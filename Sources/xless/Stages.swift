@@ -141,6 +141,15 @@ enum StageRunner {
     static func upload(_ ctx: Context) async throws -> UploadOutcome {
         try await withStage(.upload) {
             try ctx.requireDevice(.upload)
+            // The App Store mac: the pkg (from package) to ASC's build-upload API under the mac
+            // bundle id. Developer-ID mac builds stay distributed directly (the refusal below).
+            if ctx.platform == .macos {
+                guard ctx.config.distribution(for: .macos) == .appStore else {
+                    throw XlessError(.upload, "upload is App Store only; macOS Developer ID builds are distributed directly", fix: "use the notarized zip from `xless package --platform macos`")
+                }
+                let app = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
+                return try await uploadPkg(ctx: ctx, app: app, bundleID: ctx.config.bundleID(for: .macos))
+            }
             guard ctx.platform == .ios else {
                 throw XlessError(.upload, "upload is App Store only; macOS Developer ID builds are distributed directly", fix: "use the notarized zip from `xless package --platform macos`")
             }
@@ -155,20 +164,44 @@ enum StageRunner {
             }
             // Declare what the ipa carries, not the current config: the build number is re-resolved on every run.
             let versions = try IPAInfo.uploadVersions(ipa: ipa, buildOverride: ctx.buildOverride)
-            let client = ASCClient(credentials: try ASCCredentials.fromSecrets(ctx.secrets, stage: .upload))
-            let recordURL = ctx.paths.uploadRecord
-            try? FileManager.default.removeItem(at: recordURL)
-            let record = try await BuildUploader(client: client).upload(ipa: ipa, bundleID: ctx.config.bundleID(for: .ios),
-                                                                  version: versions.version, build: versions.build, platform: .ios) { record in
-                // Written on every state change, so the build ID survives a processing failure or timeout.
-                let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-                try enc.encode(record).write(to: recordURL, options: .atomic)
-            }
-            guard let tf = ctx.config.testflight, let buildID = record.buildID else { return UploadOutcome(record: record, testflight: nil) }
-            let result = try await TestFlightPublisher(client: client).publish(
-                bundleID: ctx.config.bundleID(for: .ios), buildID: buildID, buildNumber: versions.build, config: tf)
-            for w in result.warnings { FileHandle.standardError.write(Data((w + "\n").utf8)) }
-            return UploadOutcome(record: record, testflight: result)
+            return try await uploadPackage(ctx: ctx, asset: ipa, name: ipa.lastPathComponent, bundleID: ctx.config.bundleID(for: .ios),
+                                           version: versions.version, build: versions.build, platform: .ios)
         }
+    }
+
+    /// One artifact's ride to App Store Connect and — when the config has a testflight block — to the
+    /// groups it names. The ipa and the mac pkg share this tail; every caller declares the file itself
+    /// (its name, the bundle id and versions) so nothing assumes where the artifact came from.
+    private static func uploadPackage(ctx: Context, asset: URL, name: String, bundleID: String,
+                                      version: String, build: String, platform: Platform) async throws -> UploadOutcome {
+        let client = ASCClient(credentials: try ASCCredentials.fromSecrets(ctx.secrets, stage: .upload))
+        let recordURL = ctx.paths.uploadRecord
+        try? FileManager.default.removeItem(at: recordURL)
+        let record = try await BuildUploader(client: client).upload(ipa: asset, bundleID: bundleID,
+                                                              version: version, build: build, platform: platform) { record in
+            // Written on every state change, so the build ID survives a processing failure or timeout.
+            let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try enc.encode(record).write(to: recordURL, options: .atomic)
+        }
+        guard let tf = ctx.config.testflight, let buildID = record.buildID else { return UploadOutcome(record: record, testflight: nil) }
+        let result = try await TestFlightPublisher(client: client).publish(
+            bundleID: bundleID, buildID: buildID, buildNumber: build, config: tf)
+        for w in result.warnings { FileHandle.standardError.write(Data((w + "\n").utf8)) }
+        return UploadOutcome(record: record, testflight: result)
+    }
+
+    /// The mac App Store pkg's upload: the pkg `package` made, the versions read from the signed app's
+    /// plist (the same plist the payload carries).
+    private static func uploadPkg(ctx: Context, app: URL, bundleID: String) async throws -> UploadOutcome {
+        let product = try ctx.config.platform(.macos).product
+        let pkgs = ((try? FileManager.default.contentsOfDirectory(at: ctx.paths.out, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "pkg" }
+        guard let pkg = pkgs.first(where: { $0.deletingPathExtension().lastPathComponent == product }) ?? (pkgs.count == 1 ? pkgs[0] : nil) else {
+            throw XlessError(.upload, "no \(product).pkg in \(ctx.paths.out.path)",
+                             fix: "run `xless package --platform macos --distribution app-store` first")
+        }
+        let versions = try IPAInfo.uploadVersions(app: app, buildOverride: ctx.buildOverride)
+        return try await uploadPackage(ctx: ctx, asset: pkg, name: pkg.lastPathComponent, bundleID: bundleID,
+                                       version: versions.version, build: versions.build, platform: .macos)
     }
 }
