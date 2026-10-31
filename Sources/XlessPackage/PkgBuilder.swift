@@ -366,7 +366,6 @@ public enum PkgBuilder {
             let certPEM = "-----BEGIN CERTIFICATE-----\n\(der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
             try certPEM.write(to: certURL, atomically: true, encoding: .utf8)
             try run(["rcodesign"] + signArguments(pkg: pkg, keyPEM: keyURL, certPEM: certURL), tmp)
-            FileHandle.standardError.write(Data("==> PKG: \(pkg.path)\n".utf8))
             return pkg
         }
     }

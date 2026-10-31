@@ -315,6 +315,5 @@ func realAssemblyIsParsedByAppleTools() throws {
     let listing = try Shell.run("sh", ["-c", "exec gzip -dc \"$1\" | cpio -it", "sh", payload], cwd: expand, stage: .package).stdout
     let lines = listing.split(separator: "\n").map(String.init)
     let wanted = expectedEntries(app: app, symlinks: symlinks).map { $0.path }   // "." is the list's head
-    if lines != wanted { print("DBGL", lines) }   // TEMP
     #expect(lines == wanted)
 }
