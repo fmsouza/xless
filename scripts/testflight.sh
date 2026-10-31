@@ -61,7 +61,7 @@
 #   ASC_KEY_ID               App Store Connect API key ID                      (required)
 #   ASC_ISSUER_ID_FILE       file holding the issuer ID   (or ASC_ISSUER_ID)   (required)
 #   ASC_KEY_P8_FILE          the API key .p8 file                              (required)
-#   XLESS_DIST_KEY_FILE      the Apple Distribution private key (PEM)          (required, except with --platform macos)
+#   XLESS_DIST_KEY_FILE      the Apple Distribution private key (PEM)          (required on ios; on macos when --to upload runs the App-Store lane)
 #   XLESS_DEVID_KEY_FILE     the Developer ID Application private key (PEM)    (required with --platform macos)
 #     ("required" means: when a step that uses it runs. A project directory needs none of them for a run that stops
 #      before sign (--to prepare|build|assets|finalize); with --config, see the three steps above)
@@ -238,6 +238,11 @@ secret_files=()
 if [[ $need_key == 1 ]]; then
   if [[ "$PLATFORM" == macos ]]; then secret_files+=(XLESS_DEVID_KEY_FILE); else secret_files+=(XLESS_DIST_KEY_FILE); fi
 fi
+# The mac App-Store lane (--to upload): the flat pkg is signed with the Apple Distribution key
+# (the Developer ID one stays for the DMG). Only an upload-reaching run needs it in reach.
+if [[ $need_key == 1 && "$PLATFORM" == macos && $(index "$to") -ge 6 ]]; then
+  secret_files+=(XLESS_DIST_KEY_FILE)
+fi
 for v in ${secret_files[@]+"${secret_files[@]}"}; do
   [[ -n "${!v:-}" ]] || die "set $v in the environment or $ENV_FILE"
   abs_file "$v"
@@ -334,7 +339,7 @@ bind() {   # SRC DST [ro]: a `docker run --mount` bind spec; a path with ',' or 
   printf 'type=bind,%s,dst=%s%s' "$src" "$2" "${3:+,readonly}"
 }
 
-asc_secrets=(); dist_secret=()
+asc_secrets=(); dist_secret=(); appstore_secret=()
 if [[ $use_docker == 1 ]]; then
   command -v docker >/dev/null 2>&1 || die "docker is not installed (and no native xless is on PATH)"
   ctx="${DOCKER_CONTEXT:-}"
@@ -354,6 +359,8 @@ if [[ $use_docker == 1 ]]; then
   fi
   if [[ $need_key == 1 && "$PLATFORM" == macos ]]; then
     dist_secret=(--mount "$(bind "$XLESS_DEVID_KEY_FILE" /secrets/devid-key.pem ro)" -e XLESS_DEVID_KEY_FILE=/secrets/devid-key.pem)
+    # The App-Store lane's key, in the same shape: its own mount, only the second ship takes it.
+    appstore_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem)
   elif [[ $need_key == 1 ]]; then
     dist_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem)
   fi
@@ -527,25 +534,65 @@ fi
 if [[ $step3 == 1 ]]; then
   sfrom="$from"; [[ $fi_ -ge 4 ]] || sfrom=sign
   echo "==> TestFlight: step 3/3, $sfrom to $to" >&2
-  if [[ "$PLATFORM" == macos && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
-    # the DMG path is the last line xless prints (a container path with docker): report it as a host path
-    log="$(mktemp)"; trap 'rm -f "$log"' EXIT
-    set +e
+  if [[ "$PLATFORM" == macos ]]; then
+    # Macs ship two channels in one run, each signing its own copy of the signed-app build:
+    # sign→package is the Developer-ID DMG; sign→upload under --distribution app-store is the
+    # Apple-Distribution flat package that App Store Connect receives and TestFlight delivers.
+    # A failure in either channel stops the run with that channel's code; the DMG's work does
+    # not depend on the second ship.
+    mac_tf_to="package"; [[ "$(index "$to")" -ge 6 ]] || mac_tf_to="$to"
     if [[ $use_docker == 1 ]]; then
+      if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
+        run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
+          "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
+        if [[ "$(index "$to")" -ge 6 ]]; then
+          run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" ${appstore_secret[@]+"${appstore_secret[@]}"} ${bn[@]+"${bn[@]}"} \
+            "$key_image" xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
+        fi
+        echo "==> TestFlight: stopped after $to (--to), nothing delivered" >&2
+        exit 0
+      fi
+      log="$(mktemp)"; trap 'rm -f "$log"' EXIT
+      set +e
       "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
-        "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"} | tee "$log"
-    else
-      xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"} | tee "$log"
-    fi
-    code=${PIPESTATUS[0]}
-    set -e
-    if [[ $code -eq 0 && $to == package ]]; then
+        "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} | tee "$log"
+      code=${PIPESTATUS[0]}
+      [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code" >&2; exit "$code"; }
       dmg="$(grep '\.dmg$' "$log" | tail -1 || true)"
       [[ $use_docker == 0 ]] || dmg="${dmg/#\/cache\/work/$cache/work}"
       echo "==> DMG: $dmg" >&2
+      if [[ "$(index "$to")" -ge 6 ]]; then
+        "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" ${appstore_secret[@]+"${appstore_secret[@]}"} ${bn[@]+"${bn[@]}"} \
+          "$key_image" xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} | tee "$log"
+        code=${PIPESTATUS[0]}
+        [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
+        pkg="$(grep '\.pkg$' "$log" | tail -1 || true)"
+        [[ $use_docker == 0 ]] || pkg="${pkg/#\/cache\/work/$cache/work}"
+        echo "==> PKG: $pkg" >&2
+      fi
+      set -e
+      echo "==> DMG build finished" >&2
+      exit 0
     fi
-    if [[ $code -eq 0 ]]; then echo "==> DMG build finished" >&2; else echo "==> xless exited with code $code" >&2; fi
-    exit "$code"
+    # native (a macOS host run): the same two channels, xless straight from the env.
+    set +e
+    shiplog="$(mktemp)"; trap 'rm -f "$shiplog"' EXIT
+    dmg_out="$(xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
+    code=$?
+    [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }
+    dmg="$(grep '\.dmg$' <<<"$dmg_out" | tail -1 || true)"
+    echo "==> DMG: $dmg" >&2
+    echo "==> DMG build finished" >&2
+    if [[ "$(index "$to")" -ge 6 ]]; then
+      : > "$shiplog"
+      pkg_out="$(xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
+      code=$?
+      [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
+      pkg="$(grep '\.pkg$' <<<"$pkg_out" | tail -1 || true)"
+      echo "==> PKG: $pkg" >&2
+    fi
+    set -e
+    exit 0
   fi
   set +e
   if [[ $use_docker == 1 ]]; then

@@ -223,6 +223,22 @@ out=$("${mac[@]}" XLESS_BUILD_NUMBER=1.0.0.202610160000 "$S" --platform macos --
 out=$("${base[@]}" "$S" --config "$t/ov/my.overlay.yml" --platform ios 2>/dev/null)
 [[ $(wc -l <<<"$out") -eq 3 && "$out" == *"xless ship --platform ios"* && "$out" != *"devid"* ]] || fail "--platform ios: $out"
 "${mac[@]}" XLESS_DIST_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos >/dev/null 2>&1 || fail "macos needs the dist key"
+# the mac App-Store lane: --to upload = the DMG ship plus the pkg ship under the Apple Distribution key.
+printf 'x' > "$t/dist.pem"
+out=$("${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>/dev/null)
+[[ $(wc -l <<<"$out") -eq 3 ]] || fail "macos --to upload: want three steps: $out"
+dmgship=$(line "--to package "); pkgship=$(line "--distribution app-store")
+[[ "$dmgship" == *"xless ship --platform macos --config /config/my.overlay.yml --source /source --from sign --to package "* ]] || fail "the DMG ship changed with the lane on: $dmgship"
+[[ "$pkgship" == *"xless ship --platform macos --config /config/my.overlay.yml --source /source --distribution app-store --from sign --to upload "* ]] || fail "pkg ship wrong: $pkgship"
+[[ "$dmgship" == *"dst=/secrets/devid-key.pem,readonly"* && "$dmgship" != *"dst=/secrets/dist-key.pem"* ]] || fail "the DMG ship must carry only its own key: $dmgship"
+[[ "$pkgship" == *"dst=/secrets/dist-key.pem,readonly"* && "$pkgship" == *"-e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem"* ]] || fail "pkg ship dist key: $pkgship"
+[[ "$pkgship" != *"dst=/secrets/devid-key.pem"* ]] || fail "the pkg ship must not carry the Developer ID key: $pkgship"
+[[ "$out" == *"ISSUER-SECRET-VALUE"* ]] && fail "issuer value leaked"
+
+# the lane without the Apple Distribution key is refused before anything runs
+code=0; "${mac[@]}" XLESS_DIST_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload >/dev/null 2>"$t/lanerr" || code=$?
+[[ $code -eq 2 ]] && grep -q "XLESS_DIST_KEY_FILE" "$t/lanerr" || fail "the lane needs the dist key: exit $code: $(cat "$t/lanerr")"
+
 code=0; "${mac[@]}" XLESS_DEVID_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q XLESS_DEVID_KEY_FILE "$t/err" || fail "missing devid key exits $code: $(cat "$t/err")"
 code=0; "${mac[@]}" "$S" "$t/proj" --platform macos >/dev/null 2>&1 || code=$?
