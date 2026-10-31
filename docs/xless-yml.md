@@ -90,7 +90,11 @@ launch screen compiled both ways).
 
 ## Validation rules
 
-- `distribution` is fixed in milestone 1. iOS must be `app-store`; macOS must be `developer-id` (Mac App Store is not supported, see [research/mas-pkg.md](research/mas-pkg.md)). Anything else is a config error.
+- `distribution`: iOS must be `app-store`. macOS accepts `app-store` (signs with the Apple Distribution key) or
+  `developer-id` (the default, direct distribution); macOS App Store packaging and upload are not wired yet
+  (see [research/mas-pkg.md](research/mas-pkg.md)).
+- `xless ship --distribution app-store|developer-id` overrides the platform's `distribution` for that one run
+  (macOS; iOS is always app-store and refuses `developer-id`). The config file keeps its own value.
 - `platforms.<p>.minimumOS` must parse as a dotted version.
 - `launchStoryboard` must end in `.storyboard`.
 - `testflight.groups` must be non-empty without blank or duplicate names; `whatToTest` must be non-blank and at most 4000 characters.

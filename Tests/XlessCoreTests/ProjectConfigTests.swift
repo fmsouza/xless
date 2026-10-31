@@ -49,6 +49,55 @@ func rejectsInvalid(from: String, to: String, expectedFragment: String) {
     #expect(throws: XlessError.self) { try ProjectConfig.parse(yaml: yaml) }
 }
 
+@Test func macosMayBeAppStore() throws {
+    let yaml = validYAML.replacingOccurrences(of: "product: HelloShip, distribution: developer-id }",
+                                             with: "product: HelloShip, distribution: app-store }")
+    let c = try ProjectConfig.parse(yaml: yaml)
+    #expect(c.distribution(for: .macos) == .appStore)
+}
+
+// MARK: --distribution override (xless ship)
+
+@Test func distributionOverrideReplacesThePlatformForTheRun() throws {
+    let c = try ProjectConfig.parse(yaml: validYAML)
+    let overridden = try c.overridingDistribution(.appStore, for: .macos)
+    #expect(overridden.distribution(for: .macos) == .appStore)
+    // Everything else carries over, and nothing else changes.
+    #expect(overridden.distribution(for: .ios) == .appStore)
+    #expect(try overridden.platform(.macos).product == "HelloShip")
+    #expect(try overridden.platform(.macos).minimumOS == "14.0")
+    // The config file's own value (the parsed config) is untouched.
+    #expect(c.distribution(for: .macos) == .developerID)
+}
+
+@Test func macosDeveloperIDOverrideIsAccepted() throws {
+    let yaml = validYAML.replacingOccurrences(of: "product: HelloShip, distribution: developer-id }",
+                                             with: "product: HelloShip, distribution: app-store }")
+    let c = try ProjectConfig.parse(yaml: yaml)
+    #expect(try c.overridingDistribution(.developerID, for: .macos).distribution(for: .macos) == .developerID)
+}
+
+@Test func iosAppStoreOverrideIsANoOp() throws {
+    let c = try ProjectConfig.parse(yaml: validYAML)
+    #expect(try c.overridingDistribution(.appStore, for: .ios).distribution(for: .ios) == .appStore)
+}
+
+@Test func iosDeveloperIDOverrideIsRefused() throws {
+    let c = try ProjectConfig.parse(yaml: validYAML)
+    do { _ = try c.overridingDistribution(.developerID, for: .ios); Issue.record("--distribution developer-id must be refused for iOS") }
+    catch let e as XlessError {
+        #expect(e.stage == .config)
+        #expect(e.description.contains("app-store"))
+        #expect(e.fix.contains("--distribution"))
+    } catch { Issue.record("wrong error \(error)") }
+}
+
+@Test func distributionOverrideOnAnUnconfiguredPlatformThrows() throws {
+    let yaml = validYAML.replacingOccurrences(of: "  macos: { minimumOS: \"14.0\", product: HelloShip, distribution: developer-id }\n", with: "")
+    let c = try ProjectConfig.parse(yaml: yaml)
+    #expect(throws: XlessError.self) { try c.overridingDistribution(.appStore, for: .macos) }
+}
+
 @Test func missingPlatformThrowsOnLookup() throws {
     let yaml = validYAML.replacingOccurrences(of: "  macos: { minimumOS: \"14.0\", product: HelloShip, distribution: developer-id }\n", with: "")
     let c = try ProjectConfig.parse(yaml: yaml)
