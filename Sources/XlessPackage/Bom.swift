@@ -255,7 +255,9 @@ public struct Bom: Sendable, Equatable {
             var visited: Set<UInt32> = []
             var depth = 0
             while !node.isLeaf {
-                guard visited.insert(rootSlot).inserted && depth <= 0x1000 else {
+                // Mark the slot we are about to leave, so genuinely nested branch chains go
+                // through and only true cycles trip (the depth cap is the ultimate bound).
+                guard visited.insert(slot).inserted && depth <= 0x1000 else {
                     throw Bom.malformed("branch chain in Paths cycles or never ends")
                 }
                 depth += 1
@@ -396,8 +398,8 @@ private struct Writer {
                 throw Bom.unsupported("\(entry.path) is \(entry.size) bytes (the format stores 32-bit sizes)")
             }
             let seconds = entry.modificationDate.timeIntervalSince1970
-            guard seconds >= 0 && seconds <= Double(UInt32.max) else {
-                throw Bom.unsupported("\(entry.path) has a modification time the format cannot store")
+            guard seconds >= 0 && seconds <= Double(Int32.max) else {
+                throw Bom.unsupported("\(entry.path) has a modification time after January 2038 (the format stores 32-bit seconds, which this reader would read back as the pre-2026 1904-based convention)")
             }
             guard entry.path != "." || index == 0 else { throw Bom.malformed("the root directory \".\" is listed twice") }
             if entry.path == "." { continue }

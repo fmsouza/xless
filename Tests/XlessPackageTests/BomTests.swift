@@ -186,6 +186,118 @@ private func referenceEntries() -> [Bom.Entry] {
     } catch {}
 }
 
+/// A tiny big-endian assembler for hand-built stores in the tests below.
+private struct Raw {
+    var bytes: [UInt8] = []
+    mutating func u8(_ v: UInt8) { bytes.append(v) }
+    mutating func u16(_ v: UInt16) { bytes += [UInt8(v >> 8), UInt8(v & 0xff)] }
+    mutating func u32(_ v: UInt32) {
+        bytes += [UInt8(v >> 24), UInt8((v >> 16) & 0xff), UInt8((v >> 8) & 0xff), UInt8(v & 0xff)]
+    }
+    mutating func raw(_ s: String) { bytes.append(contentsOf: Array(s.utf8)) }
+}
+
+/// A fix-round regression: the leftmost descent through branch nodes once visited only the root,
+/// so a genuinely nested tree (a mkbom root branch overflowing its 510 entries) was misread as a
+/// cycle. This hand-built store is root branch → child branch → leaf.
+@Test func parseWalksNestedBranchTrees() throws {
+    var blocks: [[UInt8]] = []
+    func slot(_ payload: [UInt8]) -> UInt32 { blocks.append(payload); return UInt32(blocks.count) }
+    /// mkbom's full 31-byte info block, minimal fields.
+    func info(_ kind: Bom.Kind, _ mode: UInt16) -> [UInt8] {
+        var b = Raw()
+        b.u8(kind.rawValue); b.u8(1); b.u16(0x000f); b.u16(mode)
+        b.u32(501); b.u32(0); b.u32(1767225600); b.u32(0); b.u8(1)
+        b.u32(0); b.u32(0)
+        return b.bytes
+    }
+    func record(_ parent: UInt32, _ name: String) -> [UInt8] {
+        var b = Raw(); b.u32(parent); b.raw(name); b.u8(0); return b.bytes
+    }
+    func pair(_ id: UInt32, _ infoSlot: UInt32) -> [UInt8] {
+        var b = Raw(); b.u32(id); b.u32(infoSlot); return b.bytes
+    }
+    func branch(_ child: UInt32, _ separator: UInt32) -> [UInt8] {
+        var b = Raw(); b.u16(0); b.u16(1); b.u32(0); b.u32(0); b.u32(child); b.u32(separator)
+        return b.bytes
+    }
+    let rootInfo = slot(info(.directory, 0o040755))
+    let rootRecord = slot(record(0, "."))
+    let rootPair = slot(pair(1, rootInfo))
+    let aInfo = slot(info(.file, 0o100644))
+    let aRecord = slot(record(1, "a"))
+    let aPair = slot(pair(2, aInfo))
+    let leaf = slot({
+        var b = Raw(); b.u16(1); b.u16(2); b.u32(0); b.u32(0)
+        b.u32(rootPair); b.u32(rootRecord); b.u32(aPair); b.u32(aRecord)
+        return b.bytes
+    }())
+    let childBranch = slot(branch(leaf, aRecord))
+    let rootBranch = slot(branch(childBranch, aRecord))
+
+    var bomInfo = Raw()
+    bomInfo.u32(1)
+    bomInfo.u32(3)   // mkbom's BOMInfo stores the path count + 1
+    bomInfo.u32(1)
+    bomInfo.u32(0); bomInfo.u32(0); bomInfo.u32(0); bomInfo.u32(0)
+    _ = slot(bomInfo.bytes)
+    var treePaths = Raw()
+    treePaths.raw("tree")
+    treePaths.u32(1)
+    treePaths.u32(rootBranch)
+    treePaths.u32(0x1000)
+    treePaths.u32(2)
+    treePaths.u8(0)
+    let pathsSlot = slot(treePaths.bytes)
+
+    var out: [UInt8] = Array(repeating: 0, count: 512)
+    for block in blocks { out.append(contentsOf: block) }
+    let varsOffset = out.count
+    var vars = Raw()
+    vars.u32(2)   // the reader only needs BomInfo and Paths; the lookup trees are optional
+    vars.u32(1); vars.u8(7); vars.raw("BomInfo")
+    vars.u32(pathsSlot); vars.u8(5); vars.raw("Paths")
+    out.append(contentsOf: vars.bytes)
+    let indexOffset = out.count
+    var table = Raw()
+    table.u32(UInt32(blocks.count + 1))
+    table.u32(0); table.u32(0)
+    var address = 512
+    for block in blocks {
+        table.u32(UInt32(address)); table.u32(UInt32(block.count))
+        address += block.count
+    }
+    out.append(contentsOf: table.bytes)
+    out.append(contentsOf: Array(repeating: 0, count: 20))
+    var header = Raw()
+    header.raw("BOMStore")
+    header.u32(1)
+    header.u32(UInt32(blocks.count))
+    header.u32(UInt32(indexOffset))
+    header.u32(UInt32(out.count - indexOffset))
+    header.u32(UInt32(varsOffset))
+    header.u32(UInt32(out.count - varsOffset))
+    out.replaceSubrange(0..<header.bytes.count, with: header.bytes)
+
+    let bom = try Bom(Data(out))
+    #expect(bom.records.map(\.path) == [".", "./a"])
+    #expect(bom.records[1].parentID == bom.records[0].id && bom.records[0].parentID == 0)
+    #expect(bom.records[1].kind == .file && bom.records[0].kind == .directory)
+}
+
+/// A fix-round regression: the writer stored mtimes up to 2106, but its own reader treats
+/// 2038+ seconds as the pre-2026 1904-based convention — refusing keeps every emitted Bom
+/// unambiguous end to end.
+@Test func writerRefusesMtimesPast2038() throws {
+    var entries = referenceEntries()
+    entries[2].modificationDate = Date(timeIntervalSince1970: 2208988800)   // 2040-01-01
+    do { _ = try Bom.data(for: entries); Issue.record("expected throw") }
+    catch let e as XlessError {
+        #expect(e.stage == .package)
+        #expect(e.description.contains("2038"), "\(e)")
+    }
+}
+
 @Test func parseRejectsMalformedArchives() throws {
     let good = try fixture("reference-full.bom")
     for broken in [Data(), Data("nope".utf8), Data("BOMStore00".utf8), good.prefix(120), good.prefix(512)] {
