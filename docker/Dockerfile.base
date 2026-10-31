@@ -47,7 +47,7 @@ ENV APPIMAGE_EXTRACT_AND_RUN=1 \
     XLESS_TOOLCHAIN_META=/opt/xless/toolchain-meta.json \
     SWIFT_DETERMINISTIC_HASHING=1
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates zip unzip librsvg2-bin squashfs-tools \
+ && apt-get install -y --no-install-recommends curl ca-certificates zip unzip librsvg2-bin squashfs-tools xar cpio \
  && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
     case "$TARGETARCH" in arm64) A=aarch64; XSUM="$XTOOL_SHA256_AARCH64"; RSUM="$RCODESIGN_SHA256_AARCH64" ;; amd64) A=x86_64; XSUM="$XTOOL_SHA256_X86_64"; RSUM="$RCODESIGN_SHA256_X86_64" ;; *) echo "unsupported $TARGETARCH"; exit 1 ;; esac; \

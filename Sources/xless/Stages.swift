@@ -114,6 +114,10 @@ enum StageRunner {
             let input = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
             switch ctx.platform {
             case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out)
+            // App Store mac (TestFlight's flat package, explicit via the distribution): the pkg.
+            // Takes priority over the overlay branches: an appStore run never produces a DMG.
+            case .macos where ctx.config.distribution(for: .macos) == .appStore:
+                return try await PkgBuilder.appStore(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets)
             // Tauri and cargo overlays: a signed, notarized, stapled DMG; xless.yml: a notarized zip of the signed app.
             case .macos where ctx.tauriMac != nil || ctx.isCargo:
                 return try await DmgBuilder.notarizedDMG(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets)
