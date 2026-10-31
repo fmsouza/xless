@@ -53,9 +53,10 @@ RUN set -eux; \
     case "$TARGETARCH" in arm64) A=aarch64; XSUM="$XTOOL_SHA256_AARCH64"; RSUM="$RCODESIGN_SHA256_AARCH64" ;; amd64) A=x86_64; XSUM="$XTOOL_SHA256_X86_64"; RSUM="$RCODESIGN_SHA256_X86_64" ;; *) echo "unsupported $TARGETARCH"; exit 1 ;; esac; \
     curl -fsSL -o /tmp/xtool.AppImage "https://github.com/xtool-org/xtool/releases/download/${XTOOL_VERSION}/xtool-${A}.AppImage"; \
     echo "${XSUM}  /tmp/xtool.AppImage" | sha256sum -c -; \
-    f=/tmp/xtool.AppImage; le() { od -An -t u$2 -j "$1" -N "$2" "$f" | tr -d ' '; }; \
-    off=$(( $(le 40 8) + $(le 58 2) * $(le 60 2) )); \
-    unsquashfs -q -o "$off" -d /opt/xtool "$f" >/dev/null; ln -s /opt/xtool/AppRun /usr/local/bin/xtool; rm /tmp/xtool.AppImage; \
+    # squashfs-tools 4.4 (jammy) dies on xtool 1.21.0's AppImage ("Data queue size is too large");
+    # the AppImage runtime ships its own unsquashfs, so extract with it. --appimage-extract lands
+    # in "squashfs-root" under the RUN's cwd, which is / .
+    chmod +x /tmp/xtool.AppImage; /tmp/xtool.AppImage --appimage-extract >/dev/null; mv /squashfs-root /opt/xtool; ln -s /opt/xtool/AppRun /usr/local/bin/xtool; rm -f /tmp/xtool.AppImage; \
     RC="apple-codesign-${RCODESIGN_VERSION}-${A}-unknown-linux-musl"; \
     curl -fsSL -o "/tmp/${RC}.tar.gz" "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/${RC}.tar.gz"; \
     echo "${RSUM}  /tmp/${RC}.tar.gz" | sha256sum -c -; \
