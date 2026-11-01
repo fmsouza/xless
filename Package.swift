@@ -83,7 +83,7 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
-        .testTarget(name: "XlessPackageTests", dependencies: ["XlessPackage", "XlessCore"]),
+        .testTarget(name: "XlessPackageTests", dependencies: ["XlessPackage", "XlessCore"], exclude: ["Fixtures"]),
         .testTarget(name: "XlessIBTests", dependencies: ["XlessIB", "XlessCore"]),
         .testTarget(name: "XlessTauriTests", dependencies: ["XlessTauri", "XlessCore", "XlessMachO", .product(name: "Crypto", package: "swift-crypto")], exclude: ["Fixtures"]),
         .testTarget(name: "XlessMachOTests", dependencies: ["XlessMachO"]),

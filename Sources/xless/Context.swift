@@ -67,7 +67,9 @@ struct Context {
         return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths)
     }
 
-    static func load(_ opts: ProjectOptions, env: [String: String] = ProcessInfo.processInfo.environment, fresh: Bool = false) async throws -> Context {
+    /// `--distribution` (ship): replaces the platform's configured distribution for this run; the config file is
+    /// untouched. Applied after validation, so sign/package/upload all see it.
+    static func load(_ opts: ProjectOptions, distribution: Distribution? = nil, env: [String: String] = ProcessInfo.processInfo.environment, fresh: Bool = false) async throws -> Context {
         let override = opts.buildNumber ?? env["XLESS_BUILD_NUMBER"].flatMap { $0.isEmpty ? nil : $0 }
         let kind = try opts.configURL.map(OverlayKind.of)
         if let configURL = opts.configURL, kind == .reactNative {
@@ -84,6 +86,7 @@ struct Context {
             let paths = simulator ? StagePaths.iosSimulator(project: workRoot) : StagePaths(project: workRoot, platform: .ios)
             try await DatedBuildNumber.settle(&resolved.config, override: override, file: paths.root.appendingPathComponent("build-number"),
                                               secrets: Secrets(env: env), fresh: fresh, local: simulator)
+            resolved.config = try resolved.config.overridingDistribution(distribution, for: .ios)
             return Context(project: workRoot, config: resolved.config, platform: .ios, paths: paths, secrets: Secrets(env: env),
                            buildOverride: override, sourceRoot: sourceRoot, workRoot: workRoot, rnOverlay: overlay, reactNative: resolved,
                            simulator: simulator)
@@ -103,6 +106,7 @@ struct Context {
             if opts.platform == .macos {
                 var mac = try TauriProject.resolveMac(overlay: loc.overlay, source: loc.sourceRoot)
                 try await settleBuild(&mac.config, platform: .macos, override: override, workRoot: loc.workRoot, env: env, fresh: fresh)
+                mac.config = try mac.config.overridingDistribution(distribution, for: .macos)
                 return Context(project: loc.workRoot, config: mac.config, platform: .macos,
                                paths: StagePaths(project: loc.workRoot, platform: .macos), secrets: Secrets(env: env),
                                buildOverride: override, overlay: loc.overlay, sourceRoot: loc.sourceRoot, workRoot: loc.workRoot, tauriMac: mac)
@@ -110,6 +114,7 @@ struct Context {
             var resolved = try TauriProject.resolve(overlay: loc.overlay, source: loc.sourceRoot)
             _ = try resolved.config.platform(opts.platform)
             try await settleBuild(&resolved.config, platform: .ios, override: override, workRoot: loc.workRoot, env: env, fresh: fresh)
+            resolved.config = try resolved.config.overridingDistribution(distribution, for: opts.platform)
             return Context(project: loc.workRoot, config: resolved.config, platform: opts.platform,
                            paths: StagePaths(project: loc.workRoot, platform: opts.platform), secrets: Secrets(env: env),
                            buildOverride: override, overlay: loc.overlay, sourceRoot: loc.sourceRoot, workRoot: loc.workRoot, tauri: resolved)
@@ -118,6 +123,7 @@ struct Context {
         var config = try ProjectConfig.load(from: project.appendingPathComponent("xless.yml"), buildOverride: override)
         _ = try config.platform(opts.platform)
         try await settleBuild(&config, platform: .ios, override: override, workRoot: project, env: env, fresh: fresh)
+        config = try config.overridingDistribution(distribution, for: opts.platform)
         return Context(project: project, config: config, platform: opts.platform,
                        paths: StagePaths(project: project, platform: opts.platform), secrets: Secrets(env: env),
                        buildOverride: override)

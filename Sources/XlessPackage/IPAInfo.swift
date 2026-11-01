@@ -30,4 +30,26 @@ public enum IPAInfo {
         }
         return v
     }
+
+    /// CFBundleShortVersionString and CFBundleVersion of the signed app's Info.plist directly from the tree
+    /// (a mac App Store pkg is a cpio payload: the plist the pkg carries is the signed app's).
+    public static func versions(app: URL) throws -> (version: String, build: String) {
+        let info = try Plist.read(app.appendingPathComponent("Contents/Info.plist"), stage: .upload)
+        guard let version = info["CFBundleShortVersionString"] as? String, let build = info["CFBundleVersion"] as? String else {
+            throw XlessError(.upload, "\(app.lastPathComponent)/Contents/Info.plist lacks CFBundleShortVersionString/CFBundleVersion",
+                             fix: "re-run from finalize (`xless ship --from finalize`)")
+        }
+        return (version, build)
+    }
+
+    /// The versions to declare for the mac pkg: the signed app's. The override (`--build-number` / `XLESS_BUILD_NUMBER`)
+    /// must agree, as it does for the ipa.
+    public static func uploadVersions(app: URL, buildOverride: String?) throws -> (version: String, build: String) {
+        let v = try versions(app: app)
+        if let buildOverride, buildOverride != v.build {
+            throw XlessError(.upload, "the .app has build \(v.build) but --build-number/XLESS_BUILD_NUMBER is \(buildOverride)",
+                             fix: "re-run from finalize or drop the override")
+        }
+        return v
+    }
 }

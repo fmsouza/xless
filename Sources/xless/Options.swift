@@ -3,6 +3,7 @@ import Foundation
 import XlessCore
 
 extension Platform: ExpressibleByArgument {}
+extension Distribution: ExpressibleByArgument {}
 
 /// `--destination`: what a React Native overlay is built for.
 enum Destination: String, ExpressibleByArgument, CaseIterable {

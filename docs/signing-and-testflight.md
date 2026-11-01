@@ -18,7 +18,7 @@ are never command-line flags and are never logged.
 | Variable | Purpose | Needed for |
 |---|---|---|
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | App Store Connect API key (Admin role) | sign, upload, macOS notarization, `sign bootstrap` |
-| `XLESS_DIST_KEY` | Apple Distribution private key (PEM) | iOS sign |
+| `XLESS_DIST_KEY` | Apple Distribution private key (PEM) | iOS sign; the macOS App-Store lane's pkg sign |
 | `XLESS_DEVID_KEY` | Developer ID Application private key (PEM) | macOS sign |
 
 Values are tolerant of how CI systems mangle them: IDs are trimmed, and PEM values may have CRLF line endings or
@@ -117,6 +117,25 @@ builds a Tauri v2 macOS app, universal (arm64 and x86_64), signs it with your De
 DMG, and prints its path. The build runs without any secret; then `sign` and `package` run with
 `XLESS_DEVID_KEY_FILE` and the App Store Connect key. From a source checkout, `make dmg CONFIG=<overlay.yml>` does the
 same. Details, prerequisites and known gaps: [tauri.md](tauri.md#macos).
+
+## macOS App-Store lane (TestFlight)
+
+A macOS app can be delivered to TestFlight like the iOS one: an App-Store-signed .app packed into a
+flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane is opt-in:
+
+- the overlay (or xless.yml) must ask for the mac distribution explicitly:
+  `platforms.macos.distribution: app-store` — or `xless ship --platform macos --distribution app-store`;
+- `--to upload` reaches it: the run ships **both** channels — the Developer-ID DMG exactly as the
+  [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (signed with
+  `XLESS_DIST_KEY_FILE`, uploaded, delivered to the `testflight.groups` block). A failure in either
+  channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
+- ASC processing requires the mac app to carry **App Sandbox** (an App-Store/TestFlight
+  build); a mac app that is deliberately non-sandboxed must stay on the DMG channel, or ASC rejects
+  it.
+
+Without `--to upload`, `--platform macos` is byte-for-byte the DMG run it has always been. Flat pkgs
+are assembled by xless itself (there is no productbuild off macOS: payload cpio, Bom written by
+xless, `Distribution` file, XAR via the container's xar, signature by rcodesign).
 
 ## Running `xless ship` yourself
 

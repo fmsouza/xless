@@ -9,6 +9,7 @@ struct ShipCommand: AsyncParsableCommand {
     @OptionGroup var options: ProjectOptions
     @Option(help: "Resume from this stage.") var from: Stage = .build
     @Option(help: "Stop after this stage (default: upload, or package for macOS; build with --destination simulator).") var to: Stage?
+    @Option(help: "Distribution for this run, overriding the config's `distribution`: app-store or developer-id (macOS; iOS is always app-store). Sign/package/upload all see it; the config file is untouched.") var distribution: Distribution?
 
     /// The last stage: `--to`, else upload (build for a simulator build, which has no later stage).
     var last: Stage { StagePolicy.lastStage(to: to, simulator: options.destination == .simulator) }
@@ -20,7 +21,7 @@ struct ShipCommand: AsyncParsableCommand {
     }
 
     func run() async throws {
-        var ctx = try await Context.load(options, fresh: DatedBuildNumber.isFreshRun(command: "ship", from: from))
+        var ctx = try await Context.load(options, distribution: distribution, fresh: DatedBuildNumber.isFreshRun(command: "ship", from: from))
         let steps: [(Stage, (Context) async throws -> String)] = [
             (.prepare, { try await StageRunner.prepare($0) }),
             (.build, { try await StageRunner.build($0).path }),
@@ -38,7 +39,7 @@ struct ShipCommand: AsyncParsableCommand {
             print("==> \(stage.rawValue)")
             print(try await step(ctx))
             // React Native: the Xcode project exists only after prepare; resolve again (the run's build number is recorded).
-            if stage == .prepare, ctx.isReactNative { ctx = try await Context.load(options, fresh: false) }
+            if stage == .prepare, ctx.isReactNative { ctx = try await Context.load(options, distribution: distribution, fresh: false) }
         }
     }
 }

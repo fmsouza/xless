@@ -183,9 +183,23 @@ extension ProjectConfig {
         if distribution(for: .ios) != .appStore, platforms[.ios] != nil {
             throw XlessError(.config, "iOS distribution must be app-store in milestone 1", fix: "remove platforms.ios.distribution")
         }
-        if distribution(for: .macos) != .developerID, platforms[.macos] != nil {
-            throw XlessError(.config, "macOS distribution must be developer-id in milestone 1 (Mac App Store .pkg is not supported)", fix: "set platforms.macos.distribution: developer-id")
+    }
+
+    /// `xless ship --distribution`: the CLI value replaces the platform's configured distribution for this run
+    /// (sign/package/upload all see it); the parsed config the value came from is untouched. Absent, the config's
+    /// own value stands — `distribution(for:)` defaults macOS to developer-id. iOS is app-store only, so a
+    /// developer-id override is refused there.
+    public func overridingDistribution(_ override: Distribution?, for p: Platform) throws -> ProjectConfig {
+        guard let d = override else { return self }
+        if p == .ios, d != .appStore {
+            throw XlessError(.config, "--distribution \(d.rawValue) is not supported: iOS must be app-store in milestone 1",
+                             fix: "drop --distribution (iOS builds ship to the App Store)")
         }
+        var c = self
+        var pc = try c.platform(p)
+        pc.distribution = d
+        c.platforms[p] = pc
+        return c
     }
 
     /// Whether the config builds only for macOS (no iOS platform).
