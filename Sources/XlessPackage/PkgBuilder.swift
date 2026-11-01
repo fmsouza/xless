@@ -82,6 +82,16 @@ public enum PkgBuilder {
         if let mtime = (try? fm.attributesOfItem(atPath: signedApp.path)[.modificationDate]) as? Date {
             try? fm.setAttributes([.modificationDate: mtime], ofItemAtPath: payloadStage.path)
         }
+        // copyItem keeps the whole tree's mtimes on macOS but drops the files' on Linux: apply the
+        // source tree's own dates back over the copy, deepest first (so a directory is dated after
+        // its children), skipping symlinks — a symlink's date is its own and copyItem preserves it.
+        // Without this the Bom and the cpio payload carry the copy's wall clock, not the tree's.
+        let stagedApp = payloadStage.appendingPathComponent(appName, isDirectory: true)
+        for node in try walk(signedApp, checksums: false).reversed() {
+            let path = node.path == "." ? stagedApp : stagedApp.appendingPathComponent(String(node.path.dropFirst("./".count)))
+            guard node.kind != .symlink else { continue }
+            try fm.setAttributes([.modificationDate: node.modificationDate], ofItemAtPath: path.path)
+        }
         try run(["chmod", "-R", "u=rwX,go=rX", payloadStage.appendingPathComponent(appName).path], work)
 
         // The Payload: odc cpio.gz of the app tree, junk excluded the way every other archive is.
@@ -223,7 +233,8 @@ public enum PkgBuilder {
         }
         let mode = st.st_mode, size = UInt64(st.st_size), typeBits = mode & S_IFMT
         let date: Date
-        #if canImport(Glibc)
+        // Linux (Glibc and Musl) has st_mtim; Darwin names the field st_mtimespec.
+        #if canImport(Glibc) || canImport(Musl)
         date = Date(timeIntervalSince1970: Double(st.st_mtim.tv_sec) + Double(st.st_mtim.tv_nsec) / 1e9)
         #else
         date = Date(timeIntervalSince1970: Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9)
@@ -282,7 +293,7 @@ public enum PkgBuilder {
         return data
     }
 
-    static func walk(_ root: URL) throws -> [TreeNode] {
+    static func walk(_ root: URL, checksums: Bool = true) throws -> [TreeNode] {
         var tree: [TreeNode] = []
         let rootStat = try lstatInfo(root.path)
         tree.append(TreeNode(path: ".", kind: .directory, mode: rootStat.mode, modificationDate: rootStat.date,
@@ -315,9 +326,10 @@ public enum PkgBuilder {
                                          size: 0, checksum: 0, linkTarget: nil))
                     try walk(directory: path, prefix: rel, depth: depth + 1)
                 } else {
-                    let data = try readFile(path)
+                    // The checksum walk reads every file; the date walk (`checksums: false`) only stats.
+                    let data = checksums ? try readFile(path) : Data()
                     tree.append(TreeNode(path: rel, kind: .file, mode: s.mode, modificationDate: s.date,
-                                         size: s.size, checksum: Bom.cksum(data), linkTarget: nil))
+                                         size: s.size, checksum: checksums ? Bom.cksum(data) : 0, linkTarget: nil))
                 }
             }
         }
