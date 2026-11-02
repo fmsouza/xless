@@ -60,4 +60,34 @@ out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=0 "$x" docker p 2>/de
 [[ "$out" == *"docker=0 "* ]] || fail "XLESS_USE_DOCKER=0 overridden: $out"
 code=0; "${base[@]}" XLESS_SHARE="$t/share" STUB_EXIT=23 "$x" docker p >/dev/null 2>&1 || code=$?
 [[ $code -eq 23 ]] || fail "xless docker exits $code, want testflight.sh's 23"
+# xless run: natively by default (XLESS_USE_DOCKER=0), in the images with --docker (taken out of the arguments, but not
+# after `--`), an XLESS_USE_DOCKER already set wins over the default only, XLESS_SELF is this xless.
+"${base[@]}" "$x" run --help >/dev/null 2>"$t/err" || fail "xless run --help failed: $(cat "$t/err")"
+cat > "$t/share/scripts/testflight.sh" <<'S'
+#!/usr/bin/env bash
+printf '%s\n' "$@"
+echo "docker=$XLESS_USE_DOCKER self=${XLESS_SELF:+set}"
+exit "${STUB_EXIT:-0}"
+S
+out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run samples/HelloShip --build-number 1 --to finalize 2>"$t/err") || fail "xless run failed: $(cat "$t/err")"
+[[ "$out" == $'samples/HelloShip\n--build-number\n1\n--to\nfinalize\ndocker=0 self=set' ]] || fail "xless run passes: $out"
+out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run --docker samples/HelloShip -- --docker 2>"$t/err") || fail "xless run --docker failed: $(cat "$t/err")"
+[[ "$out" == $'samples/HelloShip\n--\n--docker\ndocker=1 self=set' ]] || fail "xless run --docker passes: $out"
+out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run p --docker 2>/dev/null) || fail "xless run p --docker failed"
+[[ "$out" == $'p\ndocker=1 self=set' ]] || fail "--docker after the project: $out"
+out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=1 "$x" run p 2>/dev/null) || fail "xless run with XLESS_USE_DOCKER=1 failed"
+[[ "$out" == *"docker=1 "* ]] || fail "XLESS_USE_DOCKER=1 overridden by run's default: $out"
+out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=0 "$x" run --docker p 2>/dev/null) || fail "xless run --docker with XLESS_USE_DOCKER=0 failed"
+[[ "$out" == *"docker=1 "* ]] || fail "--docker lost to XLESS_USE_DOCKER=0: $out"
+code=0; "${base[@]}" XLESS_SHARE="$t/share" STUB_EXIT=23 "$x" run p >/dev/null 2>&1 || code=$?
+[[ $code -eq 23 ]] || fail "xless run exits $code, want testflight.sh's 23"
+# On Linux, an overlay builds in the images only: refused natively, naming --docker, before the script runs.
+if [[ "$(uname)" == Linux ]]; then
+  code=0; "${base[@]}" XLESS_SHARE="$t/share" "$x" run --config "$t/tauri.yml" >"$t/out" 2>"$t/err" || code=$?
+  [[ $code -eq 10 ]] || fail "native overlay exits $code, want 10: $(cat "$t/err")"
+  grep -q -- '--docker' "$t/err" || fail "the overlay refusal does not name --docker: $(cat "$t/err")"
+  [[ ! -s "$t/out" ]] || fail "the script ran for a refused overlay: $(cat "$t/out")"
+  out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run --docker --config "$t/tauri.yml" 2>/dev/null) || fail "xless run --docker --config failed"
+  [[ "$out" == *"docker=1 "* ]] || fail "run --docker --config: $out"
+fi
 echo PASS

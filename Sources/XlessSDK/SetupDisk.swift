@@ -7,8 +7,11 @@ import Foundation
 public enum SetupDisk {
     public static let cacheKey = "XLESS_SETUP_CACHE_GB"
     public static let dockerKey = "XLESS_SETUP_DOCKER_GB"
+    /// A native setup (no Docker): the Swift toolchain, xtool, rcodesign and the installed SDK, for this machine's
+    /// architecture only.
+    public static let nativeKey = "XLESS_SETUP_NATIVE_GB"
     /// When versions.env has no value (an older share): the figures measured for Xcode 26.2 and 27.0.
-    public static let fallback = [cacheKey: 17, dockerKey: 40]
+    public static let fallback = [cacheKey: 17, dockerKey: 40, nativeKey: 10]
 
     public struct Need: Equatable, Sendable {
         /// The variable that sets (and overrides) `perArchGB`.
@@ -32,6 +35,12 @@ public enum SetupDisk {
     public static func needs(archs: Int, exporting: Int, env: [String: String], table: [String: String]) -> (cache: Need, docker: Need) {
         (Need(key: cacheKey, perArchGB: perArchGB(cacheKey, env: env, table: table), archs: exporting),
          Need(key: dockerKey, perArchGB: perArchGB(dockerKey, env: env, table: table), archs: archs))
+    }
+
+    /// What a native run needs: the cache for the export (when it runs), and the native home for one architecture.
+    public static func nativeNeeds(exporting: Bool, env: [String: String], table: [String: String]) -> (cache: Need, native: Need) {
+        (Need(key: cacheKey, perArchGB: perArchGB(cacheKey, env: env, table: table), archs: exporting ? 1 : 0),
+         Need(key: nativeKey, perArchGB: perArchGB(nativeKey, env: env, table: table), archs: 1))
     }
 
     /// The refusal when `freeGB` under `path` is short of `need`: nil when there is room.

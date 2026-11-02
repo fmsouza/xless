@@ -6,7 +6,7 @@ the milestone did not have. The Linux tests that the builder could run are `swif
 `bash Tests/shell/testflight.test.sh` (overlay parsing and every refusal, plist templates, inputs and the secret-file
 checks, the script's three steps in a dry run). Fill in the result column as you go.
 
-Before you start: the images from `xless setup` ([README](../README.md#build-the-images)), the one-time Apple setup
+Before you start: the images from `xless setup --docker` ([README](../README.md#build-in-docker-instead)), the one-time Apple setup
 from [bootstrap.md](bootstrap.md) (API key, Apple Distribution key, Developer ID Application key), the secrets file
 from [signing-and-testflight.md](signing-and-testflight.md#one-command-testflight), and a release of xless that
 includes milestone 6 (the release follows the nightly run after the merge).

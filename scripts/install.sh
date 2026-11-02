@@ -143,12 +143,7 @@ main() {
       ;;
   esac
 
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "warning: docker is not installed; xless builds in Docker containers. Install it: https://docs.docker.com/engine/install/" >&2
-  elif ! docker info >/dev/null 2>&1; then
-    echo "warning: docker is installed but the daemon is not reachable (is it running, and are you in the docker group?). See https://docs.docker.com/engine/install/" >&2
-  fi
-
+  # Docker is optional: `xless setup` installs natively; only `--docker` (the images) needs it.
   echo "next: xless setup --xcode ~/Downloads/Xcode_27.xip"
 }
 

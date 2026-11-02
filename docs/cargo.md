@@ -3,18 +3,18 @@
 xless builds an app that is just a Cargo workspace on Linux, with no Mac and no Xcode on the build machine: an iOS app that it ships to TestFlight, and a macOS app that it ships as a notarized DMG ([macOS](#macos)). The app has no Xcode project, no Tauri and no Swift. Its binary crate runs the platform's event loop itself (winit, eframe/egui, objc2…), and the repository holds an `Info.plist` and an icon. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
 
 ```sh
-xless docker --config ~/ci/my-app.overlay.yml
+xless run --docker --config ~/ci/my-app.overlay.yml
 ```
 
 ## Try the sample
 
 The source repository has a small winit app, `samples/HelloCargo`, with an overlay. With the images from
-`xless setup` ([README](../README.md#build-the-images)), build it up to `finalize`, unsigned and with no Apple account:
+`xless setup --docker` ([README](../README.md#build-in-docker-instead)), build it up to `finalize`, unsigned and with no Apple account:
 
 ```sh
 git clone https://github.com/fmsouza/xless.git
-xless docker --config xless/samples/HelloCargo/xless.overlay.example.yml --build-number 1.0.0.2026101601 --to finalize
-xless docker --config xless/samples/HelloCargo/xless.overlay.example.yml --platform macos --build-number 1.0.0.202610160000 --to finalize
+xless run --docker --config xless/samples/HelloCargo/xless.overlay.example.yml --build-number 1.0.0.2026101601 --to finalize
+xless run --docker --config xless/samples/HelloCargo/xless.overlay.example.yml --platform macos --build-number 1.0.0.202610160000 --to finalize
 ```
 
 The first build downloads Rust and compiles the app's dependencies, which takes several minutes. The apps end up in
@@ -30,7 +30,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 ## Requirements
 
 - To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate; for macOS the Developer ID certificate), plus the secrets file described under [One command: TestFlight](signing-and-testflight.md#one-command-testflight).
-- The `xless-tauri` image, which carries Rust's installer, LLVM binutils and the tools that build a DMG. `xless setup` builds it ([README](../README.md#build-the-images)).
+- The `xless-tauri` image, which carries Rust's installer, LLVM binutils and the tools that build a DMG. `xless setup --docker` builds it ([README](../README.md#build-in-docker-instead)).
 - The app repository is a git checkout, and `Cargo.lock` is committed and up to date (`--locked`). xless copies the **tracked** files of `source:` (and only those) into a work copy under `~/.cache/xless/work/<overlay name>`; the source is never written to. Commit the lockfile, the plist, the icon or asset catalog and every file the overlay refers to. Untracked and ignored files are not copied: a file the app's `build.rs` reads from the tree and git ignores is missing in the work copy. Data that lives outside the repository goes in as a [build input](#build-inputs).
 - `source:` may be a directory inside a git checkout (a workspace in a monorepo). The version lookup and the `GIT_SHA` placeholder read that checkout's git data.
 - A work copy belongs to one source. The first sync records the source in `.xless/source` of the work copy, and a later run of an overlay with the same file name but another source stops at `prepare`; rename one overlay file or delete the work copy.
@@ -83,7 +83,7 @@ An unknown key is refused with its path (`unknown key 'ios.feature'`), so a miss
 | Key | Meaning |
 |---|---|
 | `type` | Required. Must be `cargo`. |
-| `source` | The app repository, read-only. Required unless `--source <dir>` (or `$XLESS_SOURCE` with `xless docker`) gives it. It may be a subdirectory of a git checkout. |
+| `source` | The app repository, read-only. Required unless `--source <dir>` (or `$XLESS_SOURCE` with `xless run --docker`) gives it. It may be a subdirectory of a git checkout. |
 | `bundleID` | Required. The bundle ID of both apps unless a platform block sets its own. |
 | `teamID` | Required. The 10-character Apple team ID. |
 | `version` | `cargo` (default): the package's version ([below](#the-version)). Or an explicit version: 1 to 3 integers with an optional `-prerelease`. |
@@ -157,11 +157,11 @@ A copy may not replace the bundle's own files (the executable, `Info.plist`, `Pk
 A `build.rs` may read a directory named by an environment variable, for example fonts kept outside the repository. `inputs` declares such directories; each has a `name` (letters, digits, `.`, `_`, `-`), an `env` variable that carries its directory into the build (it follows the same rules as `env:` and must not repeat another input's or an `env:` name) and one source:
 
 - **`path:`** a directory on the host, absolute, `~`-prefixed or relative to the source root. It may be outside the source. In docker it is mounted **read-only** at `/inputs/<name>` in the build container only (step 2 of [Shipping](#shipping)), and the variable holds that container path. Natively nothing is mounted and the variable holds the host path. The path may not contain a tab or a line break. `xless cargo inputs --config <overlay> [--source <dir>]` prints `name<TAB>path` for each path input: the list `scripts/testflight.sh` mounts.
-- **`git:` and `rev:`.** An `https://` URL and the full, lowercase 40-character commit (`git rev-parse HEAD`); a branch, tag or short hash is refused because it moves. xless clones the input into `$XLESS_CACHE/inputs/<name>-<rev>` during `prepare` and reuses the clone while it is at that commit; with `xless docker` that is `~/.cache/xless/inputs` on the host. The overlay then needs nothing on the build machine but network access for the first clone. git never prompts for credentials, so a private repository fails with a clone error.
+- **`git:` and `rev:`.** An `https://` URL and the full, lowercase 40-character commit (`git rev-parse HEAD`); a branch, tag or short hash is refused because it moves. xless clones the input into `$XLESS_CACHE/inputs/<name>-<rev>` during `prepare` and reuses the clone while it is at that commit; with `xless run --docker` that is `~/.cache/xless/inputs` on the host. The overlay then needs nothing on the build machine but network access for the first clone. git never prompts for credentials, so a private repository fails with a clone error.
 
 `input:<name>/<path>` in `infoPlist`, `icon` and `resources[].from` reads from the input. A `path:` that is not a directory stops `prepare` (exit 19).
 
-`xless docker` applies to every path input the checks it applies to the source and the overlay's folder: it refuses (exit 2) a path that is `/`, your home directory or a directory above it, and a path that holds the secrets file or one of the secret files (compared by inode, so a symlink does not hide one).
+`xless run --docker` applies to every path input the checks it applies to the source and the overlay's folder: it refuses (exit 2) a path that is `/`, your home directory or a directory above it, and a path that holds the secrets file or one of the secret files (compared by inode, so a symlink does not hide one).
 
 ## Build numbers
 
@@ -176,7 +176,7 @@ As for Tauri ([tauri.md](tauri.md#creating-the-app-store-connect-app-record)), w
 ## Shipping
 
 ```sh
-xless docker --config ~/ci/my-app.overlay.yml [extra xless ship args, e.g. --from upload]
+xless run --docker --config ~/ci/my-app.overlay.yml [extra xless ship args, e.g. --from upload]
 ```
 
 The script and its options are those of Tauri ([tauri.md](tauri.md#shipping)): three containers in the `xless-tauri` image, so the app's build code (`build.rs`, proc-macros) never runs next to a secret.
@@ -190,11 +190,11 @@ What differs for cargo:
 - **Mounts.** As for Tauri, plus `~/.cache/xless/inputs` at `/cache/inputs` (the clones of git inputs) and each path input read-only at `/inputs/<name>`, with `XLESS_INPUTS_MOUNTED=1`, in step 2 only. The script lists the path inputs by running `xless cargo inputs` on the host (`$XLESS_SELF`, else `xless` on `PATH`); `make testflight CONFIG=…` and `make dmg CONFIG=…` call the script directly, so for a cargo overlay they need `xless` on `PATH` (or `XLESS_SELF` set to a built one). Its refusals (exit 2) are in [build inputs](#build-inputs).
 - **Caches.** `~/.cache/xless/work`, `~/.cache/xless/downloads` and the docker volumes `xless-rustup` and `xless-cargo`: the Rust toolchains and the crates survive between runs. The first build downloads Rust and compiles the whole dependency graph, which takes several minutes and several GB.
 - **Stages.** `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios|macos`. Exit codes are the ones in [pipeline.md](pipeline.md#stages): config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17.
-- **Native.** On a Linux machine with `xless` on `PATH` the same three steps run without docker, with the limits described for Tauri. Native cargo builds are untested in this milestone.
+- **Native.** As for Tauri: `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds are untested in this milestone.
 
 ## macOS
 
-`xless docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the `macos` block for both Apple Silicon and Intel, merges the executables into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG. It prints the path of `<product>_<version>_universal.dmg` last. The prerequisites (the Developer ID key, `XLESS_DEVID_KEY_FILE`, the App Store Connect key for notarization), the two-step key separation and the exit codes are those of [Tauri on macOS](tauri.md#macos). `macos.entitlements` supplies the entitlements of the signature; without it the app is signed with none.
+`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the `macos` block for both Apple Silicon and Intel, merges the executables into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG. It prints the path of `<product>_<version>_universal.dmg` last. The prerequisites (the Developer ID key, `XLESS_DEVID_KEY_FILE`, the App Store Connect key for notarization), the two-step key separation and the exit codes are those of [Tauri on macOS](tauri.md#macos). `macos.entitlements` supplies the entitlements of the signature; without it the app is signed with none.
 
 One overlay serves both platforms: `--platform` picks the block. The privacy manifest and `testflight` are iOS-only.
 
@@ -248,4 +248,4 @@ Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12
 | 14 | `no PrivacyInfo.xcprivacy in the bundle` | Set `privacyManifest:` in the overlay. |
 | 14, 15, 16, 17 | | As for any xless project: [troubleshooting.md](troubleshooting.md). |
 
-If the exit code is 2, the problem is in `xless docker`'s own arguments or configuration (a missing secret variable, overlay, source or input directory, or a mount that holds a secret).
+If the exit code is 2, the problem is in `xless run --docker`'s own arguments or configuration (a missing secret variable, overlay, source or input directory, or a mount that holds a secret).

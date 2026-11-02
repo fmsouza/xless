@@ -43,19 +43,21 @@ from `finalize` or drop the override. Overlays have their own `build: dated` sch
 ## One command: TestFlight
 
 ```sh
-xless docker ~/MyApp
+xless run ~/MyApp
 ```
 
-builds, signs, uploads and delivers an iOS `xless.yml` project to TestFlight (`xless ship --platform ios` in the
-`xless` image). For an app described by an overlay use `xless docker --config <overlay.yml>`: a Tauri app
-([tauri.md](tauri.md#shipping)) or a React Native / Expo app ([react-native.md](react-native.md#shipping-three-containers)).
-Arguments after the project or overlay go to `xless ship`, for example `--from upload` to retry only the upload.
-`xless docker` runs `share/xless/scripts/testflight.sh`; from a source checkout, `make testflight PROJECT=<dir>` (or
+builds, signs, uploads and delivers an iOS `xless.yml` project to TestFlight (`xless ship --platform ios`, natively
+with what `xless setup` installed; with `--docker`, in the `xless` image). For an app described by an overlay use
+`xless run --docker --config <overlay.yml>`: a Tauri app ([tauri.md](tauri.md#shipping)) or a React Native / Expo app
+([react-native.md](react-native.md#shipping-three-containers)); overlays build in the images only. Arguments after the
+project or overlay go to `xless ship`, for example `--from upload` to retry only the upload. `xless run` runs
+`share/xless/scripts/testflight.sh` (`xless docker` is the same as `xless run --docker`); from a source checkout, `make testflight PROJECT=<dir>` (or
 `CONFIG=<overlay.yml>`, with `ARGS="…"`) runs the same script.
 
 - **Secrets file.** The script reads the paths of your secret files from the environment, or from a local file that it
   sources first: `~/.config/xless/testflight.env` (override with `XLESS_TESTFLIGHT_ENV`; it never belongs in git). The
-  files are mounted read-only into the container; values are never printed or put on a command line. A run that stops
+  files are mounted read-only into the container (natively, read where they are); values are never printed or put on
+  a command line. A run that stops
   before `sign` (`--to finalize`) needs none of them and mounts none.
 
   ```sh
@@ -67,35 +69,37 @@ Arguments after the project or overlay go to `xless ship`, for example `--from u
   XLESS_DEVID_KEY_FILE=$HOME/keys/devid-key.pem  # Developer ID private key (macOS DMG only)
   ```
 
-- **Images.** `xless:local-<arch>` for this machine's architecture, or the images of the Xcode the project pins with
-  `xcode:` ([react-native.md](react-native.md#pinning-the-xcode-sdk)); `XLESS_IMAGE` names another image. The Docker
-  context is `DOCKER_CONTEXT` when set, else `colima-xless` when that context exists, else the current one.
-  `XLESS_USE_DOCKER=0` runs natively instead, with the `xless` on your `PATH` ([native-install.md](native-install.md)).
+- **Native or images.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
+  ([native-install.md](native-install.md)); a project pinning another Xcode with `xcode:` is refused until you run
+  `xless setup` with that Xcode. With `--docker`: `xless:local-<arch>` for this machine's architecture, or the images
+  of the Xcode the project pins ([react-native.md](react-native.md#pinning-the-xcode-sdk)); `XLESS_IMAGE` names another
+  image. The Docker context is `DOCKER_CONTEXT` when set, else `colima-xless` when that context exists, else the
+  current one.
 - **Build number.** `XLESS_BUILD_NUMBER` if set, else `$(( $(date +%s) / 60 ))`, which is monotonic across machines.
   With `--config` the overlay's `build:` decides instead ([tauri.md](tauri.md#build-numbers)).
-- **Paths.** Relative secret paths are resolved against the current directory. The secret files and the project must
-  be somewhere Docker can mount (on Linux, any local path).
-- **Dry run.** `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the docker commands without running them.
+- **Paths.** Relative secret paths are resolved against the current directory. With `--docker`, the secret files and
+  the project must be somewhere Docker can mount (on Linux, any local path).
+- **Dry run.** `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the commands without running them.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
   warning. The exit code is xless's (17 for a failed upload or delivery).
 - **Testers.** Internal testers must be App Store Connect users. Add them to the group once in the web UI (Users and
   Access, then TestFlight); xless creates missing groups but cannot add users. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
 
-With a project directory everything runs in one container, so package code built there could read the mounted key
-files. If that matters to you, build up to `finalize` first, with no secret, then sign and upload what it built. Use
+With a project directory everything runs in one process (one container with `--docker`), so package code built there
+could read the key files. If that matters to you, build up to `finalize` first, with no secret, then sign and upload what it built. Use
 the same build number for both runs:
 
 ```sh
 export XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 ))
-xless docker ~/MyApp --to finalize
-xless docker ~/MyApp --from sign
+xless run ~/MyApp --to finalize
+xless run ~/MyApp --from sign
 ```
 
 ## The three-step split
 
 An overlay app's build runs third-party code: npm scripts, `build.rs`, CocoaPods hooks, Xcode build phases. So with
-`--config`, `xless docker` never runs that code next to a secret. It uses three containers:
+`--config`, `xless run --docker` never runs that code next to a secret. It uses three containers:
 
 1. `xless next-build` (`xless tauri next-build` for Tauri), with the App Store Connect key only: the next `dated` build
    number, a read-only query. Skipped when `XLESS_BUILD_NUMBER` or `--build-number` is given.
@@ -110,7 +114,7 @@ refuses to start when either holds the secrets file or a secret file. Details: [
 ## Notarized DMG (Tauri macOS)
 
 ```sh
-xless docker --config ~/ci/my-app.overlay.yml --platform macos
+xless run --docker --config ~/ci/my-app.overlay.yml --platform macos
 ```
 
 builds a Tauri v2 macOS app, universal (arm64 and x86_64), signs it with your Developer ID key, notarizes and staples a

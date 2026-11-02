@@ -25,11 +25,11 @@ top=xless-1.2.3-linux-x86_64
 tar -tzf "$tb" | sed 's#/$##' | sort > "$t/list"
 
 # Nothing outside the documented layout.
-bad=$(grep -vE "^$top(/(bin(/xless)?|LICENSE|share(/xless(/(VERSION|versions\.env|docker(/.*)?|scripts(/(docker-images|xcode-swift|testflight)\.sh)?|samples(/HelloShip(/.*)?)?|licenses(/.*)?))?)?))?$" "$t/list" || true)
+bad=$(grep -vE "^$top(/(bin(/xless)?|LICENSE|share(/xless(/(VERSION|versions\.env|docker(/.*)?|scripts(/(docker-images|xcode-swift|testflight|native-toolchain)\.sh)?|samples(/HelloShip(/.*)?)?|licenses(/.*)?))?)?))?$" "$t/list" || true)
 [[ -z "$bad" ]] || fail "unexpected entries: $bad"
 for p in bin/xless LICENSE share/xless/VERSION share/xless/versions.env share/xless/docker/Dockerfile.base \
          share/xless/docker/toolchain/target-os/17C52.txt share/xless/scripts/docker-images.sh \
-         share/xless/scripts/xcode-swift.sh share/xless/scripts/testflight.sh share/xless/samples/HelloShip/Package.swift; do
+         share/xless/scripts/xcode-swift.sh share/xless/scripts/testflight.sh share/xless/scripts/native-toolchain.sh share/xless/samples/HelloShip/Package.swift; do
   grep -qx "$top/$p" "$t/list" || fail "missing $p"
 done
 

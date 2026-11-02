@@ -33,7 +33,7 @@ public enum XcodePin {
         guard matches(pin: pin, meta: meta) else {
             let sdk = (try? meta.sdk(for: platform)).map { "the \($0.sdkName) SDK" } ?? "its SDK"
             throw XlessError(stage, "\(file) pins xcode: \"\(pin)\", but this image has \(sdk) from Xcode \(xcodeVersion(meta)) (\(meta.xcodeBuild))",
-                             fix: "build with the images made from Xcode \(pin) (`xless setup --xcode <path to Xcode \(pin)'s .xip>`, tags *-xcode\(pin); xless docker selects them from the pin), or change the pin to \(xcodeVersion(meta))")
+                             fix: "install Xcode \(pin) natively (`xless setup --xcode <path to Xcode \(pin)'s .xip>`, which replaces the installed one), or build with --docker in the images made from it (`xless setup --docker --xcode …`, tags *-xcode\(pin); xless run --docker selects them from the pin), or change the pin to \(xcodeVersion(meta))")
         }
     }
 }

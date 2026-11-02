@@ -15,29 +15,32 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Two Xcode releases 
 
 ```
 ┌─ your Linux machine, once per Xcode release ──────────────────────────────┐
-│ xless setup --xcode Xcode_27.xip                                           │
-│   → xtool (open source) unpacks the SDK from the .xip in xless-base        │
+│ xless setup --xcode Xcode_27.xip                  (native, the default)    │
+│   → xtool, rcodesign and the Xcode's open-source Swift, pinned downloads   │
+│   → xtool (open source) unpacks the SDK from the .xip; installed for Swift │
+│ xless setup --docker --xcode Xcode_27.xip         (or: the images)         │
 │   → images xless-base, xless, xless-tauri, xless-rn (:local-<arch>…)       │
 └───────────────────────────────────────────────────────────────────────────┘
 ┌─ every build ─────────────────────────────────────────────────────────────┐
-│ xless docker <project-dir>  or  xless docker --config <overlay.yml>        │
-│   → xless ship, in the images:                                             │
+│ xless run <project-dir>                           (native)                 │
+│ xless run --docker <project-dir>  or  --docker --config <overlay.yml>      │
+│   → xless ship:                                                            │
 │     [prepare →] build → assets → finalize → sign → package → upload        │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The images.** `xless setup` builds them from the `.xip` ([images.md](images.md) shows each step, for building them
+- **The native install.** `xless setup` installs the toolset and the SDK under your home directory, with no Docker
+  ([native-install.md](native-install.md)). It builds `xless.yml` projects.
+- **The images.** `xless setup --docker` builds them from the `.xip` ([images.md](images.md) shows each step, for building them
   by hand). `xless-base` holds xless, xtool and rcodesign; `xless` adds the Darwin SDK and the open-source Swift
   release whose version matches that Xcode's Swift (6.4 for 27.0, 6.2.3 for 26.2; Apple's own toolchain is never in
   an image); `xless-tauri` adds Node, pnpm and Rust; `xless-rn` adds Ruby, Bundler, Swift Build, Hermes and the Xcode
   tool replacements a React Native build calls. They are tagged `<image>:local-<arch>-xcode<version>` (for
   example `xless:local-arm64-xcode26.2`), and also plain `<image>:local-<arch>` for Xcode 27.0, the default.
-- **`xless docker`** runs a build in those images. With a project directory (an `xless.yml` project) it runs
-  `xless ship` in one container. With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs three containers,
+- **`xless run`** runs a build, natively or, with `--docker`, in those images (`xless docker` is `xless run --docker`).
+  With a project directory (an `xless.yml` project) it runs `xless ship` in one process or container. With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs three containers,
   so that the app's own build code never runs next to a signing key ([signing-and-testflight.md](signing-and-testflight.md#the-three-step-split)).
   The options after the project or overlay go to `xless ship`, for example `--to finalize` or `--from sign`.
-- **Natively.** On a Debian or Ubuntu machine with the toolset installed ([native-install.md](native-install.md)),
-  `xless ship` runs without Docker.
 
 ## The project
 
@@ -64,7 +67,7 @@ stage also removes its previous output.
 | package | `xless package` | `out/`: the `.ipa`, the notarized `.zip`, or (Tauri and Cargo macOS) the notarized and stapled `.dmg` | 16 |
 | upload | `xless upload` | `upload.json` (iOS only; rewritten at every state change, so it keeps the build ID if processing fails or times out). With a [`testflight:` block](xless-yml.md#testflight) it then delivers the processed build to your TestFlight groups. | 17 |
 
-Config errors exit 10 and SDK errors exit 11. `xless docker` itself exits 2 for a usage or configuration error of its
+Config errors exit 10 and SDK errors exit 11. `xless run` itself exits 2 for a usage or configuration error of its
 own (a missing project, overlay or secret file). Errors are printed as `[stage] cause — fix`.
 
 All stage commands take `--platform ios|macos`, `--project <dir>` (default `.`) and `--build-number`; overlays take
