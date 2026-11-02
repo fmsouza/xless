@@ -145,11 +145,11 @@ else
   [[ ! -s "$log" ]] || fail "a native setup called docker: $(cat "$log")"
   [[ ! -e "$t/native" ]] || fail "--dry-run wrote $t/native"
   # A host without python3 (and the rest): refused before anything runs, every missing command and the apt line named.
-  mkdir -p "$t/few"; ln -sf "$(command -v curl || echo /usr/bin/curl)" "$t/few/curl"; ln -sf "$(command -v tar)" "$t/few/tar"
+  mkdir -p "$t/few"; for c in curl tar; do printf '#!/bin/sh\n' > "$t/few/$c"; chmod +x "$t/few/$c"; done
   path="$t/few" run ok --xcode "$xip"
   [[ $code == 11 ]] || fail "missing commands exit $code, want 11: $(cat "$t/err")"
   grep -q 'python3' "$t/err" && grep -q 'unzip' "$t/err" && grep -q 'sudo apt-get install -y' "$t/err" || fail "missing commands refusal: $(cat "$t/err")"
-  grep -q 'needs .*curl' "$t/err" && fail "curl named as missing: $(cat "$t/err")"
+  sed -n 's/.*needs \(.*\), which.*/\1/p' "$t/err" | grep -q curl && fail "curl named as missing: $(cat "$t/err")"
   [[ ! -e "$t/native" ]] || fail "a refused setup wrote $t/native"
   # Not enough room for the native install: exit 11, naming the variable, nothing installed.
   extra=(XLESS_NATIVE_HOME="$t/native" XLESS_SETUP_CACHE_GB=0 XLESS_SETUP_NATIVE_GB=999999)

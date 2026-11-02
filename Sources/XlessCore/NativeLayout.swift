@@ -40,9 +40,9 @@ public struct NativeLayout: Sendable, Equatable {
 
     /// A native xless (outside an image, which records its toolchain at `SwiftToolchain.imageFile`) with a native
     /// install puts its tools first on this process's PATH, so every tool and child process uses them. A host without
-    /// a native record (an image, an older native install) is left as it is.
+    /// a native record (an image, an older native install), or with `XLESS_SWIFT_TOOLCHAIN` set, is left as it is.
     public static func activate(env: [String: String] = ProcessInfo.processInfo.environment) {
-        guard !FileManager.default.fileExists(atPath: SwiftToolchain.imageFile) else { return }
+        guard !FileManager.default.fileExists(atPath: SwiftToolchain.imageFile), (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty else { return }
         let layout = NativeLayout(env: env)
         guard let data = FileManager.default.contents(atPath: layout.record.path),
               let toolchain = try? JSONDecoder().decode(SwiftToolchain.self, from: data) else { return }

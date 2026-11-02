@@ -223,7 +223,11 @@ struct SetupCommand: AsyncParsableCommand {
         case let .download(d):
             try Self.install(d, layout: layout ?? NativeLayout())
         case let .sdkInstall(xtoolSDK, meta):
-            let xtool = (layout ?? NativeLayout()).bin.appendingPathComponent("xtool").path
+            let layout = layout ?? NativeLayout()
+            // The record says the toolchain is fitted to the installed SDK: gone until the fit-up after this rewrites it,
+            // so a run stopped in between plans the fit-up again.
+            if FileManager.default.fileExists(atPath: layout.record.path) { try FileManager.default.removeItem(at: layout.record) }
+            let xtool = layout.bin.appendingPathComponent("xtool").path
             let at = try SDKInstaller.install(xtoolsdk: xtoolSDK, meta: meta, xtool: xtool)
             say("    SDK at \(at.sdk.path); metadata at \(at.meta.path)")
         }

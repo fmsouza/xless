@@ -38,7 +38,8 @@ if [ "$mode" = separate ]; then
   x="$bundle/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib"
   own="$("$bin/clang" -print-resource-dir)"
   xcode="$(readlink -f "$x/swift/clang")"
-  for d in "$xcode"/lib/*; do [ -e "$own/lib/$(basename "$d")" ] || ln -s "$d" "$own/lib/$(basename "$d")"; done
+  # A dead link (an earlier Xcode's runtimes) is replaced.
+  for d in "$xcode"/lib/*; do t="$own/lib/$(basename "$d")"; if [ ! -e "$t" ]; then rm -f "$t"; ln -s "$d" "$t"; fi; done
   for s in swift swift_static; do
     if [ -L "$x/$s/clang" ]; then rm "$x/$s/clang"; fi
     [ ! -e "$x/$s/clang" ] || die "$x/$s/clang is not a link"

@@ -90,7 +90,14 @@ run
 extra=(DOCKER_DOWN=1)
 mknative() { mkdir -p "$t/home/.local/share/xless-native/bin" "$t/home/.swiftpm/swift-sdks/darwin.artifactbundle" "$t/home/.config/xless"
              echo '{}' > "$t/home/.config/xless/toolchain-meta.json"; mkdir -p "$t/home/.config/swiftpm-other"; }
+# An SDK that `xless sdk install` put there, with no native setup (no toolchain record): only the native home goes.
 mknative; mkcache
+run --native
+for p in .swiftpm/swift-sdks/darwin.artifactbundle .config/xless/toolchain-meta.json; do
+  [[ -e "$t/home/$p" ]] || fail "--native without a native record removed $p"
+done
+[[ ! -e "$t/home/.local/share/xless-native" ]] || fail "--native left the native home"
+mknative; echo '{"version":"6.4.0","root":"/x"}' > "$t/home/.local/share/xless-native/swift-toolchain.json"
 run
 grep -q "^found the native install's $t/home/.local/share/xless-native" "$t/out" || fail "native not listed: $(cat "$t/out")"
 [[ -d "$t/home/.local/share/xless-native" ]] || fail "listing removed the native install"

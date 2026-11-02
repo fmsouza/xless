@@ -70,7 +70,7 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
 }
 
 @Test func installedToolsAndAnExistingExportAreSkipped() throws {
-    let present: Set<String> = ["/n/tools/xtool-1.21.0/AppRun", "/n/tools/rcodesign-0.29.0/rcodesign", "/n/toolchains/swift-6.4.0/usr/bin/swiftc",
+    let present: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign", "/n/toolchains/swift-6.4.0/usr/bin/swiftc",
                                 "/cache/xless/sdk/xcode27.0-27A266a/arm64/darwin.xtoolsdk", "/cache/xless/sdk/xcode27.0-27A266a/toolchain-meta.json"]
     // Another Xcode installed: the SDK is installed again and the toolchain fitted again.
     let other = try plan(installed: .init(xcodeBuild: "17C52", swiftVersion: "6.2.3")) { present.contains($0.path) }
@@ -80,6 +80,11 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     // Everything in place: nothing to do.
     let done = present.union(["/n/swift-toolchain.json"])
     #expect(try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.contains($0.path) }.isEmpty)
+    #expect(try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4")) { done.contains($0.path) }.isEmpty)
+    // A tool unpacked but not linked into bin/ (a run stopped in between): installed again, and everything after it.
+    let unlinked = try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.subtracting(["/n/bin/xtool"]).contains($0.path) }
+    #expect(downloads(unlinked).map(\.final.path) == ["/n/tools/xtool-1.21.0"])
+    #expect(unlinked.count == 3)
     // --reexport: the export, then everything after it.
     let again = try plan(reexport: true, installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.contains($0.path) }
     #expect(again.count == 4)
