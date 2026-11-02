@@ -44,10 +44,11 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     /// True when it is the image's own Swift (nothing to put on PATH).
     public var isEngine: Bool { bin.standardizedFileURL.path == Self.engineBin }
 
-    /// `XLESS_SWIFT_TOOLCHAIN` (a record file), else the image's record; nil when there is none (a host without an
-    /// xless image's toolchains: the `swift` on PATH compiles, as before Ruling R10).
+    /// `XLESS_SWIFT_TOOLCHAIN` (a record file), else the image's record, else the native install's (`NativeLayout`);
+    /// nil when there is none (a host without an xless toolchain: the `swift` on PATH compiles, as before Ruling R10).
     public static func load(env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage = .build) throws -> SwiftToolchain? {
-        let path = env["XLESS_SWIFT_TOOLCHAIN"].flatMap { $0.isEmpty ? nil : $0 } ?? imageFile
+        let path = env["XLESS_SWIFT_TOOLCHAIN"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? (FileManager.default.fileExists(atPath: imageFile) ? imageFile : NativeLayout(env: env).record.path)
         guard let data = FileManager.default.contents(atPath: path) else {
             if env["XLESS_SWIFT_TOOLCHAIN"].map({ !$0.isEmpty }) ?? false {
                 throw XlessError(stage, "XLESS_SWIFT_TOOLCHAIN names \(path), which does not exist", fix: "unset it, or point it at a toolchain record")
@@ -55,7 +56,7 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
             return nil
         }
         do { return try JSONDecoder().decode(SwiftToolchain.self, from: data) } catch {
-            throw XlessError(stage, "the Swift toolchain record \(path) is invalid: \(error)", fix: "rebuild the images (xless setup --xcode <Xcode.xip>)")
+            throw XlessError(stage, "the Swift toolchain record \(path) is invalid: \(error)", fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
         }
     }
 
@@ -89,12 +90,12 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     public func verifiedCompiler(stage: Stage = .build) throws -> String {
         let out: String
         do { out = try Shell.run(tool("swiftc"), ["--version"], stage: stage).stdout } catch {
-            throw XlessError(stage, "the Swift toolchain \(root) cannot run swiftc: \(error)", fix: "rebuild the images (xless setup --xcode <Xcode.xip>)")
+            throw XlessError(stage, "the Swift toolchain \(root) cannot run swiftc: \(error)", fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
         }
         let line = out.split(separator: "\n").first.map(String.init) ?? ""
         guard let have = Self.parseVersion(out), DottedVersion(have) == DottedVersion(version) else {
             throw XlessError(stage, "\(tool("swiftc")) says \"\(line)\", but the image records Swift \(version)",
-                             fix: "rebuild the images (xless setup --xcode <Xcode.xip>)")
+                             fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
         }
         return line
     }
@@ -106,12 +107,12 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
         guard let toolchain else {
             guard let pin else { return nil }
             throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but this image records no Swift toolchain (\(imageFile)): it predates Ruling R10",
-                             fix: "rebuild the images from Xcode \(pin) (xless setup --xcode <path to Xcode \(pin)'s .xip>)")
+                             fix: "set up Xcode \(pin) again (xless setup --xcode <path to Xcode \(pin)'s .xip>, with --docker for its images)")
         }
         let compiler = try toolchain.verifiedCompiler(stage: stage)
         if let meta, let apple = meta.swiftVersion, !matches(openSource: toolchain.version, apple: apple) {
             throw XlessError(stage, "this image compiles with Swift \(toolchain.version), but its SDK's Xcode \(XcodePin.xcodeVersion(meta)) (\(meta.xcodeBuild)) ships Swift \(apple)",
-                             fix: "rebuild the images from that Xcode with xless setup --xcode <Xcode.xip>, which installs the toolchain versions.env maps it to (XCODE_SWIFT_\(meta.xcodeBuild))")
+                             fix: "set up that Xcode again with xless setup --xcode <Xcode.xip> (with --docker for its images), which installs the toolchain versions.env maps it to (XCODE_SWIFT_\(meta.xcodeBuild))")
         }
         return BuildSwiftRecord(version: toolchain.version, root: toolchain.root, compiler: compiler, xcodeSwiftVersion: meta?.swiftVersion)
     }

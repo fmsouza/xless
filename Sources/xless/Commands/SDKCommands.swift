@@ -123,59 +123,27 @@ struct SDKInstallCommand: AsyncParsableCommand {
     @Option(help: "Copy both from an xless SDK image instead (needs docker).") var image: String?
 
     func run() async throws {
-        let fm = FileManager.default
-        let metaDest = ToolchainMeta.defaultLocation()
-        let sdkDest = DarwinSDKLocator.bundle()
-        let sdkParent = sdkDest.deletingLastPathComponent()
-        // Everything is staged next to the destinations (same filesystem) and swapped in only after it all succeeded,
-        // so a failure leaves any existing SDK and metadata untouched.
-        let id = UUID().uuidString
-        let sdkStage = sdkParent.appendingPathComponent(".xless-staging-\(id)")
-        let metaStage = metaDest.deletingLastPathComponent().appendingPathComponent(".xless-staging-\(id).json")
-        defer { try? fm.removeItem(at: sdkStage); try? fm.removeItem(at: metaStage) }
-
-        var stagedBundle: URL
+        let installed: (sdk: URL, meta: URL)
         if let image {
             guard xtoolsdk == nil, meta == nil else {
                 throw XlessError(.sdk, "--image cannot be combined with --xtoolsdk/--meta", fix: "pass either --image, or --xtoolsdk with --meta")
             }
-            let cid = try Shell.run("docker", ["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            defer { _ = try? Shell.run("docker", ["rm", cid], stage: .sdk) }
-            try fm.createDirectory(at: sdkParent, withIntermediateDirectories: true)
-            try fm.createDirectory(at: metaDest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            stagedBundle = sdkStage
-            try Shell.run("docker", ["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
-            try Shell.run("docker", ["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
+            installed = try SDKInstaller.install { sdkStage, metaStage in
+                let cid = try Shell.run("docker", ["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                defer { _ = try? Shell.run("docker", ["rm", cid], stage: .sdk) }
+                try Shell.run("docker", ["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
+                try Shell.run("docker", ["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
+                return sdkStage
+            }
         } else {
             guard let xtoolsdk, let meta else {
                 throw XlessError(.sdk, "pass --xtoolsdk and --meta, or --image", fix: "see docs/native-install.md")
             }
-            for (name, path) in [("--xtoolsdk", xtoolsdk), ("--meta", meta)] where !fm.fileExists(atPath: path) {
+            for (name, path) in [("--xtoolsdk", xtoolsdk), ("--meta", meta)] where !FileManager.default.fileExists(atPath: path) {
                 throw XlessError(.sdk, "\(name) \(path) does not exist", fix: "pass the files produced by `xless sdk export`")
             }
-            _ = try ToolchainMeta.load(from: URL(fileURLWithPath: meta))
-            try fm.createDirectory(at: sdkParent, withIntermediateDirectories: true)
-            try fm.createDirectory(at: metaDest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // `xtool sdk install` deletes an existing SDK before installing, so run it against a private config root.
-            try Shell.run("xtool", ["sdk", "install", xtoolsdk], env: ["XDG_CONFIG_HOME": sdkStage.path], stage: .sdk, passthrough: true)
-            stagedBundle = DarwinSDKLocator.bundle(env: ["XDG_CONFIG_HOME": sdkStage.path])
-            try fm.copyItem(at: URL(fileURLWithPath: meta), to: metaStage)
+            installed = try SDKInstaller.install(xtoolsdk: URL(fileURLWithPath: xtoolsdk), meta: URL(fileURLWithPath: meta))
         }
-        _ = try ToolchainMeta.load(from: metaStage)
-        guard fm.fileExists(atPath: stagedBundle.path) else {
-            throw XlessError(.sdk, "no darwin.artifactbundle was produced", fix: "check the SDK source and rerun")
-        }
-        try swap(stagedBundle, into: sdkDest)
-        try swap(metaStage, into: metaDest)
-        print("SDK at \(sdkDest.path); metadata at \(metaDest.path)")
-    }
-
-    private func swap(_ staged: URL, into dest: URL) throws {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: dest.path) {
-            _ = try fm.replaceItemAt(dest, withItemAt: staged)
-        } else {
-            try fm.moveItem(at: staged, to: dest)
-        }
+        print("SDK at \(installed.sdk.path); metadata at \(installed.meta.path)")
     }
 }

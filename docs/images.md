@@ -1,13 +1,14 @@
 # Building the images by hand
 
-`xless setup --xcode <Xcode.xip>` is the supported way to build the images. This page shows the same steps as plain
+`xless setup --docker --xcode <Xcode.xip>` is the supported way to build the images (without `--docker`, `xless setup`
+installs natively instead: [native-install.md](native-install.md)). This page shows the same steps as plain
 commands, for when you want to see what each one does, change a Dockerfile, or build one image again. Everything here
 uses the files the release installed in `~/.local/share/xless`; no source checkout is needed.
 
-To see the exact commands `xless setup` would run on your machine, with your paths, run it with `--dry-run`:
+To see the exact commands `xless setup --docker` would run on your machine, with your paths, run it with `--dry-run`:
 
 ```sh
-xless setup --xcode ~/Downloads/Xcode_27.xip --dry-run
+xless setup --docker --xcode ~/Downloads/Xcode_27.xip --dry-run
 ```
 
 ## The chain
@@ -106,7 +107,7 @@ onwards: each image is built on the previous one of the same architecture and su
 
 ## Another architecture
 
-`--arch` replaces the default (this machine's architecture): `xless setup --xcode … --arch amd64` builds only the
+`--arch` replaces the default (this machine's architecture): `xless setup --docker --xcode … --arch amd64` builds only the
 amd64 chain, and `--arch arm64 --arch amd64` builds both. A chain for another architecture than the machine's runs
 under emulation: 2 to 3 times slower under Rosetta, slower still under QEMU. Use a Docker that runs the other architecture through Rosetta (an Apple-silicon
 Mac) or a native host when you can: under QEMU's user-mode emulation gcc and Swift have crashed at random. The `xless`

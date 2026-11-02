@@ -21,7 +21,7 @@ VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except
 
 ## Building the images on the Mac
 
-On Linux, `xless setup` builds the images ([images.md](images.md)). On the Mac, from a checkout:
+On Linux, `xless setup --docker` builds the images ([images.md](images.md)). On the Mac, from a checkout:
 
 ```sh
 make images XCODE=/Applications/Xcode.app            # or XCODE=<Xcode_*.xip>, ARCHS=arm64 for one architecture
@@ -107,7 +107,7 @@ make base-push sdk-export sdk-push
   it. Both refuse to push unless `registry.env` sets `XLESS_REGISTRY_PRIVATE=true`; `scripts/check-private-registry.sh`
   also refuses Docker Hub (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and bare names such as
   `myuser`, which Docker would push to Docker Hub).
-- On a machine with the native toolset, `xless sdk install --image <registry>/xless:<tag>` installs the SDK from such
+- On a machine with a native install, `xless sdk install --image <registry>/xless:<tag>` installs the SDK from such
   an image (`docker login <registry>` first; [native-install.md](native-install.md)).
 - [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow that runs such an image as the job
   container ([signing-and-testflight.md](signing-and-testflight.md#continuous-integration)). It lives in `docs/`, so

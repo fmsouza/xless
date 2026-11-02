@@ -54,6 +54,7 @@
 # Where it runs
 #   Docker (the xless images), unless a native SDK is installed on this host: $XLESS_TOOLCHAIN_META, else ~/.config/xless/toolchain-meta.json.
 #   XLESS_USE_DOCKER=1 forces docker; XLESS_USE_DOCKER=0 forces native; unset: docker unless a native SDK (toolchain-meta.json) is installed.
+#   `xless run` sets it: 0, or 1 with --docker (`xless docker`: 1). Natively the steps run $XLESS_SELF (else xless on PATH).
 #
 # Configuration comes from the environment, and from a local file that is sourced first when it exists:
 #   $XLESS_TESTFLIGHT_ENV, default ~/.config/xless/testflight.env   (keep it out of git; it holds paths and IDs only)
@@ -79,7 +80,7 @@
 #   `xless ship --platform macos --from sign --to package` with XLESS_DEVID_KEY_FILE and the App Store Connect key (the
 #   read-only certificate lookup and notarization); it prints the DMG path last. `--from package` reuses the signed app.
 # xcode: "<version>" (a top-level line of the overlay, or of xless.yml; Ruling R8): with docker, every step runs in the
-#   images made from that Xcode by `xless setup --xcode <Xcode.app | .xip>`: <image>:local-<arch>-xcode<version>, e.g.
+#   images made from that Xcode by `xless setup --docker --xcode <Xcode.app | .xip>`: <image>:local-<arch>-xcode<version>, e.g.
 #   xless-rn:local-arm64-xcode26.2 and xless-base:local-arm64-xcode26.2. For versions.env's XCODE_VERSION the plain
 #   local-<arch> images serve when the suffixed ones do not exist. A missing image stops the script (exit 2) with the
 #   `xless setup` command that builds it. XLESS_IMAGE / XLESS_SIGN_IMAGE still win. Prepare (exit 19; the build stage
@@ -250,11 +251,13 @@ done
 if [[ $need_asc == 1 && -n "${ASC_ISSUER_ID_FILE:-}" ]]; then abs_file ASC_ISSUER_ID_FILE; fi
 
 use_docker=0
+# Natively, the xless that started this script (`xless run` sets XLESS_SELF), else the one on PATH.
+xself="${XLESS_SELF:-xless}"
 case "${XLESS_USE_DOCKER:-auto}" in
   1) use_docker=1 ;;
   0) use_docker=0 ;;
   # auto: the images, unless an SDK is installed natively (xless sdk install writes toolchain-meta.json)
-  auto) if [[ ! -e "${XLESS_TOOLCHAIN_META:-${XDG_CONFIG_HOME:-$HOME/.config}/xless/toolchain-meta.json}" ]] || ! command -v xless >/dev/null 2>&1; then use_docker=1; fi ;;
+  auto) if [[ ! -e "${XLESS_TOOLCHAIN_META:-${XDG_CONFIG_HOME:-$HOME/.config}/xless/toolchain-meta.json}" ]] || ! command -v "$xself" >/dev/null 2>&1; then use_docker=1; fi ;;
   *) die "XLESS_USE_DOCKER must be 0, 1 or unset" ;;
 esac
 
@@ -366,7 +369,7 @@ if [[ $use_docker == 1 ]]; then
   fi
 fi
 
-# xcode: pin (docker only; XLESS_IMAGE / XLESS_SIGN_IMAGE win): IMAGE-xcode<pin>, made by `xless setup --xcode <Xcode.xip>`. The plain
+# xcode: pin (docker only; XLESS_IMAGE / XLESS_SIGN_IMAGE win): IMAGE-xcode<pin>, made by `xless setup --docker --xcode <Xcode.xip>`. The plain
 # default images are versions.env's Xcode's, so they serve that pin when no suffixed image exists.
 default_xcode="$(sed -n 's/^XCODE_VERSION=//p' "$(dirname "$0")/../versions.env" 2>/dev/null || true)"
 image_exists() { "${docker_cli[@]}" image inspect "$1" >/dev/null 2>&1; }
@@ -383,12 +386,12 @@ need_images() {   # IMAGE...: a real run needs the images built here (docker run
   [[ $use_docker == 1 && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]] || return 0
   local i
   for i in "$@"; do
-    image_exists "$i" || die "the image $i is not built on this machine (xless images are never pulled from a registry); build it with: xless setup --xcode <Xcode.xip> --arch $arch"
+    image_exists "$i" || die "the image $i is not built on this machine (xless images are never pulled from a registry); build it with: xless setup --docker --xcode <Xcode.xip> --arch $arch"
   done
 }
 check_pin() {   # after apply_pin: refuse missing images with the command that builds them
   [[ -n "$XCODE_PIN" && $use_docker == 1 ]] || return 0
-  [[ ${#pin_missing[@]} -eq 0 ]] || die "$pin_file pins xcode: \"$XCODE_PIN\", but these images are missing: ${pin_missing[*]}; build them from Xcode $XCODE_TAG: xless setup --xcode <path to Xcode $XCODE_TAG's .app or .xip> --arch $arch"
+  [[ ${#pin_missing[@]} -eq 0 ]] || die "$pin_file pins xcode: \"$XCODE_PIN\", but these images are missing: ${pin_missing[*]}; build them from Xcode $XCODE_TAG: xless setup --docker --xcode <path to Xcode $XCODE_TAG's .app or .xip> --arch $arch"
   echo "==> xcode: \"$XCODE_PIN\" (pinned): $*" >&2
 }
 
@@ -407,7 +410,7 @@ if [[ -z "$OVERLAY" ]]; then
       "$image" xless ship --platform ios "$@"
   else
     cd "$PROJECT"
-    run xless ship --platform ios "$@"
+    run "$xself" ship --platform ios "$@"
   fi
   code=$?
   set -e
@@ -471,16 +474,16 @@ fi
 if [[ $use_docker == 1 && $RN == 1 && $SIM == 0 && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
   digest() { "${docker_run[@]}" --entrypoint sha256sum "$1" /usr/local/bin/xless 2>/dev/null | cut -c1-64; }
   d2="$(digest "$image")" || true; d13="$(digest "$key_image")" || true
-  [[ -n "$d2" ]] || die "cannot read xless from $image (is the image built? xless setup --xcode <Xcode.xip>)"
-  [[ -n "$d13" ]] || die "cannot read xless from $key_image (is the image built? xless setup --xcode <Xcode.xip>)"
-  [[ "$d2" == "$d13" ]] || die "$image and $key_image hold different xless builds (${d2:0:12} vs ${d13:0:12}); rebuild both from the same commit (xless setup --xcode <Xcode.xip>), or set XLESS_IMAGE / XLESS_SIGN_IMAGE to matching images"
+  [[ -n "$d2" ]] || die "cannot read xless from $image (is the image built? xless setup --docker --xcode <Xcode.xip>)"
+  [[ -n "$d13" ]] || die "cannot read xless from $key_image (is the image built? xless setup --docker --xcode <Xcode.xip>)"
+  [[ "$d2" == "$d13" ]] || die "$image and $key_image hold different xless builds (${d2:0:12} vs ${d13:0:12}); rebuild both from the same commit (xless setup --docker --xcode <Xcode.xip>), or set XLESS_IMAGE / XLESS_SIGN_IMAGE to matching images"
 fi
 
 # Step 1: the build number, only for a run that starts (later stages read the one recorded in the work copy).
 if [[ $step1 == 1 ]]; then
   echo "==> TestFlight: step 1/3, next build number (App Store Connect, read-only)" >&2
   if [[ $use_docker == 1 ]]; then cmd=("${docker_run[@]}" "${app[@]}" "${asc_secrets[@]}" "$key_image" "${next_build[@]}" "${xl[@]}")
-  else cmd=("${next_build[@]}" "${xl[@]}"); fi
+  else cmd=("$xself" "${next_build[@]:1}" "${xl[@]}"); fi
   if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
     run "${cmd[@]}"; XLESS_BUILD_NUMBER="<next-build>"
   else
@@ -510,7 +513,7 @@ if [[ $fi_ -le 3 ]]; then
       run "${docker_run[@]}" "${app[@]}" "${build_caches[@]}" -e "XLESS_SOURCE_ORIGIN=$SOURCE" ${bn[@]+"${bn[@]}"} \
         "$image" xless ship --platform "$PLATFORM" "${xl[@]}" ${dest[@]+"${dest[@]}"} --from "$from" --to "$bto" ${extra[@]+"${extra[@]}"}
     else
-      run "${scrub[@]}" xless ship --platform "$PLATFORM" "${xl[@]}" ${dest[@]+"${dest[@]}"} --from "$from" --to "$bto" ${extra[@]+"${extra[@]}"}
+      run "${scrub[@]}" "$xself" ship --platform "$PLATFORM" "${xl[@]}" ${dest[@]+"${dest[@]}"} --from "$from" --to "$bto" ${extra[@]+"${extra[@]}"}
     fi
   }
   set +e
@@ -577,7 +580,7 @@ if [[ $step3 == 1 ]]; then
     # native (a macOS host run): the same two channels, xless straight from the env.
     set +e
     shiplog="$(mktemp)"; trap 'rm -f "$shiplog"' EXIT
-    dmg_out="$(xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
+    dmg_out="$("$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
     code=$?
     [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }
     dmg="$(grep '\.dmg$' <<<"$dmg_out" | tail -1 || true)"
@@ -585,7 +588,7 @@ if [[ $step3 == 1 ]]; then
     echo "==> DMG build finished" >&2
     if [[ "$(index "$to")" -ge 6 ]]; then
       : > "$shiplog"
-      pkg_out="$(xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
+      pkg_out="$("$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
       code=$?
       [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
       pkg="$(grep '\.pkg$' <<<"$pkg_out" | tail -1 || true)"
@@ -599,7 +602,7 @@ if [[ $step3 == 1 ]]; then
     run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
       "$key_image" xless ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
   else
-    run xless ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
+    run "$xself" ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
   fi
   code=$?
   set -e

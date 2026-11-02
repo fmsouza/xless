@@ -85,4 +85,27 @@ grep -q 'docker does not answer' "$t/err" || fail "cause not named: $(cat "$t/er
 [[ -d "$cache" ]] || fail "--images removed the cache"
 run
 [[ $code == 0 ]] && grep -q 'docker does not answer' "$t/out" || fail "listing with docker down: $code $(cat "$t/out")"
+
+# --native: the native home and the SDK and metadata it installed, without Docker; listed by default, kept by --cache.
+extra=(DOCKER_DOWN=1)
+mknative() { mkdir -p "$t/home/.local/share/xless-native/bin" "$t/home/.swiftpm/swift-sdks/darwin.artifactbundle" "$t/home/.config/xless"
+             echo '{}' > "$t/home/.config/xless/toolchain-meta.json"; mkdir -p "$t/home/.config/swiftpm-other"; }
+mknative; mkcache
+run
+grep -q "^found the native install's $t/home/.local/share/xless-native" "$t/out" || fail "native not listed: $(cat "$t/out")"
+[[ -d "$t/home/.local/share/xless-native" ]] || fail "listing removed the native install"
+run --cache
+[[ -d "$t/home/.local/share/xless-native" ]] || fail "--cache removed the native install"
+run --native --dry-run
+grep -q "^would remove the native install's $t/home/.swiftpm/swift-sdks/darwin.artifactbundle" "$t/out" || fail "native dry run: $(cat "$t/out")"
+[[ -d "$t/home/.local/share/xless-native" ]] || fail "dry run removed the native install"
+run --native
+[[ $code == 0 ]] || fail "--native exits $code: $(cat "$t/err")"
+for p in .local/share/xless-native .swiftpm/swift-sdks/darwin.artifactbundle .config/xless/toolchain-meta.json; do
+  [[ ! -e "$t/home/$p" ]] || fail "--native left $p"
+done
+[[ -d "$t/home/.config/swiftpm-other" ]] || fail "--native removed something else"
+grep -q '^image\|^volume' "$log" && fail "--native used docker: $(cat "$log")"
+run
+grep -q '^no native install' "$t/out" || fail "no native install not said: $(cat "$t/out")"
 echo "clean.test.sh: ok"

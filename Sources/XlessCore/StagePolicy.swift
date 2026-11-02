@@ -58,7 +58,7 @@ public enum BuildSDKCheck {
         var meta: ToolchainMeta?
         do { meta = try ToolchainMeta.load(from: metaURL) } catch let e as XlessError {
             if let pin {
-                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)", fix: "build in an xless image made from Xcode \(pin) (`xless setup --xcode <path to Xcode \(pin)'s .xip>`, tags *-xcode\(pin))")
+                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)", fix: "install Xcode \(pin) (`xless setup --xcode <path to Xcode \(pin)'s .xip>`), or build in an xless image made from it (`xless setup --docker --xcode …`, tags *-xcode\(pin))")
             }
         }
         if let meta { try XcodePin.check(pin: pin, meta: meta, platform: platform, file: file, stage: stage) }

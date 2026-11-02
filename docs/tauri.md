@@ -3,17 +3,17 @@
 xless builds a [Tauri v2](https://v2.tauri.app/) iOS app on Linux and ships it to TestFlight, and a Tauri v2 macOS app as a notarized DMG ([macOS](#macos)), with no Mac and no Xcode on the build machine. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
 
 ```sh
-xless docker --config ~/ci/my-app.overlay.yml
+xless run --docker --config ~/ci/my-app.overlay.yml
 ```
 
 ## Try the sample
 
 The source repository has a small Tauri app, `samples/HelloTauri`, with an overlay. With the images from
-`xless setup` ([README](../README.md#build-the-images)), build it up to `finalize`, unsigned and with no Apple account:
+`xless setup --docker` ([README](../README.md#build-in-docker-instead)), build it up to `finalize`, unsigned and with no Apple account:
 
 ```sh
 git clone https://github.com/fmsouza/xless.git
-xless docker --config xless/samples/HelloTauri/xless.overlay.example.yml --build-number 1.0.0.2026101601 --to finalize
+xless run --docker --config xless/samples/HelloTauri/xless.overlay.example.yml --build-number 1.0.0.2026101601 --to finalize
 ```
 
 The first build downloads Rust and compiles the app's dependencies, which takes several minutes. The app ends up in
@@ -30,7 +30,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/`.
 ## Requirements
 
 - To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate), plus the secrets file described under [One command: TestFlight](signing-and-testflight.md#one-command-testflight).
-- The `xless-tauri` image, which adds Node, pnpm and the Rust toolchain installer to the xless image. `xless setup` builds it ([README](../README.md#build-the-images)).
+- The `xless-tauri` image, which adds Node, pnpm and the Rust toolchain installer to the xless image. `xless setup --docker` builds it ([README](../README.md#build-in-docker-instead)).
 - The app repository is a git checkout. xless copies the **tracked** files of `source:` (and only those) into a work copy under `~/.cache/xless/work/<overlay name>`; the source is never written to. Commit `gen/apple`, the lockfiles and the files the overlay refers to. Untracked and ignored files are not copied: a file the app's `build.rs` downloads into the tree and git ignores (a model, for example) is downloaded again in the work copy, so such a build needs network access.
 - A work copy belongs to one source. The first sync records the source in `.xless/source` of the work copy, and a later run of an overlay with the same file name but another source stops at `prepare`; rename one overlay file or delete the work copy.
 
@@ -57,7 +57,7 @@ Relative paths in the overlay (`source`, `privacyManifest`) resolve against the 
 | Key | Meaning |
 |---|---|
 | `type` | Required. Must be `tauri`. |
-| `source` | The app repository, read-only. Required unless `--source <dir>` (or `$XLESS_SOURCE` with `xless docker`) gives it. It may be a subdirectory of a git checkout. |
+| `source` | The app repository, read-only. Required unless `--source <dir>` (or `$XLESS_SOURCE` with `xless run --docker`) gives it. It may be a subdirectory of a git checkout. |
 | `tauri.dir` | Directory holding `tauri.conf.json` and `Cargo.toml`. Default `src-tauri`. |
 | `tauri.features` | Cargo features, as `tauri ios build --features`. They apply to the macOS build too unless `macos.features` is set. |
 | `bundleID` | Required. The iOS bundle ID. It overrides the `identifier` in `tauri.conf.json`. |
@@ -70,7 +70,7 @@ Relative paths in the overlay (`source`, `privacyManifest`) resolve against the 
 | `infoPlist` | iOS only. A plist file in the work copy used in place of the target's own Info.plist as the source of the keys merged into the generated one. The macOS build never reads it (it holds Xcode placeholders such as `$(EXECUTABLE_NAME)`); use `macos.infoPlist`. |
 | `privacyManifest` | A `PrivacyInfo.xcprivacy` copied into the app. `finalize` requires one for App Store builds. |
 | `usesNonExemptEncryption` | `ITSAppUsesNonExemptEncryption`, stamped at `finalize`. App Store Connect asks about export compliance when it is missing. |
-| `xcode` | The Xcode whose SDK must build the app, e.g. `"26.2"`; `xless docker` runs in the images `xless setup --xcode …` made from it (`xless-tauri:local-<arch>-xcode<version>`) and `prepare` (exit 19) and `build` refuse another SDK; app code compiles with an open-source Swift release matching that Xcode's Swift ([react-native.md](react-native.md#pinning-the-xcode-sdk)). Default: the image's SDK. |
+| `xcode` | The Xcode whose SDK must build the app, e.g. `"26.2"`; `xless run --docker` runs in the images `xless setup --docker --xcode …` made from it (`xless-tauri:local-<arch>-xcode<version>`) and `prepare` (exit 19) and `build` refuse another SDK; app code compiles with an open-source Swift release matching that Xcode's Swift ([react-native.md](react-native.md#pinning-the-xcode-sdk)). Default: the image's SDK. |
 | `linkFlags` | Extra linker flags for the app, for example `["-ObjC"]`. |
 | `binaryDependencies` | iOS only (`prepare --platform macos` does not install them). List of prebuilt dependencies that replace CocoaPods. Each has `url` (https), `sha256` (pinned, 64 hex), `extract` (path inside the archive), `to` (relative path in the work copy), optionally `fixes: { minimumOSVersion: "16.0" }` (rewrites the MinimumOSVersion of the framework's Info.plist) and `linkFlags` (flags this dependency needs). Downloads are cached by hash in `~/.cache/xless/downloads`. An `embed: true` dependency whose framework binary is a static archive is linked but not embedded (the build prints a note); rcodesign cannot sign such a framework, and the code is already in the executable. |
 | `scripts` | Maps the name of a `project.yml` build script that is not Tauri's own "Build Rust Code" to `ignore`. xless does not run `project.yml` scripts; one that is not listed stops `prepare`. Only ignore a script whose job xless already does or that does not matter for a release. |
@@ -82,7 +82,7 @@ xless enables the bundle-ID capabilities that the App Store Connect API can enab
 
 ### Build numbers
 
-With `build: dated`, `prepare` and `build` ask App Store Connect for the builds of this version and pick `<version>.<YYYYMMDDNN>` above all of them (`NN` counts the day's uploads), so a build never sorts below an existing one. The number is recorded under `.xless/build/ios/build-number` in the work copy and reused by every later stage of the run, so credentials (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) are needed from `prepare` on. `XLESS_BUILD_NUMBER` or `--build-number` replaces the lookup with an explicit number and no App Store Connect call is made (this is how `make test-tauri-linux` and the sample above run without credentials). With `build: dated` the override must itself be `<version>.<YYYYMMDDNN>` for the app's version, for example `XLESS_BUILD_NUMBER=1.0.0.2026101501`: a bare number such as `2026101501` would sort above every dated build and block the version, so it is refused. An override given to a run that starts is recorded like a looked-up number, so later stages run without it use the same one. When the app has no App Store Connect record yet, the lookup finds no builds and starts at `NN` = 01 (see [the app record](#creating-the-app-store-connect-app-record)). `xless docker --config` does not default `XLESS_BUILD_NUMBER`; set it yourself to override `dated`.
+With `build: dated`, `prepare` and `build` ask App Store Connect for the builds of this version and pick `<version>.<YYYYMMDDNN>` above all of them (`NN` counts the day's uploads), so a build never sorts below an existing one. The number is recorded under `.xless/build/ios/build-number` in the work copy and reused by every later stage of the run, so credentials (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) are needed from `prepare` on. `XLESS_BUILD_NUMBER` or `--build-number` replaces the lookup with an explicit number and no App Store Connect call is made (this is how `make test-tauri-linux` and the sample above run without credentials). With `build: dated` the override must itself be `<version>.<YYYYMMDDNN>` for the app's version, for example `XLESS_BUILD_NUMBER=1.0.0.2026101501`: a bare number such as `2026101501` would sort above every dated build and block the version, so it is refused. An override given to a run that starts is recorded like a looked-up number, so later stages run without it use the same one. When the app has no App Store Connect record yet, the lookup finds no builds and starts at `NN` = 01 (see [the app record](#creating-the-app-store-connect-app-record)). `xless run --docker --config` does not default `XLESS_BUILD_NUMBER`; set it yourself to override `dated`.
 
 ## Creating the App Store Connect app record
 
@@ -97,7 +97,7 @@ Try a new overlay against a separate test app record first. A build number uploa
 ## Shipping
 
 ```sh
-xless docker --config ~/ci/my-app.overlay.yml [extra xless ship args, e.g. --from upload]
+xless run --docker --config ~/ci/my-app.overlay.yml [extra xless ship args, e.g. --from upload]
 ```
 
 The script works in the `xless-tauri` image (`xless-tauri:local-<arch>`, or `XLESS_IMAGE`). The app's build runs third-party code (npm scripts, `build.rs`, proc-macros), so it never runs next to a secret; the script uses three containers:
@@ -112,13 +112,13 @@ The script works in the `xless-tauri` image (`xless-tauri:local-<arch>`, or `XLE
 - **`source:`.** The script reads the overlay's `source:` itself, from a plain top-level `source: <path>` line (quotes and a trailing comment are fine). Flow style, anchors or a multi-line value are not understood; set `XLESS_SOURCE` then.
 - **Source override.** `XLESS_SOURCE=<dir>` takes the place of the overlay's `source:`.
 - **Overlay path.** A leading `~/` is expanded even when your shell leaves it alone (`make testflight CONFIG=~/…` under zsh, from a source checkout).
-- **Native.** On a Linux machine with `xless` on PATH it runs the same three steps without docker; step 2 runs with the secret variables removed (`env -u`), but secret *files* stay readable to the build, which runs as your user. Native Tauri builds are untested in this milestone. They need what the image adds to xless: rustup, Node 24 with corepack, LLVM binutils (the distribution's `llvm` package plus `llvm-libtool-darwin`, as `docker/Dockerfile.tauri` installs them) and the `xcrun` shim from `docker/shims/` first on `PATH`. `scripts/install-native.sh` installs none of these.
+- **Native.** `xless run` refuses an overlay on Linux without `--docker`. From a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker; step 2 runs with the secret variables removed (`env -u`), but secret *files* stay readable to the build, which runs as your user. Native Tauri builds are untested in this milestone. They need what the image adds to xless: rustup, Node 24 with corepack, LLVM binutils (the distribution's `llvm` package plus `llvm-libtool-darwin`, as `docker/Dockerfile.tauri` installs them) and the `xcrun` shim from `docker/shims/` first on `PATH`. `xless setup` (native) installs none of these.
 
 Without the script, each step is a command: `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios`. `build` runs `prepare` first. `xless ship` takes `--from <stage>` and `--to <stage>` to run a range, and `xless tauri next-build --config <overlay> [--source <dir>]` prints the build number the next run would use (read-only). Exit codes are the ones in [pipeline.md](pipeline.md#stages), with `prepare` = 19.
 
 ## macOS
 
-`xless docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the app for `aarch64-apple-darwin` and `x86_64-apple-darwin`, merges the two into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG's signature. It prints the path of `<Product>_<version>_universal.dmg` last. It uses the same overlay as iOS (`bundleID`, `teamID`, `version`, `build`, `tauri`, `usesNonExemptEncryption`), plus an optional `macos:` block; the overlay is read for `--platform macos`, so one overlay can serve both platforms.
+`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the app for `aarch64-apple-darwin` and `x86_64-apple-darwin`, merges the two into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG's signature. It prints the path of `<Product>_<version>_universal.dmg` last. It uses the same overlay as iOS (`bundleID`, `teamID`, `version`, `build`, `tauri`, `usesNonExemptEncryption`), plus an optional `macos:` block; the overlay is read for `--platform macos`, so one overlay can serve both platforms.
 
 ```yaml
 macos:
@@ -137,9 +137,9 @@ The top-level `infoPlist` and `binaryDependencies` are iOS-only: the macOS build
 
 - The one-time setup from [bootstrap.md](bootstrap.md), step 3: `xless sign bootstrap --type developer-id --out devid-key.pem` creates the Developer ID Application key and certificate. Point `XLESS_DEVID_KEY_FILE` at the key.
 - The App Store Connect API key, as for iOS (`ASC_KEY_ID`, `ASC_ISSUER_ID_FILE`, `ASC_KEY_P8_FILE`). On macOS it is used for two things only: finding the Developer ID certificate (a read-only lookup) and notarization. No distribution key is needed (`XLESS_DIST_KEY_FILE` can stay unset).
-- The `xless-tauri` image (from `xless setup`), which also carries the tools that build the DMG (`mkfs.hfsplus`, `hfsplus` and `dmg`; there is no `hdiutil` on Linux).
+- The `xless-tauri` image (from `xless setup --docker`), which also carries the tools that build the DMG (`mkfs.hfsplus`, `hfsplus` and `dmg`; there is no `hdiutil` on Linux).
 
-**Build numbers.** There is no App Store Connect build for a Developer ID app. With `build: dated` the build number is `<version>.<YYYYMMDDHHmm>` (UTC), taken from the clock when a run starts and recorded in the work copy; `XLESS_BUILD_NUMBER` or `--build-number` (same form) replaces it. `xless docker --config … --platform macos` skips the `next-build` step and never contacts App Store Connect before signing.
+**Build numbers.** There is no App Store Connect build for a Developer ID app. With `build: dated` the build number is `<version>.<YYYYMMDDHHmm>` (UTC), taken from the clock when a run starts and recorded in the work copy; `XLESS_BUILD_NUMBER` or `--build-number` (same form) replaces it. `xless run --docker --config … --platform macos` skips the `next-build` step and never contacts App Store Connect before signing.
 
 **Key separation.** As for iOS, the app's build runs third-party code and never runs next to a secret:
 
@@ -196,4 +196,4 @@ Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12
 | 14 | `no PrivacyInfo.xcprivacy in the bundle` | Set `privacyManifest:` in the overlay. |
 | 14, 15, 16, 17 | | As for any xless project: [troubleshooting.md](troubleshooting.md). |
 
-If the exit code is 2, the problem is in `xless docker`'s own arguments or configuration (a missing secret variable, overlay or source directory).
+If the exit code is 2, the problem is in `xless run --docker`'s own arguments or configuration (a missing secret variable, overlay or source directory).

@@ -494,7 +494,7 @@ grep -q 'xcode: "26.2" (pinned)' "$t/err" || fail "pin not reported: $(cat "$t/e
 printf '%s\n' "xless-rn:local-$A" "xless-base:local-$A" "xless-base:local-$A-xcode26.2" > "$t/images"
 code=0; "${pinned[@]}" "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] || fail "missing pinned image exits $code, want 2"
-grep -qF "pins xcode: \"26.2\", but these images are missing: xless-rn:local-$A-xcode26.2; build them from Xcode 26.2: xless setup --xcode <path to Xcode 26.2's .app or .xip> --arch $A" "$t/err" \
+grep -qF "pins xcode: \"26.2\", but these images are missing: xless-rn:local-$A-xcode26.2; build them from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch $A" "$t/err" \
   || fail "missing image message: $(cat "$t/err")"
 # The pin is looked up as image tags spell it (major.minor, the patch when not 0): "26.2.0" → -xcode26.2, "26" → -xcode26.0
 printf '%s\n' "xless-rn:local-$A-xcode26.2" "xless-base:local-$A-xcode26.2" "xless-rn:local-$A-xcode26.0" "xless-base:local-$A-xcode26.0" \
@@ -544,7 +544,7 @@ out=$("${pinned[@]}" "$S" "$t/pinproj" 2>/dev/null) || fail "pull=never dry run"
 real=(env -i HOME="$t/home" PATH="$t/fd:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
       ASC_KEY_ID=KEYID ASC_ISSUER_ID_FILE="$t/issuer" ASC_KEY_P8_FILE="$t/key.p8" XLESS_DIST_KEY_FILE="$t/dist.pem" FAKE_IMAGES="$t/images")
 code=0; "${real[@]}" "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -qF "is not built on this machine" "$t/err" && grep -qF "xless setup --xcode <Xcode.xip>" "$t/err" \
+[[ $code -eq 2 ]] && grep -qF "is not built on this machine" "$t/err" && grep -qF "xless setup --docker --xcode <Xcode.xip>" "$t/err" \
   || fail "missing image on a real run: exit $code $(cat "$t/err")"
 grep -qi "pull access denied" "$t/err" && fail "docker's own pull error reached the user"
 echo PASS

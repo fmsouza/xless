@@ -31,7 +31,7 @@ else strip_cmd="strip"; fi
 cp "$root/LICENSE" "$stage/LICENSE"
 echo "$version" > "$share/VERSION"
 cp "$root/versions.env" "$share/versions.env"
-for s in docker-images xcode-swift testflight; do install -m 755 "$root/scripts/$s.sh" "$share/scripts/$s.sh"; done
+for s in docker-images xcode-swift testflight native-toolchain; do install -m 755 "$root/scripts/$s.sh" "$share/scripts/$s.sh"; done
 
 # Tracked files only (-c safe.directory: CI containers check out as another user).
 git_files() { git -c "safe.directory=$root" -C "$root" ls-files "$1"; }

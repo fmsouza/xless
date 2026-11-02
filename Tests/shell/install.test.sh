@@ -51,7 +51,7 @@ run "${base[@]}" XLESS_PREFIX="$p" PATH="$p/bin:$t/tools"
 echo "$out" | grep -qF "xless 1.2.3 installed to $p/bin/xless" || fail "no installed line: $out"
 echo "$out" | grep -qF "next: xless setup --xcode ~/Downloads/Xcode_27.xip" || fail "no next line: $out"
 echo "$out" | grep -q "export PATH=" && fail "PATH hint printed though prefix is on PATH"
-echo "$out" | grep -qi "docker" && fail "docker warning though docker works: $out"
+echo "$out" | grep -qi "docker" && fail "docker mentioned: $out"
 [[ -z "$(ls -A "$p/share" | grep -v '^xless$')" ]] || fail "temp files left in share: $(ls -A "$p/share")"
 
 # --prefix works, and a newer pinned version replaces both.
@@ -137,16 +137,11 @@ run "${base[@]}" PATH="$t/tools"
 echo "$out" | grep -qF "$t/home/.local/bin is not on PATH in this shell. Open a new terminal" || fail "no new-terminal hint for ~/.local: $out"
 echo "$out" | grep -qF "export PATH=\"$t/home/.local/bin:\$PATH\"" || fail "no export line for ~/.local: $out"
 
-# No docker: still exit 0, with the link.
+# No docker (it is only needed for --docker): exit 0, and no word of Docker.
 run "${base[@]}" XLESS_PREFIX="$t/pd" PATH="$t/pd/bin:$t/tools-nodocker"
 [[ $rc == 0 ]] || fail "no-docker install exited $rc: $out"
-echo "$out" | grep -qF "https://docs.docker.com/engine/install/" || fail "no docker link: $out"
-# docker present but the daemon is unreachable.
-mkdir -p "$t/tools-down"; cp -P "$t/tools-nodocker"/* "$t/tools-down/"
-printf '#!/bin/sh\nexit 1\n' > "$t/tools-down/docker"; chmod +x "$t/tools-down/docker"
-run "${base[@]}" XLESS_PREFIX="$t/pe" PATH="$t/pe/bin:$t/tools-down"
-[[ $rc == 0 ]] || fail "daemon-down install exited $rc"
-echo "$out" | grep -qF "https://docs.docker.com/engine/install/" || fail "daemon down: no docker link: $out"
+echo "$out" | grep -qi "docker" && fail "docker mentioned though setup installs natively: $out"
+echo "$out" | grep -qF "next: xless setup --xcode" || fail "no next line without docker: $out"
 
 # A failure after the share swap (the binary cannot be renamed into place) rolls everything back.
 p="$t/p4"

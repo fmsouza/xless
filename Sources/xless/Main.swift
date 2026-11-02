@@ -5,6 +5,8 @@ import XlessCore
 @main
 enum Main {
     static func main() async {
+        // A native install's xtool, rcodesign and Swift, first on PATH for this process and every child.
+        NativeLayout.activate()
         do {
             var command = try Xless.parseAsRoot()
             if var asyncCommand = command as? AsyncParsableCommand {

@@ -28,11 +28,13 @@ is not used.
 
 `xless setup` runs `xtool sdk build` on the `.xip`, which writes a Darwin SDK bundle (`darwin.xtoolsdk`, about 3 GB)
 into `~/.cache/xless/sdk/xcode<version>-<build>/<arch>/`; xtool unpacks the `.xip` there first, so that directory
-peaks at about 15 GB. That bundle, and the metadata read from it, is all xless takes from the download. It goes into the `xless` image and from there into the images built on it.
+peaks at about 15 GB. That bundle, and the metadata read from it, is all xless takes from the download. A native setup installs it for
+Swift under your home directory ([native-install.md](native-install.md)); with `--docker` it goes into the `xless`
+image and from there into the images built on it.
 
 | File or tree (inside the Xcode bundle) | Used by | Why there is no open replacement |
 |---|---|---|
-| The `.xip` file itself (only its SHA-256 and xtool's read of it) | `XcodeSource` (identification), `SetupPlan` (mounted read-only into the xtool container) | It is the only legal source of the SDK: Apple's licence does not allow redistributing it. |
+| The `.xip` file itself (only its SHA-256 and xtool's read of it) | `XcodeSource` (identification), `NativeSetupPlan` (read by the native xtool), `SetupPlan` (mounted read-only into the xtool container) | It is the only legal source of the SDK: Apple's licence does not allow redistributing it. |
 | `iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk`: headers, `.tbd` link stubs, module maps, Swift module interfaces | every iOS build: SwiftPM through xtool (`xless build`), Swift Build (React Native), cargo and Swift (Tauri) | These files define Apple's iOS APIs. The open-source Swift toolchains do not include any Apple platform SDK. |
 | `MacOSX.platform/Developer/SDKs/MacOSX.sdk` | macOS builds (SwiftPM `xless.yml` apps, the Tauri DMG) | The same, for macOS. |
 | `iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk` | React Native simulator builds (`--destination simulator`) | The same, for the iOS Simulator. |
@@ -149,5 +151,5 @@ classes:
 | `docker/shims/rn/xcodebuild` | 10 | Replacement |
 | `docker/shims/xcrun` | 2 | Replacement |
 
-No hit outside these classes: the user path (install, `xless setup`, `xless docker`, every build stage, signing,
+No hit outside these classes: the user path (install, `xless setup`, `xless run`, every build stage, signing,
 packaging and upload) runs no Apple program. Line numbers drift as the code changes; run the search again to check.

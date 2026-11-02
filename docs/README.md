@@ -8,7 +8,7 @@ build. The pages below go further.
 - [pipeline.md](pipeline.md): how a build runs, the images, the stages (`build` → `assets` → `finalize` → `sign` →
   `package` → `upload`) and their exit codes.
 - [xless-yml.md](xless-yml.md): the `xless.yml` reference, for Swift package apps.
-- [signing-and-testflight.md](signing-and-testflight.md): secrets, build numbers, `xless docker` up to TestFlight, the
+- [signing-and-testflight.md](signing-and-testflight.md): secrets, build numbers, `xless run` up to TestFlight, the
   notarized DMG, and running in CI.
 - [bootstrap.md](bootstrap.md): the one-time Apple setup (API key, certificates, bundle ID, app record).
 - [react-native.md](react-native.md): React Native / Expo iOS apps, with app extensions and simulator builds.
@@ -20,8 +20,8 @@ build. The pages below go further.
 
 - [apple-requirements.md](apple-requirements.md): everything xless needs from Apple, how to get it on Linux, and the
   audit behind that list.
-- [images.md](images.md): the Docker images, and how to build each one by hand.
-- [native-install.md](native-install.md): running xless on Debian or Ubuntu without Docker for builds.
+- [images.md](images.md): the Docker images (`--docker`), and how to build each one by hand.
+- [native-install.md](native-install.md): the native install `xless setup` makes (the default): what goes where, and its limits.
 - [uninstall.md](uninstall.md): `xless clean`, freeing disk space after an upgrade, and uninstalling.
 
 ## Working on xless

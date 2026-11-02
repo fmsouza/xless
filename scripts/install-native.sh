@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Native install of the xless toolset on Debian/Ubuntu (arm64 or x86_64). Same versions.env pins as docker/Dockerfile.base;
-# xtool and rcodesign are sha256-verified. Exception: swiftly itself is fetched unpinned and unverified from
-# download.swift.org (swiftly then installs the pinned SWIFT_VERSION); the image starts from the swift:SWIFT_VERSION base image instead.
+# Builds xless from this checkout and installs it into <prefix>/bin (default /usr/local), on Debian/Ubuntu (arm64 or
+# x86_64), for contributors. Users install the release (README) instead. Either way, `xless setup --xcode <Xcode.xip>`
+# then installs the rest natively (xtool, rcodesign, the Xcode's Swift, the SDK): run it with XLESS_SHARE=<this checkout>,
+# since a source build finds its data files (versions.env, the scripts) only through XLESS_SHARE.
+# Swift SWIFT_VERSION (to compile xless) comes through swiftly when it is not on PATH; swiftly itself is fetched unpinned
+# and unverified from download.swift.org (swiftly then installs the pinned SWIFT_VERSION).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
@@ -9,8 +12,8 @@ source "$ROOT/versions.env"
 PREFIX="${PREFIX:-/usr/local}"
 if [[ "${1:-}" == "--prefix" ]]; then PREFIX="${2:?--prefix needs a path}"; fi
 case "$(uname -m)" in
-  aarch64|arm64) A=aarch64; XSUM="$XTOOL_SHA256_AARCH64"; RSUM="$RCODESIGN_SHA256_AARCH64" ;;
-  x86_64) A=x86_64; XSUM="$XTOOL_SHA256_X86_64"; RSUM="$RCODESIGN_SHA256_X86_64" ;;
+  aarch64|arm64) A=aarch64 ;;
+  x86_64) A=x86_64 ;;
   *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
 esac
 SUDO=""; [[ $EUID -ne 0 ]] && SUDO="sudo"
@@ -18,7 +21,7 @@ export DEBIAN_FRONTEND=noninteractive
 SUDO_ENV="env DEBIAN_FRONTEND=noninteractive"
 
 $SUDO $SUDO_ENV apt-get update -qq
-$SUDO $SUDO_ENV apt-get install -y -qq curl ca-certificates zip unzip librsvg2-bin squashfs-tools git build-essential libcurl4-openssl-dev libxml2-dev >/dev/null
+$SUDO $SUDO_ENV apt-get install -y -qq curl ca-certificates tar gzip zip unzip git python3 build-essential libcurl4-openssl-dev libxml2-dev >/dev/null
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -43,27 +46,11 @@ if ! have_swift; then
   have_swift
 fi
 
-f="$TMP/xtool.AppImage"
-curl -fsSL -o "$f" "https://github.com/xtool-org/xtool/releases/download/${XTOOL_VERSION}/xtool-${A}.AppImage"
-echo "${XSUM}  $f" | sha256sum -c -
-le() { od -An -t u$2 -j "$1" -N "$2" "$f" | tr -d ' '; }
-off=$(( $(le 40 8) + $(le 58 2) * $(le 60 2) ))
-$SUDO rm -rf /opt/xtool
-$SUDO unsquashfs -q -o "$off" -d /opt/xtool "$f" >/dev/null
-$SUDO mkdir -p "$PREFIX/bin"
-$SUDO ln -sf /opt/xtool/AppRun "$PREFIX/bin/xtool"
-
-RC="apple-codesign-${RCODESIGN_VERSION}-${A}-unknown-linux-musl"
-curl -fsSL -o "$TMP/$RC.tar.gz" "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/$RC.tar.gz"
-echo "${RSUM}  $TMP/$RC.tar.gz" | sha256sum -c -
-tar -xzf "$TMP/$RC.tar.gz" -C "$TMP"
-$SUDO install -m755 "$(find "$TMP/$RC" -name rcodesign -type f | head -1)" "$PREFIX/bin/rcodesign"
-
 # GitHub rate-limits git over HTTP/2 from some git versions (401); scope the workaround to this build only.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.version GIT_CONFIG_VALUE_0=HTTP/1.1
 (cd "$ROOT" && swift build -c release --product xless)
+$SUDO mkdir -p "$PREFIX/bin"
 $SUDO install -m755 "$(cd "$ROOT" && swift build -c release --show-bin-path)/xless" "$PREFIX/bin/xless"
 
-export APPIMAGE_EXTRACT_AND_RUN=1
-xtool --help >/dev/null && rcodesign --version && xless --version
-echo "Installed. Next: xless sdk install --image <your private registry>/xless:<tag>  (or --xtoolsdk/--meta from \`xless sdk export\`)"
+xless --version
+echo "Installed. Next: XLESS_SHARE=$ROOT xless setup --xcode ~/Downloads/Xcode_27.xip"

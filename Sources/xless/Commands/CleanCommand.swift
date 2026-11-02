@@ -3,8 +3,9 @@ import Foundation
 import XlessCore
 import XlessSDK
 
-/// `xless clean`: frees the disk space `xless setup` and `xless docker` use. It removes only what xless made: the four
-/// images' local tags (and the older builds of them setup left untagged), xless's Docker volumes, and the cache directory.
+/// `xless clean`: frees the disk space `xless setup` and `xless run` use. It removes only what xless made: the native
+/// install (`NativeLayout`, with the SDK and metadata it installed), the four images' local tags (and the older builds of
+/// them setup left untagged), xless's Docker volumes, and the cache directory.
 /// BuildKit's build cache is shared with every other Docker project, so it is only pointed at, never pruned.
 struct CleanCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -15,7 +16,9 @@ struct CleanCommand: AsyncParsableCommand {
         xless-tauri and xless-rn, then the older builds of them that a later xless setup left untagged (label \
         \(CleanPlan.imageLabel)); --old removes only those older builds, which is what an upgrade leaves behind. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
         and \(CleanPlan.volumePrefix)*). --cache removes $XDG_CACHE_HOME/xless (default ~/.cache/xless): the exported SDKs, \
-        Tauri work copies and downloads. --all does the three. The xless install itself (~/.local/bin/xless and \
+        Tauri work copies and downloads. --native removes the native install: $XLESS_NATIVE_HOME (default \
+        ~/.local/share/xless-native: the Swift toolchain, xtool, rcodesign), the installed Darwin SDK and its \
+        toolchain-meta.json. --all does the four. The xless install itself (~/.local/bin/xless and \
         ~/.local/share/xless) and Docker's build cache, which other projects share (docker builder prune), are left alone.
         """)
 
@@ -23,7 +26,8 @@ struct CleanCommand: AsyncParsableCommand {
     @Flag(help: "Remove only the older builds of the images that a later xless setup left untagged (after an upgrade).") var old = false
     @Flag(help: "Remove the Docker volumes xless docker creates.") var volumes = false
     @Flag(help: "Remove the cache directory ($XDG_CACHE_HOME/xless, default ~/.cache/xless).") var cache = false
-    @Flag(help: "--images, --volumes and --cache.") var all = false
+    @Flag(help: "Remove the native install (toolchain, tools, the installed SDK and its metadata).") var native = false
+    @Flag(help: "--images, --volumes, --cache and --native.") var all = false
     @Flag(help: "Print what would be removed, and remove nothing.") var dryRun = false
 
     func run() async throws {
@@ -31,8 +35,11 @@ struct CleanCommand: AsyncParsableCommand {
         let fm = FileManager.default
         let home = env["HOME"].map { URL(fileURLWithPath: $0) } ?? fm.homeDirectoryForCurrentUser
         let cacheRoot = SetupPlan.cacheRoot(env: env, home: home)
-        let doImages = images || all, doVolumes = volumes || all, doCache = cache || all, doOld = old || doImages
-        let listOnly = !(doOld || doVolumes || doCache)
+        let doImages = images || all, doVolumes = volumes || all, doCache = cache || all, doOld = old || doImages, doNative = native || all
+        let listOnly = !(doOld || doVolumes || doCache || doNative)
+        // The native install: its home, and the SDK and metadata it installed (never an image's).
+        let nativePaths = [NativeLayout(env: env).root, DarwinSDKLocator.bundle(env: env), ToolchainMeta.defaultLocation(env: env)]
+            .filter { !$0.path.hasPrefix("/opt/xless/") && fm.fileExists(atPath: $0.path) }
         let removing = !listOnly && !dryRun
 
         var imageRefs: [String] = [], volumeNames: [String] = []
@@ -69,8 +76,12 @@ struct CleanCommand: AsyncParsableCommand {
         if listOnly || doCache {
             say(cacheExists ? "\(verb) the cache \(cacheRoot.path) (\(Self.size(of: cacheRoot)))" : "no cache at \(cacheRoot.path)")
         }
+        if listOnly || doNative {
+            if nativePaths.isEmpty { say("no native install") }
+            for p in nativePaths { say("\(verb) the native install's \(p.path) (\(Self.size(of: p)))") }
+        }
         if listOnly {
-            say("nothing removed: pass --images, --old, --volumes, --cache or --all (--dry-run to see what they would remove)")
+            say("nothing removed: pass --images, --old, --volumes, --cache, --native or --all (--dry-run to see what they would remove)")
             return
         }
         guard removing else { return }
@@ -95,6 +106,11 @@ struct CleanCommand: AsyncParsableCommand {
             do { try fm.removeItem(at: cacheRoot) } catch {
                 // Work copies built in a container as root belong to root.
                 failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
+            }
+        }
+        if doNative {
+            for p in nativePaths {
+                do { try fm.removeItem(at: p) } catch { failures.append("\(p.path) was not fully removed (\(Self.firstLine(error)))") }
             }
         }
         if !failures.isEmpty {
