@@ -62,8 +62,9 @@
 #   ASC_KEY_ID               App Store Connect API key ID                      (required)
 #   ASC_ISSUER_ID_FILE       file holding the issuer ID   (or ASC_ISSUER_ID)   (required)
 #   ASC_KEY_P8_FILE          the API key .p8 file                              (required)
-#   XLESS_DIST_KEY_FILE      the Apple Distribution private key (PEM)          (required on ios; on macos when --to upload runs the App-Store lane)
+#   XLESS_DIST_KEY_FILE      the Apple Distribution private key (PEM)          (required on ios; on macos when --to upload runs the App-Store lane: the app's signature)
 #   XLESS_DEVID_KEY_FILE     the Developer ID Application private key (PEM)    (required with --platform macos)
+#   XLESS_INSTALLER_KEY_FILE the Mac Installer Distribution private key (PEM)  (macos, only when --to upload runs the App-Store lane)
 #     ("required" means: when a step that uses it runs. A project directory needs none of them for a run that stops
 #      before sign (--to prepare|build|assets|finalize); with --config, see the three steps above)
 #   XLESS_IMAGE              docker image; default xless:local-<arch> (with --config: see above)
@@ -239,10 +240,12 @@ secret_files=()
 if [[ $need_key == 1 ]]; then
   if [[ "$PLATFORM" == macos ]]; then secret_files+=(XLESS_DEVID_KEY_FILE); else secret_files+=(XLESS_DIST_KEY_FILE); fi
 fi
-# The mac App-Store lane (--to upload): the flat pkg is signed with the Apple Distribution key
-# (the Developer ID one stays for the DMG). Only an upload-reaching run needs it in reach.
+# The mac App-Store lane (--to upload): the app is signed with the Apple Distribution key and the flat pkg with the Mac
+# Installer Distribution key (the Developer ID one stays for the DMG). Only an upload-reaching run needs them in reach.
+mac_lane=0
 if [[ $need_key == 1 && "$PLATFORM" == macos && $(index "$to") -ge 6 ]]; then
-  secret_files+=(XLESS_DIST_KEY_FILE)
+  mac_lane=1
+  secret_files+=(XLESS_DIST_KEY_FILE XLESS_INSTALLER_KEY_FILE)
 fi
 for v in ${secret_files[@]+"${secret_files[@]}"}; do
   [[ -n "${!v:-}" ]] || die "set $v in the environment or $ENV_FILE"
@@ -278,7 +281,7 @@ inside() {   # FILE DIR: FILE (symlinks resolved) is somewhere below DIR, compar
   done
 }
 broad_dir() { [[ "$1" -ef / || "$1" -ef "$HOME" ]] || inside "$HOME/." "$1"; }   # DIR: is / , the home directory or a directory above it
-secret_vars=(ENV_FILE ASC_KEY_P8_FILE XLESS_DIST_KEY_FILE XLESS_DEVID_KEY_FILE ASC_ISSUER_ID_FILE)
+secret_vars=(ENV_FILE ASC_KEY_P8_FILE XLESS_DIST_KEY_FILE XLESS_DEVID_KEY_FILE XLESS_INSTALLER_KEY_FILE ASC_ISSUER_ID_FILE)
 input_names=(); input_paths=()   # cargo path inputs mounted at /inputs/<name> (step 2, docker)
 if [[ -n "$OVERLAY" && $use_docker == 1 ]]; then
   overlay_dir="$(cd -P "$(dirname "$OVERLAY")" && pwd -P)"
@@ -362,8 +365,12 @@ if [[ $use_docker == 1 ]]; then
   fi
   if [[ $need_key == 1 && "$PLATFORM" == macos ]]; then
     dist_secret=(--mount "$(bind "$XLESS_DEVID_KEY_FILE" /secrets/devid-key.pem ro)" -e XLESS_DEVID_KEY_FILE=/secrets/devid-key.pem)
-    # The App-Store lane's key, in the same shape: its own mount, only the second ship takes it.
-    appstore_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem)
+    # The App-Store lane's keys, in the same shape: their own mounts, only the second ship takes them (and only a run that
+    # reaches it has them: the variables may be unset otherwise).
+    if [[ $mac_lane == 1 ]]; then
+      appstore_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem
+                       --mount "$(bind "$XLESS_INSTALLER_KEY_FILE" /secrets/installer-key.pem ro)" -e XLESS_INSTALLER_KEY_FILE=/secrets/installer-key.pem)
+    fi
   elif [[ $need_key == 1 ]]; then
     dist_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem)
   fi
@@ -458,7 +465,7 @@ else
   # native: --source only when XLESS_SOURCE overrides the overlay's own `source:`
   xl=(--config "$OVERLAY"); [[ -z "${XLESS_SOURCE:-}" ]] || xl+=(--source "$SOURCE")
   # step 2 runs without the secret variables (xless also scrubs them from its tools); the files stay on disk
-  scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY; do scrub+=(-u "$v" -u "${v}_FILE"); done
+  scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY XLESS_INSTALLER_KEY; do scrub+=(-u "$v" -u "${v}_FILE"); done
 fi
 bn=(); [[ -z "${XLESS_BUILD_NUMBER:-}" ]] || bn=(-e XLESS_BUILD_NUMBER)
 if [[ $use_docker == 1 ]]; then
@@ -540,7 +547,7 @@ if [[ $step3 == 1 ]]; then
   if [[ "$PLATFORM" == macos ]]; then
     # Macs ship two channels in one run, each signing its own copy of the signed-app build:
     # sign→package is the Developer-ID DMG; sign→upload under --distribution app-store is the
-    # Apple-Distribution flat package that App Store Connect receives and TestFlight delivers.
+    # flat package (installer-signed) that App Store Connect receives and TestFlight delivers.
     # A failure in either channel stops the run with that channel's code; the DMG's work does
     # not depend on the second ship.
     mac_tf_to="package"; [[ "$(index "$to")" -ge 6 ]] || mac_tf_to="$to"

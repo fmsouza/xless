@@ -91,8 +91,8 @@ launch screen compiled both ways).
 ## Validation rules
 
 - `distribution`: iOS must be `app-store`. macOS accepts `app-store` (signs with the Apple Distribution key) or
-  `developer-id` (the default, direct distribution); macOS App Store packaging and upload are not wired yet
-  (see [research/mas-pkg.md](research/mas-pkg.md)).
+  `developer-id` (the default, direct distribution); with `app-store`, `--to upload` runs the macOS App-Store lane
+  ([signing-and-testflight.md](signing-and-testflight.md#macos-app-store-lane-testflight)).
 - `xless ship --distribution app-store|developer-id` overrides the platform's `distribution` for that one run
   (macOS; iOS is always app-store and refuses `developer-id`). The config file keeps its own value.
 - `platforms.<p>.minimumOS` must parse as a dotted version.

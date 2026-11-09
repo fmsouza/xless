@@ -95,7 +95,7 @@ struct Context {
         if let configURL = opts.configURL, kind == .cargo {
             let (overlay, sourceRoot, workRoot) = try CargoOverlay.load(from: configURL, sourceOverride: opts.source, env: env)
             // The config holds only this platform: a macOS build's dated number is chosen locally (`isMacOnly`).
-            var resolved = try CargoProject.resolve(overlay: overlay, platform: opts.platform, source: sourceRoot)
+            var resolved = try CargoProject.resolve(overlay: overlay, platform: opts.platform, source: sourceRoot, distribution: distribution)
             try await settleBuild(&resolved.config, platform: opts.platform, override: override, workRoot: workRoot, env: env, fresh: fresh)
             return Context(project: workRoot, config: resolved.config, platform: opts.platform,
                            paths: StagePaths(project: workRoot, platform: opts.platform), secrets: Secrets(env: env),

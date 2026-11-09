@@ -18,18 +18,18 @@ import Foundation
 
 @Test func childProcessesCannotSeeSecrets() throws {
     // Build tools run third-party package code (macros, plugins); they must never inherit signing or API keys.
-    let names = ["XLESS_DIST_KEY", "XLESS_DIST_KEY_FILE", "ASC_KEY_P8", "XLESS_DEVID_KEY", "ASC_KEY_ID"]
+    let names = ["XLESS_DIST_KEY", "XLESS_DIST_KEY_FILE", "ASC_KEY_P8", "XLESS_DEVID_KEY", "XLESS_INSTALLER_KEY", "XLESS_INSTALLER_KEY_FILE", "ASC_KEY_ID"]
     // Injected, never setenv: glibc's environ is not thread-safe and other tests read the process env in parallel.
     var base = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"]
     for name in names { base[name] = "secret-\(name)" }
-    let r = try Shell.run("sh", ["-c", "echo \"[${XLESS_DIST_KEY-}][${XLESS_DIST_KEY_FILE-}][${ASC_KEY_P8-}][${XLESS_DEVID_KEY-}][${ASC_KEY_ID-}]\""], baseEnvironment: base, stage: .build)
-    #expect(r.stdout == "[][][][][]\n")
+    let r = try Shell.run("sh", ["-c", "echo \"[${XLESS_DIST_KEY-}][${XLESS_DIST_KEY_FILE-}][${ASC_KEY_P8-}][${XLESS_DEVID_KEY-}][${XLESS_INSTALLER_KEY-}][${XLESS_INSTALLER_KEY_FILE-}][${ASC_KEY_ID-}]\""], baseEnvironment: base, stage: .build)
+    #expect(r.stdout == "[][][][][][][]\n")
     let all = try Shell.run("env", [], baseEnvironment: base, stage: .build).stdout
     #expect(!all.contains("secret-"))
 }
 
 @Test func scrubbedNamesCoverEverySecretAndItsFileVariant() {
-    for name in ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8", "XLESS_DIST_KEY", "XLESS_DEVID_KEY"] {
+    for name in ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8", "XLESS_DIST_KEY", "XLESS_DEVID_KEY", "XLESS_INSTALLER_KEY"] {
         #expect(Shell.scrubbedEnvironment.contains(name))
         #expect(Shell.scrubbedEnvironment.contains("\(name)_FILE"))
     }

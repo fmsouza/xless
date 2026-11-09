@@ -35,13 +35,13 @@ public enum NativeSetupPlan {
         public init(xcodeBuild: String, swiftVersion: String) { self.xcodeBuild = xcodeBuild; self.swiftVersion = swiftVersion }
     }
 
-    /// The host commands a native setup and a native build run (xar and cpio: the macOS lane's .pkg; Swift's own
+    /// The host commands a native setup and a native build run (cpio: the macOS lane's .pkg payload; xless writes the XAR itself; Swift's own
     /// libraries are checked by running swiftc).
-    public static let requiredCommands = ["curl", "tar", "gzip", "unzip", "zip", "git", "python3", "xar", "cpio"]
+    public static let requiredCommands = ["curl", "tar", "gzip", "unzip", "zip", "git", "python3", "cpio"]
 
     /// The Debian/Ubuntu packages for `requiredCommands` and the swift.org toolchain's dependencies (its Ubuntu 22.04
     /// list; on a newer release apt picks the matching versions of the -dev packages).
-    public static let aptPackages = ["curl", "ca-certificates", "tar", "gzip", "zip", "unzip", "git", "python3", "xar", "cpio", "binutils",
+    public static let aptPackages = ["curl", "ca-certificates", "tar", "gzip", "zip", "unzip", "git", "python3", "cpio", "binutils",
                                      "libc6-dev", "libcurl4-openssl-dev", "libedit2", "libgcc-11-dev", "libpython3-dev",
                                      "libsqlite3-0", "libstdc++-11-dev", "libxml2-dev", "libz3-dev", "pkg-config", "tzdata", "zlib1g-dev"]
     public static var aptLine: String { "sudo apt-get install -y " + aptPackages.joined(separator: " ") }

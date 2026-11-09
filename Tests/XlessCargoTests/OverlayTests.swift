@@ -160,7 +160,7 @@ private func writeOverlay(_ yaml: String, named file: String = "my.overlay.yml")
 }
 
 @Test func refusesSecretEnv() {
-    for name in ["ASC_KEY_P8", "ASC_KEY_P8_FILE", "XLESS_DIST_KEY", "XLESS_DEVID_KEY_FILE", "XLESS_BUILD_NUMBER", "SWIFT_EXEC", "PATH", "SDKROOT"] {
+    for name in ["ASC_KEY_P8", "ASC_KEY_P8_FILE", "XLESS_DIST_KEY", "XLESS_DEVID_KEY_FILE", "XLESS_INSTALLER_KEY", "XLESS_BUILD_NUMBER", "SWIFT_EXEC", "PATH", "SDKROOT"] {
         expectConfig(minimalIOS + "env: { \(name): x }\n", mentioning: name)
     }
     expectConfig(minimalIOS + "env: { \"BAD NAME\": x }\n", mentioning: "BAD NAME")

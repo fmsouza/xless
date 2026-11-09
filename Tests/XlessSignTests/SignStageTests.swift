@@ -183,3 +183,42 @@ func refreshSteps(oldProfile: String, fresh: [String: Any]) throws -> [(Int, Str
     do { _ = try await f.run(); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.cause.contains("rcodesign")) }   // read, past every check; only the fake Mach-O fails
 }
+
+@Test func macAppStoreSignAsksForAMacAppStoreProfileAndEmbedsItInContents() async throws {
+    // Arrange: a macOS app signed for the App Store; ASC has no profile yet, so one is created.
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("sign-mac-\(UUID())", isDirectory: true)
+    let input = root.appendingPathComponent("final/X.app", isDirectory: true)
+    let outputDir = root.appendingPathComponent("signed", isDirectory: true)
+    try FileManager.default.createDirectory(at: input.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try Plist.write(["CFBundleExecutable": "X", "CFBundleIdentifier": "a.b"], to: input.appendingPathComponent("Contents/Info.plist"), stage: .sign)
+    try Data("not a Mach-O".utf8).write(to: input.appendingPathComponent("Contents/MacOS/X"))
+    defer { try? FileManager.default.removeItem(at: root) }
+    let config = try ProjectConfig.parse(yaml: """
+    bundleID: a.b
+    teamID: ABCDE12345
+    version: "1.0"
+    build: 1
+    platforms:
+      macos: { minimumOS: "14.0", product: X, distribution: app-store }
+    """)
+    let key = try SigningKey.generate()
+    let profile = try fakeProfile(["com.apple.application-identifier": "ABCDE12345.a.b", "com.apple.developer.team-identifier": "ABCDE12345"])
+    let transport = MockTransport([
+        (200, #"{"data":[\#(certJSON(id: "C1", der: try selfSigned(key)))]}"#),
+        (200, #"{"data":[{"type":"bundleIds","id":"B1","attributes":{"identifier":"a.b","platform":"UNIVERSAL"}}]}"#),
+        (200, #"{"data":[]}"#),
+        (201, #"{"data":{"type":"profiles","id":"P1","attributes":{"profileContent":"\#(profile.base64EncodedString())"}}}"#),
+    ])
+
+    // Act
+    let app = try await SignStage.run(input: input, outputDir: outputDir, platform: .macos, config: config, project: root,
+                                      secrets: Secrets(env: ["XLESS_DIST_KEY": key.pem]),
+                                      client: ASCClient(credentials: testCreds, transport: transport, sleep: { _ in }),
+                                      manifest: nil, codesign: { _ in })
+
+    // Assert
+    let list = transport.requests[2].url!.absoluteString
+    #expect(list.contains("filter%5BprofileType%5D=MAC_APP_STORE") && list.contains("filter%5Bname%5D=xless%20a.b%20MAC_APP_STORE"))
+    #expect(String(decoding: transport.requests[3].httpBody!, as: UTF8.self).contains("\"profileType\":\"MAC_APP_STORE\""))
+    #expect(try Data(contentsOf: app.appendingPathComponent("Contents/embedded.provisionprofile")) == profile)
+}

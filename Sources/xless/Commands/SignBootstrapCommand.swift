@@ -20,7 +20,7 @@ struct SignRunCommand: AsyncParsableCommand {
 struct SignBootstrapCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "bootstrap", abstract: "Create a signing key + certificate (one-time).")
 
-    @Option(help: "distribution or developer-id") var type: CertificateKind
+    @Option(help: "distribution, developer-id or installer (the Mac App Store .pkg)") var type: CertificateKind
     @Option(help: "Where to write the private key (mode 0600).") var out: String
     @Flag(help: "Create a certificate even if some already exist.") var allowNew = false
     @Flag(help: "Only write key + CSR (<out>.csr) for manual upload at developer.apple.com.") var csrOnly = false

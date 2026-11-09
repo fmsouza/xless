@@ -31,7 +31,7 @@ exit 0
 D
 chmod +x "$t/bin/docker"
 # The native preflight's host commands that a CI runner may lack (the setups here never run them): stubs, when missing.
-for c in curl tar gzip unzip zip git python3 xar cpio; do
+for c in curl tar gzip unzip zip git python3 cpio; do
   [ -x "/usr/bin/$c" ] || [ -x "/bin/$c" ] || { printf '#!/bin/sh\nexit 1\n' > "$t/bin/$c"; chmod +x "$t/bin/$c"; }
 done
 log="$t/docker.log"
