@@ -36,7 +36,7 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
-        .target(name: "XlessPackage", dependencies: ["XlessCore", "XlessSign", "XlessASC"]),
+        .target(name: "XlessPackage", dependencies: ["XlessCore", "XlessSign", "XlessASC", .product(name: "Crypto", package: "swift-crypto")]),
         // Xcode workspace / project / scheme reader and Swift Build PIF writer (React Native / CocoaPods subset).
         .target(name: "XlessXcode", dependencies: ["XlessCore", "XlessMachO"]),
         .target(name: "XlessTauri", dependencies: [
@@ -83,7 +83,7 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
-        .testTarget(name: "XlessPackageTests", dependencies: ["XlessPackage", "XlessCore"], exclude: ["Fixtures"]),
+        .testTarget(name: "XlessPackageTests", dependencies: ["XlessPackage", "XlessCore", .product(name: "Crypto", package: "swift-crypto")], exclude: ["Fixtures"]),
         .testTarget(name: "XlessIBTests", dependencies: ["XlessIB", "XlessCore"]),
         .testTarget(name: "XlessTauriTests", dependencies: ["XlessTauri", "XlessCore", "XlessMachO", .product(name: "Crypto", package: "swift-crypto")], exclude: ["Fixtures"]),
         .testTarget(name: "XlessMachOTests", dependencies: ["XlessMachO"]),

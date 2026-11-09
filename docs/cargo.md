@@ -1,6 +1,6 @@
 # Plain Cargo apps (iOS and macOS)
 
-xless builds an app that is just a Cargo workspace on Linux, with no Mac and no Xcode on the build machine: an iOS app that it ships to TestFlight, and a macOS app that it ships as a notarized DMG ([macOS](#macos)). The app has no Xcode project, no Tauri and no Swift. Its binary crate runs the platform's event loop itself (winit, eframe/egui, objc2…), and the repository holds an `Info.plist` and an icon. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
+xless builds an app that is just a Cargo workspace on Linux, with no Mac and no Xcode on the build machine: an iOS app that it ships to TestFlight, and a macOS app that it ships as a notarized DMG or, from the App-Store lane, to TestFlight ([macOS](#macos)). The app has no Xcode project, no Tauri and no Swift. Its binary crate runs the platform's event loop itself (winit, eframe/egui, objc2…), and the repository holds an `Info.plist` and an icon. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
 
 ```sh
 xless run --docker --config ~/ci/my-app.overlay.yml
@@ -25,7 +25,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 - **Build.** `cargo build --release --locked -p <package> --bin <bin> --target <triple>` (plus `--features` when the overlay lists some). iOS: `aarch64-apple-ios`, device only. macOS: `aarch64-apple-darwin` and `x86_64-apple-darwin`, merged into one universal executable (the `x86_64` slice first, as `lipo` does). Rust links against Apple's SDK from the xless image, with the same linker and `xcrun` set-up as the Tauri builds ([tauri.md](tauri.md)). Then the usual stages: assets, finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
 - **Bundle.** xless writes the `.app` itself: the executable, an `Info.plist` made from the app's own file, the resources the overlay lists, the privacy manifest (iOS) and the icon. iOS is a flat bundle; macOS is `Contents/MacOS`, `Contents/Resources`, `Contents/Info.plist` and `PkgInfo`.
 - **Overlay only.** The app need not change: no `build.rs`, no crate, no `Cargo.toml` key for xless. If a Cargo app needs something xless lacks, that is an xless gap ([known gaps](#known-gaps)).
-- **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, a Mac App Store `.pkg`, embedded frameworks and app extensions, external TestFlight groups, App Store submission.
+- **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, embedded frameworks and app extensions, external TestFlight groups, App Store submission.
 
 ## Requirements
 
@@ -196,14 +196,23 @@ What differs for cargo:
 
 `xless run --docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the `macos` block for both Apple Silicon and Intel, merges the executables into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG. It prints the path of `<product>_<version>_universal.dmg` last. The prerequisites (the Developer ID key, `XLESS_DEVID_KEY_FILE`, the App Store Connect key for notarization), the two-step key separation and the exit codes are those of [Tauri on macOS](tauri.md#macos). `macos.entitlements` supplies the entitlements of the signature; without it the app is signed with none.
 
-One overlay serves both platforms: `--platform` picks the block. The privacy manifest and `testflight` are iOS-only.
+### macOS App Store (TestFlight)
+
+`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos --distribution app-store --to upload` (`xless ship` takes the same two options) runs the macOS App-Store lane ([signing-and-testflight.md](signing-and-testflight.md#macos-app-store-lane-testflight)) for the `macos` block, after the DMG: it signs the universal app with the Apple Distribution certificate and a `MAC_APP_STORE` provisioning profile that it embeds as `Contents/embedded.provisionprofile`, packs it into a flat `.pkg` signed with a Mac Installer Distribution certificate, uploads the package and delivers the build to the overlay's `testflight.groups`. The overlay has no distribution key of its own: the option picks it, and without it the macOS build stays Developer ID.
+
+- **App Sandbox.** App Store Connect rejects a Mac App Store build without `com.apple.security.app-sandbox`, so `macos.entitlements` must carry it, plus whatever the app needs inside the sandbox (`com.apple.security.network.client`, file access…). Entitlements gated by a capability must be enabled for the bundle ID; xless enables the ones the API can, and says which one to enable in the portal otherwise. The hardened runtime is not applied to this build.
+- **Three keys.** `XLESS_DIST_KEY_FILE` (Apple Distribution, signs the app), `XLESS_INSTALLER_KEY_FILE` (Mac Installer Distribution, signs the package: [bootstrap.md](bootstrap.md#3b-mac-installer-distribution-key-macos-app-store-lane-only)) and `XLESS_DEVID_KEY_FILE` (Developer ID, the DMG). Only the second ship, the one that signs and uploads, has the first two.
+- **Bundle ID and app record.** `macos.bundleID` (else the overlay's `bundleID`) needs an app record of its own for macOS in App Store Connect ([bootstrap.md](bootstrap.md#5-app-record)).
+
+One overlay serves both platforms: `--platform` picks the block. The privacy manifest is iOS-only; `testflight` applies to iOS and to the macOS App-Store lane.
 
 ## Known gaps
 
 From the milestone's non-goals and what was left out:
 
 - iOS builds are release, arm64, device only. No simulator or debug builds, no x86_64 iOS.
-- No Android, Windows or Linux packaging, and no Mac App Store `.pkg` ([why](research/mas-pkg.md)).
+- No Android, Windows or Linux packaging.
+- The macOS App-Store lane ([above](#macos-app-store-testflight)) is not tested against a real App Store Connect upload ([research](research/mas-pkg.md)): the package is checked by Apple's `pkgutil` and `xar`, not by App Store Connect. The app's icon is the `.icns` of `macos.icon` (no macOS asset catalog).
 - **iOS 27 requires the UIKit scene life cycle.** An app built with the iOS 27 SDK that does not adopt UIScene is stopped by UIKit at launch on iOS 27 ("UIScene life cycle is required for apps built with this SDK"). The images default to Xcode 27.0, so a plain Cargo app has to adopt UIScene itself: winit 0.30 does not, so `samples/HelloCargo` installs from TestFlight but is stopped at launch on iOS 27 (it launches on iOS 26 and earlier), while an app with its own scene delegate works. Earlier iOS versions launch such an app as before; an app whose release pipeline uses an older Xcode is not affected (pin it with `xcode:`). The same note for React Native is in [react-native.md](react-native.md#known-gaps).
 - A plain Cargo app embeds no frameworks of its own and has no app extensions. The overlay has no launch storyboard key: use `UILaunchScreen` in the Info.plist.
 - No `cargo-bundle` or `cargo-xcode` compatibility. The overlay is the contract.

@@ -5,7 +5,11 @@ import XlessCore
 public enum ProfileType: String, Sendable {
     case iosAppStore = "IOS_APP_STORE"
     case macDirect = "MAC_APP_DIRECT"
-    public static func `for`(platform: Platform) -> ProfileType { platform == .ios ? .iosAppStore : .macDirect }
+    case macAppStore = "MAC_APP_STORE"
+    /// A Developer ID build embeds a `MAC_APP_DIRECT` profile; a Mac App Store (TestFlight) build needs `MAC_APP_STORE`.
+    public static func `for`(platform: Platform, distribution: Distribution) -> ProfileType {
+        platform == .ios ? .iosAppStore : distribution == .appStore ? .macAppStore : .macDirect
+    }
 }
 
 struct BundleIDAttributes: Codable, Sendable { var identifier: String?; var name: String?; var platform: String? }
@@ -70,7 +74,7 @@ public struct ProfileService: Sendable {
         let created: ASCDocument<ASCResource<ProfileAttributes>>
         do { created = try await client.post("/v1/profiles", body: body) } catch let e as ASCError {
             throw XlessError(.sign, "cannot create \(type.rawValue) profile for \(bundleIdentifier): \(e)",
-                             fix: type == .macDirect ? "if \(bundleIdentifier) was registered for iOS only (before xless registered identifiers as universal), set platforms.macos.bundleID to a separate identifier" : "check the bundle ID and certificate in App Store Connect")
+                             fix: type != .iosAppStore ? "if \(bundleIdentifier) was registered for iOS only (before xless registered identifiers as universal), set platforms.macos.bundleID to a separate identifier" : "check the bundle ID and certificate in App Store Connect")
         }
         guard let content = created.data.attributes.profileContent.flatMap({ Data(base64Encoded: $0) }) else {
             throw XlessError(.sign, "App Store Connect returned a profile without content", fix: "re-run; if it persists, delete the profile in the portal")

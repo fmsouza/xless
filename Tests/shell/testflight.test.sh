@@ -223,21 +223,35 @@ out=$("${mac[@]}" XLESS_BUILD_NUMBER=1.0.0.202610160000 "$S" --platform macos --
 out=$("${base[@]}" "$S" --config "$t/ov/my.overlay.yml" --platform ios 2>/dev/null)
 [[ $(wc -l <<<"$out") -eq 3 && "$out" == *"xless ship --platform ios"* && "$out" != *"devid"* ]] || fail "--platform ios: $out"
 "${mac[@]}" XLESS_DIST_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos >/dev/null 2>&1 || fail "macos needs the dist key"
-# the mac App-Store lane: --to upload = the DMG ship plus the pkg ship under the Apple Distribution key.
-printf 'x' > "$t/dist.pem"
-out=$("${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>/dev/null)
+# ...and neither it nor the installer key need exist at all (set -u): the DMG run reads only the Developer ID key (#48)
+nokeys=(); for a in "${mac[@]}"; do [[ "$a" == XLESS_DIST_KEY_FILE=* ]] || nokeys+=("$a"); done
+out=$("${nokeys[@]}" "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>"$t/err") || fail "macos without the lane's keys set: $(cat "$t/err")"
+[[ $(wc -l <<<"$out") -eq 2 && "$out" != *"dist-key"* && "$out" != *"installer-key"* ]] || fail "macos without the lane's keys: $out"
+out=$("${nokeys[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>"$t/err") || fail "native macos without the lane's keys: $(cat "$t/err")"
+# the mac App-Store lane: --to upload = the DMG ship plus the pkg ship under the Apple Distribution key (the app) and
+# the Mac Installer Distribution key (the pkg).
+printf 'x' > "$t/dist.pem"; printf 'x' > "$t/installer.pem"
+lane=("${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" XLESS_INSTALLER_KEY_FILE="$t/installer.pem")
+out=$("${lane[@]}" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>/dev/null)
 [[ $(wc -l <<<"$out") -eq 3 ]] || fail "macos --to upload: want three steps: $out"
 dmgship=$(line "--to package "); pkgship=$(line "--distribution app-store")
 [[ "$dmgship" == *"xless ship --platform macos --config /config/my.overlay.yml --source /source --from sign --to package "* ]] || fail "the DMG ship changed with the lane on: $dmgship"
 [[ "$pkgship" == *"xless ship --platform macos --config /config/my.overlay.yml --source /source --distribution app-store --from sign --to upload "* ]] || fail "pkg ship wrong: $pkgship"
-[[ "$dmgship" == *"dst=/secrets/devid-key.pem,readonly"* && "$dmgship" != *"dst=/secrets/dist-key.pem"* ]] || fail "the DMG ship must carry only its own key: $dmgship"
+[[ "$dmgship" == *"dst=/secrets/devid-key.pem,readonly"* && "$dmgship" != *"dst=/secrets/dist-key.pem"* && "$dmgship" != *"installer-key"* ]] || fail "the DMG ship must carry only its own key: $dmgship"
 [[ "$pkgship" == *"dst=/secrets/dist-key.pem,readonly"* && "$pkgship" == *"-e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem"* ]] || fail "pkg ship dist key: $pkgship"
+[[ "$pkgship" == *"dst=/secrets/installer-key.pem,readonly"* && "$pkgship" == *"-e XLESS_INSTALLER_KEY_FILE=/secrets/installer-key.pem"* ]] || fail "pkg ship installer key: $pkgship"
 [[ "$pkgship" != *"dst=/secrets/devid-key.pem"* ]] || fail "the pkg ship must not carry the Developer ID key: $pkgship"
 [[ "$out" == *"ISSUER-SECRET-VALUE"* ]] && fail "issuer value leaked"
 
 # the lane without the Apple Distribution key is refused before anything runs
-code=0; "${mac[@]}" XLESS_DIST_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload >/dev/null 2>"$t/lanerr" || code=$?
+code=0; "${mac[@]}" XLESS_DIST_KEY_FILE= XLESS_INSTALLER_KEY_FILE="$t/installer.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload >/dev/null 2>"$t/lanerr" || code=$?
 [[ $code -eq 2 ]] && grep -q "XLESS_DIST_KEY_FILE" "$t/lanerr" || fail "the lane needs the dist key: exit $code: $(cat "$t/lanerr")"
+code=0; "${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload >/dev/null 2>"$t/lanerr" || code=$?
+[[ $code -eq 2 ]] && grep -q "XLESS_INSTALLER_KEY_FILE" "$t/lanerr" || fail "the lane needs the installer key: exit $code: $(cat "$t/lanerr")"
+# the installer key inside the overlay's directory is refused like every other secret
+cp "$t/installer.pem" "$t/sec/installer.pem"
+code=0; "${lane[@]}" XLESS_INSTALLER_KEY_FILE="$t/sec/installer.pem" "$S" --config "$t/sec/o.yml" --platform macos --to upload >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 2 ]] && grep -q "keep the overlay in its own directory" "$t/err" || fail "installer key inside the overlay directory: exit $code"
 
 code=0; "${mac[@]}" XLESS_DEVID_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q XLESS_DEVID_KEY_FILE "$t/err" || fail "missing devid key exits $code: $(cat "$t/err")"

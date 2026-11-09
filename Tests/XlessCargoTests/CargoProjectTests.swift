@@ -166,6 +166,23 @@ private let hello = "[package]\nname = \"hello-mobile\"\nversion = \"1.2.3\"\n"
         #expect(c.platforms.count == 1)
     }
 
+    @Test func macosDistributionOverrideReachesTheResolvedConfig() throws {
+        let dir = try repo(["Cargo.toml": "[package]\nname = \"hello\"\nversion = \"1.4.0\"\n"])
+        let r = try CargoProject.resolve(overlay: overlay(), platform: .macos, source: dir, distribution: .appStore)
+        #expect(r.config.distribution(for: .macos) == .appStore)
+        let kept = try CargoProject.resolve(overlay: overlay(), platform: .macos, source: dir, distribution: nil)
+        #expect(kept.config.distribution(for: .macos) == .developerID)
+        #expect(kept.config.testflight == nil)                                  // a DMG has no TestFlight
+        #expect(r.config.testflight?.groups == ["Internal"])                    // the lane delivers to the overlay's groups
+    }
+
+    @Test func iosRefusesADeveloperIDOverride() throws {
+        let dir = try repo(["Cargo.toml": "[package]\nname = \"hello-mobile\"\nversion = \"1.4.0\"\n"])
+        expectConfig(containing: ["developer-id"]) {
+            _ = try CargoProject.resolve(overlay: overlay(), platform: .ios, source: dir, distribution: .developerID)
+        }
+    }
+
     @Test func missingPlatformBlockIsAConfigError() throws {
         let ios = try CargoOverlay.parse(yaml: """
         type: cargo

@@ -3,19 +3,27 @@ import XlessASC
 import XlessCore
 
 public enum CertificateKind: String, Sendable, CaseIterable {
-    case distribution, developerID = "developer-id"
+    case distribution, developerID = "developer-id", installer
 
     /// certificateType values that count as this kind when listing.
     public var ascTypes: [String] {
         switch self {
         case .distribution: ["DISTRIBUTION"]
         case .developerID: ["DEVELOPER_ID_APPLICATION_G2", "DEVELOPER_ID_APPLICATION"]
+        // "3rd Party Mac Developer Installer": the only certificate App Store Connect accepts on a Mac App Store .pkg.
+        case .installer: ["MAC_INSTALLER_DISTRIBUTION"]
         }
     }
     public var createType: String { ascTypes[0] }
     /// Apple's per-team limits (developer.apple.com/support/certificates; plan values; not confirmed against Apple docs as of 2026-10-13).
-    public var cap: Int { self == .distribution ? 3 : 5 }
-    public var secretName: String { self == .distribution ? "XLESS_DIST_KEY" : "XLESS_DEVID_KEY" }
+    public var cap: Int { self == .developerID ? 5 : 3 }
+    public var secretName: String {
+        switch self {
+        case .distribution: "XLESS_DIST_KEY"
+        case .developerID: "XLESS_DEVID_KEY"
+        case .installer: "XLESS_INSTALLER_KEY"
+        }
+    }
 }
 
 public struct CertificateAttributes: Codable, Sendable {

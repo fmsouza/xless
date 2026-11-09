@@ -27,8 +27,10 @@ import XlessSign
 ///
 /// No `Scripts` archive and no `<scripts>` in the distribution: xless ships no installer scripts, and the
 /// distribution declares `require-scripts="false"`. The app arrives App-Store-signed (the sign stage did it);
-/// the package itself is signed with the Apple Distribution certificate (rcodesign signs flat packages) after
-/// the `xar` assembly — no notarization: App Store builds are processed by ASC, not the notary service.
+/// the package itself is signed with the Mac Installer Distribution certificate (rcodesign signs flat packages) after
+/// the XAR assembly (`Xar`, in-process: no Ubuntu release packages a `xar` tool) — no notarization: App Store builds
+/// are processed by ASC, not the notary service, and ASC refuses a product archive signed with any other certificate
+/// (ITMS-90237).
 ///
 /// File names inside the payload come from the staging tree alone; the `find | cpio | gzip` pipeline's command
 /// line is constant (the out path is `$1`), so file names with spaces or non-ASCII characters are safe.
@@ -40,24 +42,27 @@ public enum PkgBuilder {
         try Shell.run(argv[0], Array(argv.dropFirst()), cwd: cwd, stage: .package)
     }
 
-    /// One `rcodesign sign` run over the finished package (an App Store pkg is signed with the Apple
+    /// One `rcodesign sign` run over the finished package (an App Store pkg is signed with the Mac Installer
     /// Distribution certificate only; no notary submit — ITMS processes it).
     static func signArguments(pkg: URL, keyPEM: URL, certPEM: URL) -> [String] {
         ["sign", "--pem-file", keyPEM.path, "--pem-file", certPEM.path, pkg.path]
     }
 
-    /// Builds `<outputDir>/<product>.pkg`. `run` receives each external command and its working directory
-    /// (the test seam: real runs use `PkgBuilder.shell`, tests record the argv and stage files by hand).
+    /// Builds `<outputDir>/<product>.pkg`. `run` receives each external command and its working directory, `pack`
+    /// the XAR archive to write (the test seams: real runs use `PkgBuilder.shell` and `Xar.write`; tests record the
+    /// argv, stage files by hand and read the archive's tree).
     @discardableResult
     public static func build(signedApp: URL, outputDir: URL, config: ProjectConfig,
-                             run: (_ command: [String], _ cwd: URL) throws -> Void = shell) throws -> URL {
-        try Files.atomicOutput(outputDir) { out in try buildInto(out, signedApp: signedApp, config: config, run: run) }
+                             run: (_ command: [String], _ cwd: URL) throws -> Void = shell,
+                             pack: (_ nodes: [Xar.Node], _ out: URL, _ modified: Date) throws -> Void = Xar.write) throws -> URL {
+        try Files.atomicOutput(outputDir) { out in try buildInto(out, signedApp: signedApp, config: config, run: run, pack: pack) }
     }
 
     // MARK: - Assembly
 
     static func buildInto(_ out: URL, signedApp: URL, config: ProjectConfig,
-                          run: (_ command: [String], _ cwd: URL) throws -> Void) throws -> URL {
+                          run: (_ command: [String], _ cwd: URL) throws -> Void,
+                          pack: (_ nodes: [Xar.Node], _ out: URL, _ modified: Date) throws -> Void) throws -> URL {
         let fm = FileManager.default
         let pc = try config.platform(.macos)
         let bundleID = config.bundleID(for: .macos)
@@ -65,7 +70,7 @@ public enum PkgBuilder {
         let appName = "\(pc.product).app"
 
         // The staging tree: `payload/` holds the app copy the cpio pipeline walks; `<component>/` collects the
-        // Bom, Payload and PackageInfo the xar call packs next to the Distribution.
+        // Bom, Payload and PackageInfo the archive packs next to the Distribution.
         let work = fm.temporaryDirectory.appendingPathComponent("xless-pkg-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: work) }
         try? fm.removeItem(at: work)                       // a stale work dir from a crashed run must not survive
@@ -109,9 +114,11 @@ public enum PkgBuilder {
         try Data(packageInfoXML(t).utf8).write(to: componentDir.appendingPathComponent("PackageInfo"))
 
         // The flat package: Apple's xar container, Distribution first, then the component's files in Apple's
-        // order (Bom, Payload, PackageInfo — file arguments, so the TOC order is fixed regardless of readdir).
-        try run(["xar", "-cf", pkg.path, "Distribution", "\(component)/Bom", "\(component)/Payload",
-                 "\(component)/PackageInfo"], work)
+        // order (Bom, Payload, PackageInfo). Dated with the app's mtime, so the same app packs to the same bytes.
+        let modified = (try? fm.attributesOfItem(atPath: signedApp.path)[.modificationDate]) as? Date ?? Date(timeIntervalSince1970: 0)
+        try pack([.file(name: "Distribution", source: work.appendingPathComponent("Distribution")),
+                  .directory(name: component, children: ["Bom", "Payload", "PackageInfo"].map {
+                      .file(name: $0, source: componentDir.appendingPathComponent($0)) })], pkg, modified)
         return pkg
     }
 
@@ -350,12 +357,14 @@ public enum PkgBuilder {
 
     // MARK: - The stage: fetch the certificate, assemble, sign
 
-    /// Fetches the Apple Distribution certificate, assembles the package (`build`) and signs it with the
-    /// same certificate (`rcodesign sign`, the seam the DMG path uses). The key is the Apple Distribution
-    /// PEM (`XLESS_DIST_KEY`) the sign stage already used to sign the app.
+    /// Fetches the Mac Installer Distribution certificate, assembles the package (`build`) and signs it with it
+    /// (`rcodesign sign`, the seam the DMG path uses). The key is the installer PEM (`XLESS_INSTALLER_KEY`), not the
+    /// Apple Distribution one the sign stage used for the app: App Store Connect refuses a product archive that
+    /// is not signed with a "3rd Party Mac Developer Installer" certificate (ITMS-90237).
     public static func appStore(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets,
-                                run: (_ command: [String], _ cwd: URL) throws -> Void = shell) async throws -> URL {
-        let kind = CertificateKind.distribution
+                                run: (_ command: [String], _ cwd: URL) throws -> Void = shell,
+                                pack: (_ nodes: [Xar.Node], _ out: URL, _ modified: Date) throws -> Void = Xar.write) async throws -> URL {
+        let kind = CertificateKind.installer
         let key = try SigningKey(pem: secrets.required(kind.secretName, stage: .package))
         let client = ASCClient(credentials: try ASCCredentials.fromSecrets(secrets, stage: .package))
         let cert = try await CertificateService(client: client).find(matching: key, kind: kind)
@@ -364,7 +373,7 @@ public enum PkgBuilder {
                              fix: "re-run; if it persists, check the certificate in App Store Connect")
         }
         return try Files.atomicOutput(outputDir) { out in
-            let pkg = try buildInto(out, signedApp: signedApp, config: config, run: run)
+            let pkg = try buildInto(out, signedApp: signedApp, config: config, run: run, pack: pack)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-pkg-sign-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])

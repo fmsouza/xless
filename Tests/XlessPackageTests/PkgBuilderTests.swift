@@ -71,8 +71,15 @@ private func config() throws -> ProjectConfig { try ProjectConfig.parse(yaml: ya
 
 private let component = "app.example.helloship.pkg"
 
-private func staged(_ cwd: URL, _ path: String) throws -> Data {
-    try Data(contentsOf: cwd.appendingPathComponent(path))
+/// The bytes of the member at `path` (`Distribution`, `<component>/Bom`…) of the tree the archive step was given.
+private func member(_ nodes: [Xar.Node], _ path: String) throws -> Data {
+    var level = nodes
+    for part in path.split(separator: "/").dropLast() {
+        guard case .directory(_, let children)? = level.first(where: { if case .directory(let n, _) = $0 { n == part } else { false } }) else { return Data() }
+        level = children
+    }
+    guard case .file(_, let source)? = level.first(where: { if case .file(let n, _) = $0 { n == path.split(separator: "/").last.map(String.init) } else { false } }) else { return Data() }
+    return try Data(contentsOf: source)
 }
 
 /// The app tree's Bom entries as PkgBuilder must list them: preorder, "." first, mkbom-shaped
@@ -112,22 +119,22 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
     #expect(PkgBuilder.fileName(product: "Hello Tauri") == "Hello Tauri.pkg")
 }
 
-/// The cpio pipeline and the xar invocation, with the fixture tree: the argv runs, their working
+/// The cpio pipeline and the archive step, with the fixture tree: the commands run, their working
 /// directories, and the TOC order (Distribution first, then the component's Bom, Payload, PackageInfo).
-@Test func buildRunsThePayloadPipelineThenXarInOrder() throws {
+@Test func buildRunsThePayloadPipelineThenArchivesInOrder() throws {
     let root = scratch(); defer { clean(root: root) }
     let (app, _) = try makeApp(root)
     nonisolated(unsafe) var ran: [(argv: [String], cwd: URL)] = []
-    let pkgURL = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config()) { argv, cwd in
+    nonisolated(unsafe) var archived: (nodes: [Xar.Node], out: URL, modified: Date)?
+    let pkgURL = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         ran.append((argv, cwd))
-        // Simulate the tools: the pipeline writes the Payload it was asked to write; xar writes the pkg file.
+        // Simulate the pipeline: it writes the Payload it was asked to write.
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
             .appendingPathComponent("\(component)/Payload").path, contents: Data("payload".utf8)) }
-        if argv[0] == "xar" { try Data("pkg".utf8).write(to: URL(fileURLWithPath: argv[2])) }
-    }
+    }, pack: { nodes, out, modified in archived = (nodes, out, modified) })
     #expect(pkgURL.lastPathComponent == "Hello Tauri.pkg")
     #expect(pkgURL.deletingLastPathComponent().lastPathComponent == "out")
-    #expect(ran.map { $0.argv[0] } == ["chmod", "sh", "xar"])
+    #expect(ran.map { $0.argv[0] } == ["chmod", "sh"])      // no xar: the archive is written in-process
     // The pipeline: preorder find (never the app name — the cwd holds the app), odc cpio, gzip, junk excluded.
     let pipeline = ran[1].argv
     #expect(pipeline[0] == "sh" && pipeline[1] == "-c")
@@ -135,26 +142,29 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
     #expect(pipeline[2].contains("DS_Store") && pipeline[2].contains("._*"))
     #expect(pipeline[3] == "sh" && pipeline[4].hasSuffix("\(component)/Payload"))
     #expect(ran[1].cwd.lastPathComponent == "payload")
-    // The xar call writes into the staging root, output first as the atomic output's partial path
-    // (Files.atomicOutput rebases the returned URL once the stage succeeded).
-    #expect(ran[2].argv == ["xar", "-cf", pkgURL.path.replacingOccurrences(of: "/out/", with: "/out.partial/"),
-                            "Distribution", "\(component)/Bom", "\(component)/Payload", "\(component)/PackageInfo"])
-    #expect(ran[2].cwd.path.contains("xless-pkg-"))
+    // The archive goes to the atomic output's partial path (Files.atomicOutput rebases the returned URL once the
+    // stage succeeded); the tree is Apple's: Distribution, then the component with Bom, Payload, PackageInfo; dated
+    // with the app's own mtime.
+    let (nodes, out, modified) = try #require(archived)
+    #expect(out.path == pkgURL.path.replacingOccurrences(of: "/out/", with: "/out.partial/"))
+    #expect(nodes.map { if case .file(let n, _) = $0 { n } else if case .directory(let n, _) = $0 { n } else { "" } } == ["Distribution", component])
+    guard case .directory(_, let children) = nodes[1] else { Issue.record("the component is not a directory"); return }
+    #expect(children.map { if case .file(let n, _) = $0 { n } else { "" } } == ["Bom", "Payload", "PackageInfo"])
+    #expect(modified == mtime)
 }
 
-/// The Bom xar packs must be byte-identical with `Bom.data(for:)` over the tree's entries, and
+/// The Bom the archive packs must be byte-identical with `Bom.data(for:)` over the tree's entries, and
 /// parse back to the same preorder paths.
 @Test func theBomSlotIsTheWriterOutputForTheTree() throws {
     let root = scratch(); defer { clean(root: root) }
     let (app, symlinks) = try makeApp(root)
     nonisolated(unsafe) var bom: Data?
-    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config()) { argv, cwd in
+    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         // The chmod step runs for real: the Bom must describe the staged, normalized tree.
         if argv[0] == "chmod" { try Shell.run(argv[0], Array(argv.dropFirst()), stage: .package) }
-        if argv[0] == "xar" { bom = try staged(cwd, "\(component)/Bom") }
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
             .appendingPathComponent("\(component)/Payload").path, contents: Data("payload".utf8)) }
-    }
+    }, pack: { nodes, _, _ in bom = try member(nodes, "\(component)/Bom") })
     let wanted = expectedEntries(app: app, symlinks: symlinks)
     let wantedBytes = try Bom.data(for: wanted)
     #expect(bom == wantedBytes)
@@ -170,7 +180,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
     let (app, _) = try makeApp(root)
     modes = [:]
     nonisolated(unsafe) var appCopy = ""
-    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config()) { argv, cwd in
+    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         // The chmod step runs for real, so the modes the walk/manifest see are the staged ones.
         if argv[0] == "chmod" { try Shell.run(argv[0], Array(argv.dropFirst()), stage: .package) }
         if argv[0] == "sh" {
@@ -186,8 +196,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
                 modes[copy + "/Contents/Resources/res.bin"] = try modeOf(a.appendingPathComponent("Contents/Resources/res.bin").path)
             }
         }
-        if argv[0] == "xar" { try Data("pkg".utf8).write(to: URL(fileURLWithPath: argv[2])) }
-    }
+    }, pack: { _, _, _ in })
     #expect(appCopy == "Hello Tauri.app")
     #expect(modes["Hello Tauri.app/"] == "755")
     #expect(modes["Hello Tauri.app/Contents"] == "755")
@@ -202,11 +211,10 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
     let root = scratch(); defer { clean(root: root) }
     let (app, _) = try makeApp(root)
     nonisolated(unsafe) var distribution = ""
-    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config()) { argv, cwd in
-        if argv[0] == "xar" { distribution = String(decoding: try staged(cwd, "Distribution"), as: UTF8.self) }
+    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
             .appendingPathComponent("\(component)/Payload").path, contents: Data()) }
-    }
+    }, pack: { nodes, _, _ in distribution = String(decoding: try member(nodes, "Distribution"), as: UTF8.self) })
     let id = "app.example.helloship"
     let want = """
         <?xml version="1.0" encoding="utf-8"?>
@@ -236,13 +244,10 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
     let root = scratch(); defer { clean(root: root) }
     let (app, _) = try makeApp(root)
     nonisolated(unsafe) var packageInfo = ""
-    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config()) { argv, cwd in
-        if argv[0] == "xar" {
-            packageInfo = String(decoding: try staged(cwd, "\(component)/PackageInfo"), as: UTF8.self)
-        }
+    _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
             .appendingPathComponent("\(component)/Payload").path, contents: Data()) }
-    }
+    }, pack: { nodes, _, _ in packageInfo = String(decoding: try member(nodes, "\(component)/PackageInfo"), as: UTF8.self) })
     let id = "app.example.helloship"
     let want = """
         <?xml version="1.0" encoding="utf-8"?>
@@ -286,7 +291,8 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
     }
 }
 
-/// The pkg signature: the Apple Distribution key and certificate, the way the DMG is signed; no
+/// The pkg signature: the Mac Installer Distribution key and certificate (App Store Connect refuses any other on a
+/// product archive, ITMS-90237), signed the way the DMG is; no
 /// notarization step (App Store builds are processed by ASC, not the notary service).
 @Test func signArgumentsMatchTheRcodesignSeam() {
     let pkg = URL(fileURLWithPath: "/o/Hello Tauri.pkg")
@@ -294,7 +300,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
         == ["sign", "--pem-file", "/k.pem", "--pem-file", "/c.pem", "/o/Hello Tauri.pkg"])
 }
 
-/// Runs only where the tools exist (the xless-tauri image, or this Mac): a real cpio/xar assembly
+/// Runs only where the tools exist (any image with cpio, or this Mac, which also has Apple's xar): a real assembly
 /// whose artifacts Apple's own tools parse back (xar TOC and extraction, the odc cpio listing).
 @Test(.enabled(if: onPath("xar") && onPath("cpio") && onPath("gzip")))
 func realAssemblyIsParsedByAppleTools() throws {
@@ -316,4 +322,19 @@ func realAssemblyIsParsedByAppleTools() throws {
     let lines = listing.split(separator: "\n").map(String.init)
     let wanted = expectedEntries(app: app, symlinks: symlinks).map { $0.path }   // "." is the list's head
     #expect(lines == wanted)
+}
+
+/// The key of the package stage is the installer one: `XLESS_INSTALLER_KEY`, not the Apple Distribution key the app
+/// was signed with, and its certificate is looked up as `MAC_INSTALLER_DISTRIBUTION`.
+@Test func packageStageNeedsTheInstallerKeyNotTheDistributionKey() async throws {
+    let root = scratch(); defer { clean(root: root) }
+    let (app, _) = try makeApp(root)
+    do {
+        _ = try await PkgBuilder.appStore(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(),
+                                          secrets: Secrets(env: ["XLESS_DIST_KEY": "unused"]))
+        Issue.record("expected a refusal")
+    } catch let e as XlessError {
+        #expect(e.stage == .package)
+        #expect(e.description.contains("XLESS_INSTALLER_KEY") && !e.description.contains("XLESS_DIST_KEY"))
+    }
 }

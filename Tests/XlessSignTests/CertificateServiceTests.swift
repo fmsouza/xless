@@ -86,3 +86,14 @@ func certJSON(id: String, der: [UInt8], type: String = "DISTRIBUTION") -> String
     catch let e as XlessError { #expect(!e.isAmbiguousCertificateCreation) }
     catch let e as ASCError { #expect(e.status == 409) }
 }
+
+@Test func installerKindIsTheMacInstallerDistributionCertificate() async throws {
+    #expect(CertificateKind.installer.rawValue == "installer")
+    #expect(CertificateKind.installer.secretName == "XLESS_INSTALLER_KEY")
+    #expect(CertificateKind.installer.createType == "MAC_INSTALLER_DISTRIBUTION")
+    let key = try SigningKey.generate()
+    let t = MockTransport([(200, #"{"data":[\#(certJSON(id: "I1", der: try selfSigned(key), type: "MAC_INSTALLER_DISTRIBUTION"))]}"#)])
+    let svc = CertificateService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    #expect(try await svc.find(matching: key, kind: .installer).id == "I1")
+    #expect(t.requests[0].url!.absoluteString.contains("MAC_INSTALLER_DISTRIBUTION"))
+}

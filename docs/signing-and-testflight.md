@@ -18,8 +18,9 @@ are never command-line flags and are never logged.
 | Variable | Purpose | Needed for |
 |---|---|---|
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | App Store Connect API key (Admin role) | sign, upload, macOS notarization, `sign bootstrap` |
-| `XLESS_DIST_KEY` | Apple Distribution private key (PEM) | iOS sign; the macOS App-Store lane's pkg sign |
+| `XLESS_DIST_KEY` | Apple Distribution private key (PEM) | iOS sign; the macOS App-Store lane's app sign |
 | `XLESS_DEVID_KEY` | Developer ID Application private key (PEM) | macOS sign |
+| `XLESS_INSTALLER_KEY` | Mac Installer Distribution private key (PEM) | the macOS App-Store lane's pkg sign |
 
 Values are tolerant of how CI systems mangle them: IDs are trimmed, and PEM values may have CRLF line endings or
 literal `\n` sequences.
@@ -67,6 +68,7 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   ASC_KEY_P8_FILE=$HOME/keys/AuthKey_ABC123DEFG.p8
   XLESS_DIST_KEY_FILE=$HOME/keys/dist-key.pem    # Apple Distribution private key
   XLESS_DEVID_KEY_FILE=$HOME/keys/devid-key.pem  # Developer ID private key (macOS DMG only)
+  XLESS_INSTALLER_KEY_FILE=$HOME/keys/installer-key.pem  # Mac Installer Distribution private key (macOS App-Store lane only)
   ```
 
 - **Native or images.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
@@ -130,16 +132,25 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
 - the overlay (or xless.yml) must ask for the mac distribution explicitly:
   `platforms.macos.distribution: app-store` — or `xless ship --platform macos --distribution app-store`;
 - `--to upload` reaches it: the run ships **both** channels — the Developer-ID DMG exactly as the
-  [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (signed with
-  `XLESS_DIST_KEY_FILE`, uploaded, delivered to the `testflight.groups` block). A failure in either
-  channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
+  [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (the app signed with
+  `XLESS_DIST_KEY_FILE` under a `MAC_APP_STORE` provisioning profile embedded as
+  `Contents/embedded.provisionprofile`, the pkg signed with `XLESS_INSTALLER_KEY_FILE`, uploaded, delivered to the
+  `testflight.groups` block). Only that second ship has the two keys; the DMG ship has the Developer ID key. A
+  failure in either channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
+- App Store Connect refuses a package that is not signed with a Mac Installer Distribution certificate
+  (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#3b-mac-installer-distribution-key-macos-app-store-lane-only);
 - ASC processing requires the mac app to carry **App Sandbox** (an App-Store/TestFlight
   build); a mac app that is deliberately non-sandboxed must stay on the DMG channel, or ASC rejects
   it.
 
-Without `--to upload`, `--platform macos` is byte-for-byte the DMG run it has always been. Flat pkgs
-are assembled by xless itself (there is no productbuild off macOS: payload cpio, Bom written by
-xless, `Distribution` file, XAR via the container's xar, signature by rcodesign).
+Without `--to upload`, `--platform macos` is byte-for-byte the DMG run it has always been, and neither the
+Apple Distribution nor the installer key need exist. Flat pkgs are assembled by xless itself (there is no
+productbuild off macOS: payload cpio, Bom, `Distribution` file and the XAR container all written by xless, signature
+by rcodesign); no `xar` tool is needed on the machine.
+
+The app's `CFBundleVersion` is the dated build number. On macOS that is `<version>.<YYYYMMDDHHmm>`
+([build numbers](tauri.md#macos)); Apple documents at most three period-separated integers for a Mac App Store
+build, so if App Store Connect refuses it, set a fixed `build:` of up to three integers in the overlay.
 
 ## Running `xless ship` yourself
 

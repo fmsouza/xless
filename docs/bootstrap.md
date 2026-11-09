@@ -38,13 +38,23 @@ xless sign bootstrap --type developer-id --out devid-key.pem --csr-only
 
 Then go to developer.apple.com → Certificates, IDs & Profiles → Certificates → + → Developer ID Application, upload `devid-key.pem.csr`, and finish. Store `devid-key.pem` as `XLESS_DEVID_KEY`.
 
+## 3b. Mac Installer Distribution key (macOS App-Store lane only)
+
+Only needed to send a macOS app to TestFlight ([the lane](signing-and-testflight.md#macos-app-store-lane-testflight)). App Store Connect accepts a Mac App Store package only when it is signed with a Mac Installer Distribution certificate ("3rd Party Mac Developer Installer"); the Apple Distribution key of step 2 signs the app inside it, and cannot sign the package (App Store Connect refuses it with ITMS-90237).
+
+```sh
+xless sign bootstrap --type installer --out installer-key.pem
+```
+
+Store it as `XLESS_INSTALLER_KEY`, then delete the file. If App Store Connect answers 403, create the certificate by hand as in step 3, with `--csr-only`, choosing Mac Installer Distribution at developer.apple.com.
+
 ## How `sign bootstrap` behaves
 
 App Store Connect creates a certificate from a CSR but never returns the private key, so xless generates an RSA-2048 key locally.
 
 - The key is written to `--out` (mode 0600, never overwriting an existing file) before any network call, so a write failure cannot cost you a certificate.
 - It refuses to continue if the team already has certificates of that kind, because their keys cannot be downloaded. Reuse the key you stored, or pass `--allow-new` to create another.
-- It also refuses if the team is at Apple's per-team limit (3 Distribution, 5 Developer ID). These limits are unconfirmed against Apple's documentation; revoke unused certificates at developer.apple.com if xless reports the cap.
+- It also refuses if the team is at Apple's per-team limit (3 Distribution, 3 Mac Installer Distribution, 5 Developer ID). These limits are unconfirmed against Apple's documentation; revoke unused certificates at developer.apple.com if xless reports the cap.
 - Certificate creation is never retried. If the request fails in a way that may have succeeded (anything but a definite 4xx refusal: transport error, 429, 5xx, an unreadable response, cancellation), xless keeps the key file and tells you to check developer.apple.com → Certificates before retrying with `--allow-new`. On definite failures the unused key file is removed.
 - A normal `ship` run later finds the certificate whose public key matches your stored key, registers the bundle ID if needed (as `UNIVERSAL`, so iOS and macOS share it), and finds or creates a matching provisioning profile.
 

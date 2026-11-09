@@ -9,7 +9,7 @@ public struct ShellResult: Sendable {
 public enum Shell {
     /// Secrets never handed to child processes: builds run third-party package code (SwiftPM macros and plugins,
     /// unsandboxed on Linux), and signing/notarization get their keys through 0600 temp files instead.
-    public static let scrubbedEnvironment: [String] = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8", "XLESS_DIST_KEY", "XLESS_DEVID_KEY"]
+    public static let scrubbedEnvironment: [String] = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8", "XLESS_DIST_KEY", "XLESS_DEVID_KEY", "XLESS_INSTALLER_KEY"]
         .flatMap { [$0, "\($0)_FILE"] }
     /// Runs `executable` (resolved via PATH) with `arguments`. Throws XlessError(stage) on non-zero exit.
     /// The child inherits `baseEnvironment` (default: this process's environment; tests inject one instead of mutating the process) minus `scrubbedEnvironment`, plus `env` (explicit entries win;

@@ -128,3 +128,10 @@ private let created = #"{"data":{"type":"profiles","id":"P2","attributes":{"name
     #expect(data == Data("FRESH".utf8))
     #expect(t.requests.map { $0.httpMethod ?? "" } == ["GET", "DELETE", "POST"])
 }
+
+@Test func profileTypeFollowsPlatformAndDistribution() {
+    #expect(ProfileType.for(platform: .ios, distribution: .appStore) == .iosAppStore)
+    #expect(ProfileType.for(platform: .macos, distribution: .developerID) == .macDirect)
+    #expect(ProfileType.for(platform: .macos, distribution: .appStore) == .macAppStore)
+    #expect(ProfileType.macAppStore.rawValue == "MAC_APP_STORE")
+}

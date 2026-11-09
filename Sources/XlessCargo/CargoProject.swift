@@ -13,7 +13,9 @@ public struct ResolvedCargo: Sendable {
 }
 
 public enum CargoProject {
-    public static func resolve(overlay: CargoOverlay, platform: Platform, source: URL) throws -> ResolvedCargo {
+    /// `distribution`: `--distribution` for this run (macOS: `app-store` for the TestFlight lane); the overlay has no
+    /// such key, so without it macOS stays `developer-id` and iOS `app-store`.
+    public static func resolve(overlay: CargoOverlay, platform: Platform, source: URL, distribution: Distribution? = nil) throws -> ResolvedCargo {
         guard let block = platform == .ios ? overlay.ios : overlay.macos else {
             throw XlessError(.config, "overlay \(overlay.name) has no \(platform.rawValue): block",
                              fix: "add a \(platform.rawValue): block naming the cargo package to build, or build the other platform")
@@ -27,7 +29,7 @@ public enum CargoProject {
         }
         let ios = platform == .ios
         let dated = overlay.build == "dated"
-        let config = ProjectConfig(
+        var config = ProjectConfig(
             bundleID: overlay.bundleID, teamID: overlay.teamID, version: short,
             // Placeholder; Context chooses the real value when a run starts (macOS-only builds use minute resolution).
             build: dated ? "\(short).\(ios ? "2000010101" : "200001010000")" : overlay.build,
@@ -36,6 +38,9 @@ public enum CargoProject {
             assets: block.assets, privacyManifest: ios ? overlay.privacyManifest : nil, infoPlist: block.infoPlist,
             testflight: ios ? overlay.testflight : nil, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
             buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)
+        config = try config.overridingDistribution(distribution, for: platform)
+        // The macOS App-Store lane ends in TestFlight like iOS does; a DMG has none.
+        if !ios, config.distribution(for: .macos) == .appStore { config.testflight = overlay.testflight }
         try config.validate()
         return ResolvedCargo(config: config, platform: block, fullVersion: fullVersion, plistVars: overlay.plistVars)
     }
