@@ -561,4 +561,46 @@ code=0; "${real[@]}" "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -qF "is not built on this machine" "$t/err" && grep -qF "xless setup --docker --xcode <Xcode.xip>" "$t/err" \
   || fail "missing image on a real run: exit $code $(cat "$t/err")"
 grep -qi "pull access denied" "$t/err" && fail "docker's own pull error reached the user"
+# a stopped run removes its container (fmsouza/xless#50): docker run gets --init and the run's label, and on TERM the
+# script removes the labelled containers at once, while the build would still be running
+mkdir -p "$t/kbin"
+cat > "$t/kbin/docker" <<'D'
+#!/usr/bin/env bash
+echo "$*" >> "$KLOG"
+case "$1" in
+  run) sleep 30 ;;
+  ps) echo c0ffee ;;
+esac
+exit 0
+D
+chmod +x "$t/kbin/docker"
+: > "$t/klog"
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 \
+  "$S" "$t/proj" --build-number 1 --to finalize >/dev/null 2>"$t/err" & pid=$!
+for _ in $(seq 50); do grep -q '^run ' "$t/klog" && break; sleep 0.1; done
+grep -q '^run .*--init --label xless\.run=' "$t/klog" || fail "docker run without --init and the run label: $(cat "$t/klog")"
+start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
+[[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
+label=$(sed -n 's/^run .*--label \(xless\.run=[^ ]*\).*/\1/p' "$t/klog")
+grep -qxF "ps -aq --filter label=$label" "$t/klog" && grep -qx 'rm -f c0ffee' "$t/klog" || fail "labelled container not removed: $(cat "$t/klog")"
+# natively, a stopped run stops xless too, for a plain step and for a simulator build (tee'd through a subshell): the
+# script runs xless as a job, which gets neither Ctrl-C (a job of a non-interactive bash ignores INT) nor a TERM sent to
+# the script, so cleanup must stop it. (TERM here: this test's own jobs start with INT ignored, which bash cannot trap.)
+mkdir -p "$t/nbin"
+printf '#!/bin/sh\necho $$ > "$NPID"\nexec sleep 30\n' > "$t/nbin/xless"; chmod +x "$t/nbin/xless"
+native=(env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 NPID="$t/npid")
+for args in "$t/proj --to finalize" "--config $t/rn/app.yml --destination simulator"; do
+  rm -f "$t/npid"
+  # shellcheck disable=SC2086 # two words or four, no spaces in $t
+  "${native[@]}" "$S" $args >/dev/null 2>&1 & pid=$!
+  for _ in $(seq 50); do [[ -s "$t/npid" ]] && break; sleep 0.1; done
+  [[ -s "$t/npid" ]] || fail "native ($args): xless never started"
+  start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
+  [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "native ($args) TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
+  # a zombie counts as stopped: under a PID 1 that reaps nothing (CI's job container runs tail -f /dev/null), the xless
+  # whose parent subshell cleanup also stopped stays a zombie
+  alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
+  xp=$(cat "$t/npid"); for _ in $(seq 20); do alive "$xp" || break; sleep 0.1; done
+  alive "$xp" && { kill "$xp"; fail "native ($args): xless still running after the script stopped"; }
+done
 echo PASS
