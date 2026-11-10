@@ -97,6 +97,23 @@ set -euo pipefail
 
 die() { echo "testflight: $*" >&2; exit 2; }
 
+# On exit, and when stopped (INT, TERM, HUP), remove this run's containers (labelled with $run_label; `--rm` acts only
+# once a container exits on its own) and its temporary files.
+run_label=""; tmpfiles=()
+cleanup() {
+  if [[ -n "$run_label" && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
+    local ids
+    ids="$("${docker_cli[@]}" ps -aq --filter "label=$run_label" 2>/dev/null)" || ids=""
+    # shellcheck disable=SC2086 # container IDs: hex words
+    if [[ -n "$ids" ]] && ! "${docker_cli[@]}" rm -f $ids >/dev/null; then
+      echo "testflight: could not remove this run's containers; remove them with: ${docker_cli[*]} rm -f ${ids//$'\n'/ }" >&2
+    fi
+  fi
+  rm -f ${tmpfiles[@]+"${tmpfiles[@]}"}
+}
+trap cleanup EXIT
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+
 usage="usage: $0 <project-dir> [extra xless ship args...]   or   $0 --config <overlay.yml> [--platform ios|macos] [--destination device|simulator] [--dry-run] [extra args...]"
 [[ $# -ge 1 ]] || die "$usage"
 PLATFORM=ios
@@ -330,8 +347,13 @@ shq() {   # WORD: WORD quoted for a shell when it needs it (single quotes), as t
 }
 run() {
   if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then for w in "$@"; do shq "$w"; printf ' '; done; echo; return 0; fi
-  "$@"
+  waited "$@"
 }
+# CMD...: as a job the script waits for. bash runs a trap only once the foreground command has ended, so a stopped
+# script would otherwise wait for the whole build before cleanup could remove its container.
+waited() { "$@" & wait $!; }
+# LOG CMD...: waited, with CMD's output also written to LOG; returns CMD's status.
+waited_tee() { local log="$1"; shift; { "$@" | tee "$log"; exit "${PIPESTATUS[0]}"; } & wait $!; }
 
 finish() {   # CODE: report and exit with xless's exit code
   if [[ $1 -eq 0 ]]; then echo "==> TestFlight delivery finished" >&2
@@ -354,6 +376,10 @@ if [[ $use_docker == 1 ]]; then
   docker_cli=(docker)
   [[ -z "$ctx" ]] || docker_cli+=(--context "$ctx")
   docker_run=("${docker_cli[@]}" run --rm --pull=never)   # never pull: a missing local image is need_images's message, not a Docker Hub "pull access denied"
+  # --init: an init process forwards the stop signal docker run proxies to xless (which, as PID 1, would ignore it).
+  # The label lets cleanup find this run's containers.
+  run_label="xless.run=$$.$(date +%s)"
+  docker_run+=(--init --label "$run_label")
   # Secrets by path or by name: values never appear on a command line.
   if [[ $need_asc == 1 ]]; then
     asc_secrets=(--mount "$(bind "$ASC_KEY_P8_FILE" /secrets/asc.p8 ro)" -e ASC_KEY_ID -e ASC_KEY_P8_FILE=/secrets/asc.p8)
@@ -514,7 +540,7 @@ if [[ $fi_ -le 3 ]]; then
   dest=(); [[ $SIM == 0 ]] || dest=(--destination simulator)
   if [[ $SIM == 1 ]]; then echo "==> Simulator: $from to $bto (no secrets)" >&2; else echo "==> TestFlight: step 2/3, $from to $bto (no secrets)" >&2; fi
   log2=/dev/null
-  if [[ $SIM == 1 && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then log2="$(mktemp)"; trap 'rm -f "$log2"' EXIT; fi
+  if [[ $SIM == 1 && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then log2="$(mktemp)"; tmpfiles+=("$log2"); fi
   step2() {
     if [[ $use_docker == 1 ]]; then
       run "${docker_run[@]}" "${app[@]}" "${build_caches[@]}" -e "XLESS_SOURCE_ORIGIN=$SOURCE" ${bn[@]+"${bn[@]}"} \
@@ -524,7 +550,7 @@ if [[ $fi_ -le 3 ]]; then
     fi
   }
   set +e
-  if [[ $SIM == 1 ]]; then step2 | tee "$log2"; code=${PIPESTATUS[0]}; else step2; code=$?; fi
+  if [[ $SIM == 1 ]]; then waited_tee "$log2" step2; code=$?; else step2; code=$?; fi
   set -e
   if [[ $SIM == 1 ]]; then
     [[ $code -eq 0 ]] || finish $code
@@ -562,19 +588,19 @@ if [[ $step3 == 1 ]]; then
         echo "==> TestFlight: stopped after $to (--to), nothing delivered" >&2
         exit 0
       fi
-      log="$(mktemp)"; trap 'rm -f "$log"' EXIT
+      log="$(mktemp)"; tmpfiles+=("$log")
       set +e
-      "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
-        "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} | tee "$log"
-      code=${PIPESTATUS[0]}
+      waited_tee "$log" "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
+        "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
+      code=$?
       [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code" >&2; exit "$code"; }
       dmg="$(grep '\.dmg$' "$log" | tail -1 || true)"
       [[ $use_docker == 0 ]] || dmg="${dmg/#\/cache\/work/$cache/work}"
       echo "==> DMG: $dmg" >&2
       if [[ "$(index "$to")" -ge 6 ]]; then
-        "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" ${appstore_secret[@]+"${appstore_secret[@]}"} ${bn[@]+"${bn[@]}"} \
-          "$key_image" xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} | tee "$log"
-        code=${PIPESTATUS[0]}
+        waited_tee "$log" "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" ${appstore_secret[@]+"${appstore_secret[@]}"} ${bn[@]+"${bn[@]}"} \
+          "$key_image" xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
+        code=$?
         [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
         pkg="$(grep '\.pkg$' "$log" | tail -1 || true)"
         [[ $use_docker == 0 ]] || pkg="${pkg/#\/cache\/work/$cache/work}"
@@ -586,7 +612,7 @@ if [[ $step3 == 1 ]]; then
     fi
     # native (a macOS host run): the same two channels, xless straight from the env.
     set +e
-    shiplog="$(mktemp)"; trap 'rm -f "$shiplog"' EXIT
+    shiplog="$(mktemp)"; tmpfiles+=("$shiplog")
     dmg_out="$("$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
     code=$?
     [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }

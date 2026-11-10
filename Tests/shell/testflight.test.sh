@@ -561,4 +561,26 @@ code=0; "${real[@]}" "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -qF "is not built on this machine" "$t/err" && grep -qF "xless setup --docker --xcode <Xcode.xip>" "$t/err" \
   || fail "missing image on a real run: exit $code $(cat "$t/err")"
 grep -qi "pull access denied" "$t/err" && fail "docker's own pull error reached the user"
+# a stopped run removes its container (fmsouza/xless#50): docker run gets --init and the run's label, and on TERM the
+# script removes the labelled containers at once, while the build would still be running
+mkdir -p "$t/kbin"
+cat > "$t/kbin/docker" <<'D'
+#!/usr/bin/env bash
+echo "$*" >> "$KLOG"
+case "$1" in
+  run) sleep 30 ;;
+  ps) echo c0ffee ;;
+esac
+exit 0
+D
+chmod +x "$t/kbin/docker"
+: > "$t/klog"
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 \
+  "$S" "$t/proj" --build-number 1 --to finalize >/dev/null 2>"$t/err" & pid=$!
+for _ in $(seq 50); do grep -q '^run ' "$t/klog" && break; sleep 0.1; done
+grep -q '^run .*--init --label xless\.run=' "$t/klog" || fail "docker run without --init and the run label: $(cat "$t/klog")"
+start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
+[[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
+label=$(sed -n 's/^run .*--label \(xless\.run=[^ ]*\).*/\1/p' "$t/klog")
+grep -qxF "ps -aq --filter label=$label" "$t/klog" && grep -qx 'rm -f c0ffee' "$t/klog" || fail "labelled container not removed: $(cat "$t/klog")"
 echo PASS
