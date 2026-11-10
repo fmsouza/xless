@@ -19,6 +19,9 @@ public struct StagePaths: Sendable {
     public var final: URL { root.appendingPathComponent("final", isDirectory: true) }
     public var signed: URL { root.appendingPathComponent("signed", isDirectory: true) }
     public var out: URL { root.appendingPathComponent("out", isDirectory: true) }
+    /// The build's debug symbols (React Native device builds): every `.dSYM` Swift Build wrote, at its path under the
+    /// products directory.
+    public var dSYMs: URL { root.appendingPathComponent("dSYMs", isDirectory: true) }
     public var uploadRecord: URL { root.appendingPathComponent("upload.json") }
 
     /// The single `.app` inside a stage directory.

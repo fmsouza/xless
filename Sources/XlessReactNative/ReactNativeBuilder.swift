@@ -321,7 +321,7 @@ public enum ReactNativeBuilder {
 
     /// The workspace's Swift packages, the case aliases, the PIF and build request (bundle IDs, versions, team, Linux
     /// overrides), Swift Build, then the `.app` into `ctx.paths.app` with every bundle's version stamped, and
-    /// `entitlements.json` and `packages.json` next to it. Returns the `.app`.
+    /// `entitlements.json`, `packages.json` and (device builds) the `dSYMs` next to it. Returns the `.app`.
     public static func build(ctx: ReactNativeBuildContext) async throws -> URL {
         try await withStage(.build) { try restage(.build) { try buildApp(ctx) } }
     }
@@ -415,6 +415,10 @@ public enum ReactNativeBuilder {
         }
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try enc.encode(["packages": records]).write(to: ctx.packagesFile, options: .atomic)
+        if !simulator {
+            let dSYMs = try BuiltApp.copyDSYMs(from: products, to: ctx.paths.dSYMs)
+            log("dSYMs: \(dSYMs.isEmpty ? "none (DEBUG_INFORMATION_FORMAT is not dwarf-with-dsym)" : dSYMs.joined(separator: ", "))")
+        }
         return result
     }
 

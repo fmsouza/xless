@@ -6,9 +6,15 @@ public enum Packager {
     /// Entries that must never ship in a bundle archive (Finder / AppleDouble litter from macOS hosts).
     static let junkExclusions = ["*.DS_Store", "*/._*", "._*"]
 
-    public static func ipa(signedApp: URL, outputDir: URL) throws -> URL {
+    /// The `.ipa`, and `<name>.app.dSYM.zip` of `dSYMs` (the build's debug symbols) when it has any, as
+    /// fastlane's `gym` names it.
+    public static func ipa(signedApp: URL, outputDir: URL, dSYMs: URL? = nil) throws -> URL {
         let name = signedApp.deletingPathExtension().lastPathComponent
         return try Files.atomicOutput(outputDir) { out in
+            if let dSYMs, let entries = try? FileManager.default.contentsOfDirectory(atPath: dSYMs.path), !entries.isEmpty {
+                let zip = out.appendingPathComponent("\(name).app.dSYM.zip")
+                try Shell.run("zip", ["-qry", zip.path] + entries.sorted() + ["-x"] + junkExclusions, cwd: dSYMs, stage: .package)
+            }
             let staging = out.appendingPathComponent(".staging")
             let payload = staging.appendingPathComponent("Payload")
             try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)

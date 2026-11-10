@@ -63,6 +63,34 @@ public enum BuiltApp {
         return changed
     }
 
+    /// Copies every `.dSYM` under `products` into `dir`, at the same relative path (a vendored framework's sits under
+    /// `XCFrameworkIntermediates/<pod>/`), as `xcodebuild archive` gathers them into `dSYMs/`. Replaces `dir`; with no dSYM
+    /// it is removed. Returns the relative paths copied, sorted.
+    @discardableResult
+    public static func copyDSYMs(from products: URL, to dir: URL) throws -> [String] {
+        let fm = FileManager.default
+        var found: [String] = []
+        let base = products.standardizedFileURL.path
+        if let walk = fm.enumerator(at: products, includingPropertiesForKeys: [.isDirectoryKey]) {
+            for case let url as URL in walk where url.pathExtension == "dSYM" {
+                walk.skipDescendants()
+                guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+                found.append(String(url.standardizedFileURL.path.dropFirst(base.count + 1)))
+            }
+        }
+        try? fm.removeItem(at: dir)
+        guard !found.isEmpty else { return [] }
+        _ = try Files.atomicOutput(dir) { out in
+            for rel in found {
+                let dest = out.appendingPathComponent(rel)
+                try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: products.appendingPathComponent(rel), to: dest)
+            }
+            return out
+        }
+        return found.sorted()
+    }
+
     /// One `entitlements.json` entry.
     public struct Entitlements: Equatable, Sendable {
         public var target: String

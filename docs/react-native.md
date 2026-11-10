@@ -41,6 +41,7 @@ while. The app stays in a Docker volume; [Getting the build out](#shipping-three
 - **App extensions.** The app target and every extension it embeds (`PlugIns/*.appex`, `Extensions/*.appex`) get their bundle IDs from the overlay. Each one is signed with its own provisioning profile and its own entitlements ([signing](#signing-app-extensions)). Watch apps and App Clips are refused at `build`: their target types are not supported.
 - **Then the usual stages:** assets (a copy-through: Swift Build already compiled the asset catalogs), finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
 - **Simulator builds.** `--destination simulator` builds an ad-hoc signed arm64 app for the iOS Simulator, without secrets, so a build can be launched on a Mac before it is uploaded ([below](#simulator-builds)).
+- **dSYMs.** A device build keeps the debug symbols Swift Build generates (`DEBUG_INFORMATION_FORMAT = dwarf-with-dsym`, Expo's Release default) and `package` zips them next to the `.ipa` ([below](#dsyms)).
 - **Not supported.** Debug builds, x86_64 app binaries (device or simulator; the host may be arm64 or amd64, see [Requirements](#requirements)), Android, dSYM upload, external TestFlight groups, App Store submission.
 
 ## Requirements
@@ -116,11 +117,11 @@ Before the first `prepare` it says what is still unknown.
 | Stage | What happens for `type: react-native` |
 |---|---|
 | prepare (19) | First refuses an image whose SDK is not the pinned Xcode's, or whose Swift does not match that Xcode's Swift (`[prepare] the overlay pins xcode: …`, [below](#pinning-the-xcode-sdk)), before anything else runs. Checks the contract; syncs the work copy; installs the JS dependencies; runs `prepare.run`; runs `expo prebuild` (CNG) and `bundle install` + `bundle exec pod install`; checks `Pods/Manifest.lock` equals `Podfile.lock`; runs the pods' configuration-switch phases (Expo's precompiled modules, React Native core, its dependencies, Hermes) for the overlay's configuration, so the build never replaces prebuilt frameworks while it runs. Refuses to run outside the `xless-rn` image. |
-| build (12) | Checks the image's SDK against `xcode:` again and records it in `.xless/build/ios/sdk.json` ([below](#pinning-the-xcode-sdk)). Finds the scheme's app target and its extensions and checks `bundleIDs`; clones the Swift packages at their pinned revisions; writes the PIF with the bundle IDs and versions as per-target settings; runs Swift Build. Copies the `.app`, stamps every bundle's version and build number, and writes `entitlements.json` and `packages.json` next to it in `.xless/build/ios/`. |
+| build (12) | Checks the image's SDK against `xcode:` again and records it in `.xless/build/ios/sdk.json` ([below](#pinning-the-xcode-sdk)). Finds the scheme's app target and its extensions and checks `bundleIDs`; clones the Swift packages at their pinned revisions; writes the PIF with the bundle IDs and versions as per-target settings; runs Swift Build. Copies the `.app`, stamps every bundle's version and build number, and writes `entitlements.json` and `packages.json` next to it in `.xless/build/ios/`, and every `.dSYM` Swift Build wrote in `.xless/build/ios/dSYMs/` ([dSYMs](#dsyms)). |
 | assets (13) | Copy-through. |
 | finalize (14) | Replaces `identifiers.replace` in the app's and its extensions' Info.plists (and records the map for `sign`), then Xcode metadata as for every app, stamped from the SDK the build recorded. |
 | sign (15) | Every bundle with its own profile and entitlements ([below](#signing-app-extensions)). |
-| package, upload (16, 17) | As for every app. |
+| package, upload (16, 17) | As for every app; `package` also zips the dSYMs into `out/<Product>.app.dSYM.zip`. |
 
 Without the script each stage is a command: `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios`. `build` runs `prepare` first, and so does `xless ship`, which takes `--from`/`--to`. `xless next-build --config <overlay>` prints the build number the next run would use (read-only).
 
@@ -171,6 +172,10 @@ The script reads `type:` and `source:` from plain top-level `key: value` lines (
 **Getting the build out.** The `.ipa` stays in the volume, at `/cache/work/<overlay name>/.xless/build/ios/out/`. Copy it out with `docker run --rm -v <work volume>:/w -v "$PWD":/out alpine cp /w/<overlay name>/.xless/build/ios/out/<Product>.ipa /out/` (with `--context` as the script chose it: `DOCKER_CONTEXT`, else `colima-xless` when it exists). A build stopped at `finalize` is in `/w/<overlay name>/.xless/build/ios/final/` instead; copy it with `cp -r`.
 
 **Native.** `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the three steps without docker. Step 2 needs everything the `xless-rn` image adds (Ruby, Bundler, Swift Build, `hermesc`, the shims in `docker/shims/rn`, `/bin/sh` as bash). Native React Native builds are untested.
+
+## dSYMs
+
+Swift Build runs `dsymutil` for every target whose `DEBUG_INFORMATION_FORMAT` is `dwarf-with-dsym`, as Xcode does. After a device build, `build` copies every `.dSYM` under the products directory (`.xless/derived-data/Products/<configuration>-iphoneos/`) to `.xless/build/ios/dSYMs/`, at the same relative path: the app's and each extension's at the top, those of the frameworks a pod vendors (Expo's precompiled modules) under `XCFrameworkIntermediates/<pod>/`. That is what `xcodebuild archive` collects into an archive's `dSYMs/`. `package` zips them into `out/<Product>.app.dSYM.zip`, the name fastlane's `gym` gives it, ready for a crash reporter's upload tool (Crashlytics' `upload-symbols`, `sentry-cli debug-files upload`). xless uploads nothing. Signing, `finalize` and `strip` do not change a Mach-O's `LC_UUID`, so the dSYMs match the shipped binaries. A simulator build keeps none.
 
 ## Simulator builds
 

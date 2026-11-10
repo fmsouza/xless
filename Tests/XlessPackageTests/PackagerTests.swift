@@ -67,3 +67,23 @@ private func ipaWithVersions(_ version: String, _ build: String) throws -> URL {
     let mangled = pem.replacingOccurrences(of: "\n", with: "\\n") + "\r\n"
     #expect(try Packager.p8Contents(Secrets(env: ["ASC_KEY_P8": mangled])) == Data((pem + "\n").utf8))
 }
+
+@Test func ipaZipsTheBuildsDSYMsNextToIt() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    let dSYMs = root.appendingPathComponent("dSYMs")
+    for rel in ["X.app.dSYM/Contents/Resources/DWARF/X", "Pod/Pod.framework.dSYM/Contents/Resources/DWARF/Pod"] {
+        let f = dSYMs.appendingPathComponent(rel)
+        try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("dwarf".utf8).write(to: f)
+    }
+    let out = root.appendingPathComponent("out")
+    _ = try Packager.ipa(signedApp: app, outputDir: out, dSYMs: dSYMs)
+    let listing = try Shell.run("unzip", ["-Z1", out.appendingPathComponent("X.app.dSYM.zip").path], stage: .package).stdout
+    #expect(listing.contains("X.app.dSYM/Contents/Resources/DWARF/X\n") && listing.contains("Pod/Pod.framework.dSYM/Contents/Resources/DWARF/Pod\n"))
+
+    try FileManager.default.removeItem(at: dSYMs)
+    _ = try Packager.ipa(signedApp: app, outputDir: out, dSYMs: dSYMs)
+    #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("X.app.dSYM.zip").path))
+}
