@@ -583,4 +583,21 @@ start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
 [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
 label=$(sed -n 's/^run .*--label \(xless\.run=[^ ]*\).*/\1/p' "$t/klog")
 grep -qxF "ps -aq --filter label=$label" "$t/klog" && grep -qx 'rm -f c0ffee' "$t/klog" || fail "labelled container not removed: $(cat "$t/klog")"
+# natively, a stopped run stops xless too, for a plain step and for a simulator build (tee'd through a subshell): the
+# script runs xless as a job, which gets neither Ctrl-C (a job of a non-interactive bash ignores INT) nor a TERM sent to
+# the script, so cleanup must stop it. (TERM here: this test's own jobs start with INT ignored, which bash cannot trap.)
+mkdir -p "$t/nbin"
+printf '#!/bin/sh\necho $$ > "$NPID"\nexec sleep 30\n' > "$t/nbin/xless"; chmod +x "$t/nbin/xless"
+native=(env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 NPID="$t/npid")
+for args in "$t/proj --to finalize" "--config $t/rn/app.yml --destination simulator"; do
+  rm -f "$t/npid"
+  # shellcheck disable=SC2086 # two words or four, no spaces in $t
+  "${native[@]}" "$S" $args >/dev/null 2>&1 & pid=$!
+  for _ in $(seq 50); do [[ -s "$t/npid" ]] && break; sleep 0.1; done
+  [[ -s "$t/npid" ]] || fail "native ($args): xless never started"
+  start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
+  [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "native ($args) TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
+  xp=$(cat "$t/npid"); for _ in $(seq 20); do kill -0 "$xp" 2>/dev/null || break; sleep 0.1; done
+  kill -0 "$xp" 2>/dev/null && { kill "$xp"; fail "native ($args): xless still running after the script stopped"; }
+done
 echo PASS

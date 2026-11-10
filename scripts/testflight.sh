@@ -99,8 +99,16 @@ die() { echo "testflight: $*" >&2; exit 2; }
 
 # On exit, and when stopped (INT, TERM, HUP), remove this run's containers (labelled with $run_label; `--rm` acts only
 # once a container exits on its own) and its temporary files.
-run_label=""; tmpfiles=()
+run_label=""; tmpfiles=(); job=""
+# PID: TERM PID and every process under it, deepest first. A job of a non-interactive bash ignores INT (and xless sets
+# no handler), so Ctrl-C alone would leave a native build running after the script exits.
+stop_tree() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do stop_tree "$c"; done
+  kill -TERM "$1" 2>/dev/null || true
+}
 cleanup() {
+  [[ -z "$job" ]] || stop_tree "$job"
   if [[ -n "$run_label" && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
     local ids
     ids="$("${docker_cli[@]}" ps -aq --filter "label=$run_label" 2>/dev/null)" || ids=""
@@ -351,9 +359,13 @@ run() {
 }
 # CMD...: as a job the script waits for. bash runs a trap only once the foreground command has ended, so a stopped
 # script would otherwise wait for the whole build before cleanup could remove its container.
-waited() { "$@" & wait $!; }
+# The job's PID is in $job while it runs, for cleanup to stop it.
+waited() { local rc=0; "$@" & job=$!; wait "$job" || rc=$?; job=""; return "$rc"; }
 # LOG CMD...: waited, with CMD's output also written to LOG; returns CMD's status.
-waited_tee() { local log="$1"; shift; { "$@" | tee "$log"; exit "${PIPESTATUS[0]}"; } & wait $!; }
+waited_tee() {
+  local log="$1" rc=0; shift
+  { "$@" | tee "$log"; exit "${PIPESTATUS[0]}"; } & job=$!; wait "$job" || rc=$?; job=""; return "$rc"
+}
 
 finish() {   # CODE: report and exit with xless's exit code
   if [[ $1 -eq 0 ]]; then echo "==> TestFlight delivery finished" >&2
