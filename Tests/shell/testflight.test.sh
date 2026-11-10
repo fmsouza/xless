@@ -597,7 +597,10 @@ for args in "$t/proj --to finalize" "--config $t/rn/app.yml --destination simula
   [[ -s "$t/npid" ]] || fail "native ($args): xless never started"
   start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
   [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "native ($args) TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
-  xp=$(cat "$t/npid"); for _ in $(seq 20); do kill -0 "$xp" 2>/dev/null || break; sleep 0.1; done
-  kill -0 "$xp" 2>/dev/null && { kill "$xp"; fail "native ($args): xless still running after the script stopped"; }
+  # a zombie counts as stopped: under a PID 1 that reaps nothing (CI's job container runs tail -f /dev/null), the xless
+  # whose parent subshell cleanup also stopped stays a zombie
+  alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
+  xp=$(cat "$t/npid"); for _ in $(seq 20); do alive "$xp" || break; sleep 0.1; done
+  alive "$xp" && { kill "$xp"; fail "native ($args): xless still running after the script stopped"; }
 done
 echo PASS
