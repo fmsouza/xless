@@ -113,7 +113,7 @@ enum StageRunner {
             try ctx.requireDevice(.package)
             let input = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
             switch ctx.platform {
-            case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out)
+            case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out, dSYMs: ctx.paths.dSYMs)
             // App Store mac (TestFlight's flat package, explicit via the distribution): the pkg.
             // Takes priority over the overlay branches: an appStore run never produces a DMG.
             case .macos where ctx.config.distribution(for: .macos) == .appStore:

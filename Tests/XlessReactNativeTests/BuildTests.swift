@@ -715,3 +715,24 @@ private let ents = ["HelloRN": BuiltApp.Entitlements(target: "HelloRN", bundleID
     try fm.removeItem(at: app.appendingPathComponent("PlugIns"))
     #expect(throws: XlessError.self) { try ReactNativeBuilder.finish(app, appTarget: "HelloRN", ids: ids, entitlements: ents, ctx: ctx3) }
 }
+
+@Test func dSYMsAreCopiedAtTheirPathsUnderProducts() throws {
+    let root = try tmp("dsym"); defer { try? fm.removeItem(at: root) }
+    let products = root.appendingPathComponent("Products/Release-iphoneos")
+    for rel in ["HelloRN.app.dSYM/Contents/Resources/DWARF/HelloRN", "HelloExtension.appex.dSYM/Contents/Resources/DWARF/HelloExtension",
+                "Pod/Pod.framework.dSYM/Contents/Info.plist", "HelloRN.app/HelloRN", "Pod/Pod.framework/Pod"] {
+        try write(products.appendingPathComponent(rel), "x")
+    }
+    let out = root.appendingPathComponent("build/dSYMs")
+    try write(out.appendingPathComponent("Stale.app.dSYM/x"), "old")
+    let copied = try BuiltApp.copyDSYMs(from: products, to: out)
+    #expect(copied == ["HelloExtension.appex.dSYM", "HelloRN.app.dSYM", "Pod/Pod.framework.dSYM"])
+    #expect(fm.fileExists(atPath: out.appendingPathComponent("HelloRN.app.dSYM/Contents/Resources/DWARF/HelloRN").path))
+    #expect(fm.fileExists(atPath: out.appendingPathComponent("Pod/Pod.framework.dSYM/Contents/Info.plist").path))
+    #expect(!fm.fileExists(atPath: out.appendingPathComponent("Stale.app.dSYM").path))
+
+    try fm.removeItem(at: products)
+    try fm.createDirectory(at: products, withIntermediateDirectories: true)
+    #expect(try BuiltApp.copyDSYMs(from: products, to: out).isEmpty)
+    #expect(!fm.fileExists(atPath: out.path))
+}
