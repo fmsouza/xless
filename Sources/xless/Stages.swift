@@ -118,11 +118,10 @@ enum StageRunner {
             // Takes priority over the overlay branches: an appStore run never produces a DMG.
             case .macos where ctx.config.distribution(for: .macos) == .appStore:
                 return try await PkgBuilder.appStore(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets)
-            // Tauri and cargo overlays: a signed, notarized, stapled DMG, named after the architectures built (Tauri's are
-            // always both; a cargo overlay's are `macos.architectures`); xless.yml: a notarized zip of the signed app.
+            // Tauri and cargo overlays: a signed, notarized, stapled DMG, named after the architectures of the app's
+            // executable (a cargo overlay's `macos.architectures`); xless.yml: a notarized zip of the signed app.
             case .macos where ctx.tauriMac != nil || ctx.isCargo:
-                return try await DmgBuilder.notarizedDMG(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets,
-                                                         architectures: ctx.cargoResolved?.platform.architectures ?? MacArchitecture.allCases)
+                return try await DmgBuilder.notarizedDMG(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets)
             case .macos: return try Packager.notarizedZip(signedApp: input, outputDir: ctx.paths.out, secrets: ctx.secrets)
             }
         }

@@ -1,6 +1,7 @@
 import Foundation
 import XlessASC
 import XlessCore
+import XlessMachO
 import XlessSign
 
 /// Builds, signs, notarizes and staples a macOS DMG on Linux, without hdiutil: an HFS+ volume (mkfs.hfsplus + libdmg-hfsplus's
@@ -17,6 +18,22 @@ public enum DmgBuilder {
         default: "universal"
         }
         return "\(product)_\(version)_\(arch).dmg"
+    }
+
+    /// The architectures of the app's main executable (`Contents/MacOS/<CFBundleExecutable>`): what the app was built for,
+    /// whatever the overlay says now (`--from package` reuses a signed app).
+    public static func architectures(ofApp app: URL) throws -> [MacArchitecture] {
+        let info = try Plist.read(app.appendingPathComponent("Contents/Info.plist"), stage: .package)
+        let name = info["CFBundleExecutable"] as? String ?? app.deletingPathExtension().lastPathComponent
+        let exe = app.appendingPathComponent("Contents/MacOS").appendingPathComponent(name)
+        let names = (try? Data(contentsOf: exe)).flatMap { try? MachO.sliceArchitectures(in: $0).map(\.name) } ?? []
+        let found = names.compactMap(MacArchitecture.init(rawValue:))
+        guard !found.isEmpty, found.count == names.count else {
+            let listed = names.isEmpty ? "" : " (\(names.joined(separator: ", ")))"
+            throw XlessError(.package, "cannot read the architectures of \(app.lastPathComponent)'s executable \(name)\(listed)",
+                             fix: "re-run from build: the executable must be an arm64 and/or x86_64 Mach-O")
+        }
+        return MacArchitecture.allCases.filter(found.contains)
     }
 
     /// What `build` runs after the stage is ready (modes normalised): zeroed image, filesystem, contents, `/Applications` link, DMG.
@@ -54,8 +71,8 @@ public enum DmgBuilder {
 
     /// Copies the signed app into a container-local stage (modes normalised the way create-dmg ends up: directories and
     /// executables 755, other files 644, because `addall` copies each `st_mode` as is), then builds `<outputDir>/<name>.dmg`.
+    /// `architectures` name the DMG (`fileName`).
     @discardableResult
-    /// `architectures`: those of the app's executable; they name the DMG (`fileName`).
     public static func build(signedApp: URL, volumeName: String, version: String, architectures: [MacArchitecture] = MacArchitecture.allCases,
                              outputDir: URL, run: ([String]) throws -> Void = DmgBuilder.shell) throws -> URL {
         try Files.atomicOutput(outputDir) { out in
@@ -87,11 +104,11 @@ public enum DmgBuilder {
     }
 
     /// Builds the DMG, signs it with the Developer ID key (a DMG is signed after imaging; the app was signed before), submits
-    /// it to the notary service, waits, staples the ticket in place and checks that the ticket is there. `architectures`: those
-    /// of the app's executable (`build`).
-    public static func notarizedDMG(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets,
-                                    architectures: [MacArchitecture] = MacArchitecture.allCases) async throws -> URL {
+    /// it to the notary service, waits, staples the ticket in place and checks that the ticket is there. The DMG is named
+    /// after the architectures of the app's executable (`architectures(ofApp:)`).
+    public static func notarizedDMG(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets) async throws -> URL {
         let product = try config.platform(.macos).product
+        let built = try architectures(ofApp: signedApp)
         let kind = CertificateKind.developerID
         let key = try SigningKey(pem: secrets.required(kind.secretName, stage: .package))
         let client = ASCClient(credentials: try ASCCredentials.fromSecrets(secrets, stage: .package))
@@ -100,7 +117,7 @@ public enum DmgBuilder {
             throw XlessError(.package, "certificate \(cert.id) has no content", fix: "re-run; if it persists, check the certificate in App Store Connect")
         }
         return try Files.atomicOutput(outputDir) { out in
-            let dmg = try buildInto(out, signedApp: signedApp, volumeName: product, version: config.version, architectures: architectures,
+            let dmg = try buildInto(out, signedApp: signedApp, volumeName: product, version: config.version, architectures: built,
                                     run: DmgBuilder.shell)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-notary-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

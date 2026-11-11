@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import XlessPackage
 @testable import XlessCore
+import XlessMachO
 
 private func onPath(_ tool: String) -> Bool {
     (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").contains {
@@ -48,6 +49,34 @@ private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> URL {
     let dmg = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64],
                                    outputDir: root.appendingPathComponent("out")) { _ in }
     #expect(dmg.lastPathComponent == "Hello_1.0.0_aarch64.dmg")
+}
+
+/// A thin 64-bit Mach-O header (no load commands) for `cpu`.
+private func thin(_ cpu: UInt32) -> Data {
+    var d = Data()
+    for v: UInt32 in [0xfeedfacf, cpu, 0, 2, 0, 0, 0, 0] { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+    return d
+}
+
+/// `Hello.app` whose `CFBundleExecutable` is `executable`.
+private func macApp(_ root: URL, executable: Data) throws -> URL {
+    let app = root.appendingPathComponent("Hello.app")
+    try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try Plist.write(["CFBundleExecutable": "Hello"], to: app.appendingPathComponent("Contents/Info.plist"), format: .xml, stage: .package)
+    try executable.write(to: app.appendingPathComponent("Contents/MacOS/Hello"))
+    return app
+}
+
+/// The notarized DMG is named after what the signed app holds, not after the overlay as it reads now (`--from package`).
+@Test func architecturesAreReadFromTheAppsExecutable() throws {
+    let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let arm64: UInt32 = 0x0100000c, x86_64: UInt32 = 0x01000007
+    #expect(try DmgBuilder.architectures(ofApp: macApp(root.appendingPathComponent("a"), executable: thin(arm64))) == [.arm64])
+    #expect(try DmgBuilder.architectures(ofApp: macApp(root.appendingPathComponent("x"), executable: thin(x86_64))) == [.x86_64])
+    let fat = try MachO.makeFat([thin(x86_64), thin(arm64)])
+    #expect(try DmgBuilder.architectures(ofApp: macApp(root.appendingPathComponent("u"), executable: fat)) == [.arm64, .x86_64])
+    do { _ = try DmgBuilder.architectures(ofApp: macApp(root.appendingPathComponent("n"), executable: Data("bin".utf8))); Issue.record("accepted") }
+    catch let e as XlessError { #expect(e.stage == .package && e.cause.contains("Hello")) }
 }
 
 @Test func commandsAreArgvWithoutAShell() {

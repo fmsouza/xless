@@ -208,7 +208,7 @@ macos:
 ```
 
 - **One architecture** builds that target only, with no universal merge: the app's executable is a thin Mach-O, and `prepare` installs only that target with `rustup`. With `[arm64]` the app **does not run on Intel Macs**; with `[x86_64]` it runs on Apple Silicon only through Rosetta.
-- **The DMG's name follows the choice**, with Tauri's names: `<product>_<version>_universal.dmg` for both, `<product>_<version>_aarch64.dmg` for `[arm64]` and `<product>_<version>_x64.dmg` for `[x86_64]`.
+- **The DMG's name follows the choice**, with Tauri's names: `<product>_<version>_universal.dmg` for both, `<product>_<version>_aarch64.dmg` for `[arm64]` and `<product>_<version>_x64.dmg` for `[x86_64]`. The `package` stage reads it from the signed app's executable, so a `--from package` run is named after what was built, even if the overlay changed since.
 - **So does the minimum macOS version.** `minimumOS` is still `LSMinimumSystemVersion` and the deployment target, but no macOS before 11.0 runs on Apple Silicon, so `[arm64]` with a `minimumOS` below `"11.0"` is refused rather than stamped with a version no Mac running it can have.
 - Each value may appear once, in any order (`[x86_64, arm64]` is the default); an empty list or another name (`aarch64`, `x64`) is a `[config]` error.
 
