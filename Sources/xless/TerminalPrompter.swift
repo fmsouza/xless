@@ -100,15 +100,3 @@ private enum EchoGuard {
         fd = -1
     }
 }
-
-/// Keeps the sign-in's secrets out of core dumps (`ulimit -c 0` for this process).
-enum CoreDumps {
-    static func disable() {
-        var none = rlimit(rlim_cur: 0, rlim_max: 0)
-        #if canImport(Glibc)
-        _ = setrlimit(__rlimit_resource_t(RLIMIT_CORE.rawValue), &none)
-        #else
-        _ = setrlimit(RLIMIT_CORE, &none)
-        #endif
-    }
-}
