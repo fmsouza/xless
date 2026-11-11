@@ -87,7 +87,7 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
             do {
                 let result = try await DeveloperDownloads.download(r.file, into: dir, client: client, progress: meter.update)
                 meter.finish(skipped: result.skipped)
-                let sum = try XcodeSource.sha256(of: result.url)
+                let sum = try XipDigest.sha256(of: result.url) { try XcodeSource.sha256(of: $0) }
                 print("\(result.url.path)\t\(DownloadReport.identity(sha256: sum, known: known))")
                 done.append(result.url)
             } catch {
