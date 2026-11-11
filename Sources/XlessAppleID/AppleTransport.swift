@@ -41,7 +41,7 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
         config.urlCache = nil
         config.urlCredentialStorage = nil
         config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForRequest = 300 // the wait for more data, not the whole transfer
         config.timeoutIntervalForResource = 24 * 60 * 60
         let queue = OperationQueue()
         queue.maxConcurrentOperationCount = 1
@@ -95,6 +95,7 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
             } catch {
                 p.writeError = error
                 completionHandler(.cancel)
+                dataTask.cancel() // swift-corelibs-foundation ignores the .cancel disposition
                 return
             }
         }
@@ -102,9 +103,18 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
     }
 
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard let p = state(dataTask) else { return }
+        guard let p = state(dataTask), p.writeError == nil else { return }
         if let h = p.handle {
-            h.write(data)
+            do {
+                try h.write(contentsOf: data)
+            } catch {
+                // A full disk or an I/O error: stop the transfer and report it (the old write(_:) API traps instead).
+                p.writeError = error
+                try? h.close()
+                p.handle = nil
+                dataTask.cancel()
+                return
+            }
             p.progress?(Int64(data.count))
         } else if p.file == nil || p.body.count < 64 << 10 {
             p.body.append(data)
