@@ -85,7 +85,7 @@ sim-launch:
 
 .PHONY: dmg
 # make dmg CONFIG=<overlay.yml>: build, sign (Developer ID), notarize and staple a Tauri or cargo macOS app's DMG, universal
-# (scripts/testflight.sh --platform macos; docs/tauri.md#macos). Like testflight, a cargo overlay needs `xless` on PATH.
+# unless a cargo overlay's macos.architectures picks one (scripts/testflight.sh --platform macos; docs/tauri.md#macos). Like testflight, a cargo overlay needs `xless` on PATH.
 dmg:
 	@test -n "$(CONFIG)" || { echo "usage: make dmg CONFIG=<overlay.yml>" >&2; exit 2; }
 	scripts/testflight.sh --config "$(CONFIG)" --platform macos

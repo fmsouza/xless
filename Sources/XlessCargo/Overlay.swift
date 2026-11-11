@@ -24,6 +24,9 @@ public struct CargoPlatform: Sendable, Equatable {
     /// In the source root only (the sign stage reads it from the work copy).
     public var entitlements: String?
     public var resources: [CargoResource]
+    /// macOS only, in canonical order (`MacArchitecture.allCases`; default: both, merged into a universal executable).
+    /// Empty on iOS, which builds arm64 alone.
+    public var architectures: [MacArchitecture]
 }
 
 /// A copy into the bundle: `Contents/Resources/<to>` on macOS, `<to>` at the bundle root on iOS.
@@ -107,6 +110,7 @@ private struct RawPlatform: Decodable {
     var icon: String?
     var entitlements: String?
     var resources: [RawResource]?
+    var architectures: [String]?
 }
 
 private struct RawInput: Decodable {
@@ -141,7 +145,7 @@ extension CargoOverlay {
     static let keys: Set<String> = ["type", "source", "bundleID", "teamID", "version", "build", "usesNonExemptEncryption", "privacyManifest",
                                     "testflight", "xcode", "rust", "env", "inputs", "plistVars", "ios", "macos"]
     static let platformKeys: Set<String> = ["package", "bin", "features", "product", "minimumOS", "bundleID", "infoPlist", "assets", "icon",
-                                            "entitlements", "resources"]
+                                            "entitlements", "resources", "architectures"]
     static let inputKeys: Set<String> = ["name", "path", "git", "rev", "env"]
     static let resourceKeys: Set<String> = ["from", "to"]
 
@@ -313,8 +317,34 @@ extension CargoOverlay {
                 if r.assets == nil {
                     throw invalid("ios.assets is missing", "point ios.assets at the app's .xcassets catalog (the App Store needs an icon)")
                 }
+                if r.architectures != nil {
+                    throw invalid("ios.architectures is not supported", "remove it: iOS builds are arm64 only")
+                }
             } else if r.icon != nil && r.assets != nil {
                 throw invalid("macos sets both icon and assets", "use one: icon for a ready .icns, assets for an asset catalog")
+            }
+            var architectures: [MacArchitecture] = []
+            if which == "macos" {
+                let names = MacArchitecture.allCases.map(\.rawValue).joined(separator: ", ")
+                let listed = r.architectures ?? MacArchitecture.allCases.map(\.rawValue)
+                if listed.isEmpty {
+                    throw invalid("macos.architectures is empty", "list at least one of \(names), or remove it to build both")
+                }
+                var seen = Set<MacArchitecture>()
+                for value in listed {
+                    guard let arch = MacArchitecture(rawValue: value) else {
+                        throw invalid("macos.architectures has an unknown architecture '\(value)'", "use \(names)")
+                    }
+                    if !seen.insert(arch).inserted {
+                        throw invalid("macos.architectures lists \(value) twice", "list each architecture once")
+                    }
+                }
+                architectures = MacArchitecture.allCases.filter(seen.contains)
+                // No macOS before 11.0 runs on Apple Silicon: an arm64-only app with a lower minimum would claim Macs it cannot run on.
+                if architectures == [.arm64], let min = DottedVersion(minimumOS), min < DottedVersion("11.0")! {
+                    throw invalid("macos.minimumOS \(minimumOS) is below 11.0, the first macOS on Apple Silicon, and macos.architectures is [arm64]",
+                                  "set minimumOS: \"11.0\" or later, or add x86_64 to architectures")
+                }
             }
             // `assets` and `entitlements` are read by the assets and sign stages from the work copy: no `input:` there.
             for (key, value, allowInput) in [("infoPlist", r.infoPlist, true), ("assets", r.assets, false), ("icon", r.icon, true),
@@ -328,7 +358,8 @@ extension CargoOverlay {
                 resources.append(CargoResource(from: resource.from, to: resource.to))
             }
             return CargoPlatform(package: r.package, bin: r.bin, features: features, product: product, minimumOS: minimumOS, bundleID: r.bundleID,
-                                 infoPlist: r.infoPlist, assets: r.assets, icon: r.icon, entitlements: r.entitlements, resources: resources)
+                                 infoPlist: r.infoPlist, assets: r.assets, icon: r.icon, entitlements: r.entitlements, resources: resources,
+                                 architectures: architectures)
         }
         let ios = try platform(raw.ios, "ios")
         let macos = try platform(raw.macos, "macos")

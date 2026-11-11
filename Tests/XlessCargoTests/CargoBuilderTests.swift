@@ -74,7 +74,7 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
         var source: URL
     }
 
-    private func fixture(_ platform: Platform, toolchain: Bool = true) throws -> Fixture {
+    private func fixture(_ platform: Platform, toolchain: Bool = true, architectures: String? = nil) throws -> Fixture {
         let root = scratch("cargobuild"), bin = root.appendingPathComponent("bin")
         let source = root.appendingPathComponent("source"), work = root.appendingPathComponent("work"), inputDir = root.appendingPathComponent("fonts")
         try write("fn main() {}\n", source.appendingPathComponent("src/main.rs"))
@@ -138,6 +138,7 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
               minimumOS: "11.0"
               icon: hello.icns
               infoPlist: mac/Info.plist.in
+            \(architectures.map { "  architectures: \($0)" } ?? "")
             """, name: "hello")
         let resolved = try CargoProject.resolve(overlay: overlay, platform: platform, source: source)
         let env = ["PATH": "\(bin.path):/usr/bin:/bin", "HOME": root.path, "CARGO_HOME": root.appendingPathComponent("cargo-home").path,
@@ -173,6 +174,27 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
         #expect(calls[0] == "1.97.0|\(f.ctx.workRoot.deletingLastPathComponent().path)/fonts|hi|[]|metadata --format-version 1 --no-deps")
         #expect(calls.dropFirst().allSatisfy { $0.hasPrefix("1.97.0|") && $0.contains("|hi|[]|build --release --locked -p hello --bin hello --target ") })
         #expect(calls.dropFirst().compactMap { $0.split(separator: " ").last }.sorted() == ["aarch64-apple-darwin", "x86_64-apple-darwin"])
+    }
+
+    @Test func buildWithOneMacArchitectureMakesAThinApp() async throws {
+        for (yaml, triple, arch) in [("[arm64]", "aarch64-apple-darwin", "arm64"), ("[x86_64]", "x86_64-apple-darwin", "x86_64")] {
+            let f = try fixture(.macos, architectures: yaml)
+            let app = try await CargoBuilder.build(ctx: f.ctx)
+            let exe = try Data(contentsOf: app.appendingPathComponent("Contents/MacOS/Hello"))
+            #expect(!MachO.isFat(exe))
+            #expect(try MachO.sliceArchitectures(in: exe).map(\.name) == [arch])
+            // metadata, then one build for the one triple.
+            let calls = try String(contentsOf: f.log, encoding: .utf8).split(separator: "\n").map(String.init)
+            #expect(calls.count == 2)
+            #expect(calls[1].hasSuffix("|hi|[]|build --release --locked -p hello --bin hello --target \(triple)"))
+        }
+    }
+
+    @Test func prepareInstallsOnlyTheChosenMacTargets() async throws {
+        let f = try fixture(.macos, architectures: "[arm64]")
+        try await CargoBuilder.prepare(ctx: f.ctx)
+        let rustup = try String(contentsOf: f.log.deletingLastPathComponent().appendingPathComponent("rustup.log"), encoding: .utf8)
+        #expect(rustup.split(separator: "\n").map(String.init).contains("target add --toolchain 1.97.0 aarch64-apple-darwin"))
     }
 
     @Test func buildWithFakeCargoMakesAnIOSApp() async throws {

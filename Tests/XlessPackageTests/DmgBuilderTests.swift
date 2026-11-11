@@ -34,6 +34,22 @@ private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> URL {
     #expect(DmgBuilder.fileName(product: json["volumeName"] as! String, version: "1.0.0") == json["fileName"] as? String)
 }
 
+/// Tauri's names for a single-architecture bundle: `aarch64` and `x64`; both architectures stay `universal`.
+@Test func dmgFileNameFollowsTheArchitectures() {
+    #expect(DmgBuilder.fileName(product: "Hello", version: "1.0.0", architectures: [.arm64]) == "Hello_1.0.0_aarch64.dmg")
+    #expect(DmgBuilder.fileName(product: "Hello", version: "1.0.0", architectures: [.x86_64]) == "Hello_1.0.0_x64.dmg")
+    #expect(DmgBuilder.fileName(product: "Hello", version: "1.0.0", architectures: [.arm64, .x86_64]) == "Hello_1.0.0_universal.dmg")
+    #expect(DmgBuilder.fileName(product: "Hello", version: "1.0.0", architectures: [.x86_64, .arm64]) == "Hello_1.0.0_universal.dmg")
+}
+
+@Test func buildNamesAThinDMGAfterItsArchitecture() throws {
+    let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    let dmg = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64],
+                                   outputDir: root.appendingPathComponent("out")) { _ in }
+    #expect(dmg.lastPathComponent == "Hello_1.0.0_aarch64.dmg")
+}
+
 @Test func commandsAreArgvWithoutAShell() {
     let work = URL(fileURLWithPath: "/w"), out = URL(fileURLWithPath: "/o/Hello Tauri é_1.0.0_universal.dmg")
     let c = DmgBuilder.commands(app: URL(fileURLWithPath: "/a/Hello Tauri é.app"), volumeName: "Hello Tauri é", work: work, out: out, sizeKB: 9000)

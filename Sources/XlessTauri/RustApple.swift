@@ -201,29 +201,49 @@ public enum RustApple {
 
     // MARK: universal executable
 
+    /// The macOS executable of a build of one or both darwin targets: the one thin executable as it is (checked as
+    /// `universal` checks a slice), or the universal file of two.
+    public static func macExecutable(_ thins: [(triple: String, url: URL)], binary: String) throws -> Data {
+        guard thins.count == 1, let only = thins.first else { return try universal(thins, binary: binary) }
+        let (arch, data) = try thin(only.triple, only.url, binary: binary)
+        try check(arch, of: only.triple)
+        return data
+    }
+
     /// One thin executable per darwin target → a universal file (x86_64 slice first, like `lipo -create`). Refuses a
     /// missing slice, a file that is not a thin Mach-O of its target's architecture, and the same architecture twice.
     public static func universal(_ thins: [(triple: String, url: URL)], binary: String) throws -> Data {
         var slices: [String: Data] = [:]
         for (triple, url) in thins {
-            let want = try macArch(of: triple)
-            guard let data = try? Data(contentsOf: url) else {
-                throw XlessError(.build, "no \(want) slice: cargo left no \(binary) for \(triple) (\(url.path))", fix: "check the cargo output above")
-            }
-            guard !MachO.isFat(data), let arch = try? MachO.sliceArchitectures(in: data).first?.name else {
-                throw XlessError(.build, "\(url.path) is not a thin Mach-O executable", fix: "check the linker wrapper and the cargo output above")
-            }
+            let (arch, data) = try thin(triple, url, binary: binary)
             guard slices[arch] == nil else {
                 throw XlessError(.build, "both executables are \(arch); the universal app needs one arm64 and one x86_64 slice", fix: "check CARGO_TARGET_*_LINKER and the cargo output above")
             }
-            guard arch == want else {
-                throw XlessError(.build, "the \(triple) executable is \(arch), not \(want)", fix: "check CARGO_TARGET_*_LINKER and the cargo output above")
-            }
+            try check(arch, of: triple)
             slices[arch] = data
         }
         for arch in ["arm64", "x86_64"] where slices[arch] == nil {
             throw XlessError(.build, "no \(arch) slice for the universal executable \(binary)", fix: "build both aarch64-apple-darwin and x86_64-apple-darwin")
         }
         return try MachO.makeFat([slices["x86_64"]!, slices["arm64"]!])
+    }
+
+    /// cargo's executable for `triple` and its architecture; refuses a missing file and one that is not a thin Mach-O.
+    private static func thin(_ triple: String, _ url: URL, binary: String) throws -> (arch: String, data: Data) {
+        let want = try macArch(of: triple)
+        guard let data = try? Data(contentsOf: url) else {
+            throw XlessError(.build, "no \(want) slice: cargo left no \(binary) for \(triple) (\(url.path))", fix: "check the cargo output above")
+        }
+        guard !MachO.isFat(data), let arch = try? MachO.sliceArchitectures(in: data).first?.name else {
+            throw XlessError(.build, "\(url.path) is not a thin Mach-O executable", fix: "check the linker wrapper and the cargo output above")
+        }
+        return (arch, data)
+    }
+
+    private static func check(_ arch: String, of triple: String) throws {
+        let want = try macArch(of: triple)
+        guard arch == want else {
+            throw XlessError(.build, "the \(triple) executable is \(arch), not \(want)", fix: "check CARGO_TARGET_*_LINKER and the cargo output above")
+        }
     }
 }

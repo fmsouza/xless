@@ -152,6 +152,44 @@ private func writeOverlay(_ yaml: String, named file: String = "my.overlay.yml")
     expectConfig(minimalIOS.replacingOccurrences(of: "  assets: Assets.xcassets\n", with: ""), mentioning: "ios.assets")
 }
 
+private func macosBlock(_ extra: String, minimumOS: String = "11.0") -> String {
+    minimalIOS + "macos: { package: hello, product: Hello, minimumOS: \"\(minimumOS)\"\(extra) }\n"
+}
+
+@Test func macOSArchitecturesDefaultToBoth() throws {
+    let o = try CargoOverlay.parse(yaml: macosBlock(""), name: "a")
+    #expect(o.macos?.architectures == [.arm64, .x86_64])
+    #expect(o.ios?.architectures == [])
+}
+
+@Test func macOSArchitecturesParseInCanonicalOrder() throws {
+    #expect(try CargoOverlay.parse(yaml: macosBlock(", architectures: [arm64]"), name: "a").macos?.architectures == [.arm64])
+    #expect(try CargoOverlay.parse(yaml: macosBlock(", architectures: [x86_64]", minimumOS: "10.13"), name: "a").macos?.architectures == [.x86_64])
+    #expect(try CargoOverlay.parse(yaml: macosBlock(", architectures: [x86_64, arm64]"), name: "a").macos?.architectures == [.arm64, .x86_64])
+    #expect(try CargoOverlay.parse(yaml: macosBlock(", architectures: [arm64]", minimumOS: "11"), name: "a").macos?.architectures == [.arm64])
+}
+
+@Test func refusesBadMacOSArchitectures() {
+    expectConfig(macosBlock(", architectures: []"), mentioning: "macos.architectures")
+    expectConfig(macosBlock(", architectures: [ppc]"), mentioning: "ppc")
+    expectConfig(macosBlock(", architectures: [aarch64]"), mentioning: "aarch64")
+    expectConfig(macosBlock(", architectures: [arm64, arm64]"), mentioning: "arm64")
+    expectConfig(macosBlock(", architectures: arm64"), mentioning: "architectures")
+}
+
+@Test func refusesArchitecturesOnIOS() {
+    expectConfig(minimalIOS.replacingOccurrences(of: "  product: Hello", with: "  product: Hello\n  architectures: [arm64]"), mentioning: "ios.architectures")
+}
+
+/// No macOS before 11.0 runs on Apple Silicon: an arm64-only app with a lower minimum would claim Macs it cannot run on.
+@Test func refusesArm64OnlyBelowMacOS11() {
+    expectConfig(macosBlock(", architectures: [arm64]", minimumOS: "10.15"), mentioning: "11.0")
+}
+
+@Test func macArchitectureRustTargets() {
+    #expect(MacArchitecture.allCases.map(\.rustTarget) == ["aarch64-apple-darwin", "x86_64-apple-darwin"])
+}
+
 @Test func refusesIconAndAssetsOnMacOS() {
     let both = minimalIOS + "macos: { package: hello, product: Hello, minimumOS: \"11.0\", icon: a.icns, assets: A.xcassets }\n"
     expectConfig(both, mentioning: "macos")

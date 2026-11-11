@@ -366,6 +366,22 @@ extension TauriMacInfoPlistTests {
         }
     }
 
+    @Test func oneTargetGivesItsThinExecutable() throws {
+        let data = thin(arm64, "a")
+        #expect(try RustApple.macExecutable([("aarch64-apple-darwin", exe(data))], binary: "demo") == data)
+        let fat = try RustApple.macExecutable([("aarch64-apple-darwin", exe(thin(arm64))), ("x86_64-apple-darwin", exe(thin(x86_64)))], binary: "demo")
+        #expect(try MachO.sliceArchitectures(in: fat).map(\.name) == ["x86_64", "arm64"])
+    }
+
+    @Test func oneTargetRefusesTheWrongArchitectureOrNoExecutable() throws {
+        do { _ = try RustApple.macExecutable([("x86_64-apple-darwin", exe(thin(arm64)))], binary: "demo"); Issue.record("accepted") }
+        catch let e as XlessError { #expect(e.stage == .build && e.cause.contains("x86_64")) }
+        do { _ = try RustApple.macExecutable([("aarch64-apple-darwin", exe(nil))], binary: "demo"); Issue.record("accepted") }
+        catch let e as XlessError { #expect(e.stage == .build && e.cause.contains("arm64")) }
+        do { _ = try RustApple.macExecutable([("aarch64-apple-darwin", exe(MachO.makeFat([thin(x86_64), thin(arm64)])))], binary: "demo"); Issue.record("accepted") }
+        catch let e as XlessError { #expect(e.stage == .build && e.cause.contains("thin")) }
+    }
+
     @Test func refusesTheSameArchitectureTwice() throws {
         do {
             _ = try TauriBuilder.universalExecutable([("aarch64-apple-darwin", exe(thin(arm64))), ("x86_64-apple-darwin", exe(thin(arm64)))], binary: "demo")
