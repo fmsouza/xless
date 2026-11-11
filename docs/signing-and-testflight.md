@@ -82,9 +82,10 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
 - **Paths.** Relative secret paths are resolved against the current directory. With `--docker`, the secret files and
   the project must be somewhere Docker can mount (on Linux, any local path).
 - **Dry run.** `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the commands without running them.
-- **Stopping.** With `--docker`, stopping `xless run` (Ctrl-C, or SIGTERM or SIGHUP, as a CI runner does when it cancels a
-  job) removes its containers before it exits, with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove
-  what is left with `docker rm -f $(docker ps -q --filter label=xless.run)`.
+- **Stopping.** Stopping `xless run` (Ctrl-C, or SIGTERM or SIGHUP, as a CI runner does when it cancels a job) takes
+  effect at once, whichever step is running: with `--docker` it removes its containers, natively it stops xless, and it
+  exits with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove what is left with
+  `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
   warning. The exit code is xless's (17 for a failed upload or delivery).
 - **Testers.** Internal testers must be App Store Connect users. Add them to the group once in the web UI (Users and

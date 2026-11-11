@@ -532,7 +532,10 @@ if [[ $step1 == 1 ]]; then
   if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
     run "${cmd[@]}"; XLESS_BUILD_NUMBER="<next-build>"
   else
-    set +e; out="$("${cmd[@]}")"; code=$?; set -e
+    # waited, not "$(…)": a command substitution would hold a stop until the step ends, as a foreground command does
+    outf="$(mktemp)"; tmpfiles+=("$outf")
+    set +e; waited "${cmd[@]}" >"$outf"; code=$?; set -e
+    out="$(cat "$outf")"
     [[ $code -eq 0 ]] || finish $code
     XLESS_BUILD_NUMBER="$(printf '%s\n' "$out" | tail -1)"
     [[ "$XLESS_BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+)*$ ]] || die "${next_build[*]} printed '$XLESS_BUILD_NUMBER', not a build number"
@@ -624,19 +627,19 @@ if [[ $step3 == 1 ]]; then
     fi
     # native (a macOS host run): the same two channels, xless straight from the env.
     set +e
-    shiplog="$(mktemp)"; tmpfiles+=("$shiplog")
-    dmg_out="$("$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
+    shiplog="$(mktemp)"; shipout="$(mktemp)"; tmpfiles+=("$shiplog" "$shipout")
+    waited "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
     code=$?
     [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }
-    dmg="$(grep '\.dmg$' <<<"$dmg_out" | tail -1 || true)"
+    dmg="$(grep '\.dmg$' "$shipout" | tail -1 || true)"
     echo "==> DMG: $dmg" >&2
     echo "==> DMG build finished" >&2
     if [[ "$(index "$to")" -ge 6 ]]; then
       : > "$shiplog"
-      pkg_out="$("$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} 2>"$shiplog")"
+      waited "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
       code=$?
       [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
-      pkg="$(grep '\.pkg$' <<<"$pkg_out" | tail -1 || true)"
+      pkg="$(grep '\.pkg$' "$shipout" | tail -1 || true)"
       echo "==> PKG: $pkg" >&2
     fi
     set -e
