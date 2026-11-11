@@ -25,6 +25,16 @@ You do not need a Mac, and you do not need to unpack the `.xip`.
 
 ### Get Xcode
 
+The quickest way is to let xless download it: it asks for your Apple ID, password and two-factor code in the terminal,
+signs in to Apple once and downloads every version you name, keeping nothing of the sign-in
+([docs/xcode-download.md](docs/xcode-download.md)):
+
+```sh
+xless xcode download 27.0 26.2 --output-dir ~/Downloads
+```
+
+Or in a browser:
+
 1. Open <https://developer.apple.com/download/all/> and sign in with your Apple ID. A free Apple ID is enough.
 2. Search for the Xcode version and download its `.xip`. Where Apple offers a "Universal" and an "Apple silicon"
    file, take the Universal one (for 26.2, xless also accepts the Apple silicon file).

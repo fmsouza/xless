@@ -3,9 +3,10 @@ import Foundation
 import XlessCore
 import XlessXcode
 
-struct XcodeCommand: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "xcode", abstract: "Xcode project helpers (React Native / CocoaPods workspaces).",
-                                                    subcommands: [XcodePIFCommand.self, XcodeSwbuildCommand.self, XcodePackagesCommand.self])
+struct XcodeCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "xcode", abstract: "Download Xcode .xips from Apple, and Xcode project helpers (React Native / CocoaPods workspaces).",
+        subcommands: [XcodeDownloadCommand.self, XcodePIFCommand.self, XcodeSwbuildCommand.self, XcodePackagesCommand.self])
 }
 
 struct XcodePIFCommand: ParsableCommand {

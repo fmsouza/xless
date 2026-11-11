@@ -77,7 +77,12 @@ jobs:
           - { name: arm64, runner: ubuntu-24.04-arm, triple: aarch64-swift-linux-musl }
     steps:
       - name: Install tools
-        run: apt-get update -qq && apt-get install -y -qq git curl ca-certificates >/dev/null
+        # The runners' resolver can fail on *.ubuntu.com while public resolvers answer (seen 2026-11-11, every job
+        # failing here); only then does this container use public resolvers instead.
+        run: |
+          getent hosts archive.ubuntu.com ports.ubuntu.com security.ubuntu.com >/dev/null \
+            || printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0\n' > /etc/resolv.conf
+          apt-get update -qq && apt-get install -y -qq git curl ca-certificates >/dev/null
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.plan.outputs.sha }}

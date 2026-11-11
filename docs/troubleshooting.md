@@ -22,6 +22,22 @@ curl -fsSL https://github.com/fmsouza/xless/releases/latest/download/install.sh 
 
 Running the install line again upgrades xless in place.
 
+## `xless xcode download`
+
+| Symptom | What to do |
+|---|---|
+| `signing in to Apple needs an interactive terminal` | Run it in a terminal (not through a pipe, `nohup` or a CI job). It never reads the Apple ID, password or code from anywhere else. |
+| `Apple refused the Apple ID or password` | Check them and run it again. A few failed attempts can lock the Apple ID. |
+| `Apple says the Apple ID is locked` | Unlock it at <https://iforgot.apple.com>, then run it again. |
+| `Apple did not accept the verification code 3 times` | Run it again and type the newest code; with `sms` at the code prompt the code comes by text message instead. |
+| `… hardware security key …`, `… old two-step verification …` | xless supports two-factor codes only. Use an Apple ID without security keys, or download in a browser. |
+| `Apple refused the download list …`, `Apple wants this Apple ID to accept new terms …` | Sign in once at <https://developer.apple.com/download/all/> in a browser, accept the agreement it shows, and run it again. |
+| `Apple offers no Xcode …` | Use the name Apple lists: `xless xcode download --list`. |
+| `Apple did not authorise the download of …` | Check in a browser that the Apple ID can download that file, then run it again. |
+| `… is incomplete`, `could not reach Apple …`, `N of M Xcode downloads failed: …`, or the download stopped | Each file was already retried twice. Run the same command again: finished `.xip`s are kept and each `.part` file resumes. |
+| `… is larger than Apple listed …` | The `.part` was deleted; run it again to download that file from the start. |
+| `… is not an Xcode .xip` (an existing file) | A file of that name that is not a `.xip` is in the output directory. Move it away. |
+
 ## `xless setup`
 
 Natively (the default):
