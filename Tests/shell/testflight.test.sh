@@ -603,4 +603,29 @@ for args in "$t/proj --to finalize" "--config $t/rn/app.yml --destination simula
   xp=$(cat "$t/npid"); for _ in $(seq 20); do alive "$xp" || break; sleep 0.1; done
   alive "$xp" && { kill "$xp"; fail "native ($args): xless still running after the script stopped"; }
 done
+# the steps whose output the script reads stop at once too: step 1 (the build number), in its container and natively,
+# and the native macOS ship, whose DMG path it reads. A command substitution, like a foreground command, holds the trap
+# until it ends.
+keys=(ASC_KEY_ID=KEYID ASC_ISSUER_ID_FILE="$t/issuer" ASC_KEY_P8_FILE="$t/key.p8" XLESS_DIST_KEY_FILE="$t/dist.pem")
+: > "$t/klog"
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 "${keys[@]}" \
+  "$S" --config "$t/ov/my.overlay.yml" --to finalize >/dev/null 2>"$t/err" & pid=$!
+for _ in $(seq 50); do grep -q '^run .*next-build' "$t/klog" && break; sleep 0.1; done
+grep -q '^run .*next-build' "$t/klog" || { kill "$pid"; fail "step 1 never started: $(cat "$t/klog" "$t/err")"; }
+start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
+[[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "step 1 TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
+grep -qx 'rm -f c0ffee' "$t/klog" || fail "step 1's container not removed: $(cat "$t/klog")"
+printf '#!/bin/sh\ncase "$*" in *"$NSTOP"*) echo $$ > "$NPID"; exec sleep 30 ;; esac\nexit 0\n' > "$t/nbin/xless"
+for args in "next-build|--config $t/ov/my.overlay.yml --to finalize" "--to package|--config $t/ov/my.overlay.yml --platform macos"; do
+  rm -f "$t/npid"
+  # shellcheck disable=SC2086 # no spaces in $t
+  env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 NPID="$t/npid" \
+    NSTOP="${args%%|*}" "${keys[@]}" XLESS_DEVID_KEY_FILE="$t/devid.pem" "$S" ${args#*|} >/dev/null 2>&1 & pid=$!
+  for _ in $(seq 50); do [[ -s "$t/npid" ]] && break; sleep 0.1; done
+  [[ -s "$t/npid" ]] || { kill "$pid"; fail "native (${args%%|*}): xless never started"; }
+  start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
+  [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "native (${args%%|*}) TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
+  xp=$(cat "$t/npid"); for _ in $(seq 20); do alive "$xp" || break; sleep 0.1; done
+  alive "$xp" && { kill "$xp"; fail "native (${args%%|*}): xless still running after the script stopped"; }
+done
 echo PASS
