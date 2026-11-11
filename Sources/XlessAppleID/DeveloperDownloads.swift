@@ -73,8 +73,10 @@ public enum DeveloperDownloads {
 
     /// Downloads `file` into `dir` as `<name>.part`, resuming a `.part` left by an earlier run, and renames it to `<name>`
     /// once it is complete and starts like a .xip (`xar!`). A complete `<name>` already there is kept (`skipped`).
-    /// `progress` gets the bytes on disk so far.
+    /// A dropped connection, a 5xx or a short body is retried (resuming the `.part`) up to `attempts` times in all,
+    /// `retryDelay` seconds apart; Apple refusing the download is not. `progress` gets the bytes on disk so far.
     public static func download(_ file: AppleDownload.File, into dir: URL, client: AppleWebClient,
+                                attempts: Int = 3, retryDelay: TimeInterval = 5,
                                 progress: @escaping @Sendable (Int64) -> Void) async throws -> Result {
         let fm = FileManager.default
         let dest = dir.appendingPathComponent(file.name)
@@ -88,6 +90,30 @@ public enum DeveloperDownloads {
         guard let url = AppleEndpoints.download(path: file.remotePath) else {
             throw fail("Apple listed \(file.name) with an unusable path", fix: AppleSignIn.changedFix)
         }
+        var attempt = 1
+        while true {
+            switch try await fetch(file, from: url, to: part, client: client, progress: progress) {
+            case .complete:
+                do {
+                    try fm.moveItem(at: part, to: dest)
+                } catch {
+                    throw fail("cannot rename \(part.path) to \(dest.lastPathComponent): \(error.localizedDescription)", fix: "check the directory, then re-run")
+                }
+                return Result(url: dest, skipped: false)
+            case .retry(let error):
+                guard attempt < max(attempts, 1) else { throw error }
+                attempt += 1
+                if retryDelay > 0 { try await Task.sleep(nanoseconds: UInt64(retryDelay * 1_000_000_000)) }
+            }
+        }
+    }
+
+    private enum Attempt { case complete, retry(XlessError) }
+
+    /// One request for the rest of `file`: `.complete` when `part` holds all of it, `.retry` for what another try may fix.
+    private static func fetch(_ file: AppleDownload.File, from url: URL, to part: URL, client: AppleWebClient,
+                              progress: @escaping @Sendable (Int64) -> Void) async throws -> Attempt {
+        let fm = FileManager.default
         // Refreshes the download cookie for this path; Apple answers 403 for Xcodes and still sets it (xcodes ignores it too).
         _ = try? await client.send(URLRequest(url: AppleEndpoints.downloadAuth(path: file.remotePath)))
 
@@ -97,7 +123,13 @@ public enum DeveloperDownloads {
         if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
         let counter = ByteCounter(offset)
         progress(offset)
-        let (_, response, finalURL) = try await client.download(request, to: part) { n in progress(counter.add(n)) }
+        let response: HTTPURLResponse, finalURL: URL
+        do {
+            (_, response, finalURL) = try await client.download(request, to: part) { n in progress(counter.add(n)) }
+        } catch let error as URLError {
+            return .retry(fail("the connection to Apple failed while downloading \(file.name): \(error.localizedDescription)",
+                               fix: "re-run (the download resumes where it stopped)"))
+        }
 
         if finalURL.lastPathComponent == "unauthorized" || URLSessionAppleTransport.isHTML(response)
             || [401, 403].contains(response.statusCode) {
@@ -108,6 +140,9 @@ public enum DeveloperDownloads {
             try? fm.removeItem(at: part)
             throw fail("Apple refused to resume \(file.name)", fix: "re-run to download it from the start")
         }
+        if (500..<600).contains(response.statusCode) {
+            return .retry(fail("Apple answered HTTP \(response.statusCode) for \(file.name)", fix: "re-run (the download resumes where it stopped)"))
+        }
         guard (200..<300).contains(response.statusCode) else {
             throw fail("Apple answered HTTP \(response.statusCode) for \(file.name)", fix: "re-run (the download resumes where it stopped)")
         }
@@ -117,14 +152,13 @@ public enum DeveloperDownloads {
         }
         let size = fileSize(part)
         if let expected = file.fileSize, expected > 0, size != expected {
-            throw fail("\(file.name) is incomplete (\(size) of \(expected) bytes)", fix: "re-run to resume the download")
+            if size < expected {
+                return .retry(fail("\(file.name) is incomplete (\(size) of \(expected) bytes)", fix: "re-run to resume the download"))
+            }
+            try? fm.removeItem(at: part)
+            throw fail("\(file.name) is larger than Apple listed (\(size) of \(expected) bytes)", fix: "re-run to download it from the start")
         }
-        do {
-            try fm.moveItem(at: part, to: dest)
-        } catch {
-            throw fail("cannot rename \(part.path) to \(dest.lastPathComponent): \(error.localizedDescription)", fix: "check the directory, then re-run")
-        }
-        return Result(url: dest, skipped: false)
+        return .complete
     }
 
     static func startsLikeXip(_ url: URL) -> Bool {

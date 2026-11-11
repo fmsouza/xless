@@ -20,8 +20,10 @@ final class DeveloperDownloadsTests: XCTestCase {
     func client(_ mock: MockTransport) -> AppleWebClient { AppleWebClient(transport: mock) }
 
     func run(_ mock: MockTransport) async throws -> DeveloperDownloads.Result {
-        try await DeveloperDownloads.download(file, into: dir, client: client(mock), progress: { _ in })
+        try await DeveloperDownloads.download(file, into: dir, client: client(mock), retryDelay: 0, progress: { _ in })
     }
+
+    func fileRequests(_ mock: MockTransport) -> Int { mock.requests.filter { $0.url?.host == "download.developer.apple.com" }.count }
 
     /// Apple's file server: the ADC auth call is answered 403 (as Apple does for Xcodes), the file with `reply`.
     func apple(_ reply: @escaping @Sendable (URLRequest) -> MockTransport.Reply) -> MockTransport {
@@ -121,6 +123,47 @@ final class DeveloperDownloadsTests: XCTestCase {
         await assertError(apple { _ in .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip.prefix(60)) },
                           contains: "re-run")
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("Xcode_27.xip.part").path))
+    }
+
+    func testDroppedConnectionIsRetriedAndResumes() async throws {
+        let calls = ByteCounter(0)
+        let mock = apple { r in
+            if calls.add(1) == 1 { return .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip.prefix(30)) }
+            XCTAssertEqual(r.header("Range"), "bytes=30-")
+            return .init(status: 206, headers: ["Content-Type": "application/octet-stream"], body: testXip.suffix(from: 30))
+        }
+        let result = try await run(mock)
+        XCTAssertEqual(try Data(contentsOf: result.url), xip)
+        XCTAssertEqual(fileRequests(mock), 2)
+    }
+
+    func testNetworkErrorIsRetried() async throws {
+        let calls = ByteCounter(0)
+        let mock = MockTransport { r in
+            if r.url!.host == "developerservices2.apple.com" { return .init(status: 403) }
+            if calls.add(1) == 1 { throw URLError(.networkConnectionLost) }
+            return .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip)
+        }
+        _ = try await run(mock)
+        XCTAssertEqual(fileRequests(mock), 2)
+    }
+
+    func testServerErrorsGiveUpAfterThreeAttempts() async {
+        let mock = apple { _ in .init(status: 503) }
+        await assertError(mock, contains: "re-run")
+        XCTAssertEqual(fileRequests(mock), 3)
+    }
+
+    func testLargerThanListedIsDiscarded() async {
+        let mock = apple { _ in .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip + Data(count: 5)) }
+        await assertError(mock, contains: "larger than Apple listed")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("Xcode_27.xip.part").path))
+    }
+
+    func testRefusalIsNotRetried() async {
+        let mock = apple { _ in .init(status: 403) }
+        await assertError(mock, contains: "did not authorise")
+        XCTAssertEqual(fileRequests(mock), 1)
     }
 
     func testExistingFileIsSkipped() async throws {

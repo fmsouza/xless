@@ -34,55 +34,73 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
 
     func run() async throws {
         try await withStage(.sdk) {
-            CoreDumps.disable()
-            let env = ProcessInfo.processInfo.environment
-            let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let dir = XcodeSource.absolute(outputDir, cwd: cwd, home: home)
-            if !list {
-                do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) } catch {
-                    throw XlessError(.sdk, "cannot create \(dir.path): \(error.localizedDescription)", fix: "pass a writable --output-dir")
-                }
-                guard FileManager.default.isWritableFile(atPath: dir.path) else {
-                    throw XlessError(.sdk, "\(dir.path) is not writable", fix: "pass a writable --output-dir")
-                }
+            do {
+                try await download()
+            } catch let e as URLError {
+                throw DownloadReport.networkError(e)
             }
+        }
+    }
 
-            let prompter = try TerminalPrompter()
-            let transport = URLSessionAppleTransport()
-            defer { transport.invalidate() }
-            let client = AppleWebClient(transport: transport, userAgent: "xless/\(XlessVersion.current)")
-            try await AppleSignIn(client: client, prompter: prompter).run()
-            prompter.say("Signed in to Apple.")
-            let downloads = try await DeveloperDownloads.list(client: client)
-
-            if list {
-                for d in downloads {
-                    let xips = d.files.filter { $0.remotePath.lowercased().hasSuffix(".xip") }
-                    let files = xips.map { "\($0.name)\($0.fileSize.map { " (\(DownloadReport.size($0)))" } ?? "")" }
-                    print("\(d.name)\t\(files.isEmpty ? "no .xip" : files.joined(separator: ", "))")
-                }
-                await client.signOut()
-                return
+    private func download() async throws {
+        CoreDumps.disable()
+        let env = ProcessInfo.processInfo.environment
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let dir = XcodeSource.absolute(outputDir, cwd: cwd, home: home)
+        if !list {
+            do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) } catch {
+                throw XlessError(.sdk, "cannot create \(dir.path): \(error.localizedDescription)", fix: "pass a writable --output-dir")
             }
+            guard FileManager.default.isWritableFile(atPath: dir.path) else {
+                throw XlessError(.sdk, "\(dir.path) is not writable", fix: "pass a writable --output-dir")
+            }
+        }
 
-            let resolved = try XcodeVersionMatch.resolve(XcodeVersionMatch.tokens(versions), in: downloads)
-            try checkSpace(DownloadReport.bytesStillNeeded(resolved.map(\.file), in: dir), dir: dir)
-            let known = (try? knownXcodes(env: env)) ?? []
-            var done: [URL] = []
-            for (i, r) in resolved.enumerated() {
-                let size = r.file.fileSize.map { ", \(DownloadReport.size($0))" } ?? ""
-                FileHandle.standardError.write(Data("[\(i + 1)/\(resolved.count)] \(r.download.name): \(r.file.name)\(size)\n".utf8))
-                let meter = ProgressMeter(total: r.file.fileSize)
+        let prompter = try TerminalPrompter()
+        let transport = URLSessionAppleTransport()
+        defer { transport.invalidate() }
+        let client = AppleWebClient(transport: transport, userAgent: "xless/\(XlessVersion.current)")
+        try await AppleSignIn(client: client, prompter: prompter).run()
+        prompter.say("Signed in to Apple.")
+        let downloads = try await DeveloperDownloads.list(client: client)
+
+        if list {
+            for d in downloads {
+                let xips = d.files.filter { $0.remotePath.lowercased().hasSuffix(".xip") }
+                let files = xips.map { "\($0.name)\($0.fileSize.map { " (\(DownloadReport.size($0)))" } ?? "")" }
+                print("\(d.name)\t\(files.isEmpty ? "no .xip" : files.joined(separator: ", "))")
+            }
+            await client.signOut()
+            return
+        }
+
+        let resolved = try XcodeVersionMatch.resolve(XcodeVersionMatch.tokens(versions), in: downloads)
+        try checkSpace(DownloadReport.bytesStillNeeded(resolved.map(\.file), in: dir), dir: dir)
+        let known = (try? knownXcodes(env: env)) ?? []
+        var done: [URL] = []
+        var failed: [(name: String, error: any Error)] = []
+        for (i, r) in resolved.enumerated() {
+            let size = r.file.fileSize.map { ", \(DownloadReport.size($0))" } ?? ""
+            FileHandle.standardError.write(Data("[\(i + 1)/\(resolved.count)] \(r.download.name): \(r.file.name)\(size)\n".utf8))
+            let meter = ProgressMeter(total: r.file.fileSize)
+            do {
                 let result = try await DeveloperDownloads.download(r.file, into: dir, client: client, progress: meter.update)
                 meter.finish(skipped: result.skipped)
                 let sum = try XcodeSource.sha256(of: result.url)
                 print("\(result.url.path)\t\(DownloadReport.identity(sha256: sum, known: known))")
                 done.append(result.url)
+            } catch {
+                meter.abandon()
+                FileHandle.standardError.write(Data("  failed: \(XlessError.wrapping(error, stage: .sdk).cause); going on with the next\n".utf8))
+                failed.append((r.download.name, error))
             }
-            await client.signOut()
+        }
+        await client.signOut()
+        if !done.isEmpty {
             FileHandle.standardError.write(Data("Next, for each Xcode: \(done.map { "xless setup --xcode \($0.path)" }.joined(separator: " ; "))\n".utf8))
         }
+        if let error = DownloadReport.failures(failed, of: resolved.count) { throw error }
     }
 
     private func checkSpace(_ needed: Int64, dir: URL) throws {
@@ -138,6 +156,11 @@ final class ProgressMeter: @unchecked Sendable {
             let text = skipped ? "  already downloaded" : "  \(line(Date()))"
             FileHandle.standardError.write(Data(((tty ? "\r\u{1B}[K" : "") + text + "\n").utf8))
         }
+    }
+
+    /// Ends a rewritten progress line before a failure is printed.
+    func abandon() {
+        lock.withLock { if tty { FileHandle.standardError.write(Data("\n".utf8)) } }
     }
 
     private func line(_ now: Date) -> String {

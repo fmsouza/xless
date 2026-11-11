@@ -32,4 +32,29 @@ final class DownloadReportTests: XCTestCase {
         XCTAssertEqual(DownloadReport.size(3_210_000_000), "3.2 GB")
         XCTAssertEqual(DownloadReport.size(850_000_000), "850 MB")
     }
+
+    func testNoFailuresIsNoError() {
+        XCTAssertNil(DownloadReport.failures([], of: 3))
+    }
+
+    func testFailuresAreSummedUpWithEachCause() throws {
+        let e = try XCTUnwrap(DownloadReport.failures([
+            ("Xcode 26.2", XlessError(.sdk, "Apple answered HTTP 503 for Xcode_26.2.xip", fix: "x")),
+            ("Xcode 27", URLError(.networkConnectionLost)),
+        ], of: 5))
+        XCTAssertEqual(e.stage, .sdk)
+        XCTAssertTrue(e.cause.hasPrefix("2 of 5 Xcode downloads failed"), e.cause)
+        XCTAssertTrue(e.cause.contains("Xcode 26.2: Apple answered HTTP 503"), e.cause)
+        XCTAssertTrue(e.cause.contains("Xcode 27: "), e.cause)
+        XCTAssertTrue(e.fix.contains("re-run"), e.fix)
+        XCTAssertTrue(e.fix.contains("resume"), e.fix)
+    }
+
+    func testNetworkErrorNamesAppleAndResuming() {
+        let e = DownloadReport.networkError(URLError(.notConnectedToInternet))
+        XCTAssertEqual(e.stage, .sdk)
+        XCTAssertTrue(e.cause.contains("Apple"), e.cause)
+        XCTAssertFalse(e.fix.contains("appstoreconnect"), e.fix)
+        XCTAssertTrue(e.fix.contains("resume"), e.fix)
+    }
 }
