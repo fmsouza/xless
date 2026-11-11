@@ -11,10 +11,7 @@ public enum Packager {
     public static func ipa(signedApp: URL, outputDir: URL, dSYMs: URL? = nil) throws -> URL {
         let name = signedApp.deletingPathExtension().lastPathComponent
         return try Files.atomicOutput(outputDir) { out in
-            if let dSYMs, let entries = try? FileManager.default.contentsOfDirectory(atPath: dSYMs.path), !entries.isEmpty {
-                let zip = out.appendingPathComponent("\(name).app.dSYM.zip")
-                try Shell.run("zip", ["-qry", zip.path] + entries.sorted() + ["-x"] + junkExclusions, cwd: dSYMs, stage: .package)
-            }
+            try zipDSYMs(dSYMs, app: signedApp, into: out)
             let staging = out.appendingPathComponent(".staging")
             let payload = staging.appendingPathComponent("Payload")
             try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
@@ -26,16 +23,29 @@ public enum Packager {
         }
     }
 
+    /// Zips everything in `dSYMs` (the build's debug symbols, `StagePaths.dSYMs`) into `<out>/<App>.app.dSYM.zip`, the
+    /// name fastlane's `gym` gives it, next to the package of `app`. Returns nil, writing nothing, when there is none.
+    @discardableResult
+    public static func zipDSYMs(_ dSYMs: URL?, app: URL, into out: URL) throws -> URL? {
+        guard let dSYMs, let entries = try? FileManager.default.contentsOfDirectory(atPath: dSYMs.path), !entries.isEmpty else { return nil }
+        let zip = out.appendingPathComponent("\(app.lastPathComponent).dSYM.zip")
+        try Shell.run("zip", ["-qry", zip.path] + entries.sorted() + ["-x"] + junkExclusions, cwd: dSYMs, stage: .package)
+        return zip
+    }
+
     /// ASC_KEY_P8 as rcodesign should read it: normalized like every PEM secret, newline-terminated.
     static func p8Contents(_ secrets: Secrets) throws -> Data {
         Data((PEM.normalize(try secrets.required("ASC_KEY_P8", stage: .package)) + "\n").utf8)
     }
 
-    /// Notarizes and staples the .app with rcodesign, then zips it (macOS Developer ID distribution).
-    public static func notarizedZip(signedApp: URL, outputDir: URL, secrets: Secrets) throws -> URL {
+    /// Notarizes and staples the .app with rcodesign, then zips it (macOS Developer ID distribution), with the dSYMs
+    /// zipped next to it (`zipDSYMs`).
+    public static func notarizedZip(signedApp: URL, outputDir: URL, secrets: Secrets, dSYMs: URL? = nil) throws -> URL {
         let name = signedApp.deletingPathExtension().lastPathComponent
         return try Files.atomicOutput(outputDir) { out in
-            try notarizedZip(signedApp: signedApp, name: name, out: out, secrets: secrets)
+            let zip = try notarizedZip(signedApp: signedApp, name: name, out: out, secrets: secrets)
+            try zipDSYMs(dSYMs, app: signedApp, into: out)
+            return zip
         }
     }
 

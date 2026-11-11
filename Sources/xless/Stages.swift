@@ -30,6 +30,9 @@ enum StageRunner {
 
     static func build(_ ctx: Context) async throws -> URL {
         try await withStage(.build) { try checkSDK(ctx) }
+        // The dSYMs of an earlier build never outlive this one: the builders that keep some write them afresh, and a
+        // build that keeps none (xtool, Cargo, Tauri) leaves none for `package` to zip.
+        try? FileManager.default.removeItem(at: ctx.paths.dSYMs)
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.build(ctx: rn) }
         if let cargo = ctx.cargoBuild { return try await CargoBuilder.build(ctx: cargo) }
         if let mac = ctx.tauriMacBuild { return try await TauriBuilder.buildMac(ctx: mac) }
@@ -117,12 +120,15 @@ enum StageRunner {
             // App Store mac (TestFlight's flat package, explicit via the distribution): the pkg.
             // Takes priority over the overlay branches: an appStore run never produces a DMG.
             case .macos where ctx.config.distribution(for: .macos) == .appStore:
-                return try await PkgBuilder.appStore(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets)
+                return try await PkgBuilder.appStore(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets,
+                                                     dSYMs: ctx.paths.dSYMs)
             // Tauri and cargo overlays: a signed, notarized, stapled DMG, named after the architectures of the app's
             // executable (a cargo overlay's `macos.architectures`); xless.yml: a notarized zip of the signed app.
+            // Every lane zips the build's dSYMs, when it kept any, into `<App>.app.dSYM.zip` next to its package.
             case .macos where ctx.tauriMac != nil || ctx.isCargo:
-                return try await DmgBuilder.notarizedDMG(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets)
-            case .macos: return try Packager.notarizedZip(signedApp: input, outputDir: ctx.paths.out, secrets: ctx.secrets)
+                return try await DmgBuilder.notarizedDMG(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets,
+                                                         dSYMs: ctx.paths.dSYMs)
+            case .macos: return try Packager.notarizedZip(signedApp: input, outputDir: ctx.paths.out, secrets: ctx.secrets, dSYMs: ctx.paths.dSYMs)
             }
         }
     }

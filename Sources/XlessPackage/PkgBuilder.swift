@@ -50,19 +50,21 @@ public enum PkgBuilder {
 
     /// Builds `<outputDir>/<product>.pkg`. `run` receives each external command and its working directory, `pack`
     /// the XAR archive to write (the test seams: real runs use `PkgBuilder.shell` and `Xar.write`; tests record the
-    /// argv, stage files by hand and read the archive's tree).
+    /// argv, stage files by hand and read the archive's tree). The dSYMs (`dSYMs`, when there are any) are zipped next
+    /// to it (`Packager.zipDSYMs`): App Store Connect gets none from the package, which carries only the app.
     @discardableResult
-    public static func build(signedApp: URL, outputDir: URL, config: ProjectConfig,
+    public static func build(signedApp: URL, outputDir: URL, config: ProjectConfig, dSYMs: URL? = nil,
                              run: (_ command: [String], _ cwd: URL) throws -> Void = shell,
                              pack: (_ nodes: [Xar.Node], _ out: URL, _ modified: Date) throws -> Void = Xar.write) throws -> URL {
-        try Files.atomicOutput(outputDir) { out in try buildInto(out, signedApp: signedApp, config: config, run: run, pack: pack) }
+        try Files.atomicOutput(outputDir) { out in try buildInto(out, signedApp: signedApp, config: config, dSYMs: dSYMs, run: run, pack: pack) }
     }
 
     // MARK: - Assembly
 
-    static func buildInto(_ out: URL, signedApp: URL, config: ProjectConfig,
+    static func buildInto(_ out: URL, signedApp: URL, config: ProjectConfig, dSYMs: URL? = nil,
                           run: (_ command: [String], _ cwd: URL) throws -> Void,
                           pack: (_ nodes: [Xar.Node], _ out: URL, _ modified: Date) throws -> Void) throws -> URL {
+        try Packager.zipDSYMs(dSYMs, app: signedApp, into: out)
         let fm = FileManager.default
         let pc = try config.platform(.macos)
         let bundleID = config.bundleID(for: .macos)
@@ -361,7 +363,7 @@ public enum PkgBuilder {
     /// (`rcodesign sign`, the seam the DMG path uses). The key is the installer PEM (`XLESS_INSTALLER_KEY`), not the
     /// Apple Distribution one the sign stage used for the app: App Store Connect refuses a product archive that
     /// is not signed with a "3rd Party Mac Developer Installer" certificate (ITMS-90237).
-    public static func appStore(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets,
+    public static func appStore(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets, dSYMs: URL? = nil,
                                 run: (_ command: [String], _ cwd: URL) throws -> Void = shell,
                                 pack: (_ nodes: [Xar.Node], _ out: URL, _ modified: Date) throws -> Void = Xar.write) async throws -> URL {
         let kind = CertificateKind.installer
@@ -373,7 +375,7 @@ public enum PkgBuilder {
                              fix: "re-run; if it persists, check the certificate in App Store Connect")
         }
         return try Files.atomicOutput(outputDir) { out in
-            let pkg = try buildInto(out, signedApp: signedApp, config: config, run: run, pack: pack)
+            let pkg = try buildInto(out, signedApp: signedApp, config: config, dSYMs: dSYMs, run: run, pack: pack)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-pkg-sign-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])

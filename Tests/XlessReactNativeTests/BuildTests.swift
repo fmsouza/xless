@@ -736,3 +736,33 @@ private let ents = ["HelloRN": BuiltApp.Entitlements(target: "HelloRN", bundleID
     #expect(try BuiltApp.copyDSYMs(from: products, to: out).isEmpty)
     #expect(!fm.fileExists(atPath: out.path))
 }
+
+/// A thin arm64 Mach-O of `filetype` (MH_EXECUTE 2, MH_DYLIB 6, MH_DSYM 0xa) whose LC_UUID is 16 bytes of `uuid`.
+private func machO(uuid: UInt8, filetype: UInt32) -> Data {
+    var d = Data()
+    func u32(_ v: UInt32) { var x = v.littleEndian; withUnsafeBytes(of: &x) { d.append(contentsOf: $0) } }
+    u32(0xfeedfacf); u32(0x0100000c); u32(0); u32(filetype); u32(1); u32(24); u32(0); u32(0)
+    u32(0x1b); u32(24); d.append(Data(repeating: uuid, count: 16))
+    return d
+}
+
+@Test func dSYMsOfBinariesTheAppNoLongerShipsAreLeftOut() throws {
+    let root = try tmp("dsym-app"); defer { try? fm.removeItem(at: root) }
+    let products = root.appendingPathComponent("Products/Release-iphoneos")
+    let app = root.appendingPathComponent("app/HelloRN.app")
+    try fm.createDirectory(at: app.appendingPathComponent("Frameworks/Pod.framework"), withIntermediateDirectories: true)
+    try machO(uuid: 0x11, filetype: 2).write(to: app.appendingPathComponent("HelloRN"))
+    try machO(uuid: 0x22, filetype: 6).write(to: app.appendingPathComponent("Frameworks/Pod.framework/Pod"))
+    for (rel, byte) in [("HelloRN.app.dSYM/Contents/Resources/DWARF/HelloRN", UInt8(0x11)),
+                        ("XCFrameworkIntermediates/Pod/Pod.framework.dSYM/Contents/Resources/DWARF/Pod", 0x22),
+                        // A pod removed since the derived data was last cleared: its dSYM is still under Products.
+                        ("XCFrameworkIntermediates/Gone/Gone.framework.dSYM/Contents/Resources/DWARF/Gone", 0x33)] {
+        let f = products.appendingPathComponent(rel)
+        try fm.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try machO(uuid: byte, filetype: 0xa).write(to: f)
+    }
+    let out = root.appendingPathComponent("build/dSYMs")
+    let copied = try BuiltApp.copyDSYMs(from: products, to: out, keepingImagesOf: app)
+    #expect(copied == ["HelloRN.app.dSYM", "XCFrameworkIntermediates/Pod/Pod.framework.dSYM"])
+    #expect(!fm.fileExists(atPath: out.appendingPathComponent("XCFrameworkIntermediates/Gone").path))
+}

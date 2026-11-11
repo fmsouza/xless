@@ -338,3 +338,15 @@ func realAssemblyIsParsedByAppleTools() throws {
         #expect(e.description.contains("XLESS_INSTALLER_KEY") && !e.description.contains("XLESS_DIST_KEY"))
     }
 }
+
+@Test func buildZipsTheDSYMsNextToThePkg() throws {
+    let root = scratch(); defer { clean(root: root) }
+    let (app, _) = try makeApp(root)
+    let dSYMs = try makeDSYMs(root, name: "Hello Tauri.app")
+    let out = root.appendingPathComponent("out")
+    _ = try PkgBuilder.build(signedApp: app, outputDir: out, config: try config(), dSYMs: dSYMs, run: { argv, cwd in
+        if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
+            .appendingPathComponent("\(component)/Payload").path, contents: Data("payload".utf8)) }
+    }, pack: { _, _, _ in })
+    #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("Hello Tauri.app.dSYM.zip").path))
+}

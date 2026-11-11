@@ -416,7 +416,7 @@ public enum ReactNativeBuilder {
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try enc.encode(["packages": records]).write(to: ctx.packagesFile, options: .atomic)
         if !simulator {
-            let dSYMs = try BuiltApp.copyDSYMs(from: products, to: ctx.paths.dSYMs)
+            let dSYMs = try BuiltApp.copyDSYMs(from: products, to: ctx.paths.dSYMs, keepingImagesOf: result)
             log("dSYMs: \(dSYMs.isEmpty ? "none (DEBUG_INFORMATION_FORMAT is not dwarf-with-dsym)" : dSYMs.joined(separator: ", "))")
         }
         return result

@@ -64,7 +64,7 @@ stage also removes its previous output.
 | assets | `xless assets` | `assets/` (iOS: `Assets.car`; macOS: `.icns`) | 13 |
 | finalize | `xless finalize` | `final/`: Xcode's metadata stamped into Info.plist, binaries patched. The app is complete but unsigned. | 14 |
 | sign | `xless sign` | `signed/` | 15 |
-| package | `xless package` | `out/`: the `.ipa`, the notarized `.zip`, or (Tauri and Cargo macOS) the notarized and stapled `.dmg` | 16 |
+| package | `xless package` | `out/`: the `.ipa`, the notarized `.zip`, (Tauri and Cargo macOS) the notarized and stapled `.dmg`, or (App-Store macOS) the `.pkg`; next to it, `<App>.app.dSYM.zip` when the build kept dSYMs ([below](#dsyms)) | 16 |
 | upload | `xless upload` | `upload.json` (iOS only; rewritten at every state change, so it keeps the build ID if processing fails or times out). With a [`testflight:` block](xless-yml.md#testflight) it then delivers the processed build to your TestFlight groups. | 17 |
 
 Config errors exit 10 and SDK errors exit 11. `xless run` itself exits 2 for a usage or configuration error of its
@@ -73,6 +73,38 @@ own (a missing project, overlay or secret file). Errors are printed as `[stage] 
 All stage commands take `--platform ios|macos`, `--project <dir>` (default `.`) and `--build-number`; overlays take
 `--config <overlay.yml>` and `--source <dir>` instead of `--project`. Sign, package and upload need an Apple Developer
 account and its keys ([signing-and-testflight.md](signing-and-testflight.md)); the stages before them need none.
+
+## dSYMs
+
+A crash reporter (Crashlytics' `upload-symbols`, `sentry-cli debug-files upload`) symbolicates a crash with the dSYM of
+the build that crashed. `build` keeps the build's dSYMs in `.xless/build/<platform>/dSYMs/`, and `package` zips them
+into `out/<App>.app.dSYM.zip`, the name fastlane's `gym` gives it, next to the `.ipa`, the notarized `.zip`, the `.dmg`
+or the `.pkg`. xless uploads nothing: App Store Connect gets no dSYM from it.
+
+| App | Where the dSYM comes from | When there is one |
+|---|---|---|
+| `xless.yml`, macOS | Swift Build's `<name>.dSYM` next to each architecture's executable, merged into one universal dSYM | When Swift Build writes one (it does for the release build in the xless image) |
+| React Native | Every `.dSYM` Swift Build wrote ([react-native.md](react-native.md#dsyms)) | `DEBUG_INFORMATION_FORMAT = dwarf-with-dsym` (Expo's Release default) |
+| `xless.yml` iOS, Cargo, Tauri | None (not supported yet, [below](#dsyms-of-rust-apps)) | |
+
+A dSYM is kept only when its UUIDs are those of a binary the app ships (`dwarfdump --uuid` shows both), so a dSYM an
+earlier build left behind (Swift Build's derived data is kept between builds) never ends up in the zip. On macOS the
+dSYM is named after the app, `<App>.app.dSYM`, with its DWARF file named after the app's executable. Signing,
+`finalize` and stripping do not change a Mach-O's UUID. Each `build` replaces the directory, and one that keeps no dSYM
+removes it; the build log's `dSYMs:` line says what was kept, or why nothing was.
+
+### dSYMs of Rust apps
+
+Cargo and Tauri apps get no dSYM yet, even with debug info in the release profile:
+
+- cargo asks rustc for `-C split-debuginfo=unpacked` on Apple targets whenever the profile has debug info, so rustc
+  does not run `dsymutil` and leaves no `<bin>.dSYM`;
+- the executable is linked with `-Wl,-x` (local symbols dropped, in place of a `strip` that could leave a Mach-O dyld
+  refuses), and `ld64.lld -x` also drops the debug map entries of local and hidden functions. Measured with LLD 15: the
+  dSYM `dsymutil` then makes describes `main` and nothing else, and nearly every Rust function is local or hidden.
+
+A useful dSYM needs a link without `-x` and the local symbols stripped after `dsymutil` has run. iOS apps built from an
+`xless.yml` (xtool) and Tauri iOS apps (which xless links itself) are not covered either.
 
 ## Other commands
 
