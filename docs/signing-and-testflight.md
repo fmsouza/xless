@@ -88,6 +88,12 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
   warning. The exit code is xless's (17 for a failed upload or delivery).
+- **One run per work copy.** A run holds a lock on the work copy it builds (the project directory; for an overlay,
+  `~/.cache/xless/work/<overlay name>`, or its work volume for React Native in Docker) in `~/.cache/xless/locks`. A
+  second run on the same work copy is refused (exit 2) while the first is running; runs on other work copies are not
+  affected, and a dry run takes no lock. After a SIGKILL, which leaves no chance to clean up, the next run on that work
+  copy sees that the run holding the lock is gone, and stops what it left before it starts: its containers (labelled
+  `xless.work=<hash>`) and, natively, the xless it was running.
 - **Testers.** Internal testers must be App Store Connect users. Add them to the group once in the web UI (Users and
   Access, then TestFlight); xless creates missing groups but cannot add users. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
