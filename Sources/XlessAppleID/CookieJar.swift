@@ -90,7 +90,8 @@ final class CookieJar: @unchecked Sendable {
         var domain: String?, path: String?, secure = false, expires: Date?, maxAge: Int?
         for attr in parts {
             let kv = attr.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-            let key = kv[0].lowercased(), val = kv.count > 1 ? kv[1] : ""
+            guard let first = kv.first else { continue }
+            let key = first.lowercased(), val = kv.count > 1 ? kv[1] : ""
             switch key {
             case "domain":
                 var d = val.lowercased()

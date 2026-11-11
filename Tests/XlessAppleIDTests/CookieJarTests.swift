@@ -81,6 +81,13 @@ final class CookieJarTests: XCTestCase {
         XCTAssertNil(jar.header(for: url("https://a.apple.com/")))
     }
 
+    func testEmptyAttributesAreIgnored() {
+        let jar = CookieJar()
+        jar.store(from: response("https://a.apple.com/", "x=y; Path=/;"), for: url("https://a.apple.com/"))
+        jar.store(from: response("https://a.apple.com/", "z=w;; Secure; ;"), for: url("https://a.apple.com/"))
+        XCTAssertEqual(jar.header(for: url("https://a.apple.com/")), "x=y; z=w")
+    }
+
     func testClearForgetsEverything() {
         let jar = CookieJar()
         jar.store(from: response("https://a.apple.com/", "s=1"), for: url("https://a.apple.com/"))
