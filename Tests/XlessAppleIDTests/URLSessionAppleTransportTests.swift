@@ -97,19 +97,42 @@ final class URLSessionAppleTransportTests: XCTestCase {
         let server = try LoopbackServer { _ in LoopbackServer.reply("200 OK", ["Content-Type": "application/octet-stream"], body: body) }
         let file = dir.appendingPathComponent("f")
         try Data("old contents".utf8).write(to: file)
-        let counter = ByteCounter(0)
-        let (_, response) = try await transport.download(URLRequest(url: server.url("/f")), to: file) { _ = counter.add($0) }
+        let seen = Recorder()
+        let (_, response) = try await transport.download(URLRequest(url: server.url("/f")), to: file, progress: seen.add)
         XCTAssertEqual(response.statusCode, 200)
         XCTAssertEqual(try Data(contentsOf: file), body)
-        XCTAssertEqual(counter.add(0), Int64(body.count))
+        XCTAssertEqual(seen.values.last, Int64(body.count), "progress is the bytes in the file")
     }
 
     func testPartialContentAppends() async throws {
-        let server = try LoopbackServer { _ in LoopbackServer.reply("206 Partial Content", ["Content-Type": "application/octet-stream"], body: Data("tail".utf8)) }
+        let server = try LoopbackServer { _ in
+            LoopbackServer.reply("206 Partial Content", ["Content-Type": "application/octet-stream", "Content-Range": "bytes 5-8/9"], body: Data("tail".utf8))
+        }
         let file = dir.appendingPathComponent("f")
         try Data("head-".utf8).write(to: file)
-        _ = try await transport.download(URLRequest(url: server.url("/f")), to: file) { _ in }
+        let seen = Recorder()
+        _ = try await transport.download(URLRequest(url: server.url("/f")), to: file, progress: seen.add)
         XCTAssertEqual(String(decoding: try Data(contentsOf: file), as: UTF8.self), "head-tail")
+        XCTAssertEqual(seen.values.last, 9, "progress counts what was already in the file")
+    }
+
+    func testPartialContentAtAnotherOffsetIsRefused() async throws {
+        for range in ["bytes 2-5/6", nil] {
+            let server = try LoopbackServer { _ in
+                var h = ["Content-Type": "application/octet-stream"]
+                h["Content-Range"] = range
+                return LoopbackServer.reply("206 Partial Content", h, body: Data("tail".utf8))
+            }
+            let file = dir.appendingPathComponent("f")
+            try Data("head-".utf8).write(to: file)
+            do {
+                _ = try await transport.download(URLRequest(url: server.url("/f")), to: file) { _ in }
+                XCTFail("expected an error for Content-Range \(range ?? "none")")
+            } catch let e as UnexpectedRange {
+                XCTAssertEqual(e.expectedStart, 5)
+            }
+            XCTAssertEqual(String(decoding: try Data(contentsOf: file), as: UTF8.self), "head-")
+        }
     }
 
     func testHTMLIsReturnedNotWritten() async throws {

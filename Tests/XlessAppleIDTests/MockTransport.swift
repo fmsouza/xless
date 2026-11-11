@@ -35,18 +35,31 @@ final class MockTransport: AppleTransport, @unchecked Sendable {
         let r = try handler(request)
         let response = response(request, r)
         guard (200..<300).contains(r.status), !URLSessionAppleTransport.isHTML(response) else { return (r.body, response) }
-        if r.status == 206, let h = try? FileHandle(forWritingTo: file) {
+        // The real transport's rules: a 206 must continue the file where it ends.
+        let size = DeveloperDownloads.fileSize(file)
+        guard let start = URLSessionAppleTransport.writeOffset(response, existingSize: size) else {
+            throw UnexpectedRange(expectedStart: size, contentRange: response.value(forHTTPHeaderField: "Content-Range"))
+        }
+        if start > 0, let h = try? FileHandle(forWritingTo: file) {
             h.seekToEndOfFile(); h.write(r.body); h.closeFile()
         } else {
             try r.body.write(to: file)
         }
-        progress(Int64(r.body.count))
+        progress(start + Int64(r.body.count))
         return (Data(), response)
     }
 
     private func response(_ request: URLRequest, _ r: Reply) -> HTTPURLResponse {
         HTTPURLResponse(url: request.url!, statusCode: r.status, httpVersion: "HTTP/1.1", headerFields: r.headers)!
     }
+}
+
+/// A running byte total shared across concurrent closures.
+final class ByteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var total: Int64
+    init(_ start: Int64) { total = start }
+    func add(_ n: Int64) -> Int64 { lock.withLock { total += n; return total } }
 }
 
 extension URLRequest {

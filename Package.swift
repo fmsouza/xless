@@ -56,8 +56,11 @@ let package = Package(
             "XlessCore", "XlessMachO", "XlessTauri",
             .product(name: "Yams", package: "Yams"),
         ]),
+        // C for what Swift cannot call (variadic prctl): keeping the sign-in's memory out of core dumps.
+        .target(name: "CXlessProcess"),
         // Apple ID sign-in (SRP, 2FA) and Xcode .xip downloads from developer.apple.com (`xless xcode download`).
         .target(name: "XlessAppleID", dependencies: [
+            "CXlessProcess",
             "XlessCore",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "BigInt", package: "BigInt"),

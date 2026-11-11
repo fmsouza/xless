@@ -3,8 +3,8 @@ import XlessAppleID
 import XlessCore
 
 /// The sign-in's prompts, on the controlling terminal (`/dev/tty`) only: an Apple ID, password or code is never read from
-/// stdin, a pipe, a file, an argument or the environment. The password is read with echo off; Ctrl-C while echo is off
-/// restores the terminal before exiting.
+/// stdin, a pipe, a file, an argument or the environment. The password is read with echo off; a signal at that prompt
+/// gives the terminal its echo back (see `EchoGuard`).
 final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
     private let fd: Int32
     private let lock = NSLock()
@@ -33,7 +33,7 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
             guard tcgetattr(fd, &saved) == 0 else { throw noEcho() }
             var quiet = saved
             quiet.c_lflag &= ~tcflag_t(ECHO)
-            EchoGuard.arm(fd: fd, saved: saved)
+            EchoGuard.arm(fd: fd, saved: saved, quiet: quiet)
             guard tcsetattr(fd, TCSAFLUSH, &quiet) == 0 else { EchoGuard.disarm(); throw noEcho() }
             defer {
                 _ = tcsetattr(fd, TCSAFLUSH, &saved)
@@ -81,34 +81,48 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
     }
 }
 
-/// Restores the terminal's echo when the user presses Ctrl-C at the password prompt.
+/// While the password is read with echo off: a signal that ends the process (SIGINT, SIGTERM, SIGHUP, SIGQUIT) gives the
+/// terminal its echo back first, and Ctrl-Z (SIGTSTP) gives it back while stopped and turns it off again on resume.
 private enum EchoGuard {
     nonisolated(unsafe) static var fd: Int32 = -1
     nonisolated(unsafe) static var saved = termios()
+    nonisolated(unsafe) static var quiet = termios()
+    static let signals: [Int32] = [SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGTSTP]
 
-    static func arm(fd: Int32, saved: termios) {
+    static func arm(fd: Int32, saved: termios, quiet: termios) {
         Self.fd = fd
         Self.saved = saved
-        signal(SIGINT) { _ in
-            if EchoGuard.fd >= 0 { _ = tcsetattr(EchoGuard.fd, TCSAFLUSH, &EchoGuard.saved) }
-            _exit(130)
-        }
+        Self.quiet = quiet
+        for sig in signals { install(sig) }
     }
 
     static func disarm() {
-        signal(SIGINT, SIG_DFL)
+        for sig in signals { signal(sig, SIG_DFL) }
         fd = -1
     }
-}
 
-/// Keeps the sign-in's secrets out of core dumps (`ulimit -c 0` for this process).
-enum CoreDumps {
-    static func disable() {
-        var none = rlimit(rlim_cur: 0, rlim_max: 0)
-        #if canImport(Glibc)
-        _ = setrlimit(__rlimit_resource_t(RLIMIT_CORE.rawValue), &none)
+    private static func install(_ sig: Int32) {
+        signal(sig) { EchoGuard.handle($0) }
+    }
+
+    /// Async-signal-safe: tcsetattr, signal, sigprocmask and raise only.
+    private static func handle(_ sig: Int32) {
+        if fd >= 0 { _ = tcsetattr(fd, TCSANOW, &saved) }
+        // Take the signal's default action now: the process ends here, or (SIGTSTP) stops until SIGCONT.
+        signal(sig, SIG_DFL)
+        var set = sigset_t()
+        #if os(Linux)
+        sigemptyset(&set)
+        sigaddset(&set, sig)
         #else
-        _ = setrlimit(RLIMIT_CORE, &none)
+        set = sigset_t(1) << sigset_t(sig - 1)
         #endif
+        _ = pthread_sigmask(SIG_UNBLOCK, &set, nil)
+        _ = raise(sig)
+        // Resumed after a stop, still at the password prompt.
+        if fd >= 0 {
+            _ = tcsetattr(fd, TCSANOW, &quiet)
+            install(sig)
+        }
     }
 }

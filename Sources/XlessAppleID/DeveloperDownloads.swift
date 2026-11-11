@@ -92,7 +92,13 @@ public enum DeveloperDownloads {
         }
         var attempt = 1
         while true {
-            switch try await fetch(file, from: url, to: part, client: client, progress: progress) {
+            let outcome: Attempt
+            if isComplete(part, size: file.fileSize) {
+                outcome = .complete
+            } else {
+                outcome = try await fetch(file, from: url, to: part, client: client, progress: progress)
+            }
+            switch outcome {
             case .complete:
                 do {
                     try fm.moveItem(at: part, to: dest)
@@ -115,17 +121,22 @@ public enum DeveloperDownloads {
                               progress: @escaping @Sendable (Int64) -> Void) async throws -> Attempt {
         let fm = FileManager.default
         // Refreshes the download cookie for this path; Apple answers 403 for Xcodes and still sets it (xcodes ignores it too).
-        _ = try? await client.send(URLRequest(url: AppleEndpoints.downloadAuth(path: file.remotePath)))
+        var auth = URLRequest(url: AppleEndpoints.downloadAuth(path: file.remotePath))
+        auth.setValue("*/*", forHTTPHeaderField: "Accept")
+        _ = try? await client.send(auth)
 
         let offset = fileSize(part)
         var request = URLRequest(url: url)
         request.setValue("*/*", forHTTPHeaderField: "Accept")
         if offset > 0 { request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range") }
-        let counter = ByteCounter(offset)
         progress(offset)
         let response: HTTPURLResponse, finalURL: URL
         do {
-            (_, response, finalURL) = try await client.download(request, to: part) { n in progress(counter.add(n)) }
+            (_, response, finalURL) = try await client.download(request, to: part, progress: progress)
+        } catch let error as UnexpectedRange {
+            try? fm.removeItem(at: part)
+            return .retry(fail("Apple resumed \(file.name) at the wrong place (\(error.contentRange ?? "no Content-Range"), not byte \(error.expectedStart))",
+                               fix: "re-run to download it from the start"))
         } catch let error as URLError {
             return .retry(fail("the connection to Apple failed while downloading \(file.name): \(error.localizedDescription)",
                                fix: "re-run (the download resumes where it stopped)"))
@@ -137,6 +148,8 @@ public enum DeveloperDownloads {
                        fix: "check that this Apple ID can download it at https://developer.apple.com/download/all/ (accept the agreement there), then re-run")
         }
         if response.statusCode == 416 {
+            // The .part may already hold the whole file (the last run stopped after its last byte).
+            if let total = URLSessionAppleTransport.contentRange(response)?.total, isComplete(part, size: total) { return .complete }
             try? fm.removeItem(at: part)
             throw fail("Apple refused to resume \(file.name)", fix: "re-run to download it from the start")
         }
@@ -161,6 +174,12 @@ public enum DeveloperDownloads {
         return .complete
     }
 
+    /// `part` holds all `size` bytes (when Apple listed the size) and starts like a .xip.
+    static func isComplete(_ part: URL, size: Int64?) -> Bool {
+        guard let size, size > 0 else { return false }
+        return fileSize(part) == size && startsLikeXip(part)
+    }
+
     static func startsLikeXip(_ url: URL) -> Bool {
         guard let h = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? h.close() }
@@ -170,12 +189,4 @@ public enum DeveloperDownloads {
     static func fileSize(_ url: URL) -> Int64 {
         ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value ?? 0
     }
-}
-
-/// A running byte total shared with the transport's delegate queue.
-final class ByteCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var total: Int64
-    init(_ start: Int64) { total = start }
-    func add(_ n: Int64) -> Int64 { lock.withLock { total += n; return total } }
 }

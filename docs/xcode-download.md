@@ -30,9 +30,13 @@ Universal one is taken.
 Each file goes to `<output-dir>/<Apple's file name>` (`--output-dir` defaults to the current directory) through a
 `<name>.part` file. A dropped connection or a server error is retried twice, resuming
 the `.part`; if a file still fails, the others go on and the command ends with the list of failures. Run the same command
-again: it signs in again, keeps the files that are complete and resumes each `.part`. Before it starts, it checks that the disk has room for what is left to download.
+again: it signs in again, keeps the files that are complete and resumes each `.part` (a `.part` that already holds the
+whole file is finished without downloading). A resume Apple answers from the wrong byte is thrown away and downloaded
+from the start, never appended. Before it starts, it checks that the disk has room for what is left to download.
 
-After each download the file's SHA-256 is compared with the Xcodes in `versions.env`. A file xless does not support yet
+After each download the file's SHA-256 is compared with the Xcodes in `versions.env`. The hash is recorded next to the
+file as `<name>.sha256` (in `sha256sum` format, so `sha256sum -c` checks it), and a re-run that keeps the file uses it
+instead of reading the file again. A file xless does not support yet
 prints the `XCODE_XIP_SHA256_<build>` value to record for it ([maintainers.md](maintainers.md)).
 
 ## What happens to your Apple ID and password
@@ -41,14 +45,15 @@ Nothing of the sign-in is kept, and none of it leaves for anywhere but Apple:
 
 - The Apple ID, password and code are read from the terminal itself (`/dev/tty`), never from a pipe, a file, an
   argument or an environment variable; without a terminal the command refuses to run. The password is read with echo
-  off.
+  off; Ctrl-C, Ctrl-Z, closing the terminal or a `kill` at that prompt gives the terminal its echo back.
 - The password is never sent, to Apple or anyone. The sign-in is Apple's own SRP protocol, the one its web sign-in
   uses: xless sends a proof computed from the password. The typed password is overwritten as soon as it is hashed, and
   only that hash is kept, in memory, until the sign-in step ends.
 - The session's cookies live in the process's memory. Nothing is written to disk (no cookie file, no cache), logged,
   printed, or passed to another program; the downloads run inside xless, not through `curl`. Cookies are only sent to
   the Apple hosts that set them, over https.
-- Core dumps are turned off for the command, so a crash cannot write its memory to disk.
+- Core dumps are turned off for the command, so a crash cannot write its memory to disk. On Linux the process is also
+  marked non-dumpable, so another process of the same user cannot read its memory (ptrace, `/proc/<pid>/mem`).
 - When the command ends, the session is gone; the next run signs in again.
 
 ## What it does not do

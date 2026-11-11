@@ -19,7 +19,8 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
         shows the names. Where Apple offers a Universal and an Apple silicon .xip, the Universal one is taken.
 
         Each .xip downloads to <output-dir>/<Apple's file name> through a .part file; an interrupted run resumes it, and \
-        a file already there is kept. Afterwards each file's SHA-256 is checked against the Xcodes xless supports.
+        a file already there is kept. Afterwards each file's SHA-256 is checked against the Xcodes xless supports (and \
+        recorded as <name>.sha256, so a re-run does not read the file again).
         """)
 
     @Argument(help: "Xcode versions, e.g. 26.2 27.0 or 26.2,27.0.") var versions: [String] = []
@@ -87,7 +88,7 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
             do {
                 let result = try await DeveloperDownloads.download(r.file, into: dir, client: client, progress: meter.update)
                 meter.finish(skipped: result.skipped)
-                let sum = try XcodeSource.sha256(of: result.url)
+                let sum = try XipDigest.sha256(of: result.url) { try XcodeSource.sha256(of: $0) }
                 print("\(result.url.path)\t\(DownloadReport.identity(sha256: sum, known: known))")
                 done.append(result.url)
             } catch {

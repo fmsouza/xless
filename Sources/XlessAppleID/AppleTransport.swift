@@ -7,10 +7,17 @@ import FoundationNetworking
 /// or sends cookies: `AppleWebClient` does both, so it decides which host gets which cookie.
 public protocol AppleTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
-    /// Streams a binary 2xx body into `file`: a 206 (Partial Content) is appended, any other 2xx replaces the file.
-    /// `progress` gets each written chunk's byte count. Any other response, and an HTML body (Apple's "unauthorized"
+    /// Streams a binary 2xx body into `file`: a 206 (Partial Content) is appended, any other 2xx replaces the file. A 206
+    /// whose `Content-Range` does not start where the file ends writes nothing and throws `UnexpectedRange`.
+    /// `progress` gets the bytes in the file so far. Any other response, and an HTML body (Apple's "unauthorized"
     /// page), writes nothing; its body (at most 64 KB) is returned instead.
     func download(_ request: URLRequest, to file: URL, progress: @escaping @Sendable (Int64) -> Void) async throws -> (Data, HTTPURLResponse)
+}
+
+/// A 206 that would not continue the file where it ends (its `Content-Range` starts elsewhere, or is missing).
+public struct UnexpectedRange: Error, Sendable {
+    public let expectedStart: Int64
+    public let contentRange: String?
 }
 
 /// The real transport: an ephemeral URLSession with no cookie storage, no cache and no automatic redirects, so nothing
@@ -21,6 +28,7 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
         let file: URL?
         let progress: (@Sendable (Int64) -> Void)?
         var handle: FileHandle?
+        var written: Int64 = 0
         var body = Data()
         var writeError: Error?
         init(_ c: CheckedContinuation<(Data, HTTPURLResponse), Error>, file: URL?, progress: (@Sendable (Int64) -> Void)?) {
@@ -64,6 +72,25 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
         response.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("text/html") ?? false
     }
 
+    /// Where a binary 2xx body goes in a file of `existingSize` bytes: 0 (replace) for a 200, `existingSize` (append) for
+    /// a 206 whose `Content-Range: bytes <start>-…` starts there, nil for any other 206.
+    static func writeOffset(_ response: HTTPURLResponse, existingSize: Int64) -> Int64? {
+        guard response.statusCode == 206 else { return 0 }
+        guard let start = contentRange(response)?.start, start == existingSize else { return nil }
+        return start
+    }
+
+    /// `Content-Range: bytes <start>-<end>/<total>` (start nil for `bytes */<total>`, total nil for `/*`).
+    static func contentRange(_ response: HTTPURLResponse) -> (start: Int64?, total: Int64?)? {
+        guard let v = response.value(forHTTPHeaderField: "Content-Range")?.trimmingCharacters(in: .whitespaces),
+              v.lowercased().hasPrefix("bytes "), let slash = v.lastIndex(of: "/") else { return nil }
+        let range = v[v.index(v.startIndex, offsetBy: 6)..<slash].trimmingCharacters(in: .whitespaces)
+        let total = Int64(v[v.index(after: slash)...].trimmingCharacters(in: .whitespaces))
+        if range == "*" { return (nil, total) }
+        guard let dash = range.firstIndex(of: "-"), let start = Int64(range[..<dash]) else { return nil }
+        return (start, total)
+    }
+
     private func run(_ request: URLRequest, file: URL?, progress: (@Sendable (Int64) -> Void)?) async throws -> (Data, HTTPURLResponse) {
         try await withCheckedThrowingContinuation { c in
             let task = session.dataTask(with: request)
@@ -84,7 +111,11 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
         if let p = state(dataTask), let file = p.file, let http = response as? HTTPURLResponse,
            (200..<300).contains(http.statusCode), !Self.isHTML(http) {
             do {
-                if http.statusCode != 206 || !FileManager.default.fileExists(atPath: file.path) {
+                let size = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? NSNumber)?.int64Value ?? 0
+                guard let start = Self.writeOffset(http, existingSize: size) else {
+                    throw UnexpectedRange(expectedStart: size, contentRange: http.value(forHTTPHeaderField: "Content-Range"))
+                }
+                if start == 0 {
                     guard FileManager.default.createFile(atPath: file.path, contents: nil) else {
                         throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: file.path])
                     }
@@ -92,6 +123,7 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
                 let h = try FileHandle(forWritingTo: file)
                 h.seekToEndOfFile()
                 p.handle = h
+                p.written = start
             } catch {
                 p.writeError = error
                 completionHandler(.cancel)
@@ -115,7 +147,8 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
                 dataTask.cancel()
                 return
             }
-            p.progress?(Int64(data.count))
+            p.written += Int64(data.count)
+            p.progress?(p.written)
         } else if p.file == nil || p.body.count < 64 << 10 {
             p.body.append(data)
         }
