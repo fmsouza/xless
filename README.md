@@ -57,7 +57,8 @@ curl -fsSL https://github.com/fmsouza/xless/releases/latest/download/install.sh 
 ```
 
 This puts `xless` in `~/.local/bin` and its support files in `~/.local/share/xless`, after checking the download
-against the release's checksums. It needs no `sudo`. If it says that `~/.local/bin` is not on `PATH` in this shell,
+against the release's checksums. It needs no `sudo`. Run it again to upgrade: it replaces both, and xless refuses
+support files from another release than its own ([troubleshooting](docs/troubleshooting.md#installing)). If it says that `~/.local/bin` is not on `PATH` in this shell,
 open a new terminal (many Linux systems add `~/.local/bin` at login once it exists) or run the `export` line it
 prints. If a new terminal still cannot find `xless`, add that line to your shell's startup file. Then check:
 

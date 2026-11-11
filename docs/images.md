@@ -107,7 +107,9 @@ S=~/xless-share
 ```
 
 Then edit `$S/docker/Dockerfile.*` (or a pin in `$S/versions.env`) and run the steps above from the image you changed
-onwards: each image is built on the previous one of the same architecture and suffix.
+onwards: each image is built on the previous one of the same architecture and suffix. The copy keeps the release's
+`VERSION` file: if you point `XLESS_SHARE` at it, xless refuses it once you upgrade
+([troubleshooting.md](troubleshooting.md#installing)), so copy the new share and make your changes again.
 
 ## Another architecture
 

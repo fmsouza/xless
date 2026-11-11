@@ -66,6 +66,7 @@ s="$t/stamp"; mkdir -p "$s/Sources/XlessCore" "$s/scripts"
 cp "$repo/scripts/stamp-version.sh" "$s/scripts/"; cp "$repo/versions.env" "$s/"; cp "$repo/Sources/XlessCore/Version.swift" "$s/Sources/XlessCore/"
 bash "$s/scripts/stamp-version.sh" 0.1.0 >/dev/null
 grep -q 'current = "0.1.0"' "$s/Sources/XlessCore/Version.swift" || fail "Version.swift not stamped"
+grep -q 'development = "0.0.0-dev"' "$s/Sources/XlessCore/Version.swift" || fail "the stamp changed XlessVersion.development"
 grep -q '^XLESS_VERSION=0.1.0$' "$s/versions.env" || fail "versions.env not stamped"
 for v in 1.2 v1.2.3 1.2.3-rc1 "" abc; do
   bash "$s/scripts/stamp-version.sh" "$v" >/dev/null 2>&1 && fail "stamp accepted '$v'"
