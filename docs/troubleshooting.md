@@ -95,6 +95,28 @@ removes them.
 `xless setup --reexport` exports the SDK again even when the cache has it. The cache is
 `$XDG_CACHE_HOME/xless`, else `~/.cache/xless`; deleting it costs only a new export.
 
+### Without the .xip
+
+The `.xip` is needed only to export the SDK. Once an export exists, `xless setup` (native or `--docker`) can run
+from it instead, for example on a CI runner that kept `~/.cache/xless` but lost its images:
+
+- `xless setup --docker` with neither `--xcode` nor `--sdk` reuses the export in `~/.cache/xless/sdk/` when exactly
+  one export there, of a supported Xcode, holds every architecture the run sets up.
+- `xless setup --docker --sdk <dir>` names the export: the directory that holds `<arch>/darwin.xtoolsdk` and
+  `toolchain-meta.json`, such as `~/.cache/xless/sdk/xcode27.0-27A266a`, which may be anywhere.
+
+The Xcode is read from the export's `toolchain-meta.json` (or, without one, from its `xcode<version>-<build>` name)
+and must be one `versions.env` supports. Nothing is exported, so the disk check skips the cache.
+
+| Symptom | What to do |
+|---|---|
+| `no --xcode, and no SDK export under … to reuse` | Nothing to reuse: pass the Xcode, `xless setup --xcode <Xcode.xip>`. |
+| `… holds 2 SDK exports for …` | Pick one with `--sdk <dir>`, or pass `--xcode`. |
+| `no SDK export under … holds amd64 …`, or `the SDK export … holds no amd64 SDK` | The export has no SDK for that architecture: pass `--xcode` to export it, or drop that `--arch`. |
+| `… holds no SDK export (<arch>/darwin.xtoolsdk)` | `--sdk` takes the export itself, not its `<arch>` directory or the `darwin.xtoolsdk` inside it. |
+| `… is an SDK export of Xcode build …, not a supported Xcode` | That Xcode is no longer supported: set up a supported one with `--xcode`. |
+| `--reexport exports the SDK again, which needs the Xcode` | Add `--xcode <Xcode.xip>`. |
+
 ## Building
 
 | Symptom | What to do |

@@ -16,6 +16,11 @@ struct SetupCommand: AsyncParsableCommand {
         SDK is exported into $XDG_CACHE_HOME/xless/sdk/xcode<V>-<B>/ (default ~/.cache/xless) and reused by later runs \
         (--reexport exports again).
 
+        Once exported, the Xcode is no longer needed: --sdk <dir> sets up from that export instead (its toolchain-meta.json \
+        names the Xcode, which must be one versions.env supports), and with neither --xcode nor --sdk setup reuses the \
+        cache's export when exactly one holds the architectures it sets up. Nothing is exported then, so the cache's \
+        free-space check is skipped.
+
         Native (the default, Linux only): xtool, rcodesign and the open-source Swift toolchain of that Xcode's Swift are \
         downloaded (each checked against versions.env's sha256) into $XLESS_NATIVE_HOME (default \
         $XDG_DATA_HOME/xless-native, else ~/.local/share/xless-native), the SDK is installed for xtool and SwiftPM, and the \
@@ -33,10 +38,12 @@ struct SetupCommand: AsyncParsableCommand {
         the disk check asks for, and runs nothing.
         """)
 
-    @Option(help: "The Xcode: a downloaded Xcode .xip (any name) or an Xcode.app.") var xcode: String
+    @Option(help: "The Xcode: a downloaded Xcode .xip (any name) or an Xcode.app. Not needed once its SDK is exported (see --sdk).") var xcode: String?
+    @Option(help: ArgumentHelp("Set up from this SDK export instead of an Xcode: a directory an earlier setup exported into (e.g. ~/.cache/xless/sdk/xcode27.0-27A266a). Without --xcode or --sdk: the cache's one export.",
+                               valueName: "dir")) var sdk: String?
     @Flag(help: "Build the xless Docker images instead of installing natively.") var docker = false
     @Option(parsing: .upToNextOption, help: "With --docker: architectures arm64 and/or amd64 (default: this machine's).") var arch: [String] = []
-    @Flag(help: "Export the SDK again even when an export of this Xcode exists.") var reexport = false
+    @Flag(help: "Export the SDK again even when an export of this Xcode exists (needs --xcode).") var reexport = false
     @Flag(help: "Print the plan (each step's command) and run nothing.") var dryRun = false
 
     func run() async throws {
@@ -45,15 +52,37 @@ struct SetupCommand: AsyncParsableCommand {
         }
     }
 
+    /// What this run sets up from, as its arguments spell it: for a fix that names the same setup with other flags.
+    private var sourceArgs: String {
+        if let xcode { return " --xcode \(Self.quote(xcode))" }
+        if let sdk { return " --sdk \(Self.quote(sdk))" }
+        return " [--xcode <Xcode .xip or Xcode.app>]"
+    }
+
     private func setup() throws {
+        if xcode != nil, sdk != nil {
+            throw XlessError(.sdk, "--xcode and --sdk both name what to set up from",
+                             fix: "pass one: --xcode to export the SDK from that Xcode, or --sdk to reuse an export")
+        }
+        if reexport, xcode == nil {
+            throw XlessError(.sdk, "--reexport exports the SDK again, which needs the Xcode",
+                             fix: "pass it: xless setup --xcode <Xcode .xip or Xcode.app> --reexport")
+        }
         if !docker {
             guard arch.allSatisfy({ $0 == Self.hostArch }) else {
                 throw XlessError(.sdk, "--arch \(arch.joined(separator: " ")) needs --docker: a native setup installs for this machine (\(Self.hostArch)) only",
                                  fix: "drop --arch, or add --docker to build the images for those architectures")
             }
             guard Self.isLinux else {
-                throw XlessError(.sdk, "a native setup runs on Linux only", fix: "build the images instead: xless setup --docker --xcode \(xcode)")
+                throw XlessError(.sdk, "a native setup runs on Linux only", fix: "build the images instead: xless setup --docker\(sourceArgs)")
             }
+        }
+        var archs: [String] = []
+        for a in docker && !arch.isEmpty ? arch : [Self.hostArch] where !archs.contains(a) {
+            guard a == "arm64" || a == "amd64" else {
+                throw XlessError(.sdk, "unknown architecture '\(a)'", fix: "pass --arch arm64 and/or --arch amd64")
+            }
+            archs.append(a)
         }
         let env = ProcessInfo.processInfo.environment
         let fm = FileManager.default
@@ -64,12 +93,21 @@ struct SetupCommand: AsyncParsableCommand {
         let home = env["HOME"].map { URL(fileURLWithPath: $0) } ?? fm.homeDirectoryForCurrentUser
         let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
 
-        if !dryRun { say("==> identifying \(xcode)") }
-        let source = try XcodeSource.identify(path: xcode, known: known, cwd: cwd, home: home)
         let table = KnownXcodes.parseEnv((try? String(contentsOf: versionsEnv, encoding: .utf8)) ?? "")
         let cacheRoot = SetupPlan.cacheRoot(env: env, home: home)
+        let source: XcodeSource.Identified
+        if let xcode {
+            if !dryRun { say("==> identifying \(xcode)") }
+            source = try XcodeSource.identify(path: xcode, known: known, cwd: cwd, home: home)
+        } else if let sdk {
+            source = try XcodeSource.identifyExport(path: sdk, known: known, cwd: cwd, home: home)
+        } else {
+            source = try XcodeSource.findExport(cacheRoot: cacheRoot, known: known, archs: archs)
+        }
+        // An export is reused as it is: every architecture this run sets up must already be in it.
+        if source.kind == .export { try XcodeSource.checkExport(source.url, holds: archs) }
         if docker {
-            try dockerSetup(source: source, env: env, exe: exe, share: share, home: home, cwd: cwd, table: table, cacheRoot: cacheRoot)
+            try dockerSetup(source: source, archs: archs, env: env, exe: exe, share: share, home: home, cwd: cwd, table: table, cacheRoot: cacheRoot)
         } else {
             try nativeSetup(source: source, env: env, share: share, table: table, cacheRoot: cacheRoot)
         }
@@ -94,7 +132,7 @@ struct SetupCommand: AsyncParsableCommand {
         let need = SetupDisk.nativeNeeds(exporting: exporting, env: env, table: table)
         let missing = NativeSetupPlan.requiredCommands.filter { Self.which($0, path: env["PATH"]) == nil }
 
-        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(source.url.path) (\(source.kind == .xip ? ".xip" : ".app")), natively for \(Self.hostArch) into \(layout.root.path); SDK in \(SetupPlan.sdkDir(cacheRoot: cacheRoot, xcode: x).path)")
+        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(Self.origin(source)), natively for \(Self.hostArch) into \(layout.root.path); SDK in \(SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot).path)")
         if dryRun {
             say("dry run: the plan, nothing runs")
             if !missing.isEmpty { say("missing commands: \(missing.joined(separator: ", ")) (\(NativeSetupPlan.aptLine))") }
@@ -108,7 +146,7 @@ struct SetupCommand: AsyncParsableCommand {
         }
         guard missing.isEmpty else {
             throw XlessError(.sdk, "a native setup needs \(missing.joined(separator: ", ")), which \(missing.count == 1 ? "is" : "are") not on PATH",
-                             fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build the images instead: xless setup --docker --xcode \(xcode)")
+                             fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build the images instead: xless setup --docker\(sourceArgs)")
         }
         if need.cache.totalGB > 0 {
             try Self.checkFree(cacheRoot, need: need.cache, what: "the cache (the SDK export, which expands the .xip there)",
@@ -127,36 +165,31 @@ struct SetupCommand: AsyncParsableCommand {
             try execute(s, xcode: x, layout: layout)
             say("    done in \(Self.minutes(since: t0))")
         }
-        if steps.isEmpty { say("==> nothing to do: Xcode \(x.shortVersion) (\(x.build)) is installed natively (--reexport exports the SDK again)") }
+        if steps.isEmpty { say("==> nothing to do: Xcode \(x.shortVersion) (\(x.build)) is installed natively" + (source.kind == .export ? "" : " (--reexport exports the SDK again)")) }
         else { say("==> done in \(Self.minutes(since: start)): Xcode \(x.shortVersion) (\(x.build))'s SDK and its Swift are installed natively") }
         say("next: xless run <project-dir> --build-number 1 --to finalize")
     }
 
     // MARK: - Docker
 
-    private func dockerSetup(source: XcodeSource.Identified, env: [String: String], exe: URL, share: URL, home: URL, cwd: URL,
+    private func dockerSetup(source: XcodeSource.Identified, archs: [String], env: [String: String], exe: URL, share: URL, home: URL, cwd: URL,
                              table: [String: String], cacheRoot: URL) throws {
         let fm = FileManager.default
         let host = Self.hostArch
-        var archs: [String] = []
-        for a in arch.isEmpty ? [host] : arch where !archs.contains(a) {
-            guard a == "arm64" || a == "amd64" else {
-                throw XlessError(.sdk, "unknown architecture '\(a)'", fix: "pass --arch arm64 and/or --arch amd64")
-            }
-            archs.append(a)
-        }
 
-        guard !source.url.path.contains(":") else {
+        // The .xip or .app is mounted with -v (an export is a build context instead).
+        guard source.kind == .export || !source.url.path.contains(":") else {
             throw XlessError(.sdk, "\(source.url.path) contains ':', which docker cannot mount", fix: "move or rename it, then run xless setup again")
         }
         let x = source.xcode
         let work = fm.temporaryDirectory.appendingPathComponent("xless-setup-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: work) }
 
-        // The disk figures are per architecture; the cache one counts only the architectures exported in this run.
-        // An environment variable of the same name (e.g. when most layers are already cached) wins over versions.env's.
-        let sdkDir = SetupPlan.sdkDir(cacheRoot: cacheRoot, xcode: x)
-        let exporting = archs.filter { reexport || !fm.fileExists(atPath: sdkDir.appendingPathComponent("\($0)/darwin.xtoolsdk").path) }
+        // The disk figures are per architecture; the cache one counts only the architectures exported in this run (none
+        // from an export). An environment variable of the same name (e.g. when most layers are already cached) wins over versions.env's.
+        let sdkDir = SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot)
+        let exporting = source.kind == .export ? []
+            : archs.filter { reexport || !fm.fileExists(atPath: sdkDir.appendingPathComponent("\($0)/darwin.xtoolsdk").path) }
         let need = SetupDisk.needs(archs: archs.count, exporting: exporting.count, env: env, table: table)
         var rootless = false
         if !dryRun { rootless = try Self.preflight(cacheRoot: cacheRoot, need: need) }
@@ -169,7 +202,7 @@ struct SetupCommand: AsyncParsableCommand {
             // Rootless Docker already writes as the calling user from the container's root; `--user` would map to a subuid.
             .map { rootless ? Self.withoutUser($0) : $0 }
 
-        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(source.url.path) (\(source.kind == .xip ? ".xip" : ".app")), for \(archs.joined(separator: ", ")); SDK in \(SetupPlan.sdkDir(cacheRoot: cacheRoot, xcode: x).path)")
+        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(Self.origin(source)), for \(archs.joined(separator: ", ")); SDK in \(sdkDir.path)")
         say("    (\(SetupPlan.estimateNote))")
         if dryRun {
             say("dry run: the plan, nothing runs")
@@ -459,6 +492,15 @@ struct SetupCommand: AsyncParsableCommand {
         #else
         false
         #endif
+    }
+
+    /// Where the run's Xcode comes from, for the plan's first line.
+    static func origin(_ source: XcodeSource.Identified) -> String {
+        switch source.kind {
+        case .xip: "\(source.url.path) (.xip)"
+        case .app: "\(source.url.path) (.app)"
+        case .export: "its SDK export \(source.url.path) (no Xcode needed)"
+        }
     }
 
     static func quote(_ s: String) -> String {

@@ -24,6 +24,9 @@ Apple targets, Swift Build, the Xcode tool shims), so `xless run` refuses them o
   (On a release newer than Ubuntu 22.04, use its versions of `libgcc-*-dev` and `libstdc++-*-dev`.)
 - Free space: `XLESS_SETUP_CACHE_GB` (17 GB) under the cache while the SDK is exported, and `XLESS_SETUP_NATIVE_GB`
   (10 GB) under the native home. An environment variable of the same name overrides each figure.
+- The `.xip` only until the SDK is exported. After that, `xless setup` with no `--xcode` installs from the export in
+  `~/.cache/xless/sdk/`, and `--sdk <dir>` names one kept elsewhere
+  ([troubleshooting.md](troubleshooting.md#without-the-xip)).
 
 ## What it installs, and where
 

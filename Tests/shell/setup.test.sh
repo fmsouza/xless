@@ -166,4 +166,69 @@ else
   fi
   extra=()
 fi
+
+# Reusing an SDK export instead of the Xcode (issue #51): --sdk <dir>, or with neither --xcode nor --sdk the cache's one export.
+share="$repo"
+export_meta() {   # DIR BUILD ARCH…: a fake export (no Apple file): <arch>/darwin.xtoolsdk and toolchain-meta.json naming BUILD
+  local dir="$1" build="$2"; shift 2
+  for a in "$@"; do mkdir -p "$dir/$a/darwin.xtoolsdk/Developer"; done
+  printf '{"xcodeVersion":"2700","xcodeBuild":"%s","buildMachineOSBuild":"26A434","compiler":"com.apple.compilers.llvm.clang.1_0","platforms":{}}\n' \
+    "$build" > "$dir/toolchain-meta.json"
+}
+run ok --docker --xcode "$app" --sdk "$t/nowhere" --dry-run
+[[ $code == 11 ]] && grep -q -- '--xcode and --sdk both' "$t/err" || fail "--xcode with --sdk: $code $(cat "$t/err")"
+run ok --docker --reexport --dry-run
+[[ $code == 11 ]] && grep -q -- '--reexport exports the SDK again, which needs the Xcode' "$t/err" || fail "--reexport without --xcode: $code $(cat "$t/err")"
+# Nothing to reuse: refused, naming --xcode, before docker is asked anything.
+run ok --docker --arch arm64
+[[ $code == 11 ]] || fail "no --xcode and no export exits $code, want 11: $(cat "$t/err")"
+grep -q "no --xcode, and no SDK export under $t/home/.cache/xless/sdk to reuse" "$t/err" && grep -q 'xless setup --xcode' "$t/err" \
+  || fail "no-export refusal: $(cat "$t/err")"
+[[ ! -s "$log" ]] || fail "docker was called with nothing to set up from: $(cat "$log")"
+# The cache's one export: the images are planned from it, nothing is exported and the cache needs no room.
+cached="$t/home/.cache/xless/sdk/xcode27.0-27A266a"
+export_meta "$cached" 27A266a arm64
+run ok --docker --arch arm64 --dry-run
+[[ $code == 0 ]] || fail "--docker from the cache's export exits $code: $(cat "$t/err")"
+grep -qF "from its SDK export $cached (no Xcode needed)" "$t/out" || fail "the plan does not name the export: $(cat "$t/out")"
+grep -q 'xtool sdk build' "$t/out" && fail "the plan exports from an export: $(cat "$t/out")"
+grep -qF -- "docker-images.sh sdk --arch arm64 --suffix -xcode27.0-27A266a --sdk-dir $cached --xcode-build 27A266a" "$t/out" \
+  || fail "the sdk image does not read the export: $(cat "$t/out")"
+grep -q 'about 0 GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "the cache check still asks for room: $(cat "$t/out")"
+grep -q 'xless sdk meta' "$t/out" && fail "the plan rewrites the export's toolchain-meta.json: $(cat "$t/out")"
+grep -q '^run' "$log" && fail "--dry-run ran docker: $(cat "$log")"
+# An architecture the export lacks: refused, naming it and --xcode.
+run ok --docker --arch arm64 --arch amd64 --dry-run
+[[ $code == 11 ]] && grep -q "holds arm64 and amd64 (xcode27.0-27A266a holds arm64)" "$t/err" || fail "missing-arch refusal: $code $(cat "$t/err")"
+run ok --docker --arch arm64 --arch amd64 --sdk "$cached" --dry-run
+[[ $code == 11 ]] && grep -qF "the SDK export $cached holds no amd64 SDK (it holds arm64)" "$t/err" || fail "--sdk missing-arch refusal: $code $(cat "$t/err")"
+# --sdk: an export anywhere (a relative path), identified by its toolchain-meta.json.
+export_meta "$t/exports/x26" 17C52 arm64
+pushd "$t" >/dev/null
+run ok --docker --arch arm64 --sdk exports/x26 --dry-run
+popd >/dev/null
+[[ $code == 0 ]] || fail "--sdk exits $code: $(cat "$t/err")"
+grep -qF "Xcode 26.2 (17C52) from its SDK export $t/exports/x26" "$t/out" || fail "--sdk plan: $(cat "$t/out")"
+grep -qF -- "--sdk-dir $t/exports/x26 --xcode-build 17C52" "$t/out" || fail "--sdk is not the sdk image's context: $(cat "$t/out")"
+# --sdk given an architecture's directory: refused, naming the export.
+run ok --docker --arch arm64 --sdk "$t/exports/x26/arm64" --dry-run
+[[ $code == 11 ]] && grep -qF -- "--sdk $t/exports/x26" "$t/err" || fail "--sdk <arch dir>: $code $(cat "$t/err")"
+# Two exports in the cache that fit: refused, listing them.
+export_meta "$t/home/.cache/xless/sdk/xcode26.2-17C52" 17C52 arm64
+run ok --docker --arch arm64 --dry-run
+[[ $code == 11 ]] && grep -q 'holds 2 SDK exports for arm64 (xcode26.2-17C52, xcode27.0-27A266a)' "$t/err" || fail "two exports: $code $(cat "$t/err")"
+rm -rf "$t/home/.cache/xless/sdk/xcode26.2-17C52"
+if [[ "$(uname)" == Linux ]]; then
+  # Native, from the cache's export of this machine's architecture: no export step, the SDK installed from the export.
+  export_meta "$cached" 27A266a "$host"
+  extra=(XLESS_NATIVE_HOME="$t/native")
+  run ok --dry-run
+  [[ $code == 0 ]] || fail "native from the cache's export exits $code: $(cat "$t/err")"
+  grep -q 'sdk build' "$t/out" && fail "the native plan exports from an export: $(cat "$t/out")"
+  grep -qF "xless sdk install --xtoolsdk $cached/$host/darwin.xtoolsdk --meta $cached/toolchain-meta.json" "$t/out" \
+    || fail "the native plan does not install the export: $(cat "$t/out")"
+  grep -q 'about 0 GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "the native cache check still asks for room: $(cat "$t/out")"
+  [[ ! -s "$log" ]] || fail "a native setup called docker: $(cat "$log")"
+  extra=()
+fi
 echo "setup.test.sh: ok"

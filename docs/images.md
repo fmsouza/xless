@@ -11,6 +11,10 @@ To see the exact commands `xless setup --docker` would run on your machine, with
 xless setup --docker --xcode ~/Downloads/Xcode_27.xip --dry-run
 ```
 
+Once the SDK is exported (step 2 below), the `.xip` is no longer needed: `xless setup --docker` with no `--xcode`
+rebuilds the images from the export in `~/.cache/xless/sdk/`, and `--sdk <dir>` names an export kept elsewhere
+([troubleshooting.md](troubleshooting.md#without-the-xip)).
+
 ## The chain
 
 Four images, each built on the previous one, per architecture:
