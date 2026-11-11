@@ -7,9 +7,10 @@ import FoundationNetworking
 /// or sends cookies: `AppleWebClient` does both, so it decides which host gets which cookie.
 public protocol AppleTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
-    /// Streams a 2xx body into `file` (appended when `append`, else the file is truncated first), calling `progress` with
-    /// each chunk's byte count. Any other status writes nothing.
-    func download(_ request: URLRequest, to file: URL, append: Bool, progress: @escaping @Sendable (Int64) -> Void) async throws -> HTTPURLResponse
+    /// Streams a binary 2xx body into `file`: a 206 (Partial Content) is appended, any other 2xx replaces the file.
+    /// `progress` gets each written chunk's byte count. Any other response, and an HTML body (Apple's "unauthorized"
+    /// page), writes nothing; its body (at most 64 KB) is returned instead.
+    func download(_ request: URLRequest, to file: URL, progress: @escaping @Sendable (Int64) -> Void) async throws -> (Data, HTTPURLResponse)
 }
 
 /// The real transport: an ephemeral URLSession with no cookie storage, no cache and no automatic redirects, so nothing
@@ -18,13 +19,12 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
     private final class Pending {
         let continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>
         let file: URL?
-        let append: Bool
         let progress: (@Sendable (Int64) -> Void)?
         var handle: FileHandle?
         var body = Data()
         var writeError: Error?
-        init(_ c: CheckedContinuation<(Data, HTTPURLResponse), Error>, file: URL?, append: Bool, progress: (@Sendable (Int64) -> Void)?) {
-            continuation = c; self.file = file; self.append = append; self.progress = progress
+        init(_ c: CheckedContinuation<(Data, HTTPURLResponse), Error>, file: URL?, progress: (@Sendable (Int64) -> Void)?) {
+            continuation = c; self.file = file; self.progress = progress
         }
     }
 
@@ -52,17 +52,22 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
     public func invalidate() { session.invalidateAndCancel() }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await run(request, file: nil, append: false, progress: nil)
+        try await run(request, file: nil, progress: nil)
     }
 
-    public func download(_ request: URLRequest, to file: URL, append: Bool, progress: @escaping @Sendable (Int64) -> Void) async throws -> HTTPURLResponse {
-        try await run(request, file: file, append: append, progress: progress).1
+    public func download(_ request: URLRequest, to file: URL, progress: @escaping @Sendable (Int64) -> Void) async throws -> (Data, HTTPURLResponse) {
+        try await run(request, file: file, progress: progress)
     }
 
-    private func run(_ request: URLRequest, file: URL?, append: Bool, progress: (@Sendable (Int64) -> Void)?) async throws -> (Data, HTTPURLResponse) {
+    /// An HTML body: what Apple serves instead of a file it will not hand out.
+    static func isHTML(_ response: HTTPURLResponse) -> Bool {
+        response.value(forHTTPHeaderField: "Content-Type")?.lowercased().hasPrefix("text/html") ?? false
+    }
+
+    private func run(_ request: URLRequest, file: URL?, progress: (@Sendable (Int64) -> Void)?) async throws -> (Data, HTTPURLResponse) {
         try await withCheckedThrowingContinuation { c in
             let task = session.dataTask(with: request)
-            lock.withLock { pending[task.taskIdentifier] = Pending(c, file: file, append: append, progress: progress) }
+            lock.withLock { pending[task.taskIdentifier] = Pending(c, file: file, progress: progress) }
             task.resume()
         }
     }
@@ -76,9 +81,10 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
 
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        if let p = state(dataTask), let file = p.file, let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+        if let p = state(dataTask), let file = p.file, let http = response as? HTTPURLResponse,
+           (200..<300).contains(http.statusCode), !Self.isHTML(http) {
             do {
-                if !p.append || !FileManager.default.fileExists(atPath: file.path) {
+                if http.statusCode != 206 || !FileManager.default.fileExists(atPath: file.path) {
                     guard FileManager.default.createFile(atPath: file.path, contents: nil) else {
                         throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: file.path])
                     }

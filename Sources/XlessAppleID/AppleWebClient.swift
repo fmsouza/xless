@@ -26,13 +26,13 @@ public actor AppleWebClient {
         return (data, response)
     }
 
-    /// Downloads into `file` (see `AppleTransport.download`), following redirects; returns the final response and URL.
-    func download(_ request: URLRequest, to file: URL, append: Bool,
-                  progress: @escaping @Sendable (Int64) -> Void) async throws -> (HTTPURLResponse, URL) {
-        let (_, response, url) = try await perform(request, followRedirects: true) { r in
-            (Data(), try await self.transport.download(r, to: file, append: append, progress: progress))
+    /// Downloads into `file` (see `AppleTransport.download`), following redirects; returns the unwritten body (if any),
+    /// the final response and the final URL.
+    func download(_ request: URLRequest, to file: URL,
+                  progress: @escaping @Sendable (Int64) -> Void) async throws -> (Data, HTTPURLResponse, URL) {
+        try await perform(request, followRedirects: true) { r in
+            try await self.transport.download(r, to: file, progress: progress)
         }
-        return (response, url)
     }
 
     /// Forgets every cookie of the session.

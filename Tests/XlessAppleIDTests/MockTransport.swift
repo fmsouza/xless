@@ -30,18 +30,18 @@ final class MockTransport: AppleTransport, @unchecked Sendable {
         return (r.body, response(request, r))
     }
 
-    func download(_ request: URLRequest, to file: URL, append: Bool, progress: @escaping @Sendable (Int64) -> Void) async throws -> HTTPURLResponse {
+    func download(_ request: URLRequest, to file: URL, progress: @escaping @Sendable (Int64) -> Void) async throws -> (Data, HTTPURLResponse) {
         lock.withLock { _requests.append(request) }
         let r = try handler(request)
-        if (200..<300).contains(r.status) {
-            if append, let h = try? FileHandle(forWritingTo: file) {
-                h.seekToEndOfFile(); h.write(r.body); h.closeFile()
-            } else {
-                try r.body.write(to: file)
-            }
-            progress(Int64(r.body.count))
+        let response = response(request, r)
+        guard (200..<300).contains(r.status), !URLSessionAppleTransport.isHTML(response) else { return (r.body, response) }
+        if r.status == 206, let h = try? FileHandle(forWritingTo: file) {
+            h.seekToEndOfFile(); h.write(r.body); h.closeFile()
+        } else {
+            try r.body.write(to: file)
         }
-        return response(request, r)
+        progress(Int64(r.body.count))
+        return (Data(), response)
     }
 
     private func response(_ request: URLRequest, _ r: Reply) -> HTTPURLResponse {
