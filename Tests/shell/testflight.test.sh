@@ -587,6 +587,9 @@ grep -qxF "ps -aq --filter label=$label" "$t/klog" && grep -qx 'rm -f c0ffee' "$
 # script runs xless as a job, which gets neither Ctrl-C (a job of a non-interactive bash ignores INT) nor a TERM sent to
 # the script, so cleanup must stop it. (TERM here: this test's own jobs start with INT ignored, which bash cannot trap.)
 mkdir -p "$t/nbin"
+# a zombie counts as stopped: under a PID 1 that reaps nothing (CI's job container runs tail -f /dev/null), the xless
+# whose parent subshell cleanup also stopped stays a zombie
+alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
 printf '#!/bin/sh\necho $$ > "$NPID"\nexec sleep 30\n' > "$t/nbin/xless"; chmod +x "$t/nbin/xless"
 native=(env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 NPID="$t/npid")
 for args in "$t/proj --to finalize" "--config $t/rn/app.yml --destination simulator"; do
@@ -597,14 +600,11 @@ for args in "$t/proj --to finalize" "--config $t/rn/app.yml --destination simula
   [[ -s "$t/npid" ]] || fail "native ($args): xless never started"
   start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
   [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "native ($args) TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
-  # a zombie counts as stopped: under a PID 1 that reaps nothing (CI's job container runs tail -f /dev/null), the xless
-  # whose parent subshell cleanup also stopped stays a zombie
-  alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
   xp=$(cat "$t/npid"); for _ in $(seq 20); do alive "$xp" || break; sleep 0.1; done
   alive "$xp" && { kill "$xp"; fail "native ($args): xless still running after the script stopped"; }
 done
 # the steps whose output the script reads stop at once too: step 1 (the build number), in its container and natively,
-# and the native macOS ship, whose DMG path it reads. A command substitution, like a foreground command, holds the trap
+# and the native macOS ships, whose DMG and PKG paths it reads. A command substitution, like a foreground command, holds the trap
 # until it ends.
 keys=(ASC_KEY_ID=KEYID ASC_ISSUER_ID_FILE="$t/issuer" ASC_KEY_P8_FILE="$t/key.p8" XLESS_DIST_KEY_FILE="$t/dist.pem")
 : > "$t/klog"
@@ -616,11 +616,13 @@ start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
 [[ $code -eq 143 && $((SECONDS - start)) -lt 10 ]] || fail "step 1 TERM: exit $code after $((SECONDS - start)) s, want 143 at once"
 grep -qx 'rm -f c0ffee' "$t/klog" || fail "step 1's container not removed: $(cat "$t/klog")"
 printf '#!/bin/sh\ncase "$*" in *"$NSTOP"*) echo $$ > "$NPID"; exec sleep 30 ;; esac\nexit 0\n' > "$t/nbin/xless"
-for args in "next-build|--config $t/ov/my.overlay.yml --to finalize" "--to package|--config $t/ov/my.overlay.yml --platform macos"; do
+for args in "next-build|--config $t/ov/my.overlay.yml --to finalize" "--to package|--config $t/ov/my.overlay.yml --platform macos" \
+            "app-store|--config $t/ov/my.overlay.yml --platform macos --to upload"; do
   rm -f "$t/npid"
   # shellcheck disable=SC2086 # no spaces in $t
   env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 NPID="$t/npid" \
-    NSTOP="${args%%|*}" "${keys[@]}" XLESS_DEVID_KEY_FILE="$t/devid.pem" "$S" ${args#*|} >/dev/null 2>&1 & pid=$!
+    NSTOP="${args%%|*}" "${keys[@]}" XLESS_DEVID_KEY_FILE="$t/devid.pem" \
+    XLESS_INSTALLER_KEY_FILE="$t/installer.pem" "$S" ${args#*|} >/dev/null 2>&1 & pid=$!
   for _ in $(seq 50); do [[ -s "$t/npid" ]] && break; sleep 0.1; done
   [[ -s "$t/npid" ]] || { kill "$pid"; fail "native (${args%%|*}): xless never started"; }
   start=$SECONDS; kill -TERM "$pid"; code=0; wait "$pid" || code=$?
