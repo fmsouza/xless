@@ -36,6 +36,7 @@ Running the install line again upgrades xless in place.
 | `Apple did not authorise the download of …` | Check in a browser that the Apple ID can download that file, then run it again. |
 | `… is incomplete`, `could not reach Apple …`, `N of M Xcode downloads failed: …`, or the download stopped | Each file was already retried twice. Run the same command again: finished `.xip`s are kept and each `.part` file resumes. |
 | `… is larger than Apple listed …` | The `.part` was deleted; run it again to download that file from the start. |
+| `Apple resumed … at the wrong place …` | Nothing wrong was kept: the `.part` was deleted and the file was retried from the start. If it still fails, run it again. |
 | `… is not an Xcode .xip` (an existing file) | A file of that name that is not a `.xip` is in the output directory. Move it away. |
 
 ## `xless setup`
