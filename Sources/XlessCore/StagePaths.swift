@@ -20,8 +20,8 @@ public struct StagePaths: Sendable {
     public var signed: URL { root.appendingPathComponent("signed", isDirectory: true) }
     public var out: URL { root.appendingPathComponent("out", isDirectory: true) }
     /// The build's debug symbols, which `package` zips next to its package: for React Native device builds every `.dSYM`
-    /// Swift Build wrote, at its path under the products directory; for an `xless.yml` macOS app, `<App>.app.dSYM`
-    /// (`DSYM.keep`). Removed at the start of every `build`.
+    /// Swift Build wrote, at its path under the products directory; for every other app, `<App>.app.dSYM` (`DSYM.keep`),
+    /// when its build had debug info (docs/pipeline.md#dsyms). Removed at the start of every `build`.
     public var dSYMs: URL { root.appendingPathComponent("dSYMs", isDirectory: true) }
     public var uploadRecord: URL { root.appendingPathComponent("upload.json") }
 

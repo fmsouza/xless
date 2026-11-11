@@ -45,7 +45,8 @@ public enum TauriMacEnvironment {
 
     /// cargo's linker for a darwin target (see `RustApple.writeMacLinkerWrapper`).
     @discardableResult
-    public static func writeLinkerWrapper(target: String, minOS: String, sdk: DarwinSDK, workRoot: URL, swift: SwiftToolchain? = nil) throws -> URL {
-        try RustApple.writeMacLinkerWrapper(target: target, minOS: minOS, sdk: sdk, workRoot: workRoot, swift: swift)
+    public static func writeLinkerWrapper(target: String, minOS: String, sdk: DarwinSDK, workRoot: URL, swift: SwiftToolchain? = nil,
+                                          debugLink: RustApple.DebugLink? = nil) throws -> URL {
+        try RustApple.writeMacLinkerWrapper(target: target, minOS: minOS, sdk: sdk, workRoot: workRoot, swift: swift, debugLink: debugLink)
     }
 }
