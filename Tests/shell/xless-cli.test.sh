@@ -67,12 +67,12 @@ code=0; "${base[@]}" XLESS_SHARE="$t/share" STUB_EXIT=23 "$x" docker p >/dev/nul
 echo 9.9.9 > "$t/share/VERSION"
 code=0; "${base[@]}" XLESS_SHARE="$t/share" "$x" docker p >"$t/out" 2>"$t/err" || code=$?
 [[ $code -eq 11 ]] || fail "a share of another release: exit $code, want 11: $(cat "$t/err")"
-grep -qF "this xless is $v, but its share directory $t/share is from xless 9.9.9" "$t/err" || fail "mismatch message: $(cat "$t/err")"
+grep -qF "this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "mismatch message: $(cat "$t/err")"
 grep -qF "XLESS_ALLOW_SHARE_MISMATCH=1" "$t/err" || fail "the refusal does not name the escape hatch: $(cat "$t/err")"
 [[ ! -s "$t/out" ]] || fail "the script ran with a share of another release: $(cat "$t/out")"
 out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_ALLOW_SHARE_MISMATCH=1 "$x" docker p 2>"$t/err") || fail "XLESS_ALLOW_SHARE_MISMATCH=1 still refused: $(cat "$t/err")"
 [[ "$out" == $'p\ndocker=1 share='"$t/share" ]] || fail "XLESS_ALLOW_SHARE_MISMATCH=1 run passes: $out"
-grep -qF "warning: this xless is $v, but its share directory $t/share is from xless 9.9.9" "$t/err" || fail "no warning: $(cat "$t/err")"
+grep -qF "warning: this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "no warning: $(cat "$t/err")"
 echo "$v" > "$t/share/VERSION"
 # xless run: natively by default (XLESS_USE_DOCKER=0), in the images with --docker (taken out of the arguments, but not
 # after `--`), an XLESS_USE_DOCKER already set wins over the default only, XLESS_SELF is this xless.

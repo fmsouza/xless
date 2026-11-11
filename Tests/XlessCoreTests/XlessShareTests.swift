@@ -107,6 +107,7 @@ private func touch(_ url: URL) throws { try write("x", url) }
         #expect(e.cause == "this xless is 0.0.0-dev, but its share directory \(t.path) is from xless 0.3.1")
         #expect(e.fix.contains("XLESS_SHARE=<the checkout it was built from>"))
         #expect(!e.fix.contains("install.sh"))
+        #expect(!e.fix.contains("0.0.0-dev's share directory"))
     }
 }
 
@@ -157,6 +158,57 @@ private func touch(_ url: URL) throws { try write("x", url) }
     #expect(throws: XlessError.self) {
         try XlessShare.root(env: ["XLESS_SHARE": t.path], executable: t.appendingPathComponent("bin/xless"), binary: "0.4.0")
     }
+}
+
+@Test func anExplicitShareIsNamedAsSuchAndTheFixSaysSo() throws {
+    let t = try tempDir()
+    try write("0.3.1\n", t.appendingPathComponent("VERSION"))
+    do {
+        _ = try XlessShare.checkRelease(share: t, binary: "0.4.0", env: ["XLESS_SHARE": t.path])
+        Issue.record("expected a throw")
+    } catch let e as XlessError {
+        #expect(e.cause == "this xless is 0.4.0, but its share directory \(t.path) (XLESS_SHARE) is from xless 0.3.1")
+        #expect(e.fix.hasPrefix("unset XLESS_SHARE to use the share installed with this xless, or point it at xless 0.4.0's share directory"))
+        #expect(!e.fix.contains("install.sh"))   // reinstalling would not help: XLESS_SHARE still wins
+    }
+}
+
+@Test func aMissingExplicitShareSaysItDoesNotExist() throws {
+    let t = try tempDir().appendingPathComponent("typo")
+    do {
+        _ = try XlessShare.checkRelease(share: t, binary: "0.4.0", env: ["XLESS_SHARE": t.path, "XLESS_ALLOW_SHARE_MISMATCH": "1"])
+        Issue.record("expected a throw")
+    } catch let e as XlessError {
+        #expect(e.cause == "xless's share directory \(t.path) (XLESS_SHARE) does not exist")
+    }
+}
+
+@Test func theReinstallKeepsACustomPrefix() throws {
+    let t = try tempDir()
+    let share = t.appendingPathComponent("opt dir/share/xless")
+    try write("0.3.1\n", share.appendingPathComponent("VERSION"))
+    let fix = { (home: String) -> String in
+        do { _ = try XlessShare.checkRelease(share: share, binary: "0.4.0", env: ["HOME": home]); return "" } catch let e as XlessError { return e.fix } catch { return "" }
+    }
+    #expect(fix("/home/u").contains("| XLESS_VERSION=0.4.0 XLESS_PREFIX='\(t.path)/opt dir' sh"))
+    // install.sh's default prefix, $HOME/.local, needs no XLESS_PREFIX.
+    let local = t.appendingPathComponent("h/.local/share/xless")
+    try write("0.3.1\n", local.appendingPathComponent("VERSION"))
+    do {
+        _ = try XlessShare.checkRelease(share: local, binary: "0.4.0", env: ["HOME": t.appendingPathComponent("h").path])
+        Issue.record("expected a throw")
+    } catch let e as XlessError {
+        #expect(e.fix.contains("| XLESS_VERSION=0.4.0 sh"))
+    }
+}
+
+@Test func releaseTrimsAndUnquotes() throws {
+    let t = try tempDir()
+    try write("  0.3.1 \n", t.appendingPathComponent("VERSION"))
+    #expect(XlessShare.release(of: t) == "0.3.1")
+    let c = try tempDir()
+    try write("XLESS_VERSION=\"0.0.0-dev\"\n", c.appendingPathComponent("versions.env"))
+    #expect(XlessShare.release(of: c) == "0.0.0-dev")
 }
 
 @Test func thisCheckoutMatchesThisBinary() throws {
