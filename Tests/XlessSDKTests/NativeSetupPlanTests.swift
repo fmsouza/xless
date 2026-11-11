@@ -91,6 +91,21 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     if case .export = again[0].action {} else { Issue.record("first step is not the export: \(again[0].title)") }
 }
 
+@Test func anExportSourceIsInstalledFromWhereItIsAndNeverExported() throws {
+    let export = URL(fileURLWithPath: "/exports/x27")
+    let tools: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign", "/n/toolchains/swift-6.4.0/usr/bin/swiftc"]
+    let steps = try NativeSetupPlan.make(source: (xcode27, .export, export), arch: "arm64", share: share, cacheRoot: cache, layout: layout,
+                                         sdkBundle: bundle, metaDest: metaDest, table: table, reexport: false, installed: nil,
+                                         existing: { tools.contains($0.path) })
+    for s in steps { if case .export = s.action { Issue.record("an export source was exported again: \(s.title)") } }
+    #expect(steps.count == 3)
+    #expect(steps[0].action == .meta(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
+                                     out: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))
+    #expect(steps[1].action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
+                                           meta: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))
+    #expect(steps.allSatisfy { !$0.argv.joined(separator: " ").contains("/cache/xless") })
+}
+
 @Test func aMissingPinIsRefusedNamingIt() throws {
     var t = table; t["SWIFT_TOOLCHAIN_6_4_0_SHA256_AARCH64"] = nil
     #expect { try plan(table: t) } throws: { ($0 as? XlessError)?.cause.contains("SWIFT_TOOLCHAIN_6_4_0_SHA256_AARCH64") == true }

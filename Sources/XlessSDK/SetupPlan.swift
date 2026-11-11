@@ -41,7 +41,7 @@ public enum SetupPlan {
         let x = source.xcode
         let version = canonicalVersion(x.shortVersion)
         let suffix = "-xcode\(version)", bsuffix = "\(suffix)-\(x.build)"
-        let sdkDir = self.sdkDir(cacheRoot: cacheRoot, xcode: x)
+        let sdkDir = self.sdkDir(source: source, cacheRoot: cacheRoot)
         let script = share.appendingPathComponent("scripts/docker-images.sh").path
         let env = (try? String(contentsOf: share.appendingPathComponent("versions.env"), encoding: .utf8)).map(KnownXcodes.parseEnv) ?? [:]
         let isDefault = env["XCODE_BUILD"] == x.build && env["XCODE_VERSION"] == version
@@ -61,7 +61,8 @@ public enum SetupPlan {
 
             let final = sdkDir.appendingPathComponent(a), partial = sdkDir.appendingPathComponent("\(a).partial")
             let xtoolSDK = final.appendingPathComponent("darwin.xtoolsdk")
-            if reexport || !existing(xtoolSDK) {
+            // An export source has no Xcode to export from (setup refuses an export that lacks this arch).
+            if source.kind != .export, reexport || !existing(xtoolSDK) {
                 steps.append(SetupStep(
                     title: "export the Darwin SDK for \(a) from Xcode \(x.shortVersion) (\(x.build)) into \(final.path)",
                     argv: ["docker", "run", "--rm", "--platform", "linux/\(a)", "--user", "\(getuid()):\(getgid())",
@@ -71,9 +72,10 @@ public enum SetupPlan {
                     estimate: est("~2 min", disk: source.kind == .xip ? "; up to ~15 GB in the cache while the .xip is unpacked, ~3.5 GB stays" : "; ~3 GB on disk"),
                     action: .export(partial: partial, final: final)))
             }
-            if !wroteMeta {
+            // An export source is read, not written (it may be read-only): its metadata is written only when it has none.
+            let out = sdkDir.appendingPathComponent("toolchain-meta.json")
+            if !wroteMeta, source.kind != .export || !existing(out) {
                 wroteMeta = true
-                let out = sdkDir.appendingPathComponent("toolchain-meta.json")
                 steps.append(SetupStep(
                     title: "toolchain-meta.json for Xcode \(x.shortVersion) (\(x.build))",
                     argv: ["xless", "sdk", "meta", "--from-xtoolsdk", xtoolSDK.path, "--xcode-build", x.build, "--out", out.path],
@@ -109,6 +111,11 @@ public enum SetupPlan {
     /// docker/Dockerfile.sdk reads.
     public static func sdkDir(cacheRoot: URL, xcode: KnownXcode) -> URL {
         cacheRoot.appendingPathComponent("sdk/xcode\(canonicalVersion(xcode.shortVersion))-\(xcode.build)")
+    }
+
+    /// The SDK export a setup from `source` reads: the export itself when the source is one, else the cache's.
+    public static func sdkDir(source: XcodeSource.Identified, cacheRoot: URL) -> URL {
+        source.kind == .export ? source.url : sdkDir(cacheRoot: cacheRoot, xcode: source.xcode)
     }
 
     /// As scripts/build-images.sh and a project's pin spell it: major.minor, plus the patch when it is not 0.

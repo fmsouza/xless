@@ -94,6 +94,27 @@ private func kinds(_ steps: [SetupStep]) -> [String] {
     #expect(kinds(plan(reexport: true, existing: { $0 == done })).contains("export"))
 }
 
+@Test func anExportSourceIsReadWhereItIsAndNeverExported() {
+    // An export reused in place of the Xcode (xless setup --sdk, or the cache's one export): no Xcode to export from,
+    // so no export step even for an arch the plan finds missing (setup refuses that before planning).
+    let export = URL(fileURLWithPath: "/exports/x27")
+    let steps = plan((xcode27, .export, export), archs: ["arm64", "amd64"])
+    #expect(!kinds(steps).contains("export"))
+    #expect(Array(kinds(steps).prefix(9)) == ["base", "meta", "sdk", "tauri", "rn", "base", "sdk", "tauri", "rn"])
+    #expect(steps[1].action == .meta(xtoolSDK: export.appendingPathComponent("arm64/darwin.xtoolsdk"),
+                                     out: export.appendingPathComponent("toolchain-meta.json")))
+    let sdk = steps[2].argv
+    #expect(sdk.firstIndex(of: "--sdk-dir").map { sdk[$0 + 1] } == "/exports/x27")
+    #expect(sdk.firstIndex(of: "--xcode-build").map { sdk[$0 + 1] } == "27A266a")
+    #expect(steps.contains { $0.argv == ["docker", "tag", "xless-rn:local-arm64-xcode27.0-27A266a", "xless-rn:local-arm64-xcode27.0"] })
+    // The export is read, not written (it may be read-only): its toolchain-meta.json is written only when it has none.
+    let meta = export.appendingPathComponent("toolchain-meta.json")
+    let kept = plan((xcode27, .export, export), existing: { $0 == meta })
+    #expect(Array(kinds(kept).prefix(4)) == ["base", "sdk", "tauri", "rn"])
+    #expect(SetupPlan.sdkDir(source: (xcode27, .export, export), cacheRoot: cache) == export)
+    #expect(SetupPlan.sdkDir(source: xipSource, cacheRoot: cache) == cache.appendingPathComponent("sdk/xcode27.0-27A266a"))
+}
+
 @Test func aPartialExportIsNeverReused() {
     // Only paths under a .partial directory exist: the interrupted run's leftovers.
     let steps = plan(existing: { $0.path.contains(".partial") })

@@ -53,7 +53,7 @@ public enum NativeSetupPlan {
     public static func swiftVersion(for xcode: KnownXcode, table: [String: String]) throws -> String {
         guard let v = table["XCODE_SWIFT_\(xcode.build)"], !v.isEmpty else {
             throw XlessError(.sdk, "versions.env maps Xcode \(xcode.shortVersion) (\(xcode.build)) to no Swift toolchain (XCODE_SWIFT_\(xcode.build))",
-                             fix: "use a supported Xcode, or build the images instead: xless setup --docker --xcode …")
+                             fix: "use a supported Xcode, or build the images instead: xless setup --docker …")
         }
         return v
     }
@@ -67,7 +67,7 @@ public enum NativeSetupPlan {
         func pin(_ key: String) throws -> String {
             guard let v = table[key], !v.isEmpty else {
                 throw XlessError(.sdk, "versions.env has no \(key), which a native setup on \(arch) downloads with",
-                                 fix: "reinstall xless (its versions.env is incomplete), or build the images instead: xless setup --docker --xcode …")
+                                 fix: "reinstall xless (its versions.env is incomplete), or build the images instead: xless setup --docker …")
             }
             return v
         }
@@ -92,10 +92,11 @@ public enum NativeSetupPlan {
                                    estimate: estimate, action: .download(d)))
         }
 
-        let sdkDir = SetupPlan.sdkDir(cacheRoot: cacheRoot, xcode: x)
+        let sdkDir = SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot)
         let final = sdkDir.appendingPathComponent(arch), partial = sdkDir.appendingPathComponent("\(arch).partial")
         let xtoolSDK = final.appendingPathComponent("darwin.xtoolsdk"), meta = sdkDir.appendingPathComponent("toolchain-meta.json")
-        let exporting = reexport || !existing(xtoolSDK)
+        // An export source has no Xcode to export from (setup refuses an export that lacks this arch).
+        let exporting = source.kind != .export && (reexport || !existing(xtoolSDK))
         if exporting {
             steps.append(SetupStep(
                 title: "export the Darwin SDK for \(arch) from Xcode \(x.shortVersion) (\(x.build)) into \(final.path)",

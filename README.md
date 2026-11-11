@@ -126,6 +126,11 @@ plain Cargo apps) and `xless-rn`. It first checks Docker and your free disk spac
 time. The whole run took about 13 minutes on an 8-core machine with a fast network; it can take an hour on a slow one.
 `--dry-run` shows the plan, and `--arch amd64` (or `arm64`, or both) builds for another architecture.
 
+Once the SDK is exported, the `.xip` is no longer needed: to build the images again (on a machine that lost them,
+say), run `xless setup --docker` with no `--xcode`. It reuses the SDK export in `~/.cache/xless/sdk/`, or the one you
+name with `--sdk <dir>` ([troubleshooting.md](docs/troubleshooting.md#without-the-xip)). The same works without
+`--docker` for the native install.
+
 `docker images` then lists each image under several tags that name the same image: `:local-<arch>-xcode<version>`,
 `:local-<arch>-xcode<version>-<build>` and, for Xcode 27.0, `:local-<arch>`. The images never leave your machine: they
 contain Apple's SDK, so do not push them to a public registry.
