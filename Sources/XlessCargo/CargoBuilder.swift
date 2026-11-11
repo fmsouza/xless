@@ -23,13 +23,13 @@ public struct CargoBuildContext: Sendable {
     var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
     /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it).
     var tools: [String: String] { ["PATH": "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"] }
-    /// The cargo targets of this platform.
-    var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : TauriMacEnvironment.targets }
+    /// The cargo targets of this platform: on macOS, those of `macos.architectures`.
+    var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
     var inputsRecord: URL { workRoot.appendingPathComponent(".xless/cargo-inputs.json") }
 }
 
 /// The `prepare` and `build` stages for `type: cargo` overlays: a Rust binary built with cargo for iOS (device) or macOS
-/// (universal) and packaged into its `.app` by `CargoBundler`, with no Xcode.
+/// (universal, or the one architecture of `macos.architectures`) and packaged into its `.app` by `CargoBundler`, with no Xcode.
 public enum CargoBuilder {
     /// What `prepare` leaves for `build`: the inputs' directories, by environment variable and by input name.
     struct InputsRecord: Codable, Equatable {
@@ -66,8 +66,8 @@ public enum CargoBuilder {
 
     // MARK: build
 
-    /// cargo for the platform (one run per darwin triple on macOS, merged into a universal executable), then the `.app`
-    /// in `ctx.paths.app`.
+    /// cargo for the platform (on macOS one run per chosen darwin triple, two merged into a universal executable), then
+    /// the `.app` in `ctx.paths.app`.
     public static func build(ctx: CargoBuildContext) async throws -> URL {
         try await withStage(.build) {
             let r = ctx.resolved, block = r.platform, work = ctx.workRoot
@@ -96,7 +96,7 @@ public enum CargoBuilder {
                 executable = metadata.targetDir.appendingPathComponent("\(target)/release/\(bin)")
             case .macos:
                 var thins: [(triple: String, url: URL)] = []
-                for triple in TauriMacEnvironment.targets {
+                for triple in ctx.rustTargets {
                     let platformEnv = try RustApple.macCargoEnv(target: triple, minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
                     try runCargo(target: triple, bin: bin, block: block, env: environment(platform: platformEnv), cargo: cargo)
                     thins.append((triple, metadata.targetDir.appendingPathComponent("\(triple)/release/\(bin)")))
@@ -104,7 +104,7 @@ public enum CargoBuilder {
                 let staging = work.appendingPathComponent(".xless/cargo-mac", isDirectory: true)
                 try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
                 executable = staging.appendingPathComponent(bin)
-                try RustApple.universal(thins, binary: bin).write(to: executable)
+                try RustApple.macExecutable(thins, binary: bin).write(to: executable)
             }
 
             let vars = try builtInVariables(ctx)

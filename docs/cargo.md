@@ -22,7 +22,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 
 ## What is supported
 
-- **Build.** `cargo build --release --locked -p <package> --bin <bin> --target <triple>` (plus `--features` when the overlay lists some). iOS: `aarch64-apple-ios`, device only. macOS: `aarch64-apple-darwin` and `x86_64-apple-darwin`, merged into one universal executable (the `x86_64` slice first, as `lipo` does). Rust links against Apple's SDK from the xless image, with the same linker and `xcrun` set-up as the Tauri builds ([tauri.md](tauri.md)). Then the usual stages: assets, finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
+- **Build.** `cargo build --release --locked -p <package> --bin <bin> --target <triple>` (plus `--features` when the overlay lists some). iOS: `aarch64-apple-ios`, device only. macOS: `aarch64-apple-darwin` and `x86_64-apple-darwin`, merged into one universal executable (the `x86_64` slice first, as `lipo` does), or only one of them with `macos.architectures` ([architectures](#architectures)). Rust links against Apple's SDK from the xless image, with the same linker and `xcrun` set-up as the Tauri builds ([tauri.md](tauri.md)). Then the usual stages: assets, finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
 - **Bundle.** xless writes the `.app` itself: the executable, an `Info.plist` made from the app's own file, the resources the overlay lists, the privacy manifest (iOS) and the icon. iOS is a flat bundle; macOS is `Contents/MacOS`, `Contents/Resources`, `Contents/Info.plist` and `PkgInfo`.
 - **Overlay only.** The app need not change: no `build.rs`, no crate, no `Cargo.toml` key for xless. If a Cargo app needs something xless lacks, that is an xless gap ([known gaps](#known-gaps)).
 - **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, embedded frameworks and app extensions, external TestFlight groups, App Store submission.
@@ -70,6 +70,7 @@ macos:
   infoPlist: apps/desktop/Info.plist.in
   icon: apps/desktop/hello.icns
   entitlements: apps/desktop/entitlements.plist
+  architectures: [arm64, x86_64]       # the default; [arm64] builds for Apple Silicon only
   resources:
     - { from: "input:fonts/licenses/*/OFL.txt", to: Licenses/ }
 ```
@@ -111,6 +112,7 @@ Platform block keys (the same in `ios` and `macos`):
 | `infoPlist` | The app's `Info.plist`, or a template of it. Optional: without it xless writes the keys it owns and nothing else. |
 | `assets` | An asset catalog (`.xcassets`). **Required on iOS** (the App Store needs an icon); compiled to `Assets.car` at the `assets` stage. On macOS it is the alternative to `icon`. In the source root only. |
 | `icon` | macOS only: a ready `.icns`. iOS refuses it. Setting both `icon` and `assets` on macOS is refused. |
+| `architectures` | macOS only: the architectures to build, `arm64` and/or `x86_64`. Default `[arm64, x86_64]`, a universal app. iOS refuses it. See [architectures](#architectures). |
 | `entitlements` | A plist of entitlements for the signature. In the source root only. |
 | `resources` | A list of `{ from, to }` copies into the bundle: see [resources](#resources). |
 
@@ -194,11 +196,27 @@ What differs for cargo:
 
 ## macOS
 
-`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the `macos` block for both Apple Silicon and Intel, merges the executables into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG. It prints the path of `<product>_<version>_universal.dmg` last. The prerequisites (the Developer ID key, `XLESS_DEVID_KEY_FILE`, the App Store Connect key for notarization), the two-step key separation and the exit codes are those of [Tauri on macOS](tauri.md#macos). `macos.entitlements` supplies the entitlements of the signature; without it the app is signed with none.
+`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos` (from a source checkout: `make dmg CONFIG=…`) builds the `macos` block for both Apple Silicon and Intel, merges the executables into one universal `.app`, signs it with a Developer ID Application certificate and the hardened runtime, wraps it in a DMG, notarizes the DMG with Apple, staples the ticket and checks that the stapled ticket is in the DMG. It prints the path of `<product>_<version>_universal.dmg` last. `macos.architectures` builds one architecture instead, which changes the DMG's name ([architectures](#architectures)). The prerequisites (the Developer ID key, `XLESS_DEVID_KEY_FILE`, the App Store Connect key for notarization), the two-step key separation and the exit codes are those of [Tauri on macOS](tauri.md#macos). `macos.entitlements` supplies the entitlements of the signature; without it the app is signed with none.
+
+### Architectures
+
+By default the macOS build compiles the app twice, for `aarch64-apple-darwin` and `x86_64-apple-darwin`, and merges the two executables into one universal app that runs on every Mac. The second architecture is about half of the build time. `macos.architectures` picks the ones to build:
+
+```yaml
+macos:
+  architectures: [arm64]   # default: [arm64, x86_64]
+```
+
+- **One architecture** builds that target only, with no universal merge: the app's executable is a thin Mach-O, and `prepare` installs only that target with `rustup`. With `[arm64]` the app **does not run on Intel Macs**; with `[x86_64]` it runs on Apple Silicon only through Rosetta.
+- **The DMG's name follows the choice**, with Tauri's names: `<product>_<version>_universal.dmg` for both, `<product>_<version>_aarch64.dmg` for `[arm64]` and `<product>_<version>_x64.dmg` for `[x86_64]`. The `package` stage reads it from the signed app's executable, so a `--from package` run is named after what was built, even if the overlay changed since.
+- **So does the minimum macOS version.** `minimumOS` is still `LSMinimumSystemVersion` and the deployment target, but no macOS before 11.0 runs on Apple Silicon, so `[arm64]` with a `minimumOS` below `"11.0"` is refused rather than stamped with a version no Mac running it can have.
+- Each value may appear once, in any order (`[x86_64, arm64]` is the default); an empty list or another name (`aarch64`, `x64`) is a `[config]` error.
+
+The macOS App-Store lane below packages whatever was built: an arm64-only app is uploaded as one.
 
 ### macOS App Store (TestFlight)
 
-`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos --distribution app-store --to upload` (`xless ship` takes the same two options) runs the macOS App-Store lane ([signing-and-testflight.md](signing-and-testflight.md#macos-app-store-lane-testflight)) for the `macos` block, after the DMG: it signs the universal app with the Apple Distribution certificate and a `MAC_APP_STORE` provisioning profile that it embeds as `Contents/embedded.provisionprofile`, packs it into a flat `.pkg` signed with a Mac Installer Distribution certificate, uploads the package and delivers the build to the overlay's `testflight.groups`. The overlay has no distribution key of its own: the option picks it, and without it the macOS build stays Developer ID.
+`xless run --docker --config ~/ci/my-app.overlay.yml --platform macos --distribution app-store --to upload` (`xless ship` takes the same two options) runs the macOS App-Store lane ([signing-and-testflight.md](signing-and-testflight.md#macos-app-store-lane-testflight)) for the `macos` block, after the DMG: it signs the app (universal unless `macos.architectures` says otherwise) with the Apple Distribution certificate and a `MAC_APP_STORE` provisioning profile that it embeds as `Contents/embedded.provisionprofile`, packs it into a flat `.pkg` signed with a Mac Installer Distribution certificate, uploads the package and delivers the build to the overlay's `testflight.groups`. The overlay has no distribution key of its own: the option picks it, and without it the macOS build stays Developer ID.
 
 - **App Sandbox.** App Store Connect rejects a Mac App Store build without `com.apple.security.app-sandbox`, so `macos.entitlements` must carry it, plus whatever the app needs inside the sandbox (`com.apple.security.network.client`, file access…). Entitlements gated by a capability must be enabled for the bundle ID; xless enables the ones the API can, and says which one to enable in the portal otherwise. The hardened runtime is not applied to this build.
 - **Three keys.** `XLESS_DIST_KEY_FILE` (Apple Distribution, signs the app), `XLESS_INSTALLER_KEY_FILE` (Mac Installer Distribution, signs the package: [bootstrap.md](bootstrap.md#3b-mac-installer-distribution-key-macos-app-store-lane-only)) and `XLESS_DEVID_KEY_FILE` (Developer ID, the DMG). Only the second ship, the one that signs and uploads, has the first two.
