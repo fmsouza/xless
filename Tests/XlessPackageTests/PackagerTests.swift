@@ -87,3 +87,30 @@ private func ipaWithVersions(_ version: String, _ build: String) throws -> URL {
     _ = try Packager.ipa(signedApp: app, outputDir: out, dSYMs: dSYMs)
     #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("X.app.dSYM.zip").path))
 }
+
+/// A `dSYMs` directory holding `<name>.dSYM` with one DWARF file.
+func makeDSYMs(_ root: URL, name: String) throws -> URL {
+    let dSYMs = root.appendingPathComponent("dSYMs")
+    let dwarf = dSYMs.appendingPathComponent("\(name).dSYM/Contents/Resources/DWARF/x")
+    try FileManager.default.createDirectory(at: dwarf.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("dwarf".utf8).write(to: dwarf)
+    return dSYMs
+}
+
+@Test func zipDSYMsNamesTheZipAfterTheApp() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let out = root.appendingPathComponent("out")
+    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    let app = root.appendingPathComponent("signed/Hello World.app")
+    let dSYMs = try makeDSYMs(root, name: "Hello World.app")
+    let zip = try #require(try Packager.zipDSYMs(dSYMs, app: app, into: out))
+    #expect(zip.lastPathComponent == "Hello World.app.dSYM.zip")
+    let listing = try Shell.run("unzip", ["-Z1", zip.path], stage: .package).stdout
+    #expect(listing.contains("Hello World.app.dSYM/Contents/Resources/DWARF/x\n"))
+
+    try FileManager.default.removeItem(at: zip)
+    #expect(try Packager.zipDSYMs(nil, app: app, into: out) == nil)
+    #expect(try Packager.zipDSYMs(root.appendingPathComponent("missing"), app: app, into: out) == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)
+}

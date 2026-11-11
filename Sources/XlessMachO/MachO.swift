@@ -218,6 +218,25 @@ public enum MachO {
         return offsets.count
     }
 
+    static let lcUUID: UInt32 = 0x1b
+
+    /// LC_UUID of every slice that has one, in file order, as `dwarfdump --uuid` prints it (upper-case 8-4-4-4-12).
+    /// A dSYM's DWARF file carries its binary's UUID: that is how crash reporters match the two.
+    public static func uuids(in data: Data) throws -> [String] {
+        var out: [String] = []
+        for r in try slices(data) {
+            try forEachLoadCommand(data, slice: r) { off, cmd, size in
+                guard cmd == lcUUID else { return }
+                guard size >= 24 else { throw MachOError.truncated }
+                let hex = data[(off + 8)..<(off + 24)].map { String(format: "%02X", $0) }.joined()
+                var parts: [Substring] = [], rest = Substring(hex)
+                for n in [8, 4, 4, 4, 12] { parts.append(rest.prefix(n)); rest = rest.dropFirst(n) }
+                out.append(parts.joined(separator: "-"))
+            }
+        }
+        return out
+    }
+
     /// Combines thin 64-bit slices into a universal binary (2^14 alignment).
     public static func makeFat(_ thins: [Data]) throws -> Data {
         let align: UInt32 = 14

@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessMachO
 import XlessXcode
 
 /// What the build stage does to the `.app` Swift Build produced, and what it records about it for the sign stage.
@@ -64,17 +65,21 @@ public enum BuiltApp {
     }
 
     /// Copies every `.dSYM` under `products` into `dir`, at the same relative path (a vendored framework's sits under
-    /// `XCFrameworkIntermediates/<pod>/`), as `xcodebuild archive` gathers them into `dSYMs/`. Replaces `dir`; with no dSYM
-    /// it is removed. Returns the relative paths copied, sorted.
+    /// `XCFrameworkIntermediates/<pod>/`), as `xcodebuild archive` gathers them into `dSYMs/`. With `app`, only the dSYMs
+    /// of binaries the app ships (sharing a UUID with one of its Mach-O images): derived data is kept between builds, so
+    /// it can still hold the dSYM of a target or pod removed since. Replaces `dir`; with no dSYM it is removed. Returns
+    /// the relative paths copied, sorted.
     @discardableResult
-    public static func copyDSYMs(from products: URL, to dir: URL) throws -> [String] {
+    public static func copyDSYMs(from products: URL, to dir: URL, keepingImagesOf app: URL? = nil) throws -> [String] {
         let fm = FileManager.default
         var found: [String] = []
         let base = products.standardizedFileURL.path
+        let shipped = app.map { DSYM.imageUUIDs(in: $0) }
         if let walk = fm.enumerator(at: products, includingPropertiesForKeys: [.isDirectoryKey]) {
             for case let url as URL in walk where url.pathExtension == "dSYM" {
                 walk.skipDescendants()
                 guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+                if let shipped, DSYM.uuids(ofDSYM: url).isDisjoint(with: shipped) { continue }
                 found.append(String(url.standardizedFileURL.path.dropFirst(base.count + 1)))
             }
         }

@@ -228,3 +228,12 @@ func signedButUnstapledRealDmgFailsTheStapleCheck() throws {
     #expect(!DmgBuilder.hasStapledTicket(signatureInfo: info))
     #expect(throws: XlessError.self) { try DmgBuilder.checkStapled(dmg: dmg) }
 }
+
+@Test func buildZipsTheDSYMsNextToTheDMG() throws {
+    let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    let dSYMs = try makeDSYMs(root, name: "Hello Tauri.app")
+    let out = root.appendingPathComponent("out")
+    _ = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64], outputDir: out, dSYMs: dSYMs) { _ in }
+    #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("Hello Tauri.app.dSYM.zip").path))
+}

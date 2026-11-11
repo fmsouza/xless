@@ -71,17 +71,19 @@ public enum DmgBuilder {
 
     /// Copies the signed app into a container-local stage (modes normalised the way create-dmg ends up: directories and
     /// executables 755, other files 644, because `addall` copies each `st_mode` as is), then builds `<outputDir>/<name>.dmg`.
-    /// `architectures` name the DMG (`fileName`).
+    /// `architectures` name the DMG (`fileName`). The dSYMs (`dSYMs`, when there are any) are zipped next to it
+    /// (`Packager.zipDSYMs`).
     @discardableResult
     public static func build(signedApp: URL, volumeName: String, version: String, architectures: [MacArchitecture] = MacArchitecture.allCases,
-                             outputDir: URL, run: ([String]) throws -> Void = DmgBuilder.shell) throws -> URL {
+                             outputDir: URL, dSYMs: URL? = nil, run: ([String]) throws -> Void = DmgBuilder.shell) throws -> URL {
         try Files.atomicOutput(outputDir) { out in
-            try buildInto(out, signedApp: signedApp, volumeName: volumeName, version: version, architectures: architectures, run: run)
+            try buildInto(out, signedApp: signedApp, volumeName: volumeName, version: version, architectures: architectures, dSYMs: dSYMs, run: run)
         }
     }
 
     static func buildInto(_ out: URL, signedApp: URL, volumeName: String, version: String, architectures: [MacArchitecture],
-                          run: ([String]) throws -> Void) throws -> URL {
+                          dSYMs: URL? = nil, run: ([String]) throws -> Void) throws -> URL {
+        try Packager.zipDSYMs(dSYMs, app: signedApp, into: out)
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("xless-dmg-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: work) }
@@ -105,8 +107,8 @@ public enum DmgBuilder {
 
     /// Builds the DMG, signs it with the Developer ID key (a DMG is signed after imaging; the app was signed before), submits
     /// it to the notary service, waits, staples the ticket in place and checks that the ticket is there. The DMG is named
-    /// after the architectures of the app's executable (`architectures(ofApp:)`).
-    public static func notarizedDMG(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets) async throws -> URL {
+    /// after the architectures of the app's executable (`architectures(ofApp:)`); the dSYMs are zipped next to it.
+    public static func notarizedDMG(signedApp: URL, outputDir: URL, config: ProjectConfig, secrets: Secrets, dSYMs: URL? = nil) async throws -> URL {
         let product = try config.platform(.macos).product
         let built = try architectures(ofApp: signedApp)
         let kind = CertificateKind.developerID
@@ -118,7 +120,7 @@ public enum DmgBuilder {
         }
         return try Files.atomicOutput(outputDir) { out in
             let dmg = try buildInto(out, signedApp: signedApp, volumeName: product, version: config.version, architectures: built,
-                                    run: DmgBuilder.shell)
+                                    dSYMs: dSYMs, run: DmgBuilder.shell)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-notary-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: tmp) }

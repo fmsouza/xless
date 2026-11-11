@@ -92,7 +92,7 @@ public enum MacBuilder {
             "XCODE_EXTRA_PLATFORM_FOLDERS": sdk.appendingPathComponent("Developer/Platforms").path,
             "PATH": "\(sdk.appendingPathComponent("toolset/bin").path):\(env["PATH"] ?? "/usr/bin:/bin")",
         ]
-        var slices: [Data] = []
+        var slices: [Data] = [], executables: [URL] = []
         var resourceBundles: [URL] = []
         // Ruling R10: another Swift than the image's own (the build stage put it on PATH) builds in its own scratch
         // directory, never reusing a previous toolchain's products; its SwiftPM may lay them out elsewhere than `out/`.
@@ -107,13 +107,14 @@ public enum MacBuilder {
                 throw XlessError(.build, "no \(mac.product)Mac executable under \(scratch.path)/out/Products", fix: "check the swift build output above")
             }
             slices.append(try Data(contentsOf: exe))
+            executables.append(exe)
             if resourceBundles.isEmpty {
                 resourceBundles = ((try? FileManager.default.contentsOfDirectory(at: exe.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? [])
                     .filter { $0.pathExtension == "bundle" }
             }
         }
 
-        return try Files.atomicOutput(paths.app) { partial in
+        let built = try Files.atomicOutput(paths.app) { partial in
             let app = partial.appendingPathComponent("\(mac.product).app", isDirectory: true)
             let layout = BundleLayout(platform: .macos)
             let fm = FileManager.default
@@ -141,5 +142,9 @@ public enum MacBuilder {
             try Plist.write(info, to: app.appendingPathComponent(layout.infoPlist), stage: .build)
             return app
         }
+        // Swift Build writes `<name>.dSYM` next to each architecture's executable: one universal `<Product>.app.dSYM`.
+        let dSYMs = try DSYM.keep(executables: executables, app: built, into: paths.dSYMs)
+        FileHandle.standardError.write(Data("xless: dSYMs: \(dSYMs.summary)\n".utf8))
+        return built
     }
 }

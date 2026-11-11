@@ -25,7 +25,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/`.
 - **Project.** The app repository must already be initialised with `tauri ios init`: `src-tauri/gen/apple/project.yml` is committed. xless supports the subset of `project.yml` that `tauri ios init` generates; an unsupported key is refused with its name, and so is a build script it does not know ([`scripts:`](#overlay-reference)).
 - **Build.** Release, arm64, device only. xless runs the frontend build command, compiles the Rust library (`cargo`) and the Swift packages for `aarch64-apple-ios`, and links the app. Then the usual stages: assets, finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
 - **Dependencies.** CocoaPods is not run. A pod that is a prebuilt binary is declared as a [`binaryDependencies`](#overlay-reference) entry (url, sha256 pin). Git submodules in the app repository are refused.
-- **Not supported.** Simulator and debug builds, x86_64 (iOS), Android, dSYMs, external TestFlight groups, App Store submission.
+- **Not supported.** Simulator and debug builds, x86_64 (iOS), Android, dSYMs ([why](pipeline.md#dsyms)), external TestFlight groups, App Store submission.
 
 ## Requirements
 
