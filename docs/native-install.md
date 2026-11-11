@@ -74,7 +74,9 @@ stages directly.
 `scripts/install-native.sh [--prefix <dir>]` builds `xless` from the checkout and installs it into `<prefix>/bin`
 (default `/usr/local`; it installs Swift through swiftly first if needed, and uses `sudo`). A source build finds its
 data files (`versions.env`, the scripts) only through `XLESS_SHARE`, so run setup as
-`XLESS_SHARE=<the checkout> xless setup --xcode <Xcode.xip>`.
+`XLESS_SHARE=<the checkout> xless setup --xcode <Xcode.xip>`. A source build is version `0.0.0-dev`, as is a checkout's
+`versions.env`, so it refuses a release's share directory (`~/.local/share/xless`) and the other way round
+([troubleshooting.md](troubleshooting.md#installing)).
 
 ## Removing it
 

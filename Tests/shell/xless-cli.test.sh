@@ -54,12 +54,26 @@ printf '%s\n' "$@"
 echo "docker=$XLESS_USE_DOCKER share=$XLESS_SHARE"
 exit "${STUB_EXIT:-0}"
 S
+v="$("${base[@]}" "$x" --version)"
+echo "$v" > "$t/share/VERSION"   # a share is from one release: this xless's
 out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" docker samples/HelloShip --build-number 1 --to finalize -- --verbose 2>"$t/err") || fail "xless docker failed: $(cat "$t/err")"
 [[ "$out" == $'samples/HelloShip\n--build-number\n1\n--to\nfinalize\n--\n--verbose\ndocker=1 share='"$t/share" ]] || fail "xless docker passes: $out"
 out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=0 "$x" docker p 2>/dev/null) || fail "xless docker with XLESS_USE_DOCKER=0 failed"
 [[ "$out" == *"docker=0 "* ]] || fail "XLESS_USE_DOCKER=0 overridden: $out"
 code=0; "${base[@]}" XLESS_SHARE="$t/share" STUB_EXIT=23 "$x" docker p >/dev/null 2>&1 || code=$?
 [[ $code -eq 23 ]] || fail "xless docker exits $code, want testflight.sh's 23"
+# A share from another release is refused before the script runs, naming both releases and the share;
+# XLESS_ALLOW_SHARE_MISMATCH=1 runs it anyway, with a warning.
+echo 9.9.9 > "$t/share/VERSION"
+code=0; "${base[@]}" XLESS_SHARE="$t/share" "$x" docker p >"$t/out" 2>"$t/err" || code=$?
+[[ $code -eq 11 ]] || fail "a share of another release: exit $code, want 11: $(cat "$t/err")"
+grep -qF "this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "mismatch message: $(cat "$t/err")"
+grep -qF "XLESS_ALLOW_SHARE_MISMATCH=1" "$t/err" || fail "the refusal does not name the escape hatch: $(cat "$t/err")"
+[[ ! -s "$t/out" ]] || fail "the script ran with a share of another release: $(cat "$t/out")"
+out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_ALLOW_SHARE_MISMATCH=1 "$x" docker p 2>"$t/err") || fail "XLESS_ALLOW_SHARE_MISMATCH=1 still refused: $(cat "$t/err")"
+[[ "$out" == $'p\ndocker=1 share='"$t/share" ]] || fail "XLESS_ALLOW_SHARE_MISMATCH=1 run passes: $out"
+grep -qF "warning: this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "no warning: $(cat "$t/err")"
+echo "$v" > "$t/share/VERSION"
 # xless run: natively by default (XLESS_USE_DOCKER=0), in the images with --docker (taken out of the arguments, but not
 # after `--`), an XLESS_USE_DOCKER already set wins over the default only, XLESS_SELF is this xless.
 "${base[@]}" "$x" run --help >/dev/null 2>"$t/err" || fail "xless run --help failed: $(cat "$t/err")"
