@@ -13,6 +13,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-asn1", from: "1.0.0"),
         .package(path: "ThirdParty/AssetKit"), // vendored, patched AssetKit; see ThirdParty/AssetKit/README.md
         .package(url: "https://github.com/tayloraswift/swift-png", from: "4.5.0"), // already pulled in by AssetKit
+        .package(url: "https://github.com/attaswift/BigInt", from: "5.4.0"), // Apple ID sign-in: SRP's big-number arithmetic
     ],
     targets: [
         .target(name: "XlessCore", dependencies: [.product(name: "Yams", package: "Yams")]),
@@ -55,9 +56,15 @@ let package = Package(
             "XlessCore", "XlessMachO", "XlessTauri",
             .product(name: "Yams", package: "Yams"),
         ]),
+        // Apple ID sign-in (SRP, 2FA) and Xcode .xip downloads from developer.apple.com (`xless xcode download`).
+        .target(name: "XlessAppleID", dependencies: [
+            "XlessCore",
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "BigInt", package: "BigInt"),
+        ]),
         .executableTarget(name: "xless", dependencies: [
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
-            "XlessXcode", "XlessReactNative", "XlessCargo",
+            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
@@ -89,6 +96,11 @@ let package = Package(
         .testTarget(name: "XlessMachOTests", dependencies: ["XlessMachO"]),
         .testTarget(name: "XlessReactNativeTests", dependencies: ["XlessReactNative", "XlessXcode", "XlessCore", "XlessTauri", "XlessASC"]),
         .testTarget(name: "XlessCargoTests", dependencies: ["XlessCargo", "XlessCore", "XlessTauri", "XlessMachO", "XlessReactNative"]),
+        .testTarget(name: "XlessAppleIDTests", dependencies: [
+            "XlessAppleID", "XlessCore",
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "BigInt", package: "BigInt"),
+        ]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
