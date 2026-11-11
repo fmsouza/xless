@@ -98,8 +98,8 @@ set -euo pipefail
 die() { echo "testflight: $*" >&2; exit 2; }
 
 # On exit, and when stopped (INT, TERM, HUP), remove this run's containers (labelled with $run_label; `--rm` acts only
-# once a container exits on its own) and its temporary files.
-run_label=""; tmpfiles=(); job=""
+# once a container exits on its own), release its work copy ($wc_lock, below) and remove its temporary files.
+run_label=""; tmpfiles=(); job=""; wc_lock=""; wc_takeover=""; in_job=""
 # PID: TERM PID and every process under it, deepest first. A job of a non-interactive bash ignores INT (and xless sets
 # no handler), so Ctrl-C alone would leave a native build running after the script exits.
 stop_tree() {
@@ -108,7 +108,10 @@ stop_tree() {
   kill -TERM "$1" 2>/dev/null || true
 }
 cleanup() {
-  [[ -z "$job" ]] || stop_tree "$job"
+  if [[ -n "$job" ]]; then   # and wait (5 s at most) for it, before another run may take the work copy
+    stop_tree "$job"
+    for _ in $(seq 50); do running "$job" || break; sleep 0.1; done
+  fi
   if [[ -n "$run_label" && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
     local ids
     ids="$("${docker_cli[@]}" ps -aq --filter "label=$run_label" 2>/dev/null)" || ids=""
@@ -117,10 +120,83 @@ cleanup() {
       echo "testflight: could not remove this run's containers; remove them with: ${docker_cli[*]} rm -f ${ids//$'\n'/ }" >&2
     fi
   fi
+  if [[ -n "$wc_lock" ]] && grep -qx "pid=$$" "$wc_lock" 2>/dev/null; then rm -f "$wc_lock"; fi
+  [[ -z "$wc_takeover" ]] || rmdir "$wc_takeover" 2>/dev/null || true
   rm -f ${tmpfiles[@]+"${tmpfiles[@]}"}
 }
 trap cleanup EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
+
+# One run per work copy (fmsouza/xless#57). A run holds a lock on its work copy, ~/.cache/xless/locks/<hash>.lock: its
+# PID, the start time of that process (so a reused PID is not taken for it), its host (for the messages) and, while a
+# step runs, the step's job. A run on a work copy that a live run holds is refused. A SIGKILL leaves no chance to clean
+# up, so the next run on that work copy takes the lock over and stops what the killed run left: the job it recorded,
+# and every container labelled xless.work=<hash> (every run that labels a container so holds the lock while it runs).
+wc_owner=""
+running() { [[ "$1" =~ ^[0-9]+$ ]] && kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }   # PID: alive, not a zombie
+# PID: its start time, the same text whatever the caller's time zone and locale; empty when unknown
+started_of() { LC_ALL=C TZ=UTC0 ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//; s/ *$//'; }
+is_proc() {   # PID STARTED: PID is running, and is the process that started at STARTED (not a reused PID)
+  [[ -n "$2" && "$(started_of "$1")" == "$2" ]] && running "$1"
+}
+holds() {   # PID STARTED: the run that wrote a lock is alive. When in doubt, it is: a start time that ps cannot give, or
+  # one that moved (a clock stepped under a long build), still counts for a PID that runs this script.
+  running "$1" || return 1
+  is_proc "$1" "$2" || [[ -z "$2" || -z "$(started_of "$1")" ]] || [[ "$(ps -o command= -p "$1" 2>/dev/null)" == *testflight.sh* ]]
+}
+sha_hex() { if command -v sha256sum >/dev/null; then printf '%s' "$1" | sha256sum; else printf '%s' "$1" | shasum -a 256; fi | cut -c1-64; }   # TEXT
+lock_field() { sed -n "s/^$1=//p" <<<"$2" | head -1; }   # NAME TEXT: the lock's NAME= line
+hold_work_copy() {   # KEY: take the lock of the work copy KEY names (a path, or a docker volume), or stop
+  # (no local named job: cleanup, which a die here runs, reads the global one)
+  local key="$1" dir="$HOME/.cache/xless/locks" hash lock tmp old pid started host step held=0 ids
+  hash="$(sha_hex "$key" | cut -c1-12)"
+  [[ $use_docker == 0 ]] || docker_run+=(--label "xless.work=$hash")
+  [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]] || return 0
+  lock="$dir/$hash.lock"; tmp="$dir/$hash.$$"; tmpfiles+=("$tmp" "$tmp.new" "$lock.$$")
+  mkdir -p "$dir" || die "cannot create $dir, for the lock of the work copy $key"
+  wc_owner="$(printf 'pid=%s\nstarted=%s\nhost=%s\nwork=%s' "$$" "$(started_of $$)" "$(uname -n)" "$key")"
+  printf '%s\n' "$wc_owner" > "$tmp"
+  ! ln "$tmp" "$lock" 2>/dev/null || held=1   # a hard link: created whole, and only when no lock is there
+  if [[ $held == 0 ]]; then
+    old="$(cat "$lock" 2>/dev/null)" || die "cannot take the lock $lock of the work copy $key"
+    pid="$(lock_field pid "$old")"; started="$(lock_field started "$old")"; host="$(lock_field host "$old")"; step="$(lock_field job "$old")"
+    if holds "$pid" "$started"; then
+      die "the work copy $key is in use by another run (pid $pid on $host, started $started); wait for it to end, or stop it: kill $pid"
+    fi
+    # That run is gone: take the lock over, one taker at a time (the .takeover directory). The lock is replaced by a
+    # rename, so it never disappears and no new run can take it in between.
+    if mkdir "$lock.takeover" 2>/dev/null; then
+      wc_takeover="$lock.takeover"
+      if [[ "$(cat "$lock" 2>/dev/null)" == "$old" ]]; then cp "$tmp" "$tmp.new" && mv -f "$tmp.new" "$lock" && held=1; fi
+      rmdir "$wc_takeover"; wc_takeover=""
+    fi
+    [[ $held == 1 ]] || die "another run is taking over the work copy $key; run again (if none is, remove $lock.takeover)"
+    wc_lock="$lock"
+    echo "==> work copy $key: the run that held it (pid $pid) is gone without cleaning up; stopping what it left" >&2
+    if is_proc "${step%% *}" "${step#* }"; then
+      echo "==> stopping its step (pid ${step%% *})" >&2
+      stop_tree "${step%% *}"
+      for _ in $(seq 50); do is_proc "${step%% *}" "${step#* }" || break; sleep 0.1; done
+      ! is_proc "${step%% *}" "${step#* }" || die "the step of the run that held the work copy $key (pid ${step%% *}) does not stop; stop it: kill -9 ${step%% *}"
+    fi
+  fi
+  wc_lock="$lock"
+  if [[ $use_docker == 1 ]]; then
+    ids="$("${docker_cli[@]}" ps -aq --filter "label=xless.work=$hash" 2>/dev/null)" || ids=""
+    if [[ -n "$ids" ]]; then
+      echo "==> work copy $key: removing the containers a gone run left on it: ${ids//$'\n'/ }" >&2
+      # shellcheck disable=SC2086 # container IDs: hex words
+      "${docker_cli[@]}" rm -f $ids >/dev/null \
+        || die "could not remove the containers a gone run left on the work copy $key; remove them with: ${docker_cli[*]} rm -f ${ids//$'\n'/ }"
+    fi
+  fi
+}
+note_job() {   # records the running step ($job) in the lock, for the run that takes over if this one is killed
+  # only from the script's own shell ($in_job is set in a job's subshell), and only while the lock is still this run's
+  [[ -n "$wc_lock" && -z "$in_job" ]] && grep -qx "pid=$$" "$wc_lock" 2>/dev/null || return 0
+  # best effort: a lock without its job still guards the work copy (written aside, then renamed: never read half-written)
+  { printf '%s\njob=%s %s\n' "$wc_owner" "$job" "$(started_of "$job")" > "$wc_lock.$$" && mv -f "$wc_lock.$$" "$wc_lock"; } 2>/dev/null || true
+}
 
 usage="usage: $0 <project-dir> [extra xless ship args...]   or   $0 --config <overlay.yml> [--platform ios|macos] [--destination device|simulator] [--dry-run] [extra args...]"
 [[ $# -ge 1 ]] || die "$usage"
@@ -359,12 +435,12 @@ run() {
 }
 # CMD...: as a job the script waits for. bash runs a trap only once the foreground command has ended, so a stopped
 # script would otherwise wait for the whole build before cleanup could remove its container.
-# The job's PID is in $job while it runs, for cleanup to stop it.
-waited() { local rc=0; "$@" & job=$!; wait "$job" || rc=$?; job=""; return "$rc"; }
+# The job's PID is in $job while it runs, for cleanup to stop it (and in the work copy's lock, note_job).
+waited() { local rc=0; "$@" & job=$!; note_job; wait "$job" || rc=$?; job=""; return "$rc"; }
 # LOG CMD...: waited, with CMD's output also written to LOG; returns CMD's status.
 waited_tee() {
   local log="$1" rc=0; shift
-  { "$@" | tee "$log"; exit "${PIPESTATUS[0]}"; } & job=$!; wait "$job" || rc=$?; job=""; return "$rc"
+  { in_job=1; "$@" | tee "$log"; exit "${PIPESTATUS[0]}"; } & job=$!; note_job; wait "$job" || rc=$?; job=""; return "$rc"
 }
 
 finish() {   # CODE: report and exit with xless's exit code
@@ -443,6 +519,7 @@ check_pin() {   # after apply_pin: refuse missing images with the command that b
 if [[ -z "$OVERLAY" ]]; then
   # A project directory: one `xless ship`. Secrets are mounted, and xless scrubs them from the environment of the tools
   # it runs, but the files stay readable to package code (SwiftPM plugins and macros) built in the same container.
+  hold_work_copy "$(cd -P "$PROJECT" && pwd -P)"   # the project is its own work copy
   if [[ $given_build == 1 ]]; then echo "==> TestFlight: build number from --build-number" >&2
   else echo "==> TestFlight: build number $XLESS_BUILD_NUMBER" >&2; fi
   set +e
@@ -473,7 +550,7 @@ if [[ $use_docker == 1 ]]; then
     key_image="${XLESS_SIGN_IMAGE:-xless-base:local-$arch}"
     # One work volume per overlay file: its name, and a hash of its path (two overlays never share a work copy).
     ov_name="$(basename "$OVERLAY")"; ov_name="${ov_name%.*}"; ov_name="$(printf '%s' "$ov_name" | tr -c 'A-Za-z0-9_.-' '-')"
-    ov_hash="$( { command -v sha256sum >/dev/null && printf '%s' "$OVERLAY" | sha256sum || printf '%s' "$OVERLAY" | shasum -a 256; } | cut -c1-8)"
+    ov_hash="$(sha_hex "$OVERLAY" | cut -c1-8)"
     rn_work="${XLESS_RN_WORK_VOLUME:-xless-rn-work-$ov_name-$ov_hash}"
     build_caches=(-v "$rn_work:/cache/work" -v xless-corepack:/cache/corepack -v xless-bundle:/cache/bundle
                   -v xless-cocoapods-home:/root/.cocoapods -v xless-cocoapods-cache:/root/Library/Caches/CocoaPods
@@ -513,6 +590,21 @@ if [[ $use_docker == 1 ]]; then
   if [[ $RN == 1 && $SIM == 0 ]]; then check_pin "build $image, App Store Connect steps $key_image"; else check_pin "$image"; fi
   if [[ $RN == 1 && $SIM == 0 ]]; then need_images "$image" "$key_image"; else need_images "$image"; fi
 fi
+
+# The work copy all three steps share: the overlay's name under xless's work root (the cache's, in docker), or the
+# React Native build's work volume.
+work_dir() {   # ROOT NAME: ROOT/NAME, ROOT with its symlinks resolved (and created, as xless would: one spelling only)
+  [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]] || mkdir -p "$1" || die "cannot create the work root $1"
+  if [[ -d "$1" ]]; then printf '%s/%s' "$(cd -P "$1" && pwd -P)" "$2"; else printf '%s/%s' "$1" "$2"; fi
+}
+wc_name="$(basename "$OVERLAY")"; wc_name="${wc_name%.*}"
+if [[ $use_docker == 0 ]]; then
+  wc_root="${XLESS_WORK_ROOT:-$HOME/.cache/xless/work}"
+  case "$wc_root" in "~") wc_root="$HOME" ;; "~/"*) wc_root="$HOME/${wc_root#\~/}" ;; esac
+  wc_key="$(work_dir "$wc_root" "$wc_name")"
+elif [[ $RN == 1 ]]; then wc_key="docker volume $rn_work"
+else wc_key="$(work_dir "$cache/work" "$wc_name")"; fi
+hold_work_copy "$wc_key"
 
 # React Native: step 2 (xless-rn) and steps 1 and 3 (xless-base) must run the same xless, or step 3 could misread what
 # step 2 wrote. The images are compared by the digest of their xless binary (not for a simulator build: step 2 only).
