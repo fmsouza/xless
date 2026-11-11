@@ -59,6 +59,7 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
     /// One line's bytes, without the newline. EOF before any byte is an error (the terminal went away).
     private func readLine() throws -> [UInt8] {
         var out: [UInt8] = []
+        out.reserveCapacity(1024) // so appending never reallocates and leaves an unzeroed copy of a password behind
         var byte: UInt8 = 0
         while true {
             let n = Foundation.read(fd, &byte, 1)

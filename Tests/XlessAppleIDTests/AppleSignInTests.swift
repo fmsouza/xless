@@ -172,6 +172,12 @@ final class AppleSignInTests: XCTestCase {
         XCTAssertEqual((try JSONSerialization.jsonObject(with: submit.httpBody!) as? NSDictionary)?["phoneNumber"] as? NSDictionary, ["id": 7])
     }
 
+    func testSpacesInTheCodeAreDropped() async throws {
+        let (mock, _) = try await signIn(FakeApple(), answers: ["me@example.com", " 123 456 "])
+        let submit = try XCTUnwrap(mock.requests.first { $0.url?.path.hasSuffix("trusteddevice/securitycode") == true })
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: submit.httpBody!) as? NSDictionary, ["securityCode": ["code": "123456"]])
+    }
+
     func testTypingSMSSwitchesFromDeviceCode() async throws {
         let apple = FakeApple()
         let (mock, _) = try await signIn(apple, answers: ["me@example.com", "sms", "1", "333444"])

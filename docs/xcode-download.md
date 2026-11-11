@@ -28,8 +28,9 @@ fails at once rather than after an hour of downloads. Where Apple offers a "Univ
 Universal one is taken.
 
 Each file goes to `<output-dir>/<Apple's file name>` (`--output-dir` defaults to the current directory) through a
-`<name>.part` file. If the run is interrupted, run the same command again: it signs in again, keeps the files that are
-complete and resumes the `.part`. Before it starts, it checks that the disk has room for what is left to download.
+`<name>.part` file. A dropped connection or a server error is retried twice, resuming
+the `.part`; if a file still fails, the others go on and the command ends with the list of failures. Run the same command
+again: it signs in again, keeps the files that are complete and resumes each `.part`. Before it starts, it checks that the disk has room for what is left to download.
 
 After each download the file's SHA-256 is compared with the Xcodes in `versions.env`. A file xless does not support yet
 prints the `XCODE_XIP_SHA256_<build>` value to record for it ([maintainers.md](maintainers.md)).
@@ -42,7 +43,8 @@ Nothing of the sign-in is kept, and none of it leaves for anywhere but Apple:
   argument or an environment variable; without a terminal the command refuses to run. The password is read with echo
   off.
 - The password is never sent, to Apple or anyone. The sign-in is Apple's own SRP protocol, the one its web sign-in
-  uses: xless sends a proof computed from the password, and keeps only a hash of it for the few milliseconds that takes.
+  uses: xless sends a proof computed from the password. The typed password is overwritten as soon as it is hashed, and
+  only that hash is kept, in memory, until the sign-in step ends.
 - The session's cookies live in the process's memory. Nothing is written to disk (no cookie file, no cache), logged,
   printed, or passed to another program; the downloads run inside xless, not through `curl`. Cookies are only sent to
   the Apple hosts that set them, over https.
@@ -51,8 +53,9 @@ Nothing of the sign-in is kept, and none of it leaves for anywhere but Apple:
 
 ## What it does not do
 
-- Apple IDs that sign in with a hardware security key, managed (federated) Apple IDs, and the old two-step
-  verification are refused with a message. Two-factor codes from a trusted device or by text message work.
+- Apple IDs that sign in with a hardware security key, and the old two-step verification, are refused with a message.
+  Managed (federated) Apple IDs are not recognised as such: their sign-in fails with the refusal Apple gives. Two-factor
+  codes from a trusted device or by text message work.
 - It downloads Xcode `.xip`s only (not the Command Line Tools, simulators or older `.dmg` Xcodes), one at a time.
 - It does not run `xless setup`.
 

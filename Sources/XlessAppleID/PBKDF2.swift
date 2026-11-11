@@ -39,7 +39,13 @@ enum ApplePasswordKey {
         case .s2k:
             return PBKDF2.sha256(password: passwordSHA256, salt: salt, iterations: iterations, length: 32)
         case .s2k_fo:
-            var hexDigest = Array(passwordSHA256.map { String(format: "%02x", $0) }.joined().utf8)
+            // Built byte by byte so no String copy of the hash outlives this call.
+            let digits = Array("0123456789abcdef".utf8)
+            var hexDigest = [UInt8](repeating: 0, count: passwordSHA256.count * 2)
+            for (i, b) in passwordSHA256.enumerated() {
+                hexDigest[2 * i] = digits[Int(b >> 4)]
+                hexDigest[2 * i + 1] = digits[Int(b & 0x0F)]
+            }
             defer { hexDigest.resetBytes() }
             return PBKDF2.sha256(password: hexDigest, salt: salt, iterations: iterations, length: 32)
         }

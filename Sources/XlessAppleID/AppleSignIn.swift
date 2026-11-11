@@ -177,7 +177,7 @@ struct TwoFactor {
         while true {
             let prompt = phone.map { "Enter the \(length)-digit code sent to \($0.numberWithDialCode): " }
                 ?? "Enter the \(length)-digit code shown on your trusted Apple device (or type sms to get it by text message): "
-            let code = try await prompter.ask(prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+            let code = String(try await prompter.ask(prompt).filter { !$0.isWhitespace })
             if code.isEmpty { continue }
             if phone == nil && code.lowercased() == "sms" {
                 guard !phones.isEmpty else {
