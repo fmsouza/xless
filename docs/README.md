@@ -20,6 +20,8 @@ build. The pages below go further.
 
 - [apple-requirements.md](apple-requirements.md): everything xless needs from Apple, how to get it on Linux, and the
   audit behind that list.
+- [xcode-download.md](xcode-download.md): `xless xcode download`, one terminal sign-in to Apple for any number of Xcode
+  `.xip`s, and what happens to your Apple ID and password.
 - [images.md](images.md): the Docker images (`--docker`), and how to build each one by hand.
 - [native-install.md](native-install.md): the native install `xless setup` makes (the default): what goes where, and its limits.
 - [uninstall.md](uninstall.md): `xless clean`, freeing disk space after an upgrade, and uninstalling.
