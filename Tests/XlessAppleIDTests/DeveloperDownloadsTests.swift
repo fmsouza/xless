@@ -19,9 +19,12 @@ final class DeveloperDownloadsTests: XCTestCase {
 
     func client(_ mock: MockTransport) -> AppleWebClient { AppleWebClient(transport: mock) }
 
-    func run(_ mock: MockTransport) async throws -> DeveloperDownloads.Result {
-        try await DeveloperDownloads.download(file, into: dir, client: client(mock), retryDelay: 0, progress: { _ in })
+    func run(_ mock: MockTransport, file: AppleDownload.File? = nil,
+             progress: @escaping @Sendable (Int64) -> Void = { _ in }) async throws -> DeveloperDownloads.Result {
+        try await DeveloperDownloads.download(file ?? self.file, into: dir, client: client(mock), retryDelay: 0, progress: progress)
     }
+
+    var part: URL { dir.appendingPathComponent("Xcode_27.xip.part") }
 
     func fileRequests(_ mock: MockTransport) -> Int { mock.requests.filter { $0.url?.host == "download.developer.apple.com" }.count }
 
@@ -78,7 +81,7 @@ final class DeveloperDownloadsTests: XCTestCase {
         let rest = xip.suffix(from: 40)
         let mock = apple { r in
             XCTAssertEqual(r.header("Range"), "bytes=40-")
-            return .init(status: 206, headers: ["Content-Type": "application/octet-stream"], body: rest)
+            return partial(from: 40, rest)
         }
         let result = try await run(mock)
         XCTAssertEqual(try Data(contentsOf: result.url), xip)
@@ -89,6 +92,58 @@ final class DeveloperDownloadsTests: XCTestCase {
         let mock = apple { _ in .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip) }
         let result = try await run(mock)
         XCTAssertEqual(try Data(contentsOf: result.url), xip)
+    }
+
+    func testADCAuthAcceptsAnything() async throws {
+        let mock = apple { _ in .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip) }
+        _ = try await run(mock)
+        let auth = try XCTUnwrap(mock.requests.first { $0.url?.host == "developerservices2.apple.com" })
+        XCTAssertEqual(auth.header("Accept"), "*/*")
+    }
+
+    func testProgressNeverOvershootsWhenAppleRestartsFromZero() async throws {
+        try xip.prefix(40).write(to: part)
+        let mock = apple { _ in .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip) }
+        let seen = Recorder()
+        _ = try await run(mock, progress: seen.add)
+        XCTAssertLessThanOrEqual(seen.values.max() ?? 0, 100, "\(seen.values)")
+        XCTAssertEqual(seen.values.last, 100)
+    }
+
+    func testMisplacedRangeRestartsFromZero() async throws {
+        try xip.prefix(40).write(to: part)
+        let calls = ByteCounter(0)
+        let mock = apple { r in
+            if calls.add(1) == 1 { return partial(from: 10, testXip.suffix(from: 10)) }
+            XCTAssertNil(r.header("Range"))
+            return .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip)
+        }
+        let result = try await run(mock)
+        XCTAssertEqual(try Data(contentsOf: result.url), xip)
+        XCTAssertEqual(fileRequests(mock), 2)
+    }
+
+    func testCompletePartIsFinishedWithoutDownloading() async throws {
+        try xip.write(to: part)
+        let mock = apple { _ in XCTFail("no download expected"); return .init(status: 500) }
+        let result = try await run(mock)
+        XCTAssertEqual(try Data(contentsOf: result.url), xip)
+        XCTAssertEqual(fileRequests(mock), 0)
+    }
+
+    func testRangeNotSatisfiableWithACompletePartFinishesIt() async throws {
+        let unsized = AppleDownload.File(filename: "Xcode_27.xip", remotePath: file.remotePath, fileSize: nil)
+        try xip.write(to: part)
+        let mock = apple { _ in .init(status: 416, headers: ["Content-Range": "bytes */100"]) }
+        let result = try await run(mock, file: unsized)
+        XCTAssertEqual(try Data(contentsOf: result.url), xip)
+    }
+
+    func testRangeNotSatisfiableOtherwiseStartsOver() async {
+        try? xip.prefix(40).write(to: part)
+        let mock = apple { _ in .init(status: 416, headers: ["Content-Range": "bytes */100"]) }
+        await assertError(mock, contains: "refused to resume")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: part.path))
     }
 
     func testUnauthorizedRedirectIsAnError() async throws {
@@ -130,7 +185,7 @@ final class DeveloperDownloadsTests: XCTestCase {
         let mock = apple { r in
             if calls.add(1) == 1 { return .init(status: 200, headers: ["Content-Type": "application/octet-stream"], body: testXip.prefix(30)) }
             XCTAssertEqual(r.header("Range"), "bytes=30-")
-            return .init(status: 206, headers: ["Content-Type": "application/octet-stream"], body: testXip.suffix(from: 30))
+            return partial(from: 30, testXip.suffix(from: 30))
         }
         let result = try await run(mock)
         XCTAssertEqual(try Data(contentsOf: result.url), xip)
@@ -185,3 +240,17 @@ final class DeveloperDownloadsTests: XCTestCase {
 }
 
 let testXip = Data("xar!".utf8) + Data(repeating: 7, count: 96)
+
+/// Apple's answer to `Range: bytes=<from>-` for testXip.
+func partial(from: Int, _ body: Data, total: Int = 100) -> MockTransport.Reply {
+    .init(status: 206, headers: ["Content-Type": "application/octet-stream",
+                                 "Content-Range": "bytes \(from)-\(from + body.count - 1)/\(total)"], body: body)
+}
+
+/// Every progress value reported.
+final class Recorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _values: [Int64] = []
+    var values: [Int64] { lock.withLock { _values } }
+    func add(_ v: Int64) { lock.withLock { _values.append(v) } }
+}
