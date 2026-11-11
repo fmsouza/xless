@@ -29,6 +29,9 @@ public struct DarwinSDK: Sendable {
 
     public var toolchain: URL { bundle.appendingPathComponent("Developer/Toolchains/XcodeDefault.xctoolchain") }
     public var ld64: URL { bundle.appendingPathComponent("toolset/bin/ld64.lld") }
+    /// xtool's toolset (darwin-tools-linux-llvm, the LLVM of `ld64.lld`) ships dsymutil next to the linker; Swift Build
+    /// finds it there through PATH.
+    public var dsymutil: URL { bundle.appendingPathComponent("toolset/bin/dsymutil") }
 
     /// `libclang_rt.<platform>.a` from the toolchain's clang resource dir (platform "ios" → libclang_rt.ios.a).
     public func clangRuntime(platform: String) throws -> URL {

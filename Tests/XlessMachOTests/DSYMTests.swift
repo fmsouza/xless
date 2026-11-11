@@ -148,3 +148,95 @@ private func dSYM(in dir: URL, bin: String, dwarf: Data) throws -> URL {
     try write(Data([0xcf]), app.appendingPathComponent("tiny"))
     #expect(DSYM.imageUUIDs(in: app) == [uuid(0x11), uuid(0x22), uuid(0x33)])
 }
+
+// MARK: dSYMs of Rust executables linked by cargo (the linker wrapper's debug link)
+
+/// A dSYM's DWARF file stand-in: an image whose LC_UUID is 16 times `byte`, as dsymutil writes it (MH_DSYM).
+private func dwarf(_ byte: UInt8) -> Data { image(uuid: byte, filetype: 0xa) }
+
+private let localSymbols: [(String, UInt8, UInt64)] = [
+    ("/w/target/release/deps/hello-1.hello.abc-cgu.0.rcgu.o", ExecutableImage.nOSO, 0),
+    ("__ZN5hello7private17h1E", ExecutableImage.nSect, 0x1_0000_1000),
+    ("_main", ExecutableImage.nSect | ExecutableImage.nExt, 0x1_0000_1000),
+]
+
+/// The wrapper links `deps/<crate>-<hash>` with -Wl,-x for cargo, and again without it into its debug directory, where
+/// dsymutil writes `<crate>-<hash>.dSYM`. The executable cargo uplifts (`release/<bin>`) is the -x link: same code, other
+/// UUID. The debug directory can also hold the link of another binary of the package.
+@Test func debugLinkDSYMIsTheOneOfTheUnstrippedLinkWithTheShippedCode() throws {
+    let root = try tmp(); defer { try? fm.removeItem(at: root) }
+    let shipped = root.appendingPathComponent("target/aarch64-apple-darwin/release/hello")
+    try write(ExecutableImage(symbols: [localSymbols[0], localSymbols[2]], uuid: 0x11).data, shipped)
+    let debug = root.appendingPathComponent("debug", isDirectory: true)
+    try write(ExecutableImage(code: [0x1f, 0x20, 0x03, 0xd5], symbols: localSymbols, uuid: 0x33).data, debug.appendingPathComponent("helper-9"))
+    _ = try dSYM(in: debug, bin: "helper-9", dwarf: dwarf(0x33))
+    try write(ExecutableImage(symbols: localSymbols, uuid: 0x22).data, debug.appendingPathComponent("hello-2"))
+    let bundle = try dSYM(in: debug, bin: "hello-2", dwarf: dwarf(0x22))
+
+    let found = DSYM.debugLinkDSYM(of: shipped, in: debug)
+    #expect(found == .found(bundle))
+    // Its UUID is now the shipped executable's, which crash reporters match on.
+    #expect(DSYM.uuids(ofDSYM: bundle) == [uuid(0x11)])
+    // The other links (another binary, an older build) are removed; the directory is kept for a build cargo does not relink.
+    #expect(try fm.contentsOfDirectory(atPath: debug.path).sorted() == ["hello-2", "hello-2.dSYM"])
+    #expect(DSYM.debugLinkDSYM(of: shipped, in: debug) == .found(bundle))
+
+    let out = root.appendingPathComponent("dSYMs")
+    let outcome = try DSYM.keep([(executable: shipped, dSYM: found)], app: try app(in: root, executable: "hello", mac: true), into: out)
+    #expect(outcome == .kept(out.appendingPathComponent("Hello.app.dSYM")))
+    let kept = try Data(contentsOf: out.appendingPathComponent("Hello.app.dSYM/Contents/Resources/DWARF/hello"))
+    #expect(try MachO.uuids(in: kept) == [uuid(0x11)])
+}
+
+@Test func debugLinkDSYMSaysWhyThereIsNone() throws {
+    let root = try tmp(); defer { try? fm.removeItem(at: root) }
+    let shipped = root.appendingPathComponent("release/hello")
+    try write(ExecutableImage(symbols: [localSymbols[2]], uuid: 0x11).data, shipped)
+    let debug = root.appendingPathComponent("debug", isDirectory: true)
+
+    // Nothing at all: the wrapper did not link it (xless forces a link in that case, so this is unexpected).
+    guard case .missing(let unlinked) = DSYM.debugLinkDSYM(of: shipped, in: debug) else { Issue.record("found a dSYM"); return }
+    #expect(unlinked.contains("did not link"))
+
+    // The wrapper's record of a link whose objects had no DWARF.
+    try write(Data(), debug.appendingPathComponent("hello-1.nodebug"))
+    guard case .missing(let none) = DSYM.debugLinkDSYM(of: shipped, in: debug) else { Issue.record("found a dSYM"); return }
+    #expect(none.contains("without debug info"))
+
+    // The wrapper's record of a failed second link or dsymutil.
+    try fm.removeItem(at: debug.appendingPathComponent("hello-1.nodebug"))
+    try write(Data(), debug.appendingPathComponent("hello-1.failed"))
+    guard case .missing(let failedLink) = DSYM.debugLinkDSYM(of: shipped, in: debug) else { Issue.record("found a dSYM"); return }
+    #expect(failedLink.contains("failed"))
+
+    // A shipped executable that cannot be read is a reason, not an error that fails the build.
+    guard case .missing(let unreadable) = DSYM.debugLinkDSYM(of: root.appendingPathComponent("missing"), in: debug) else { Issue.record("found a dSYM"); return }
+    #expect(!unreadable.isEmpty)
+
+    // A debug link of other code only.
+    try write(ExecutableImage(code: [0x1f, 0x20, 0x03, 0xd5], symbols: localSymbols, uuid: 0x33).data, debug.appendingPathComponent("helper-9"))
+    _ = try dSYM(in: debug, bin: "helper-9", dwarf: dwarf(0x33))
+    guard case .missing(let other) = DSYM.debugLinkDSYM(of: shipped, in: debug) else { Issue.record("found a dSYM"); return }
+    #expect(other.contains("no unstripped link"))
+
+    // The unstripped link, but dsymutil left no dSYM.
+    try write(ExecutableImage(symbols: localSymbols, uuid: 0x22).data, debug.appendingPathComponent("hello-2"))
+    guard case .missing(let failed) = DSYM.debugLinkDSYM(of: shipped, in: debug) else { Issue.record("found a dSYM"); return }
+    #expect(failed.contains("dsymutil"))
+}
+
+/// One architecture without a dSYM: the universal app keeps none, and says why.
+@Test func keepWithAMissingSliceKeepsNoneAndGivesItsReason() throws {
+    let root = try tmp(); defer { try? fm.removeItem(at: root) }
+    let arm = root.appendingPathComponent("arm/hello"), x86 = root.appendingPathComponent("x86/hello")
+    try write(image(uuid: 0x11), arm)
+    try write(image(cpu: 0x01000007, uuid: 0x22), x86)
+    let armDSYM = try dSYM(in: root.appendingPathComponent("elsewhere"), bin: "hello-1", dwarf: dwarf(0x11))
+    let out = root.appendingPathComponent("dSYMs")
+    try write(Data("old".utf8), out.appendingPathComponent("Hello.app.dSYM/x"))
+
+    let outcome = try DSYM.keep([(executable: arm, dSYM: .found(armDSYM)), (executable: x86, dSYM: .missing("x86_64 was built without debug info"))],
+                                app: try app(in: root, mac: true), into: out)
+    #expect(outcome == .none("x86_64 was built without debug info"))
+    #expect(!fm.fileExists(atPath: out.path))
+}

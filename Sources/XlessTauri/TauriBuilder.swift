@@ -235,8 +235,65 @@ public enum TauriBuilder {
             try Shell.run(swift?.tool("clang++") ?? "clang++", NativeLink.linkArguments(inputs), cwd: apple, env: ctx.tools, baseEnvironment: ctx.env, stage: .build,
                           keepErrorLine: { !$0.contains("does not support linking for platform iOS") })
 
-            // 8. The bundle.
-            return try Files.atomicOutput(ctx.paths.app) { try AppAssembler.assemble(resolved: r, workRoot: work, executable: executable, into: $0, note: { log($0) }) }
+            // 8. The dSYM, when the app crate was compiled with debug info: dsymutil reads the executable's debug map.
+            let dSYM = iosDSYM(executable: executable, crateLib: crate.lib) { exe, out in
+                try dsymutil(ctx.sdk.dsymutil, exe, out, ctx: ctx)
+            }
+
+            // 9. The bundle.
+            let app = try Files.atomicOutput(ctx.paths.app) { try AppAssembler.assemble(resolved: r, workRoot: work, executable: executable, into: $0, note: { log($0) }) }
+            log("dSYMs: \(try DSYM.keep([(executable: executable, dSYM: dSYM)], app: app, into: ctx.paths.dSYMs).summary)")
+            return app
+        }
+    }
+
+    /// The dSYM of the iOS executable xless linked (no `-x`, so its debug map is whole): `<executable>.dSYM`, made by
+    /// `dsymutil` (`run(executable, output)`) when the debug map names an object of the app crate (`crateLib`), that is
+    /// when the release profile has debug info. The Rust standard library's objects always carry some (rustup ships
+    /// it with line tables), so a debug map alone does not mean the app's code has any. Never throws: whatever goes
+    /// wrong (`run` included) is the reason there is no dSYM.
+    static func iosDSYM(executable: URL, crateLib: String, run: (URL, URL) throws -> Void) -> DSYM.Source {
+        let out = DSYM.companion(of: executable)
+        try? FileManager.default.removeItem(at: out)
+        do {
+            guard !appCrateObjects(debugMap: try MachO.debugMapObjects(in: Data(contentsOf: executable)), crateLib: crateLib).isEmpty else {
+                return .missing("the app crate (\(crateLib)) was compiled without debug info: set `debug` in the release profile for a dSYM")
+            }
+            try run(executable, out)
+        } catch let e as XlessError {
+            return .missing(e.cause)
+        } catch {
+            return .missing("\(error)")
+        }
+        return FileManager.default.fileExists(atPath: out.path) ? .found(out) : .missing("dsymutil wrote no \(out.path)")
+    }
+
+    /// The objects of the crate whose library is `crateLib` in a debug map (`MachO.debugMapObjects`): rustc names a
+    /// codegen unit `<crate>-<hash>.<crate>.<hash>-cgu.<n>.rcgu.o`, linked by path or as a member of an archive
+    /// (`lib<crate>.a(<member>)`).
+    static func appCrateObjects(debugMap: [String], crateLib: String) -> [String] {
+        debugMap.filter { path in
+            let object: Substring
+            if path.hasSuffix(")"), let open = path.lastIndex(of: "(") {
+                object = path[path.index(after: open)..<path.index(before: path.endIndex)]
+            } else {
+                object = Substring((path as NSString).lastPathComponent)
+            }
+            return object.hasPrefix(crateLib + "-")
+        }
+    }
+
+    /// `dsymutil <executable> -o <output>` with the SDK toolset's dsymutil. Throws when the toolset has none or it
+    /// fails; `iosDSYM` turns that into the reason there is no dSYM.
+    static func dsymutil(_ tool: URL, _ executable: URL, _ output: URL, ctx: some TauriWorkContext) throws {
+        guard FileManager.default.isExecutableFile(atPath: tool.path) else {
+            throw XlessError(.build, "the SDK's toolset has no dsymutil (\(tool.path))", fix: "reinstall the SDK")
+        }
+        do {
+            try Shell.run(tool.path, [executable.path, "-o", output.path], env: ctx.tools, baseEnvironment: ctx.env, stage: .build)
+        } catch {
+            try? FileManager.default.removeItem(at: output)
+            throw error
         }
     }
 
@@ -280,16 +337,24 @@ public enum TauriBuilder {
             let staging = work.appendingPathComponent(".xless/mac", isDirectory: true)
 
             var thins: [(triple: String, url: URL)] = [], snapshots: [(triple: String, dir: URL)] = [], targets: [String]? = nil
+            var dSYMs: [DSYM.Source] = []
             let swift = try SwiftToolchain.load(env: ctx.env)
             for triple in TauriMacEnvironment.targets {
-                try TauriMacEnvironment.writeLinkerWrapper(target: triple, minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
+                // The wrapper's debug link gives the executable its dSYM when the release profile has debug info.
+                let release = main.targetDir.appendingPathComponent("\(triple)/release", isDirectory: true)
+                let debugLink = RustApple.debugLink(target: triple, workRoot: work, sdk: ctx.sdk)
+                if let debugLink, !RustApple.linkAgainWithoutRecord(bin: main.bin, release: release, debugLink: debugLink).isEmpty {
+                    log("\(triple): \(main.bin) has no debug link record yet; cargo links it again")
+                }
+                try TauriMacEnvironment.writeLinkerWrapper(target: triple, minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift, debugLink: debugLink)
                 var env = ctx.tools
                 for (k, v) in try TauriMacEnvironment.cargo(resolved: r, target: triple, sdk: ctx.sdk, workRoot: work, swift: swift) { env[k] = v }
                 let argv = macCargoArguments(target: triple, features: ctx.overlay.macFeatures)
                 log("cargo \(argv.joined(separator: " "))")
                 try run(["cargo"] + argv, cwd: ctx.tauriDir, env: env, ctx: ctx, stage: .build)
-                let release = main.targetDir.appendingPathComponent("\(triple)/release", isDirectory: true)
                 thins.append((triple, release.appendingPathComponent(main.bin)))
+                dSYMs.append(debugLink.map { DSYM.debugLinkDSYM(of: release.appendingPathComponent(main.bin), in: $0.dir) }
+                             ?? .missing("the SDK's toolset has no dsymutil (\(ctx.sdk.dsymutil.path))"))
                 // build.rs may stage bundle.resources, so they are resolved after each target's cargo run.
                 let mappings = try TauriMacBundler.resourceMappings(resources: bundle["resources"], tauriDir: ctx.tauriDir)
                 let dir = staging.appendingPathComponent("resources/\(triple)", isDirectory: true)
@@ -309,9 +374,12 @@ public enum TauriBuilder {
             try universalExecutable(thins, binary: main.bin).write(to: exe)
             let resources = try TauriMacBundler.mergeResources(snapshots, targets: targets ?? [], into: staging.appendingPathComponent("resources/universal", isDirectory: true))
             let resolved = r
-            return try Files.atomicOutput(ctx.paths.app) {
+            let app = try Files.atomicOutput(ctx.paths.app) {
                 try TauriMacBundler.assemble(resolved: resolved, workRoot: work, universalExecutable: exe, resources: resources, into: $0, note: { log($0) })
             }
+            let slices = zip(thins, dSYMs).map { (executable: $0.0.url, dSYM: $0.1) }
+            log("dSYMs: \(try DSYM.keep(slices, app: app, into: ctx.paths.dSYMs).summary)")
+            return app
         }
     }
 

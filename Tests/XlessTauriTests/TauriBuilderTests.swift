@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import XlessTauri
 @testable import XlessCore
+import XlessMachO
 
 private var fm: FileManager { .default }
 
@@ -58,6 +59,74 @@ private func tree(_ files: [String]) throws -> URL {
         let sdkRoot = try sdk.sdkPath("iphoneos").path, tc = sdk.toolchain.path
         #expect(paths == ["/W/src-tauri/gen/apple/Externals/arm64/release", "\(sdkRoot)/usr/lib/swift",
                           "\(tc)/usr/lib/swift/iphoneos", "\(tc)/usr/lib/swift-5.0/iphoneos"])
+    }
+}
+
+/// The iOS executable's debug map names the objects with debug info it was linked from. The Rust standard library's
+/// always have some (rustup ships it with line tables); the app crate's only when the release profile has debug info.
+@Suite struct TauriIOSDebugMapTests {
+    let debugMap = [
+        "/w/target/aarch64-apple-ios/release/deps/libapp_lib.a(core-57.core.5b-cgu.0.rcgu.o)",
+        "/w/target/aarch64-apple-ios/release/deps/libapp_lib.a(app_lib-0c.app_lib.9f-cgu.0.rcgu.o)",
+        "/w/target/aarch64-apple-ios/release/deps/libapp_lib.a(app_lib-0c.app_lib.9f-cgu.1.rcgu.o)",
+        "/w/.xless/swift/.build/arm64-apple-ios/release/Tauri.build/Tauri.swift.o",
+    ]
+
+    @Test func appCrateObjectsAreTheCratesCodegenUnits() {
+        #expect(TauriBuilder.appCrateObjects(debugMap: debugMap, crateLib: "app_lib") == Array(debugMap[1...2]))
+        #expect(TauriBuilder.appCrateObjects(debugMap: [debugMap[0], debugMap[3]], crateLib: "app_lib").isEmpty)
+        // A crate whose name extends the app's is another crate.
+        #expect(TauriBuilder.appCrateObjects(debugMap: ["/w/libapp_lib.a(app_lib_ext-1.app_lib_ext.2-cgu.0.rcgu.o)"], crateLib: "app_lib").isEmpty)
+        // An object linked by path, not from the archive.
+        #expect(TauriBuilder.appCrateObjects(debugMap: ["/w/deps/app_lib-0c.app_lib.9f-cgu.0.rcgu.o"], crateLib: "app_lib").count == 1)
+    }
+
+    /// A thin arm64 executable with an LC_UUID and a symbol table whose N_OSO stabs name `objects`.
+    private func executable(objects: [String]) -> Data {
+        var d = Data()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        var strings = Data([0x20, 0]), nlist = Data()
+        for o in objects {
+            withUnsafeBytes(of: UInt32(strings.count).littleEndian) { nlist.append(contentsOf: $0) }
+            nlist.append(contentsOf: [0x66, 0, 0, 0] + [UInt8](repeating: 0, count: 8))
+            strings.append(contentsOf: Array(o.utf8) + [0])
+        }
+        u32(0xfeedfacf); u32(0x0100000c); u32(0); u32(2); u32(2); u32(48); u32(0); u32(0)
+        u32(0x1b); u32(24); d.append(Data(repeating: 0x11, count: 16))
+        u32(0x2); u32(24); u32(80); u32(UInt32(objects.count)); u32(UInt32(80 + nlist.count)); u32(UInt32(strings.count))
+        d.append(nlist); d.append(strings)
+        return d
+    }
+
+    @Test func iosDSYMRunsDsymutilOnlyWhenTheAppCrateHasDebugInfo() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tauri-dsym-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let exe = dir.appendingPathComponent("Hello")
+
+        try executable(objects: [debugMap[0], debugMap[3]]).write(to: exe)
+        let none = TauriBuilder.iosDSYM(executable: exe, crateLib: "app_lib") { _, _ in Issue.record("ran dsymutil") }
+        guard case .missing(let reason) = none else { Issue.record("found a dSYM"); return }
+        #expect(reason.contains("without debug info"))
+
+        try executable(objects: debugMap).write(to: exe)
+        var ran: [[String]] = []
+        let made = TauriBuilder.iosDSYM(executable: exe, crateLib: "app_lib") { e, out in
+            ran.append([e.path, out.path])
+            try FileManager.default.createDirectory(at: out.appendingPathComponent("Contents/Resources/DWARF"), withIntermediateDirectories: true)
+        }
+        #expect(ran == [[exe.path, exe.path + ".dSYM"]])
+        #expect(made == .found(URL(fileURLWithPath: exe.path + ".dSYM", isDirectory: true)))
+
+        // A missing or failing dsymutil is the reason there is no dSYM; the build goes on.
+        let failed = TauriBuilder.iosDSYM(executable: exe, crateLib: "app_lib") { _, _ in
+            throw XlessError(.build, "the SDK's toolset has no dsymutil (/sdk/toolset/bin/dsymutil)", fix: "reinstall the SDK")
+        }
+        #expect(failed == .missing("the SDK's toolset has no dsymutil (/sdk/toolset/bin/dsymutil)"))
+        // An executable that cannot be read, too.
+        guard case .missing = TauriBuilder.iosDSYM(executable: dir.appendingPathComponent("absent"), crateLib: "app_lib", run: { _, _ in }) else {
+            Issue.record("found a dSYM"); return
+        }
     }
 }
 

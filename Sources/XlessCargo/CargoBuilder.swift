@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessMachO
 import XlessTauri
 
 /// What the Cargo stages need from the CLI's context.
@@ -87,19 +88,37 @@ public enum CargoBuilder {
             let metadata = try readMetadata(cargo(["metadata", "--format-version", "1", "--no-deps"], env: environment(platform: [:])), package: block.package)
             let bin = block.bin ?? metadata.onlyBin ?? block.package
 
+            // The linker wrapper's debug link gives each thin executable its dSYM when the release profile has debug
+            // info (RustApple.DebugLink).
+            func debugLink(_ triple: String) -> RustApple.DebugLink? {
+                guard let link = RustApple.debugLink(target: triple, workRoot: work, sdk: ctx.sdk) else { return nil }
+                let release = metadata.targetDir.appendingPathComponent("\(triple)/release", isDirectory: true)
+                if !RustApple.linkAgainWithoutRecord(bin: bin, release: release, debugLink: link).isEmpty {
+                    log("\(triple): \(bin) has no debug link record yet; cargo links it again")
+                }
+                return link
+            }
+            func dSYM(of thin: URL, _ link: RustApple.DebugLink?) -> DSYM.Source {
+                link.map { DSYM.debugLinkDSYM(of: thin, in: $0.dir) } ?? .missing("the SDK's toolset has no dsymutil (\(ctx.sdk.dsymutil.path))")
+            }
             let executable: URL
+            var slices: [(executable: URL, dSYM: DSYM.Source)] = []
             switch ctx.platform {
             case .ios:
-                let target = RustApple.iosTarget
-                let platformEnv = try RustApple.iosCargoEnv(minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
+                let target = RustApple.iosTarget, link = debugLink(target)
+                let platformEnv = try RustApple.iosCargoEnv(minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift, debugLink: link)
                 try runCargo(target: target, bin: bin, block: block, env: environment(platform: platformEnv), cargo: cargo)
                 executable = metadata.targetDir.appendingPathComponent("\(target)/release/\(bin)")
+                slices.append((executable, dSYM(of: executable, link)))
             case .macos:
                 var thins: [(triple: String, url: URL)] = []
                 for triple in ctx.rustTargets {
-                    let platformEnv = try RustApple.macCargoEnv(target: triple, minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
+                    let link = debugLink(triple)
+                    let platformEnv = try RustApple.macCargoEnv(target: triple, minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift, debugLink: link)
                     try runCargo(target: triple, bin: bin, block: block, env: environment(platform: platformEnv), cargo: cargo)
-                    thins.append((triple, metadata.targetDir.appendingPathComponent("\(triple)/release/\(bin)")))
+                    let thin = metadata.targetDir.appendingPathComponent("\(triple)/release/\(bin)")
+                    thins.append((triple, thin))
+                    slices.append((thin, dSYM(of: thin, link)))
                 }
                 let staging = work.appendingPathComponent(".xless/cargo-mac", isDirectory: true)
                 try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -109,10 +128,12 @@ public enum CargoBuilder {
 
             let vars = try builtInVariables(ctx)
             let privacy = r.config.privacyManifest.map { URL(fileURLWithPath: $0) }
-            return try Files.atomicOutput(ctx.paths.app) {
+            let app = try Files.atomicOutput(ctx.paths.app) {
                 try CargoBundler.assemble(resolved: r, platform: ctx.platform, work: work, inputs: inputURLs, vars: vars,
                                           executable: executable, privacyManifest: privacy, into: $0)
             }
+            log("dSYMs: \(try DSYM.keep(slices, app: app, into: ctx.paths.dSYMs).summary)")
+            return app
         }
     }
 

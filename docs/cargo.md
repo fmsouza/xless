@@ -25,7 +25,8 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 - **Build.** `cargo build --release --locked -p <package> --bin <bin> --target <triple>` (plus `--features` when the overlay lists some). iOS: `aarch64-apple-ios`, device only. macOS: `aarch64-apple-darwin` and `x86_64-apple-darwin`, merged into one universal executable (the `x86_64` slice first, as `lipo` does), or only one of them with `macos.architectures` ([architectures](#architectures)). Rust links against Apple's SDK from the xless image, with the same linker and `xcrun` set-up as the Tauri builds ([tauri.md](tauri.md)). Then the usual stages: assets, finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
 - **Bundle.** xless writes the `.app` itself: the executable, an `Info.plist` made from the app's own file, the resources the overlay lists, the privacy manifest (iOS) and the icon. iOS is a flat bundle; macOS is `Contents/MacOS`, `Contents/Resources`, `Contents/Info.plist` and `PkgInfo`.
 - **Overlay only.** The app need not change: no `build.rs`, no crate, no `Cargo.toml` key for xless. If a Cargo app needs something xless lacks, that is an xless gap ([known gaps](#known-gaps)).
-- **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, embedded frameworks and app extensions, dSYMs ([why](pipeline.md#dsyms)), external TestFlight groups, App Store submission.
+- **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, embedded frameworks and app extensions, external TestFlight groups, App Store submission.
+- **dSYMs.** With debug info in the release profile (`debug = "line-tables-only"`, or `CARGO_PROFILE_RELEASE_DEBUG` in the overlay's `env:`), `package` zips the dSYM next to the package ([dSYMs of Rust apps](pipeline.md#dsyms-of-rust-apps)).
 
 ## Requirements
 

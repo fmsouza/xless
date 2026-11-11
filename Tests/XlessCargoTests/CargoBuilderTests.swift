@@ -15,9 +15,14 @@ private func write(_ text: String, _ url: URL) throws {
     try text.write(to: url, atomically: true, encoding: .utf8)
 }
 
-/// A Darwin SDK stand-in with the iPhoneOS and MacOSX 27.0 SDKs and their libclang_rt (what the cargo environments read).
-private func fakeSDK() throws -> DarwinSDK {
+/// A Darwin SDK stand-in with the iPhoneOS and MacOSX 27.0 SDKs and their libclang_rt (what the cargo environments
+/// read), and the toolset's dsymutil (`dsymutil: false` leaves it out).
+private func fakeSDK(dsymutil: Bool = true) throws -> DarwinSDK {
     let bundle = scratch("sdk").appendingPathComponent("darwin.xtoolsdk", isDirectory: true)
+    if dsymutil {
+        try write("#!/bin/sh\nexit 0\n", bundle.appendingPathComponent("toolset/bin/dsymutil"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundle.appendingPathComponent("toolset/bin/dsymutil").path)
+    }
     for platform in ["MacOSX", "iPhoneOS"] {
         try write(#"{"Version":"27.0"}"#, bundle.appendingPathComponent("Developer/Platforms/\(platform).platform/Developer/SDKs/\(platform)27.0.sdk/SDKSettings.json"))
     }
@@ -74,7 +79,8 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
         var source: URL
     }
 
-    private func fixture(_ platform: Platform, toolchain: Bool = true, architectures: String? = nil) throws -> Fixture {
+    private func fixture(_ platform: Platform, toolchain: Bool = true, architectures: String? = nil, debugInfo: Bool = false,
+                         dsymutil: Bool = true) throws -> Fixture {
         let root = scratch("cargobuild"), bin = root.appendingPathComponent("bin")
         let source = root.appendingPathComponent("source"), work = root.appendingPathComponent("work"), inputDir = root.appendingPathComponent("fonts")
         try write("fn main() {}\n", source.appendingPathComponent("src/main.rs"))
@@ -105,7 +111,20 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
               esac
               echo "$CARGO_PROFILE_RELEASE_STRIP" >> "$dir/strip.log"
               mkdir -p "\(root.path)/target/$t/release"
-              { printf '\\317\\372\\355\\376'; printf "$cpu"; head -c 24 /dev/zero; printf '%s' "$t"; } > "\(root.path)/target/$t/release/$b"
+              if [ -z "${FAKE_DEBUG_INFO:-}" ]; then
+                { printf '\\317\\372\\355\\376'; printf "$cpu"; head -c 24 /dev/zero; printf '%s' "$t"; } > "\(root.path)/target/$t/release/$b"
+              else
+                # An image with one LC_UUID of 16 times byte $1 (octal); what the linker wrapper leaves with debug info:
+                # the shipped -x link, and in its debug directory the link without -x (another UUID) and its dSYM.
+                mach() { printf '\\317\\372\\355\\376'; printf "$cpu"; printf '\\000\\000\\000\\000\\002\\000\\000\\000\\001\\000\\000\\000\\030\\000\\000\\000'
+                         head -c 8 /dev/zero; printf '\\033\\000\\000\\000\\030\\000\\000\\000'; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do printf "$1"; done; }
+                debug="\(work.path)/.xless/dsym/$t"
+                mkdir -p "$debug/$b-1.dSYM/Contents/Resources/DWARF"
+                mach '\\021' > "\(root.path)/target/$t/release/$b"
+                mach '\\042' > "$debug/$b-1"
+                mach '\\042' > "$debug/$b-1.dSYM/Contents/Resources/DWARF/$b-1"
+                echo '<plist/>' > "$debug/$b-1.dSYM/Contents/Info.plist"
+              fi
               ;;
             *) echo "unexpected cargo $*" >&2; exit 1 ;;
             esac
@@ -141,10 +160,11 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
             \(architectures.map { "  architectures: \($0)" } ?? "")
             """, name: "hello")
         let resolved = try CargoProject.resolve(overlay: overlay, platform: platform, source: source)
-        let env = ["PATH": "\(bin.path):/usr/bin:/bin", "HOME": root.path, "CARGO_HOME": root.appendingPathComponent("cargo-home").path,
+        var env = ["PATH": "\(bin.path):/usr/bin:/bin", "HOME": root.path, "CARGO_HOME": root.appendingPathComponent("cargo-home").path,
                    "ASC_KEY_ID": "SECRET"]
+        if debugInfo { env["FAKE_DEBUG_INFO"] = "1" }
         let ctx = CargoBuildContext(overlay: overlay, resolved: resolved, platform: platform, sourceRoot: source, workRoot: work,
-                                    paths: StagePaths(project: root, platform: platform), sdk: try fakeSDK(), env: env)
+                                    paths: StagePaths(project: root, platform: platform), sdk: try fakeSDK(dsymutil: dsymutil), env: env)
         // What prepare leaves for build.
         try CargoBuilder.writeRecord(.init(env: ["FONTS_DIR": inputDir.path], paths: ["craft-fonts": inputDir.path]), to: ctx.inputsRecord)
         return Fixture(ctx: ctx, log: bin.appendingPathComponent("calls.log"), source: source)
@@ -211,6 +231,44 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
         #expect(try String(contentsOf: f.log.deletingLastPathComponent().appendingPathComponent("strip.log"), encoding: .utf8) == "false\n")
         let wrapper = try String(contentsOf: f.ctx.workRoot.appendingPathComponent(".xless/bin/xless-ios-cc"), encoding: .utf8)
         #expect(wrapper.contains(" -Wl,-x "))
+        // The wrapper's debug link, with the SDK toolset's dsymutil; without debug info, no dSYM.
+        #expect(wrapper.contains("'\(f.ctx.sdk.dsymutil.path)'"))
+        #expect(wrapper.contains("'\(f.ctx.workRoot.appendingPathComponent(".xless/dsym/aarch64-apple-ios").path)'"))
+        #expect(!fm.fileExists(atPath: f.ctx.paths.dSYMs.path))
+    }
+
+    /// With debug info, the dSYM of each architecture's debug link, renamed after the app and given the UUID of the
+    /// executable it ships: one universal dSYM on macOS, a thin one on iOS.
+    @Test func buildKeepsTheDSYMsOfTheDebugLinks() async throws {
+        for (platform, dwarf, slices) in [(Platform.macos, "Hello.app.dSYM/Contents/Resources/DWARF/Hello", 2),
+                                          (.ios, "Hello.app.dSYM/Contents/Resources/DWARF/Hello", 1)] {
+            let f = try fixture(platform, debugInfo: true)
+            _ = try await CargoBuilder.build(ctx: f.ctx)
+            let kept = try Data(contentsOf: f.ctx.paths.dSYMs.appendingPathComponent(dwarf))
+            #expect(MachO.isFat(kept) == (slices == 2))
+            #expect(try MachO.uuids(in: kept) == Array(repeating: "11111111-1111-1111-1111-111111111111", count: slices))
+        }
+    }
+
+    /// An SDK whose toolset has no dsymutil: the wrapper is the one without a debug link, and there is no dSYM.
+    @Test func buildWithoutDsymutilKeepsNoDSYM() async throws {
+        let f = try fixture(.ios, debugInfo: true, dsymutil: false)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        let wrapper = try String(contentsOf: f.ctx.workRoot.appendingPathComponent(".xless/bin/xless-ios-cc"), encoding: .utf8)
+        #expect(!wrapper.contains("dsymutil"))
+        #expect(!fm.fileExists(atPath: f.ctx.paths.dSYMs.path))
+    }
+
+    /// The first build with a debug link: an executable cargo already linked, with no record in the debug directory,
+    /// is removed from `deps/` so that cargo links it again through the wrapper.
+    @Test func buildRemovesALinkedExecutableTheDebugDirectoryHasNoRecordOf() async throws {
+        let f = try fixture(.ios)
+        let deps = f.ctx.workRoot.deletingLastPathComponent().appendingPathComponent("target/aarch64-apple-ios/release/deps")
+        try write("old", deps.appendingPathComponent("hello_mobile-0a1b2c"))
+        try write("", deps.appendingPathComponent("hello_mobile-0a1b2c.d"))
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: deps.appendingPathComponent("hello_mobile-0a1b2c").path))
+        #expect(fm.fileExists(atPath: deps.appendingPathComponent("hello_mobile-0a1b2c.d").path))
     }
 
     @Test func prepareSyncsInstallsTheToolchainAndRecordsTheInputs() async throws {

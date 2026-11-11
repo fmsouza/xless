@@ -84,27 +84,61 @@ or the `.pkg`. xless uploads nothing: App Store Connect gets no dSYM from it.
 | App | Where the dSYM comes from | When there is one |
 |---|---|---|
 | `xless.yml`, macOS | Swift Build's `<name>.dSYM` next to each architecture's executable, merged into one universal dSYM | When Swift Build writes one (it does for the release build in the xless image) |
+| `xless.yml`, iOS | xtool's build: Swift Build's `<Product>-App.dSYM` (xtool builds with Swift Build from Swift 6.4), else `dsymutil` on the app's executable | When the executable has a debug map (SwiftPM's release builds have debug info) |
 | React Native | Every `.dSYM` Swift Build wrote ([react-native.md](react-native.md#dsyms)) | `DEBUG_INFORMATION_FORMAT = dwarf-with-dsym` (Expo's Release default) |
-| `xless.yml` iOS, Cargo, Tauri | None (not supported yet, [below](#dsyms-of-rust-apps)) | |
+| Cargo (iOS, macOS), Tauri macOS | The linker wrapper's debug link ([below](#dsyms-of-rust-apps)), one per architecture | When the release profile has debug info |
+| Tauri iOS | `dsymutil` on the executable xless links | When the release profile has debug info for the app crate |
 
 A dSYM is kept only when its UUIDs are those of a binary the app ships (`dwarfdump --uuid` shows both), so a dSYM an
-earlier build left behind (Swift Build's derived data is kept between builds) never ends up in the zip. On macOS the
-dSYM is named after the app, `<App>.app.dSYM`, with its DWARF file named after the app's executable. Signing,
-`finalize` and stripping do not change a Mach-O's UUID. Each `build` replaces the directory, and one that keeps no dSYM
-removes it; the build log's `dSYMs:` line says what was kept, or why nothing was.
+earlier build left behind (Swift Build's derived data is kept between builds) never ends up in the zip. The dSYM is
+named after the app, `<App>.app.dSYM`, with its DWARF file named after the app's executable (React Native keeps every
+dSYM under its own name). Signing, `finalize` and stripping do not change a Mach-O's UUID. Each `build` replaces the
+directory, and one that keeps no dSYM removes it; the build log's `dSYMs:` line says what was kept, or why nothing was.
+`dsymutil` is the one in the SDK's toolset (`toolset/bin/dsymutil`, which xtool installs next to `ld64.lld`, the same
+LLVM), in the images and in a native install alike.
 
 ### dSYMs of Rust apps
 
-Cargo and Tauri apps get no dSYM yet, even with debug info in the release profile:
+A Rust app gets a dSYM when its release profile has debug info for the app's crate. Set it in the `Cargo.toml` of the
+workspace root (cargo reads profiles only there; for Tauri usually `src-tauri/Cargo.toml`):
 
-- cargo asks rustc for `-C split-debuginfo=unpacked` on Apple targets whenever the profile has debug info, so rustc
-  does not run `dsymutil` and leaves no `<bin>.dSYM`;
+```toml
+[profile.release]
+debug = "line-tables-only"   # enough for a crash reporter: function names, files and lines; `true` adds variables
+```
+
+A plain Cargo app can instead leave the repository untouched and set it in the overlay:
+`env: { CARGO_PROFILE_RELEASE_DEBUG: line-tables-only }`. Without debug info nothing changes (the build log says
+`dSYMs: none (… compiled without debug info …)`). With it, the build takes longer (a second link and `dsymutil`) and
+the work copy holds the debug links.
+
+**Cargo apps and Tauri macOS apps** (cargo links the executable through xless's linker wrapper). Two things keep a
+plain `dsymutil` from working on the executable cargo builds:
+
+- cargo asks rustc for `-C split-debuginfo=unpacked` on Apple targets whenever the profile has debug info, so the DWARF
+  stays in rustc's object files and rustc writes no `<bin>.dSYM`;
 - the executable is linked with `-Wl,-x` (local symbols dropped, in place of a `strip` that could leave a Mach-O dyld
-  refuses), and `ld64.lld -x` also drops the debug map entries of local and hidden functions. Measured with LLD 15: the
-  dSYM `dsymutil` then makes describes `main` and nothing else, and nearly every Rust function is local or hidden.
+  refuses), and `ld64.lld -x` also drops the debug map entries of local and hidden functions, nearly every Rust
+  function. A dSYM made from that executable describes almost nothing of the app's code.
 
-A useful dSYM needs a link without `-x` and the local symbols stripped after `dsymutil` has run. iOS apps built from an
-`xless.yml` (xtool) and Tauri iOS apps (which xless links itself) are not covered either.
+So when the crate's own object files carry DWARF, the wrapper links twice: first exactly as without debug info, with
+`-x` (that executable is the one cargo gets and the app ships, the same bytes as before), then the same arguments
+without `-x` into `.xless/dsym/<target>/` in the work copy, and runs `dsymutil` on that second link while rustc's
+objects still exist. The two links hold the same code and data; only their symbol tables and UUIDs differ. After
+cargo, xless checks that every section of the second link equals the shipped executable's, sets the dSYM's UUID to the
+shipped one, and keeps it (one per architecture, merged for a universal app). Every link of the crate replaces its
+earlier debug links, and a link without debug info leaves only a record that it had none (`<crate>-<hash>.nodebug`).
+cargo links an executable only when something changed (the work copy keeps the source's file times), so a build it
+does not link again reuses the last debug link; when the directory has no record of the executable at all (the first
+build with this xless, or after the directory was removed), xless removes cargo's linked executable from
+`target/<target>/release/deps/` so that cargo links it once more, through the wrapper. A failure of the second link
+or of `dsymutil` (recorded as `<crate>-<hash>.failed`, with rustc's warning showing the wrapper's message), an SDK
+whose toolset has no `dsymutil`, and a link whose arguments rustc passed in a response file (`@file`, only when the
+command line is too long for the system) leave the app without a dSYM; none of them fails the build.
+
+**Tauri iOS apps.** xless links the executable itself, without `-x`, so its debug map is whole: `dsymutil` runs on it
+when the map names an object of the app crate. The Rust standard library's objects always carry line tables (rustup
+ships them that way), so a debug map alone does not mean the app's code has debug info.
 
 ## Other commands
 
