@@ -35,7 +35,7 @@ private func compileArgs(_ input: URL, tmp: URL, devices: [String] = ["iphone", 
         + ["--minimum-deployment-target", target, "--output-format", "human-readable-text", input.path, "--compilation-directory", tmp.path]
 }
 
-@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("27B52", "25408", "27.2"), ("17C52", "24506", "26.2"), ("17B55", "24412", "26.1"), ("17A400", "24128", "26.0.1")])
+@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("27B52", "25408", "27.2"), ("17C52", "24506", "26.2"), ("17B55", "24412", "26.1"), ("17B100", "24412", "26.1.1"), ("17A400", "24128", "26.0.1")])
 func versionProbeAnswersAsTheImagesIbtool(_ build: String, _ bundle: String, _ short: String) throws {
     let r = runShim(["--version", "--output-format", "xml1"], build: build)
     #expect(r.exitCode == 0)

@@ -98,6 +98,7 @@ jobs:
           [ "$rc" -eq 11 ]
           echo "$err" | grep -F 'Xcode 26.0.1 (17A400)'
           echo "$err" | grep -F 'Xcode 26.1 (17B55)'
+          echo "$err" | grep -F 'Xcode 26.1.1 (17B100)'
           echo "$err" | grep -F 'Xcode 26.2 (17C52)'
           echo "$err" | grep -F 'Xcode 27.0 (27A266a)'
           echo "$err" | grep -F 'Xcode 27.1 (27A9275)'

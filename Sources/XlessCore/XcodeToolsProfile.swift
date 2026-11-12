@@ -163,8 +163,21 @@ public struct XcodeToolsProfile: Sendable, Equatable {
         ibtoolBundleVersion: "24412", ibtoolShortVersion: "26.1",
         nibPlainViews: xcode17C52.nibPlainViews, nibOtherViews: xcode17C52.nibOtherViews)
 
+    /// Xcode 26.1.1 (17B100): the same nib encodings, CoreUI version and CAR header strings as 26.1 (the 17B100 goldens equal the 17B55
+    /// ones, bar `IBTOOL_VERSION`; the iOS 26.1 simulator runtime installed is the same), its own version strings (actool and ibtool
+    /// report bundle version 24412 as in 26.1, short version 26.1.1), and the newest document ibtool accepts is 26.1.1.
+    public static let xcode17B100 = XcodeToolsProfile(
+        xcodeBuild: "17B100", xcodeVersion: "26.1.1",
+        actoolBundleVersion: "24412", actoolShortVersion: "26.1.1",
+        carCoreUIVersion: 971, carStorageVersion: 17,
+        carMainVersion: "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-971.6",
+        carAssetStorageVersion: "Xcode 26.1.1 (17B100) via AssetCatalogSimulatorAgent",
+        carAuthoringTool: "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-653.2  [IIO-2784.1.3.3]",
+        ibtoolBundleVersion: "24412", ibtoolShortVersion: "26.1.1",
+        nibPlainViews: xcode17C52.nibPlainViews, nibOtherViews: xcode17C52.nibOtherViews)
+
     /// Every measured build, keyed by `xcodeBuild`.
-    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55].map { ($0.xcodeBuild, $0) })
+    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100].map { ($0.xcodeBuild, $0) })
 
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {
