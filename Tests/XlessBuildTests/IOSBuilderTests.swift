@@ -23,12 +23,16 @@ private func executable(uuid: UInt8, objects: [String] = []) -> Data {
     return d
 }
 
-private let fm = FileManager.default
+private var fm: FileManager { .default }
 
 /// What `xtool dev build` leaves: `xtool/<Product>.app` with the executable, and Swift Build's products under the
 /// project's `.build`.
 private func project() throws -> (root: URL, app: URL) {
-    let root = fm.temporaryDirectory.appendingPathComponent("xtool-\(UUID().uuidString)", isDirectory: true)
+    // Resolved with realpath: FileManager lists entries of macOS's temporary directory under `/private/var`, not the
+    // `/var` link (and `resolvingSymlinksInPath()` would strip `/private` again).
+    let tmp = fm.temporaryDirectory.path
+    let real = realpath(tmp, nil).map { defer { free($0) }; return String(cString: $0) } ?? tmp
+    let root = URL(fileURLWithPath: real, isDirectory: true).appendingPathComponent("xtool-\(UUID().uuidString)", isDirectory: true)
     let app = root.appendingPathComponent("xless-build/Hello.app", isDirectory: true)
     try fm.createDirectory(at: app, withIntermediateDirectories: true)
     let plist = try PropertyListSerialization.data(fromPropertyList: ["CFBundleExecutable": "Hello"], format: .xml, options: 0)

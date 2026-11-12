@@ -17,12 +17,20 @@ private func uuid(_ byte: UInt8) -> String {
     return [8, 4, 4, 4, 12].map { String(repeating: h, count: $0 / 2) }.joined(separator: "-")
 }
 
-private let fm = FileManager.default
+private var fm: FileManager { .default }
+
+/// `url` with every symbolic link resolved. On macOS the temporary directory is under `/var`, a link to `/private/var`,
+/// and FileManager lists a directory's entries under the latter; `resolvingSymlinksInPath()` would strip `/private` again.
+private func realPath(_ url: URL) -> URL {
+    guard let resolved = realpath(url.path, nil) else { return url }
+    defer { free(resolved) }
+    return URL(fileURLWithPath: String(cString: resolved), isDirectory: url.hasDirectoryPath)
+}
 
 private func tmp() throws -> URL {
     let url = fm.temporaryDirectory.appendingPathComponent("dsym-\(UUID().uuidString)", isDirectory: true)
     try fm.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
+    return realPath(url)
 }
 
 private func write(_ data: Data, _ url: URL) throws {
