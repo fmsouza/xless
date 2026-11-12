@@ -63,7 +63,7 @@ private func plist(_ url: URL) throws -> [String: Any] {
     try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as! [String: Any]
 }
 
-@Test(arguments: [("27A266a", "25098", "27.0"), ("17C52", "24506", "26.2")])
+@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("17C52", "24506", "26.2")])
 func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ short: String) async throws {
     let r = await runShim(["--version", "--output-format", "xml1"], build: build)
     #expect(r.exitCode == 0)
@@ -75,17 +75,17 @@ func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ s
 @Test func testShimRefusesUnprofiledImage() async throws {
     let out = try tmp("out"), temp = try tmp("temp")
     for args in [["--version", "--output-format", "xml1"], compileArgs([try expoLikeCatalog()], out: out, temp: temp, extra: ["--app-icon", "AppIcon"])] {
-        let r = await runShim(args, build: "27A9275")
+        let r = await runShim(args, build: "99A9999")
         #expect(r.exitCode == 70)
         #expect(r.stdout.isEmpty)
-        #expect(r.stderr.contains("this image's Xcode build 27A9275 has no measured asset/storyboard tools profile"), "\(r.stderr)")
+        #expect(r.stderr.contains("this image's Xcode build 99A9999 has no measured asset/storyboard tools profile"), "\(r.stderr)")
         #expect(r.stderr.contains("xless setup --xcode"), "\(r.stderr)")
     }
     #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)
 }
 
 /// The car and the dependency info carry the image's actool: CoreUI version and header strings as measured.
-@Test(arguments: ["27A266a", "17C52"])
+@Test(arguments: ["27A266a", "27A9275", "17C52"])
 func compiledCarCarriesTheImagesActool(_ build: String) async throws {
     let p = try #require(XcodeToolsProfile.all[build])
     let out = try tmp("out"), temp = try tmp("temp")

@@ -7,13 +7,13 @@ S="$repo/scripts/xcode-tools.sh"
 fail() { echo "FAIL: $*"; exit 1; }
 
 test_known_builds_pass() {
-  for b in 17C52 27A266a; do "$S" "$b" >/dev/null 2>&1 || fail "build $b refused"; done
+  for b in 17C52 27A266a 27A9275; do "$S" "$b" >/dev/null 2>&1 || fail "build $b refused"; done
 }
 test_unknown_build_refused() {
   local rc=0 err
-  err=$("$S" 27A9275 2>&1 >/dev/null) || rc=$?
+  err=$("$S" 99A9999 2>&1 >/dev/null) || rc=$?
   [[ $rc == 2 ]] || fail "unknown build exits $rc, want 2"
-  for s in assetkit-golden.sh ib-golden.sh copypng-golden.sh 27A9275; do
+  for s in assetkit-golden.sh ib-golden.sh copypng-golden.sh 99A9999; do
     [[ "$err" == *"$s"* ]] || fail "refusal does not mention $s: $err"
   done
 }

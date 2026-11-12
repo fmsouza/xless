@@ -35,7 +35,7 @@ private func compileArgs(_ input: URL, tmp: URL, devices: [String] = ["iphone", 
         + ["--minimum-deployment-target", target, "--output-format", "human-readable-text", input.path, "--compilation-directory", tmp.path]
 }
 
-@Test(arguments: [("27A266a", "25098", "27.0"), ("17C52", "24506", "26.2")])
+@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("17C52", "24506", "26.2")])
 func versionProbeAnswersAsTheImagesIbtool(_ build: String, _ bundle: String, _ short: String) throws {
     let r = runShim(["--version", "--output-format", "xml1"], build: build)
     #expect(r.exitCode == 0)
@@ -48,10 +48,10 @@ func versionProbeAnswersAsTheImagesIbtool(_ build: String, _ bundle: String, _ s
 @Test func testShimRefusesUnprofiledImage() throws {
     let dir = try scratch(); defer { try? FileManager.default.removeItem(at: dir) }
     for args in [["--version", "--output-format", "xml1"], compileArgs(CorpusCase(name: "real-logo-plus-label").storyboard, tmp: dir)] {
-        let r = runShim(args, build: "27A9275")
+        let r = runShim(args, build: "99A9999")
         #expect(r.exitCode == 70)
         #expect(r.stdout.isEmpty)
-        #expect(r.stderr.contains("this image's Xcode build 27A9275 has no measured asset/storyboard tools profile"), "\(r.stderr)")
+        #expect(r.stderr.contains("this image's Xcode build 99A9999 has no measured asset/storyboard tools profile"), "\(r.stderr)")
         #expect(r.stderr.contains("xless setup --xcode"), "\(r.stderr)")
     }
     #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("real-logo-plus-label.storyboardc").path))

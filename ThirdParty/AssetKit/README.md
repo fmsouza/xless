@@ -46,7 +46,7 @@ A copy of [xtool-org/AssetKit](https://github.com/xtool-org/AssetKit), the `Asse
 
 Tests: `BOMWriterTests` (free list), `BitmapKeysTests` (descriptors), `AssetutilParseTests` "assetutil validates and
 thins the compiled Assets.car" (macOS: `assetutil --validate-file` and thinning), and `ActoolParityTests` (opacity
-and colors against `Fixtures/Parity.expected.<build>.json`, once per recorded Xcode build (27A266a, 17C52): what
+and colors against `Fixtures/Parity.expected.<build>.json`, once per recorded Xcode build (27A266a, 27A9275, 17C52): what
 `assetutil --info` reports for that actool's car of the neutral `Fixtures/Parity.xcassets`, recorded by
 `scripts/assetkit-golden.sh`; macOS also compares AssetKit's car field by field; the header test checks patch 5, with
 `assetutil` on macOS). Known gaps against actool: no MultiSized Image rendition for app icons, grayscale PNGs stored as

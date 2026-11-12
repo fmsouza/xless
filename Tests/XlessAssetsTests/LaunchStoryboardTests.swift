@@ -142,9 +142,9 @@ func launchStoryboardCompiledIntoBundleRoot(family: [Int], minimumOS: String, fl
 @Test func assetsStageRefusesAnUnprofiledImage() async throws {
     let e = try await #require(throws: XlessError.self) {
         _ = try await runLaunchStoryboard(ibCorpus.appendingPathComponent("real-logo-plus-label.storyboard"), family: [1, 2], minimumOS: "16.0",
-                                          profile: testProfile("27A9275"))
+                                          profile: testProfile("99A9999"))
     }
     #expect(e.stage == .assets)
-    #expect(e.cause == "this image's Xcode build 27A9275 has no measured asset/storyboard tools profile")
+    #expect(e.cause == "this image's Xcode build 99A9999 has no measured asset/storyboard tools profile")
     #expect(e.fix.contains("xless setup --xcode"))
 }
