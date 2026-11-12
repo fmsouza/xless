@@ -40,9 +40,10 @@ public enum NativeSetupPlan {
     public static let requiredCommands = ["curl", "tar", "gzip", "unzip", "zip", "git", "python3", "cpio"]
 
     /// The Debian/Ubuntu packages for `requiredCommands` and the swift.org toolchain's dependencies (its Ubuntu 22.04
-    /// list; on a newer release apt picks the matching versions of the -dev packages).
+    /// list; on a newer release apt picks the matching versions of the -dev packages), plus libncurses6: swiftc links
+    /// libncurses.so.6, which ubuntu:22.04's base has and ubuntu:24.04's lacks.
     public static let aptPackages = ["curl", "ca-certificates", "tar", "gzip", "zip", "unzip", "git", "python3", "cpio", "binutils",
-                                     "libc6-dev", "libcurl4-openssl-dev", "libedit2", "libgcc-11-dev", "libpython3-dev",
+                                     "libc6-dev", "libcurl4-openssl-dev", "libedit2", "libgcc-11-dev", "libncurses6", "libpython3-dev",
                                      "libsqlite3-0", "libstdc++-11-dev", "libxml2-dev", "libz3-dev", "pkg-config", "tzdata", "zlib1g-dev"]
     public static var aptLine: String { "sudo apt-get install -y " + aptPackages.joined(separator: " ") }
 
@@ -113,7 +114,7 @@ public enum NativeSetupPlan {
         if !steps.isEmpty || !current || !existing(layout.record) {
             steps.append(SetupStep(title: "install the SDK and toolchain-meta.json for xtool and SwiftPM",
                                    argv: ["xless", "sdk", "install", "--xtoolsdk", xtoolSDK.path, "--meta", meta.path],
-                                   estimate: "~1 min", action: .sdkInstall(xtoolSDK: xtoolSDK, meta: meta)))
+                                   estimate: "~1 min", action: .sdkInstall(xtoolSDK: xtoolSDK, meta: meta, toolchain: layout.toolchain(version: swift))))
             // The image's own Swift (SWIFT_VERSION) keeps the Xcode's clang resource directory; another release gets
             // its own, with the Xcode's runtimes (docker/Dockerfile.sdk's two cases).
             let mode = swift == table["SWIFT_VERSION"] ? "own" : "separate"
