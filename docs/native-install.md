@@ -33,7 +33,7 @@ Apple targets, Swift Build, the Xcode tool shims), so `xless run` refuses them o
 | What | Where |
 |---|---|
 | xtool and rcodesign, at the versions pinned in `versions.env`, each checked against its sha256 | `~/.local/share/xless-native/tools/`, linked from `…/bin/` |
-| The open-source Swift toolchain of the Xcode's Swift (Ruling R10: Swift 6.4.2 for Xcode 27.2, 6.4.0 for Xcode 27.1 and 27.0, 6.2.3 for 26.2), checked against its sha256 | `~/.local/share/xless-native/toolchains/swift-<version>/` |
+| The open-source Swift toolchain of the Xcode's Swift (Ruling R10: Swift 6.4.2 for Xcode 27.2, 6.4.0 for Xcode 27.1 and 27.0, 6.2.3 for 26.2, 6.2.0 for 26.0.1), checked against its sha256 | `~/.local/share/xless-native/toolchains/swift-<version>/` |
 | The toolchain record (which Swift compiles app code, and the clang flags it needs) | `~/.local/share/xless-native/swift-toolchain.json` |
 | The Darwin SDK exported from the `.xip` by that xtool | `~/.cache/xless/sdk/xcode<version>-<build>/<arch>/` (shared with `--docker`) |
 | The SDK, installed for xtool and SwiftPM | `$XDG_CONFIG_HOME/swiftpm/swift-sdks/` if set, else `~/.swiftpm/swift-sdks/` |
