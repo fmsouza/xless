@@ -10,6 +10,7 @@ ARG TARGETARCH
 # clangd, DocC, swift-format, the Embedded Swift and static Linux standard libraries). xless itself stays built with the
 # image's own Swift, as does Swift Build (docker/Dockerfile.rn). /opt/xless/swift-toolchain.json records the toolchain
 # (XlessCore SwiftToolchain); prepare and the build stage check it against the Xcode's Swift in toolchain-meta.json.
+# A release x.y.0 names itself without the patch (`Swift version 6.2 (swift-6.2-RELEASE)`), which the install checks for.
 ARG APP_SWIFT_VERSION=
 ARG APP_SWIFT_URL_AARCH64=
 ARG APP_SWIFT_SHA256_AARCH64=
@@ -29,7 +30,8 @@ RUN set -eux; \
       rm -rf bin/lldb* lib/liblldb* lib/python3* bin/sourcekit-lsp lib/libsourcekitdInProc.so lib/libSwiftSourceKit*.so \
              bin/clangd bin/docc share/docc bin/swift-format bin/wasmkit bin/swift-build-sdk-interfaces lib/swift/embedded \
              lib/swift_static local; \
-      "$root/usr/bin/swiftc" --version | grep -qF "Swift version $APP_SWIFT_VERSION (swift-$APP_SWIFT_VERSION-RELEASE)"; \
+      sv="${APP_SWIFT_VERSION%.0}"; \
+      "$root/usr/bin/swiftc" --version | grep -qF "Swift version $sv (swift-$sv-RELEASE)"; \
       v="$APP_SWIFT_VERSION"; \
     else \
       root=/; v="$(swiftc --version | sed -nE 's/.*Swift version ([0-9.]+) .*/\1/p' | head -1)"; [ -n "$v" ]; \
