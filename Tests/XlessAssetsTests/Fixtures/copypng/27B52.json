@@ -1,0 +1,943 @@
+{
+  "cases": {
+    "gray-1x1": {
+      "compress": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+        "stderr": "",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+        "stderr": "",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879",
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "gray16-1x1": {
+      "compress": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 0,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      }
+    },
+    "rgb-1x1-srgb": {
+      "compress": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "gAMA",
+          "sRGB",
+          "cHRM",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ce0c7973e4e321d1a95186b665a33a0a852c1bec478b2a5fe13eaeb0368db3b4",
+        "stderr": "",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "gAMA",
+          "sRGB",
+          "cHRM",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ce0c7973e4e321d1a95186b665a33a0a852c1bec478b2a5fe13eaeb0368db3b4",
+        "stderr": "",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "sRGB",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "gAMA",
+          "sRGB",
+          "cHRM",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ce0c7973e4e321d1a95186b665a33a0a852c1bec478b2a5fe13eaeb0368db3b4",
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "rgb-1x1-text": {
+      "compress": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ce0c7973e4e321d1a95186b665a33a0a852c1bec478b2a5fe13eaeb0368db3b4",
+        "stderr": "",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ce0c7973e4e321d1a95186b665a33a0a852c1bec478b2a5fe13eaeb0368db3b4",
+        "stderr": "",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "ce0c7973e4e321d1a95186b665a33a0a852c1bec478b2a5fe13eaeb0368db3b4",
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "rgb-2x2": {
+      "compress": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 2,
+          "interlace": 0,
+          "width": 2
+        },
+        "pixelsSha256": "f8ac0faa609f76dd7aa71270a1d4beef3333d425906a25ce22acdf00f61c00a7",
+        "stderr": "",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 2,
+          "interlace": 0,
+          "width": 2
+        },
+        "pixelsSha256": "f8ac0faa609f76dd7aa71270a1d4beef3333d425906a25ce22acdf00f61c00a7",
+        "stderr": "",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 2,
+          "interlace": 0,
+          "width": 2
+        },
+        "pixelsSha256": "7820b27b0afb08f44a016e244242cca1b2f23ba79ed3acf636f8c13fa11c63b4",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": "50002006",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 2,
+          "interlace": 0,
+          "width": 2
+        },
+        "pixelsSha256": "f8ac0faa609f76dd7aa71270a1d4beef3333d425906a25ce22acdf00f61c00a7",
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "rgb16-1x1": {
+      "compress": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      }
+    },
+    "rgb16-1x1-srgb": {
+      "compress": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "sRGB",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "sRGB",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "sRGB",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "sRGB",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 2,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "958f471f5477894347dcbff396bd76f96a462df65c79f3b9cac58e340cd8a61e",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      }
+    },
+    "rgba-4x4": {
+      "compress": {
+        "cgbi": "50002002",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "1d32944c6990f630b442ba76c396c23da0f6bd7ad50f9c06f5f93c280b62801a",
+        "stderr": "",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": "50002002",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "1d32944c6990f630b442ba76c396c23da0f6bd7ad50f9c06f5f93c280b62801a",
+        "stderr": "",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "f7e33d546c1d8e17afe3d3ceff131aab7d4eb41d485362c046f4af98a25573d3",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": "50002002",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "1d32944c6990f630b442ba76c396c23da0f6bd7ad50f9c06f5f93c280b62801a",
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "rgba-4x4-text": {
+      "compress": {
+        "cgbi": "50002002",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "1d32944c6990f630b442ba76c396c23da0f6bd7ad50f9c06f5f93c280b62801a",
+        "stderr": "",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": "50002002",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "1d32944c6990f630b442ba76c396c23da0f6bd7ad50f9c06f5f93c280b62801a",
+        "stderr": "",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "f7e33d546c1d8e17afe3d3ceff131aab7d4eb41d485362c046f4af98a25573d3",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": "50002002",
+        "chunkOrder": [
+          "CgBI",
+          "IHDR",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": false,
+        "ihdr": {
+          "bitDepth": 8,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 4,
+          "interlace": 0,
+          "width": 4
+        },
+        "pixelsSha256": "1d32944c6990f630b442ba76c396c23da0f6bd7ad50f9c06f5f93c280b62801a",
+        "stderr": "",
+        "stdout": ""
+      }
+    },
+    "rgba16-1x1-text": {
+      "compress": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "fc700fd55e6347e711ea0586b240e7b69815ec943a4001fe268c8f46a76cbc5a",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "compress-strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "fc700fd55e6347e711ea0586b240e7b69815ec943a4001fe268c8f46a76cbc5a",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      },
+      "none": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "fc700fd55e6347e711ea0586b240e7b69815ec943a4001fe268c8f46a76cbc5a",
+        "stderr": "",
+        "stdout": ""
+      },
+      "strip": {
+        "cgbi": null,
+        "chunkOrder": [
+          "IHDR",
+          "tEXt",
+          "IDAT",
+          "IEND"
+        ],
+        "exit": 0,
+        "identicalToInput": true,
+        "ihdr": {
+          "bitDepth": 16,
+          "colorType": 6,
+          "compression": 0,
+          "filter": 0,
+          "height": 1,
+          "interlace": 0,
+          "width": 1
+        },
+        "pixelsSha256": "fc700fd55e6347e711ea0586b240e7b69815ec943a4001fe268c8f46a76cbc5a",
+        "stderr": "libpng warning: Warning: Input PNG does not have an 8 bit input depth.  Please convert your PNG to 8-bit for optimal performance on iPhone OS.",
+        "stdout": ""
+      }
+    }
+  },
+  "note": "copypng output fields only; pixelsSha256 hashes the unfiltered scanlines as stored (CgBI: raw deflate, BGRA premultiplied)",
+  "xcodeBuild": "27B52"
+}

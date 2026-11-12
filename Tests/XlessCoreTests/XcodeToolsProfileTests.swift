@@ -10,7 +10,7 @@ private func meta(_ build: String) -> ToolchainMeta {
 }
 
 @Test func testMeasuredBuilds() {
-    #expect(XcodeToolsProfile.all.keys.sorted() == ["17C52", "27A266a", "27A9275"])
+    #expect(XcodeToolsProfile.all.keys.sorted() == ["17C52", "27A266a", "27A9275", "27B52"])
     for (build, p) in XcodeToolsProfile.all { #expect(p.xcodeBuild == build) }
 }
 
@@ -54,6 +54,24 @@ private func meta(_ build: String) -> ToolchainMeta {
     #expect(p.nibPlainViews == q.nibPlainViews && p.nibOtherViews == q.nibOtherViews)
 }
 
+/// Xcode 27.2 writes what 27.1 writes bar the version strings and the CoreUI version (the 27B52 goldens equal the 27A9275 ones,
+/// bar `IBTOOL_VERSION`).
+@Test func test27B52() throws {
+    let p = try #require(XcodeToolsProfile.all["27B52"])
+    let q = try #require(XcodeToolsProfile.all["27A9275"])
+    #expect(p.xcodeVersion == "27.2")
+    #expect(p.actoolBundleVersion == "25408")
+    #expect(p.actoolShortVersion == "27.2")
+    #expect(p.ibtoolBundleVersion == "25408")
+    #expect(p.ibtoolShortVersion == "27.2")
+    #expect(p.carCoreUIVersion == 1011)
+    #expect(p.carStorageVersion == 17)
+    #expect(p.carMainVersion == "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-1011.4 [LAR]")
+    #expect(p.carAssetStorageVersion == "Xcode 27.2 (27B52) via AssetCatalogAgent-AssetRuntime")
+    #expect(p.carAuthoringTool == "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-664 [LAR] [IIO-2851.1.8][LAR] AppleJPEG[1][32]  CMPhoto[1][222]] [IR-120(hw)]")
+    #expect(p.nibPlainViews == q.nibPlainViews && p.nibOtherViews == q.nibOtherViews)
+}
+
 @Test func test17C52() throws {
     let p = try #require(XcodeToolsProfile.all["17C52"])
     #expect(p.xcodeVersion == "26.2")
@@ -87,7 +105,7 @@ private func meta(_ build: String) -> ToolchainMeta {
     #expect(e?.stage == .assets)
     #expect(e?.cause == "this image's Xcode build 99A9999 has no measured asset/storyboard tools profile")
     #expect(e?.fix.contains("xless setup --xcode") == true)
-    #expect(e?.fix.contains("17C52, 27A266a, 27A9275") == true)
+    #expect(e?.fix.contains("17C52, 27A266a, 27A9275, 27B52") == true)
     #expect(try XcodeToolsProfile.forImage(meta: meta("17C52"), stage: .ib) == XcodeToolsProfile.all["17C52"])
 }
 
