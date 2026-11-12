@@ -94,7 +94,7 @@ extra=()
 echo hello > "$t/hostname"
 run ok --docker --xcode "$t/hostname"
 [[ $code == 11 ]] || fail "an unsupported file exits $code, want 11: $(cat "$t/err")"
-grep -q 'is not a supported Xcode (supported: Xcode 26.2 (17C52), Xcode 27.0 (27A266a))' "$t/err" || fail "supported list: $(cat "$t/err")"
+grep -q 'is not a supported Xcode (supported: Xcode 26.2 (17C52), Xcode 27.0 (27A266a), Xcode 27.1 (27A9275))' "$t/err" || fail "supported list: $(cat "$t/err")"
 [[ ! -s "$log" ]] || fail "docker was called for an unsupported Xcode: $(cat "$log")"
 
 # --dry-run: a fake .xip (any name, a path with spaces) registered by its sha256 in a temp copy of versions.env.

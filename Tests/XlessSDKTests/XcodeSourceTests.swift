@@ -84,8 +84,8 @@ private func fakeApp(_ dir: URL, name: String, build: String) throws -> URL {
 }
 
 @Test func anUnsupportedAppBuildThrows() throws {
-    let dir = try tempDir("app-27.1")
-    let app = try fakeApp(dir, name: "Xcode.app", build: "27A9275")
+    let dir = try tempDir("app-unsupported")
+    let app = try fakeApp(dir, name: "Xcode.app", build: "99A9999")
     #expect(throws: XlessError.self) { try XcodeSource.identify(path: app.path, known: known, cwd: dir, home: dir) }
     do { _ = try XcodeSource.identify(path: app.path, known: known, cwd: dir, home: dir) } catch let e as XlessError {
         #expect(e.cause.contains("Xcode 26.2 (17C52), Xcode 27.0 (27A266a)"))
@@ -167,9 +167,9 @@ private func fakeExport(_ parent: URL, name: String = "xcode27.0-27A266a", archs
 
 @Test func anExportOfAnUnsupportedXcodeIsRefusedWithTheSupportedReleases() throws {
     let dir = try tempDir("export-unsupported")
-    let export = try fakeExport(dir, name: "xcode27.1-27A9275", metaBuild: "27A9275")
+    let export = try fakeExport(dir, name: "xcode99.9-99A9999", metaBuild: "99A9999")
     #expect { try XcodeSource.identifyExport(path: export.path, known: known, cwd: dir, home: dir) } throws: {
-        ($0 as? XlessError)?.cause == "\(export.path) is an SDK export of Xcode build 27A9275, not a supported Xcode (supported: Xcode 26.2 (17C52), Xcode 27.0 (27A266a))"
+        ($0 as? XlessError)?.cause == "\(export.path) is an SDK export of Xcode build 99A9999, not a supported Xcode (supported: Xcode 26.2 (17C52), Xcode 27.0 (27A266a))"
     }
 }
 

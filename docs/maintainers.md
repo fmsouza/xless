@@ -69,8 +69,7 @@ They compare what xless builds with what Xcode builds from the same sources.
 
 ## Measuring a new Xcode
 
-xless accepts only the Xcode releases it has measured. Adding one (a later round's work; Xcode 27.1, 27A9275, is the
-known unmeasured release) takes, on a Mac with that Xcode, all black-box:
+xless accepts only the Xcode releases it has measured. Adding one takes, on a Mac with that Xcode, all black-box:
 
 1. **The supported-Xcode table** in `versions.env`, keyed by the Xcode build `<B>`: add `<B>` to `XCODE_RELEASES`,
    and set `XCODE_SHORT_<B>` (the marketing version), `XCODE_APPLE_SWIFT_<B>` (what the Xcode's default toolchain's

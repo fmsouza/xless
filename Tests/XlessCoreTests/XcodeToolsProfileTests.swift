@@ -10,7 +10,7 @@ private func meta(_ build: String) -> ToolchainMeta {
 }
 
 @Test func testMeasuredBuilds() {
-    #expect(XcodeToolsProfile.all.keys.sorted() == ["17C52", "27A266a"])
+    #expect(XcodeToolsProfile.all.keys.sorted() == ["17C52", "27A266a", "27A9275"])
     for (build, p) in XcodeToolsProfile.all { #expect(p.xcodeBuild == build) }
 }
 
@@ -35,6 +35,23 @@ private func meta(_ build: String) -> ToolchainMeta {
     #expect(p.nibOtherViews.writesNilLabelText)
     #expect(p.nibOtherViews.uniquesCustomFonts)
     #expect(p.nibOtherViews.italicTraits == .shared)
+}
+
+/// Xcode 27.1 writes what 27.0 writes (the 27A9275 goldens equal the 27A266a ones, bar the version strings).
+@Test func test27A9275() throws {
+    let p = try #require(XcodeToolsProfile.all["27A9275"])
+    let q = try #require(XcodeToolsProfile.all["27A266a"])
+    #expect(p.xcodeVersion == "27.1")
+    #expect(p.actoolBundleVersion == "25098")
+    #expect(p.actoolShortVersion == "27.1")
+    #expect(p.ibtoolBundleVersion == "25098")
+    #expect(p.ibtoolShortVersion == "27.1")
+    #expect(p.carCoreUIVersion == 1010)
+    #expect(p.carStorageVersion == 17)
+    #expect(p.carMainVersion == q.carMainVersion)
+    #expect(p.carAssetStorageVersion == "Xcode 27.1 (27A9275) via AssetCatalogAgent-AssetRuntime")
+    #expect(p.carAuthoringTool == q.carAuthoringTool)
+    #expect(p.nibPlainViews == q.nibPlainViews && p.nibOtherViews == q.nibOtherViews)
 }
 
 @Test func test17C52() throws {
@@ -66,11 +83,11 @@ private func meta(_ build: String) -> ToolchainMeta {
 }
 
 @Test func testUnknownBuildRefuses() throws {
-    let e = #expect(throws: XlessError.self) { try XcodeToolsProfile.forImage(meta: meta("27A9275"), stage: .assets) }
+    let e = #expect(throws: XlessError.self) { try XcodeToolsProfile.forImage(meta: meta("99A9999"), stage: .assets) }
     #expect(e?.stage == .assets)
-    #expect(e?.cause == "this image's Xcode build 27A9275 has no measured asset/storyboard tools profile")
+    #expect(e?.cause == "this image's Xcode build 99A9999 has no measured asset/storyboard tools profile")
     #expect(e?.fix.contains("xless setup --xcode") == true)
-    #expect(e?.fix.contains("17C52, 27A266a") == true)
+    #expect(e?.fix.contains("17C52, 27A266a, 27A9275") == true)
     #expect(try XcodeToolsProfile.forImage(meta: meta("17C52"), stage: .ib) == XcodeToolsProfile.all["17C52"])
 }
 

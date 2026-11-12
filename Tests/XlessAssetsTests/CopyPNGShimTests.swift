@@ -173,7 +173,7 @@ private func chunkList(_ d: Data) -> [(type: String, data: [UInt8])] {
 /// copypng behaves the same in every measured Xcode (docs/research/xcode-tools-by-version.md, "copypng"), so the shim has
 /// no profile field; it is still checked against each build's recording: every call it accepts gives Xcode's chunk
 /// order, IHDR, CgBI bytes, stderr and pixels (scanlines as stored); every call it refuses is one listed above.
-@Test(arguments: ["17C52", "27A266a"])
+@Test(arguments: ["17C52", "27A266a", "27A9275"])
 func copypngMatchesXcodesCopypng(_ build: String) throws {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/copypng/\(build).json")
     let golden = try JSONDecoder().decode(CopyPNGGolden.self, from: Data(contentsOf: url))

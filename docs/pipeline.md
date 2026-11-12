@@ -8,8 +8,8 @@ xless takes an app's source and produces what Apple's own tools would:
   step for macOS.
 
 It does this on Linux, without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
-from Apple ([apple-requirements.md](apple-requirements.md)). Two Xcode releases are supported: 27.0 (27A266a) and
-26.2 (17C52).
+from Apple ([apple-requirements.md](apple-requirements.md)). Three Xcode releases are supported: 27.1 (27A9275), 27.0
+(27A266a) and 26.2 (17C52).
 
 ## Where things run
 
@@ -33,7 +33,7 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Two Xcode releases 
   ([native-install.md](native-install.md)). It builds `xless.yml` projects.
 - **The images.** `xless setup --docker` builds them from the `.xip` ([images.md](images.md) shows each step, for building them
   by hand). `xless-base` holds xless, xtool and rcodesign; `xless` adds the Darwin SDK and the open-source Swift
-  release whose version matches that Xcode's Swift (6.4 for 27.0, 6.2.3 for 26.2; Apple's own toolchain is never in
+  release whose version matches that Xcode's Swift (6.4 for 27.1 and 27.0, 6.2.3 for 26.2; Apple's own toolchain is never in
   an image); `xless-tauri` adds Node, pnpm and Rust; `xless-rn` adds Ruby, Bundler, Swift Build, Hermes and the Xcode
   tool replacements a React Native build calls. They are tagged `<image>:local-<arch>-xcode<version>` (for
   example `xless:local-arm64-xcode26.2`), and also plain `<image>:local-<arch>` for Xcode 27.0, the default.
