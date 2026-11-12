@@ -9,6 +9,7 @@ private let p27 = XcodeToolsProfile.all["27A266a"]!
 private let p26 = XcodeToolsProfile.all["17C52"]!
 private let p2601 = XcodeToolsProfile.all["17A400"]!
 private let p261 = XcodeToolsProfile.all["17B55"]!
+private let p2611 = XcodeToolsProfile.all["17B100"]!
 
 private func compile(_ xml: String, _ profile: XcodeToolsProfile) throws -> IBCompileResult {
     try StoryboardCompiler.compile(StoryboardParser.parse(Data(xml.utf8)), options: .flagset(named: "universal-16", root: corpusRoot), profile: profile)
@@ -19,7 +20,7 @@ private func corpus(_ name: String) throws -> String {
 }
 
 /// ibtool does not check `toolsVersion`; it refuses a document whose capability needs a newer Xcode than its own short
-/// version (27.0, 26.2, 26.1, 26.0.1), with "This document requires at least Xcode X.". The compiler refuses it the same way under that
+/// version (27.0, 26.2, 26.1.1, 26.1, 26.0.1), with "This document requires at least Xcode X.". The compiler refuses it the same way under that
 /// profile, naming the image's limit.
 @Test func testStoryboardNewerThanPinRefused() throws {
     let base = try corpus("view-plain-default")
@@ -33,7 +34,9 @@ private func corpus(_ name: String) throws -> String {
     _ = try compile(needing("26.0"), p2601)
     _ = try compile(needing("26.0.1"), p2601)
     _ = try compile(needing("26.1"), p261)
-    for (v, profile) in [("27.0", p26), ("26.3", p26), ("27.1", p27), ("26.1", p2601), ("26.2", p2601), ("26.2", p261), ("27.0", p261)] {
+    _ = try compile(needing("26.1"), p2611)
+    _ = try compile(needing("26.1.1"), p2611)
+    for (v, profile) in [("27.0", p26), ("26.3", p26), ("27.1", p27), ("26.1", p2601), ("26.2", p2601), ("26.2", p261), ("27.0", p261), ("26.1.2", p2611), ("26.2", p2611), ("27.0", p2611)] {
         let e = try #require(throws: XlessError.self) { try compile(needing(v), profile) }
         #expect(e.stage == .ib)
         #expect(e.cause.hasPrefix("This document requires at least Xcode \(v)."), "\(e)")
