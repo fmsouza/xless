@@ -47,8 +47,9 @@ headers, read as files).
 | `Xcode_26.4_Universal.xip` | 26.4 (17E192) | identical | yes | yes |
 | `Xcode_26.4.1_Universal.xip` | 26.4.1 (17E202) | identical | yes | yes |
 | `Xcode_26.5_Universal.xip` | 26.5 (17F42) | identical | yes | yes |
+| `Xcode_26.6_Universal.xip` | 26.6 (17F113) | identical | yes | yes |
 
-The twelve SHA-256s are in `versions.env` (`XCODE_XIP_SHA256_<build>`). Exports on the Mac took 171 to 234 s each, and
+The thirteen SHA-256s are in `versions.env` (`XCODE_XIP_SHA256_<build>`). Exports on the Mac took 171 to 234 s each, and
 the export directory peaked at 11.5 to 14.9 GB.
 
 ## Runs in the VM

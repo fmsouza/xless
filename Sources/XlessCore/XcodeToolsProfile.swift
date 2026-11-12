@@ -235,8 +235,22 @@ public struct XcodeToolsProfile: Sendable, Equatable {
         ibtoolBundleVersion: "24765", ibtoolShortVersion: "26.5",
         nibPlainViews: xcode17E192.nibPlainViews, nibOtherViews: xcode17E192.nibOtherViews)
 
+    /// Xcode 26.6 (17F113): 26.5's nib encodings and CAR header (the 17F113 goldens equal the 17F42 ones bar `IBTOOL_VERSION`; the car carries the
+    /// same CoreUI-975 and CoreThemeDefinition-653.4 [IIO-2784.5.4] strings, measured with the iOS 26.5 simulator runtime installed, 23F77), its own
+    /// version strings (actool and ibtool report bundle version 24765 as in 26.4 and 26.5, short version 26.6), and the newest document ibtool
+    /// accepts is 26.6.
+    public static let xcode17F113 = XcodeToolsProfile(
+        xcodeBuild: "17F113", xcodeVersion: "26.6",
+        actoolBundleVersion: "24765", actoolShortVersion: "26.6",
+        carCoreUIVersion: 975, carStorageVersion: 17,
+        carMainVersion: "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-975",
+        carAssetStorageVersion: "Xcode 26.6 (17F113) via AssetCatalogSimulatorAgent",
+        carAuthoringTool: "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-653.4  [IIO-2784.5.4]",
+        ibtoolBundleVersion: "24765", ibtoolShortVersion: "26.6",
+        nibPlainViews: xcode17E192.nibPlainViews, nibOtherViews: xcode17E192.nibOtherViews)
+
     /// Every measured build, keyed by `xcodeBuild`.
-    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100, xcode17C529, xcode17E192, xcode17E202, xcode17F42].map { ($0.xcodeBuild, $0) })
+    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100, xcode17C529, xcode17E192, xcode17E202, xcode17F42, xcode17F113].map { ($0.xcodeBuild, $0) })
 
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {

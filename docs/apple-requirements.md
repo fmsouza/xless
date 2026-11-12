@@ -19,6 +19,7 @@ Linux machine: Apple's programs are macOS programs, and xless uses open-source r
    | 26.3 | 17C529 | `Xcode_26.3_Universal.xip` |
    | 26.4 | 17E192 | `Xcode_26.4_Universal.xip` |
    | 26.4.1 | 17E202 | `Xcode_26.4.1_Universal.xip` |
+   | 26.6 | 17F113 | `Xcode_26.6_Universal.xip` |
    | 26.5 | 17F42 | `Xcode_26.5_Universal.xip` |
    | 26.2 | 17C52 | `Xcode_26.2_Universal.xip` |
    | 26.1.1 | 17B100 | `Xcode_26.1.1_Universal.xip` |

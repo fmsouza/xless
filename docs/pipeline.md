@@ -8,8 +8,8 @@ xless takes an app's source and produces what Apple's own tools would:
   step for macOS.
 
 It does this on Linux, without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
-from Apple ([apple-requirements.md](apple-requirements.md)). Eleven Xcode releases are supported: 27.2 (27B52), 27.1
-(27A9275), 27.0 (27A266a), 26.5 (17F42), 26.4.1 (17E202), 26.4 (17E192), 26.3 (17C529), 26.2 (17C52), 26.1.1 (17B100), 26.1 (17B55) and 26.0.1 (17A400).
+from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releases are supported: 27.2 (27B52), 27.1
+(27A9275), 27.0 (27A266a), 26.6 (17F113), 26.5 (17F42), 26.4.1 (17E202), 26.4 (17E192), 26.3 (17C529), 26.2 (17C52), 26.1.1 (17B100), 26.1 (17B55) and 26.0.1 (17A400).
 
 ## Where things run
 
@@ -33,7 +33,7 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Eleven Xcode releas
   ([native-install.md](native-install.md)). It builds `xless.yml` projects.
 - **The images.** `xless setup --docker` builds them from the `.xip` ([images.md](images.md) shows each step, for building them
   by hand). `xless-base` holds xless, xtool and rcodesign; `xless` adds the Darwin SDK and the open-source Swift
-  release whose version matches that Xcode's Swift (6.4.2 for 27.2, 6.4 for 27.1 and 27.0, 6.3.2 for 26.5, 6.3.1 for 26.4.1, 6.3 for 26.4, 6.2.4 for 26.3, 6.2.3 for 26.2, 6.2.1 for 26.1.1 and 26.1, 6.2 for 26.0.1; Apple's own toolchain is never in
+  release whose version matches that Xcode's Swift (6.4.2 for 27.2, 6.4 for 27.1 and 27.0, 6.3.3 for 26.6, 6.3.2 for 26.5, 6.3.1 for 26.4.1, 6.3 for 26.4, 6.2.4 for 26.3, 6.2.3 for 26.2, 6.2.1 for 26.1.1 and 26.1, 6.2 for 26.0.1; Apple's own toolchain is never in
   an image); `xless-tauri` adds Node, pnpm and Rust; `xless-rn` adds Ruby, Bundler, Swift Build, Hermes and the Xcode
   tool replacements a React Native build calls. They are tagged `<image>:local-<arch>-xcode<version>` (for
   example `xless:local-arm64-xcode26.2`), and also plain `<image>:local-<arch>` for Xcode 27.0, the default.

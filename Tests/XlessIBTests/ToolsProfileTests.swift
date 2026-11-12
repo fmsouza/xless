@@ -14,6 +14,7 @@ private let p263 = XcodeToolsProfile.all["17C529"]!
 private let p264 = XcodeToolsProfile.all["17E192"]!
 private let p2641 = XcodeToolsProfile.all["17E202"]!
 private let p265 = XcodeToolsProfile.all["17F42"]!
+private let p266 = XcodeToolsProfile.all["17F113"]!
 
 private func compile(_ xml: String, _ profile: XcodeToolsProfile) throws -> IBCompileResult {
     try StoryboardCompiler.compile(StoryboardParser.parse(Data(xml.utf8)), options: .flagset(named: "universal-16", root: corpusRoot), profile: profile)
@@ -24,7 +25,7 @@ private func corpus(_ name: String) throws -> String {
 }
 
 /// ibtool does not check `toolsVersion`; it refuses a document whose capability needs a newer Xcode than its own short
-/// version (27.0, 26.5, 26.4.1, 26.4, 26.3, 26.2, 26.1.1, 26.1, 26.0.1), with "This document requires at least Xcode X.". The compiler refuses it the same way under that
+/// version (27.0, 26.6, 26.5, 26.4.1, 26.4, 26.3, 26.2, 26.1.1, 26.1, 26.0.1), with "This document requires at least Xcode X.". The compiler refuses it the same way under that
 /// profile, naming the image's limit.
 @Test func testStoryboardNewerThanPinRefused() throws {
     let base = try corpus("view-plain-default")
@@ -48,7 +49,9 @@ private func corpus(_ name: String) throws -> String {
     _ = try compile(needing("26.4.1"), p2641)
     _ = try compile(needing("26.4.1"), p265)
     _ = try compile(needing("26.5"), p265)
-    for (v, profile) in [("27.0", p26), ("26.3", p26), ("26.3.1", p263), ("27.0", p263), ("26.4.1", p264), ("27.0", p264), ("26.4.2", p2641), ("26.5", p2641), ("27.0", p2641), ("26.5.1", p265), ("27.0", p265), ("27.1", p27), ("26.1", p2601), ("26.2", p2601), ("26.2", p261), ("27.0", p261), ("26.1.2", p2611), ("26.2", p2611), ("27.0", p2611)] {
+    _ = try compile(needing("26.5"), p266)
+    _ = try compile(needing("26.6"), p266)
+    for (v, profile) in [("27.0", p26), ("26.3", p26), ("26.3.1", p263), ("27.0", p263), ("26.4.1", p264), ("27.0", p264), ("26.4.2", p2641), ("26.5", p2641), ("27.0", p2641), ("26.5.1", p265), ("26.6", p265), ("27.0", p265), ("26.6.1", p266), ("27.0", p266), ("27.1", p27), ("26.1", p2601), ("26.2", p2601), ("26.2", p261), ("27.0", p261), ("26.1.2", p2611), ("26.2", p2611), ("27.0", p2611)] {
         let e = try #require(throws: XlessError.self) { try compile(needing(v), profile) }
         #expect(e.stage == .ib)
         #expect(e.cause.hasPrefix("This document requires at least Xcode \(v)."), "\(e)")
