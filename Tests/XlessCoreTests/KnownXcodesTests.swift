@@ -32,12 +32,12 @@ private func tempEnv(_ text: String) throws -> URL {
 
 @Test func loadsTheRepositorysTable() throws {
     let xcodes = try KnownXcodes.load(versionsEnv: repoRoot.appendingPathComponent("versions.env"))
-    #expect(xcodes.map(\.build) == ["17A400", "17B55", "17B100", "17C52", "17C529", "17E192", "17E202", "27A266a", "27A9275", "27B52"])
-    #expect(xcodes.map(\.appleSwift) == ["6.2", "6.2.1", "6.2.1", "6.2.3", "6.2.4", "6.3", "6.3.1", "6.4", "6.4", "6.4.2"])
-    #expect(xcodes.map(\.shortVersion) == ["26.0.1", "26.1", "26.1.1", "26.2", "26.3", "26.4", "26.4.1", "27.0", "27.1", "27.2"])
-    #expect(xcodes.map(\.buildMachineOSBuild) == ["26B123", "26B123", "26B123", "26A434", "26B123", "26B123", "26B123", "26A434", "26B123", "26B123"])
-    // 17C52: the Universal and the Apple silicon download; 17A400, 17B55, 17B100, 17C529, 17E192, 17E202, 27A266a, 27A9275 and 27B52: one download each.
-    #expect(xcodes.map(\.xipSHA256.count) == [1, 1, 1, 2, 1, 1, 1, 1, 1, 1])
+    #expect(xcodes.map(\.build) == ["17A400", "17B55", "17B100", "17C52", "17C529", "17E192", "17E202", "17F42", "27A266a", "27A9275", "27B52"])
+    #expect(xcodes.map(\.appleSwift) == ["6.2", "6.2.1", "6.2.1", "6.2.3", "6.2.4", "6.3", "6.3.1", "6.3.2", "6.4", "6.4", "6.4.2"])
+    #expect(xcodes.map(\.shortVersion) == ["26.0.1", "26.1", "26.1.1", "26.2", "26.3", "26.4", "26.4.1", "26.5", "27.0", "27.1", "27.2"])
+    #expect(xcodes.map(\.buildMachineOSBuild) == ["26B123", "26B123", "26B123", "26A434", "26B123", "26B123", "26B123", "26B123", "26A434", "26B123", "26B123"])
+    // 17C52: the Universal and the Apple silicon download; 17A400, 17B55, 17B100, 17C529, 17E192, 17E202, 17F42, 27A266a, 27A9275 and 27B52: one download each.
+    #expect(xcodes.map(\.xipSHA256.count) == [1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1])
     #expect(xcodes.allSatisfy { $0.xipSHA256.allSatisfy { $0.wholeMatch(of: /[0-9a-f]{64}/) != nil } })
 }
 

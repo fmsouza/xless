@@ -221,8 +221,22 @@ public struct XcodeToolsProfile: Sendable, Equatable {
         ibtoolBundleVersion: "24765", ibtoolShortVersion: "26.4.1",
         nibPlainViews: xcode17E192.nibPlainViews, nibOtherViews: xcode17E192.nibOtherViews)
 
+    /// Xcode 26.5 (17F42): 26.4's nib encodings (the 17F42 goldens equal the 17E202 ones bar `IBTOOL_VERSION`), its own version strings
+    /// (actool and ibtool report bundle version 24765 as in 26.4, short version 26.5), a new CoreUI version and CAR header strings
+    /// (CoreUI-975 and CoreThemeDefinition-653.4 [IIO-2784.5.4], measured with the iOS 26.5 simulator runtime installed, 23F77), and
+    /// the newest document ibtool accepts is 26.5.
+    public static let xcode17F42 = XcodeToolsProfile(
+        xcodeBuild: "17F42", xcodeVersion: "26.5",
+        actoolBundleVersion: "24765", actoolShortVersion: "26.5",
+        carCoreUIVersion: 975, carStorageVersion: 17,
+        carMainVersion: "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-975",
+        carAssetStorageVersion: "Xcode 26.5 (17F42) via AssetCatalogSimulatorAgent",
+        carAuthoringTool: "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-653.4  [IIO-2784.5.4]",
+        ibtoolBundleVersion: "24765", ibtoolShortVersion: "26.5",
+        nibPlainViews: xcode17E192.nibPlainViews, nibOtherViews: xcode17E192.nibOtherViews)
+
     /// Every measured build, keyed by `xcodeBuild`.
-    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100, xcode17C529, xcode17E192, xcode17E202].map { ($0.xcodeBuild, $0) })
+    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100, xcode17C529, xcode17E192, xcode17E202, xcode17F42].map { ($0.xcodeBuild, $0) })
 
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {
