@@ -1,0 +1,226 @@
+{
+  "actool": "26.6 (24765)",
+  "renditions": [
+    {
+      "AssetType": "Color",
+      "Color components": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "Colorspace": "srgb",
+      "Idiom": "universal",
+      "Name": "ColorDark",
+      "Scale": 1
+    },
+    {
+      "Appearance": "UIAppearanceDark",
+      "AssetType": "Color",
+      "Color components": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "Colorspace": "srgb",
+      "Idiom": "universal",
+      "Name": "ColorDark",
+      "Scale": 1
+    },
+    {
+      "AssetType": "Color",
+      "Color components": [
+        1.2000000476837158,
+        -0.10000000149011612,
+        0,
+        1
+      ],
+      "Colorspace": "extended srgb",
+      "Idiom": "universal",
+      "Name": "ColorExtended",
+      "Scale": 1
+    },
+    {
+      "AssetType": "Color",
+      "Color components": [
+        0.5,
+        0.5,
+        0.5,
+        1
+      ],
+      "Colorspace": "extended linear srgb",
+      "Idiom": "universal",
+      "Name": "ColorLinear",
+      "Scale": 1
+    },
+    {
+      "AssetType": "Color",
+      "Color components": [
+        1,
+        0,
+        0,
+        1
+      ],
+      "Colorspace": "p3",
+      "Idiom": "universal",
+      "Name": "ColorP3",
+      "Scale": 1
+    },
+    {
+      "AssetType": "Color",
+      "Color components": [
+        1,
+        0.5,
+        0.25,
+        1
+      ],
+      "Colorspace": "srgb",
+      "Idiom": "universal",
+      "Name": "ColorSrgb",
+      "Scale": 1
+    },
+    {
+      "AssetType": "Color",
+      "Color components": [
+        0.20000000298023224,
+        0.4000000059604645,
+        0.6000000238418579,
+        0.5
+      ],
+      "Colorspace": "srgb",
+      "Idiom": "universal",
+      "Name": "ColorSrgbHalf",
+      "Scale": 1
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "Monochrome",
+      "Colorspace": "gray gamma 22",
+      "Compression": "deepmap2",
+      "Encoding": "Gray",
+      "Idiom": "universal",
+      "Name": "Gray",
+      "Opaque": true,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "Gray.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "Monochrome",
+      "Colorspace": "gray gamma 22",
+      "Compression": "deepmap2",
+      "Encoding": "Gray",
+      "Idiom": "universal",
+      "Name": "GrayAlpha",
+      "Opaque": false,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "GrayAlpha.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "Monochrome",
+      "Colorspace": "gray gamma 22",
+      "Compression": "deepmap2",
+      "Encoding": "Gray",
+      "Idiom": "universal",
+      "Name": "GrayAlphaOpaque",
+      "Opaque": true,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "GrayAlphaOpaque.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "RGB",
+      "Colorspace": "srgb",
+      "Compression": "deepmap2",
+      "Encoding": "ARGB",
+      "Idiom": "universal",
+      "Name": "Palette",
+      "Opaque": true,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "Palette.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "RGB",
+      "Colorspace": "srgb",
+      "Compression": "deepmap2",
+      "Encoding": "ARGB",
+      "Idiom": "universal",
+      "Name": "Rgb",
+      "Opaque": true,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "Rgb.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "RGB",
+      "Colorspace": "srgb",
+      "Compression": "deepmap2",
+      "Encoding": "ARGB",
+      "Idiom": "universal",
+      "Name": "RgbaAlpha",
+      "Opaque": false,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "RgbaAlpha.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "RGB",
+      "Colorspace": "srgb",
+      "Compression": "deepmap2",
+      "Encoding": "ARGB",
+      "Idiom": "universal",
+      "Name": "RgbaOne254",
+      "Opaque": false,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "RgbaOne254.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    },
+    {
+      "AssetType": "Image",
+      "BitsPerComponent": 8,
+      "ColorModel": "RGB",
+      "Colorspace": "srgb",
+      "Compression": "deepmap2",
+      "Encoding": "ARGB",
+      "Idiom": "universal",
+      "Name": "RgbaOpaque",
+      "Opaque": true,
+      "PixelHeight": 64,
+      "PixelWidth": 64,
+      "RenditionName": "RgbaOpaque.png",
+      "Scale": 2,
+      "Template Mode": "automatic"
+    }
+  ],
+  "xcodeBuild": "17F113"
+}
