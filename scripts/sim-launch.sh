@@ -2,7 +2,7 @@
 # Installs and launches an iOS Simulator app (an xless `--destination simulator` build) on this Mac, and checks that
 # it is still running some seconds later. Mac only.
 #
-#   scripts/sim-launch.sh [--seconds N] [--out DIR] [--device NAME] [--keep] <App.app>
+#   scripts/sim-launch.sh [--seconds N] [--out DIR] [--device NAME|UDID] [--runtime R] [--keep] <App.app>
 #   scripts/sim-launch.sh [...] volume:<docker volume>:<path of the .app, the volume mounted at /cache/work>
 #   (or: make sim-launch APP=<App.app | volume:…> [ARGS="--seconds 20"])
 #
@@ -10,8 +10,13 @@
 #           its container, where the volume is /cache/work (scripts/testflight.sh --destination simulator prints the
 #           whole argument). Uses DOCKER_CONTEXT (default colima-xless if it exists) and versions.env's
 #           ALPINE_IMAGE (alpine, pinned by digest).
-# --device  the simulator to use, created on the newest available iOS runtime when missing (default "xless-sim", an
-#           iPhone 17); it is booted, and left booted.
+# --device  the simulator to use, by name or UDID, on the runtime below (default "xless-sim"); a name with no device on
+#           that runtime is created there (an iPhone 17 when the runtime has it). It is booted, and left booted.
+# --runtime the iOS simulator runtime (identifier, build, or version such as 26.3). Default: the one that matches the
+#           Xcode's SDK (DEVELOPER_DIR selects the Xcode): the runtime Xcode pairs with its SDK
+#           (`simctl runtime match list`), else the newest with the SDK's major.minor. With none installed, the script
+#           stops and names it (`xcodebuild -downloadPlatform iOS` installs it) rather than launching on another iOS.
+#           Picking the device is scripts/sim-pick.py.
 # --seconds how long the app must stay up (default 10).
 # --keep    leave the app running afterwards (by default it is terminated once everything is captured, so a system
 #           alert it raised does not cover the next app's screenshot).
@@ -26,18 +31,19 @@ set -euo pipefail
 die() { echo "sim-launch: $*" >&2; exit 2; }
 [[ "$(uname)" == Darwin ]] || die "needs macOS (uname is $(uname))"
 
-seconds=10; out=""; device="xless-sim"; app=""; keep=0
+seconds=10; out=""; device="xless-sim"; runtime=""; app=""; keep=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seconds) [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || die "--seconds needs a number"; seconds="$2"; shift 2 ;;
     --out) [[ $# -ge 2 ]] || die "--out needs a directory"; out="$2"; shift 2 ;;
-    --device) [[ $# -ge 2 ]] || die "--device needs a name"; device="$2"; shift 2 ;;
+    --device) [[ $# -ge 2 ]] || die "--device needs a name or UDID"; device="$2"; shift 2 ;;
+    --runtime) [[ $# -ge 2 ]] || die "--runtime needs an identifier, build or version"; runtime="$2"; shift 2 ;;
     --keep) keep=1; shift ;;
     -*) die "unknown option $1" ;;
     *) [[ -z "$app" ]] || die "one app only"; app="$1"; shift ;;
   esac
 done
-[[ -n "$app" ]] || die "usage: $0 [--seconds N] [--out DIR] [--device NAME] [--keep] <App.app | volume:<volume>:<path>>"
+[[ -n "$app" ]] || die "usage: $0 [--seconds N] [--out DIR] [--device NAME|UDID] [--runtime R] [--keep] <App.app | volume:<volume>:<path>>"
 
 name="$(basename "${app##*:}" .app)"
 out="${out:-$HOME/.cache/xless/sim/$name}"
@@ -62,26 +68,29 @@ bundle="$out/app/$name.app"
 id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Info.plist")"
 exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Info.plist")"
 platforms="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms' "$bundle/Info.plist" 2>/dev/null || true)"
-[[ "$platforms" == *iPhoneSimulator* ]] || die "$bundle is not a simulator build (CFBundleSupportedPlatforms: $(echo $platforms)); build it with --destination simulator"
+[[ "$platforms" == *iPhoneSimulator* ]] || die "$bundle is not a simulator build (CFBundleSupportedPlatforms: ${platforms//$'\n'/ }); build it with --destination simulator"
 codesign --verify --deep --strict "$bundle" 2>"$out/codesign-verify.txt" || die "codesign does not accept the app's signature (see $out/codesign-verify.txt)"
 
-# The simulator: by name, else created on the newest iOS runtime.
-udid="$(xcrun simctl list devices available -j | /usr/bin/python3 -c '
-import json, sys
-name = sys.argv[1]
-for runtime, devs in json.load(sys.stdin)["devices"].items():
-    for d in devs:
-        if d["name"] == name and "iOS" in runtime: print(d["udid"]); sys.exit()' "$device")"
-if [[ -z "$udid" ]]; then
-  runtime="$(xcrun simctl list runtimes available -j | /usr/bin/python3 -c '
-import json, sys
-rs = [r for r in json.load(sys.stdin)["runtimes"] if r.get("platform") == "iOS" and r.get("isAvailable")]
-rs.sort(key=lambda r: [int(x) for x in r["version"].split(".")])
-print(rs[-1]["identifier"] if rs else "")')"
-  [[ -n "$runtime" ]] || die "no available iOS simulator runtime (install one in Xcode → Settings → Components)"
-  udid="$(xcrun simctl create "$device" com.apple.CoreSimulator.SimDeviceType.iPhone-17 "$runtime")"
-  echo "==> created simulator $device ($udid) on $runtime" >&2
+# The simulator: a device on the runtime that matches this Xcode's SDK (or --runtime), created there when missing.
+tmp="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$tmp"' EXIT
+dev_dir="$(xcode-select -p)"   # DEVELOPER_DIR when set
+sdk="$(xcrun --sdk iphonesimulator --show-sdk-version 2>/dev/null || true)"
+[[ -n "$sdk" || -n "$runtime" ]] || die "no iphonesimulator SDK in the Xcode at $dev_dir"
+xcrun simctl list devices available -j > "$tmp/devices.json"
+xcrun simctl list runtimes available -j > "$tmp/runtimes.json"
+xcrun simctl runtime match list -j > "$tmp/match.json" 2>/dev/null || echo '{}' > "$tmp/match.json"
+pick="$(/usr/bin/python3 "$(dirname "$0")/sim-pick.py" --devices "$tmp/devices.json" --runtimes "$tmp/runtimes.json" \
+  --match "$tmp/match.json" --sdk-version "$sdk" --device "$device" --runtime "$runtime")" || exit 2
+IFS=$'\t' read -r action what runtime_id runtime_name <<< "$pick"
+if [[ "$action" == create ]]; then
+  udid="$(xcrun simctl create "$device" "$what" "$runtime_id")"
+  echo "==> created simulator $device ($udid, ${what##*.}) on $runtime_name" >&2
+else
+  udid="$what"
 fi
+echo "==> Xcode at $dev_dir, iphonesimulator${sdk:-?} SDK; runtime $runtime_name" >&2
+app_sdk="$(/usr/libexec/PlistBuddy -c 'Print :DTSDKName' "$bundle/Info.plist" 2>/dev/null || true)"
+[[ -z "$app_sdk" || "$app_sdk" == "iphonesimulator$sdk" ]] || echo "==> note: the app was built with the $app_sdk SDK" >&2
 echo "==> simulator $device ($udid)" >&2
 xcrun simctl bootstatus "$udid" -b >/dev/null
 xcrun simctl terminate "$udid" "$id" >/dev/null 2>&1 || true
@@ -91,7 +100,7 @@ marker="$out/.launched"; : > "$marker"
 # The app's stdout and stderr go to a file the simulator's launchd opens: its path must match the file system's own
 # spelling (a case-insensitive file system resolves ~/x/hellorn for ~/x/HelloRN, launchd_sim then fails to spawn the
 # app: "No such process"). A fresh temporary directory's physical path does; the log is copied to $out afterwards.
-logdir="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$logdir"' EXIT
+logdir="$tmp"
 start="$(date +%s)"
 pid="$(xcrun simctl launch --terminate-running-process --stdout="$logdir/console.log" --stderr="$logdir/console.log" "$udid" "$id" | sed -n 's/^[^:]*: *//p')"
 [[ "$pid" =~ ^[0-9]+$ ]] || die "simctl launch printed no process ID"
