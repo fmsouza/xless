@@ -121,3 +121,5 @@ jobs:
           shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh
           shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/testflight.sh scripts/xcode-swift.sh
+      - name: Mac bench scripts
+        run: shellcheck scripts/tauri-ios-reference.sh scripts/sim-launch.sh scripts/xcode-pin.sh

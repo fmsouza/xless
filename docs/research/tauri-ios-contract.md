@@ -15,6 +15,11 @@ A different `@tauri-apps/cli` or `tauri` version is off-contract until this docu
    the `TAURI_*`, `IPHONEOS_DEPLOYMENT_TARGET`, `SDKROOT`, `CC*`, `CFLAGS*`, `RUSTFLAGS`, `CARGO_*TARGET*` variables)
    to a JSON-lines log and execs the real tool. The `PATH` survives into Xcode's "Build Rust Code" script phase, so
    the cargo build that `tauri ios xcode-script` starts and every build-script `xcrun`/`swift` call is captured.
+   The Xcode is `DEVELOPER_DIR` (default: the pinned clone, else xcode-select's; any Xcode with a tools profile).
+   The Tauri CLI runs xcodebuild and cargo with a cleared environment that keeps `PATH` but drops `DEVELOPER_DIR`,
+   so `scripts/xcode-pin.sh` also puts a `DEVELOPER_DIR`-pinning shim for every Xcode shim in `/usr/bin` on `PATH`.
+   The run is refused when the app's `DTXcodeBuild`/`DTSDKBuild` or any log names another Xcode or the Command Line
+   Tools. `xless` itself (step 5) is built with xcode-select's Xcode, so Xcodes older than Swift 6.3 work too.
 3. Installs JS dependencies (lockfile-selected), runs `pod install` only if the Podfile declares pods, then
    `pnpm tauri ios build --export-method app-store-connect --build-number 1 --no-sign --ci -v [--features …]`.
    No signing: `--no-sign`, no team; the archived `.app` is unsigned (`codesign -dv`: "not signed at all").

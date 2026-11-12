@@ -7,7 +7,14 @@
 # --platform ios (default): `tauri ios build` (archive, App Store export method).
 # --platform macos:         `tauri build --target universal-apple-darwin --bundles app,dmg` (both darwin slices + lipo).
 #
-# Env: TAURI_FEATURES   cargo features for `tauri … build --features` (space or comma separated)
+# Env: DEVELOPER_DIR    the Xcode to record with (<Xcode.app>/Contents/Developer; never `xcode-select -s`). Default: the
+#                       clone at ~/.cache/xless/Xcode.app when it is versions.env's XCODE_BUILD, else xcode-select's. A
+#                       build without an XcodeToolsProfile entry (scripts/xcode-tools.sh) is refused. Every step runs
+#                       with it, through PATH shims (scripts/xcode-pin.sh) because the Tauri CLI drops DEVELOPER_DIR
+#                       from what it runs; the run is refused when the app's DTXcodeBuild/DTSDKBuild (ios) or any log
+#                       names another Xcode or the Command Line Tools. xless (for reference.json) is built with
+#                       xcode-select's Xcode, so a reference Xcode whose Swift is older than Package.swift's works too.
+#      TAURI_FEATURES   cargo features for `tauri … build --features` (space or comma separated)
 #      TAURI_DIR        Tauri directory inside the app root (default src-tauri)
 #      REF_WORK         reuse this scratch dir instead of a fresh mktemp one: the work copy is recreated from
 #                       scratch each run, but <tauri dir>/target is carried over (incremental cargo rebuilds)
@@ -35,6 +42,8 @@
 # from a read-only attach).
 # Only reference.json, calls.json and dmg.json are meant to be committed, and only for samples/HelloTauri. The work
 # copy is left in place.
+# The normalisation prefixes and generated wrappers hold literal $NAMES on purpose.
+# shellcheck disable=SC2016
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=/dev/null
@@ -42,11 +51,26 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 PLATFORM=ios
 if [[ "${1:-}" == --platform ]]; then PLATFORM="${2:-}"; shift 2 || true; fi
-[[ "$PLATFORM" == ios || "$PLATFORM" == macos ]] && [[ $# -eq 2 ]] \
-  || { echo "usage: $0 [--platform ios|macos] <tauri-app-root> <out-dir>" >&2; exit 2; }
+if [[ ( "$PLATFORM" != ios && "$PLATFORM" != macos ) || $# -ne 2 ]]; then
+  echo "usage: $0 [--platform ios|macos] <tauri-app-root> <out-dir>" >&2; exit 2
+fi
 [[ "$(uname)" == Darwin ]] || { echo "tauri-ios-reference: needs macOS (uname is $(uname))" >&2; exit 1; }
-xcodebuild -version | grep -q "Build version $XCODE_BUILD" \
-  || { echo "tauri-ios-reference: needs Xcode build $XCODE_BUILD; found: $(xcodebuild -version | tr '\n' ' ')" >&2; exit 1; }
+# The Xcode: DEVELOPER_DIR if set, else the APFS clone at ~/.cache/xless/Xcode.app when it is versions.env's pinned
+# build, else xcode-select's (as scripts/rn-reference.sh). Any Xcode with an XcodeToolsProfile entry is a valid reference
+# for that Xcode's SDK.
+CLONE="$HOME/.cache/xless/Xcode.app/Contents/Developer"
+if [[ -z "${DEVELOPER_DIR:-}" && -d "$CLONE" ]] \
+   && DEVELOPER_DIR="$CLONE" xcodebuild -version 2>/dev/null | grep -qx "Build version $XCODE_BUILD"; then
+  DEVELOPER_DIR="$CLONE"
+fi
+DEV="${DEVELOPER_DIR:-$(xcode-select -p)}"; DEV="${DEV%/}"
+XCODE_FOUND="$(DEVELOPER_DIR="$DEV" xcodebuild -version 2>/dev/null | sed -n 's/^Build version //p')"
+[[ -n "$XCODE_FOUND" ]] || { echo "tauri-ios-reference: no Xcode at $DEV (set DEVELOPER_DIR=<Xcode.app>/Contents/Developer)" >&2; exit 1; }
+"$ROOT/scripts/xcode-tools.sh" "$XCODE_FOUND" || exit 1
+if [[ "$XCODE_FOUND" != "$XCODE_BUILD" ]]; then
+  echo "==> note: Xcode build $XCODE_FOUND, not versions.env's default $XCODE_BUILD: a reference for that Xcode's SDK only" >&2
+fi
+echo "==> Xcode $XCODE_FOUND at $DEV"
 
 APP="$(cd "$1" && pwd)"
 mkdir -p "$2"; OUT="$(cd "$2" && pwd)"
@@ -68,12 +92,12 @@ export LANG="${LANG:-en_US.UTF-8}" CI=true
 
 if [[ -n "${REF_WORK:-}" ]]; then TMP="$REF_WORK"; mkdir -p "$TMP"; else TMP="$(mktemp -d "${TMPDIR:-/tmp}/tauri-ref.XXXXXX")"; fi
 TMP_LOGICAL="$(cd "$TMP" && pwd -L)"; TMP="$(cd "$TMP" && pwd -P)"   # /var/folders/… vs /private/var/folders/…
-WORK="$TMP/work"; BIN="$TMP/bin"
+WORK="$TMP/work"; BIN="$TMP/bin"; XBIN="$TMP/xcode-bin"
 # A reused REF_WORK starts from a fresh work tree (rsync --files-from does not delete stale files); only the cargo
 # target dir survives, for incremental builds.
 KEEP="$TMP/target.keep"
 if [[ -d "$WORK/$TAURI_DIR/target" ]]; then rm -rf "$KEEP"; mv "$WORK/$TAURI_DIR/target" "$KEEP"; fi
-rm -rf "$WORK" "$BIN"
+rm -rf "$WORK" "$BIN" "$XBIN"
 mkdir -p "$WORK" "$BIN"
 echo "==> work copy: $WORK"
 # Tracked files that exist in the working tree (a tracked file deleted but not yet staged would make rsync fail).
@@ -109,20 +133,27 @@ with open(sys.argv[1], "a") as f: f.write(json.dumps({"cwd": os.getcwd(), "argv"
 exec $* "\$@"
 EOF
 }
-argv_wrapper xcrun /usr/bin/xcrun
-argv_wrapper swift /usr/bin/xcrun swift
+# The Xcode reaches every tool through PATH: the Tauri CLI runs xcodebuild and cargo with a cleared environment that
+# keeps PATH but not DEVELOPER_DIR, so an exported DEVELOPER_DIR alone would leave them on xcode-select's Xcode.
+# scripts/xcode-pin.sh writes a DEVELOPER_DIR-pinning shim for each Xcode shim in /usr/bin into $XBIN.
+"$ROOT/scripts/xcode-pin.sh" shims "$DEV" "$XBIN" || exit 1
+pinned="$(env -u DEVELOPER_DIR PATH="$XBIN:/usr/bin:/bin" xcodebuild -version 2>/dev/null | sed -n 's/^Build version //p')"
+[[ "$pinned" == "$XCODE_FOUND" ]] \
+  || { echo "tauri-ios-reference: the PATH shims in $XBIN run Xcode build '${pinned:-none}', not $XCODE_FOUND: no reference for $DEV" >&2; exit 1; }
+argv_wrapper xcrun "$XBIN/xcrun"
+argv_wrapper swift "$XBIN/xcrun" swift
 WRAPPED=(cargo xcrun swift)
 if [[ "$PLATFORM" == macos ]]; then
-  argv_wrapper lipo /usr/bin/lipo
+  argv_wrapper lipo "$XBIN/lipo"
   argv_wrapper hdiutil /usr/bin/hdiutil
   argv_wrapper codesign /usr/bin/codesign
-  argv_wrapper SetFile /usr/bin/SetFile
+  argv_wrapper SetFile "$XBIN/SetFile"
   argv_wrapper bless /usr/sbin/bless
   WRAPPED+=(lipo hdiutil codesign SetFile bless)
 fi
 for w in "${WRAPPED[@]}"; do chmod +x "$BIN/$w"; done
 ORIG_PATH="$PATH"
-export PATH="$BIN:$PATH"
+export DEVELOPER_DIR="$DEV" PATH="$BIN:$XBIN:$PATH"
 
 # --- dependencies (inside the work copy only) ------------------------------------------------------------------
 cd "$WORK"
@@ -131,10 +162,9 @@ elif [[ -f package-lock.json ]]; then npm ci
 elif [[ -f yarn.lock ]]; then yarn install --frozen-lockfile
 fi
 FEATURES=()
-[[ -n "${TAURI_FEATURES:-}" ]] && FEATURES=(--features ${TAURI_FEATURES//,/ })
+if [[ -n "${TAURI_FEATURES:-}" ]]; then read -ra feats <<< "${TAURI_FEATURES//,/ }"; FEATURES=(--features ${feats[@]+"${feats[@]}"}); fi
 unset TAURI_FEATURES   # ours, not Tauri's: keep it out of the recorded TAURI_* env
 
-DEV="$(xcode-select -p)"
 TOOLCHAIN="$DEV/Toolchains/XcodeDefault.xctoolchain"
 # Normalisation prefixes for calls.json (more are added per platform below).
 PREFIXES=('$WORK' "$WORK" '$WORK' "$TMP_LOGICAL/work" '$REFTMP' "$TMP" '$REFTMP' "$TMP_LOGICAL"
@@ -143,10 +173,23 @@ PREFIXES=('$WORK' "$WORK" '$WORK' "$TMP_LOGICAL/work" '$REFTMP' "$TMP" '$REFTMP'
           '$DARWIN_USER_TEMP_DIR' "$(getconf DARWIN_USER_TEMP_DIR | sed 's:/$::')")
 
 # report_app <app>: `xless tauri report` of the built bundle → <out>/reference.json (wrappers off: app build only).
+# xless itself is built by xcode-select's Xcode: the reference's Xcode may ship a Swift older than Package.swift's tools
+# version (6.3 before Xcode 26.4), and which Xcode builds the reporting tool does not change the report.
 report_app() {
   export PATH="$ORIG_PATH"
-  (cd "$ROOT" && swift build --product xless -q)
-  "$(cd "$ROOT" && swift build --show-bin-path)/xless" tauri report "$1" --json "$OUT/reference.json"
+  (cd "$ROOT" && env -u DEVELOPER_DIR swift build --product xless -q) \
+    || { echo "tauri-ios-reference: building xless with xcode-select's Xcode ($(env -u DEVELOPER_DIR xcode-select -p)) failed" >&2; exit 1; }
+  "$(cd "$ROOT" && env -u DEVELOPER_DIR swift build --show-bin-path)/xless" tauri report "$1" --json "$OUT/reference.json"
+}
+# check_xcode <file>…: refuse the run when a log names another Xcode or the Command Line Tools (a tool that bypassed
+# the PATH shims, e.g. by an absolute /usr/bin path with DEVELOPER_DIR cleared).
+check_xcode() {
+  local others
+  if ! others="$("$ROOT/scripts/xcode-pin.sh" check "$DEV" "$@" 2>&1)"; then
+    echo "tauri-ios-reference: the build used a toolchain other than $DEV, so it is no reference for Xcode $XCODE_FOUND:" >&2
+    while IFS= read -r line; do echo "  $line" >&2; done <<< "$others"
+    exit 1
+  fi
 }
 # normalize <platform>: merges the logs into <out>/calls.json.
 normalize() {
@@ -171,6 +214,7 @@ if [[ "$PLATFORM" == macos ]]; then
   [[ -n "$APP_BUNDLE" && -n "$DMG" ]] || { echo "tauri-ios-reference: no .app or .dmg under $BUNDLE_DIR" >&2; exit 1; }
   echo "==> app: $APP_BUNDLE"
   echo "==> dmg: $DMG"
+  check_xcode "$OUT"/*.jsonl "$OUT/build.log"
   report_app "$APP_BUNDLE"
 
   # DMG: read-only attach at a private mount point (no Finder window), list the top level, detach.
@@ -208,7 +252,7 @@ PY
   hdiutil detach "$MNT" -quiet; trap - EXIT
   echo "==> codesign -dv of the .app: $(codesign -dv "$APP_BUNDLE" 2>&1 | tr '\n' ' ')"
 
-  SDK="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
+  SDK="$("$XBIN/xcrun" --sdk macosx --show-sdk-path)"
   PREFIXES+=('$SDK' "$SDK")
   normalize macos
   echo "==> wrote $OUT/reference.json, $OUT/calls.json and $OUT/dmg.json"
@@ -244,7 +288,7 @@ if [[ $status -ne 0 || -z "$APP_BUNDLE" ]]; then
     exit $(( status == 0 ? 1 : status ))
   fi
   echo "==> tauri ios build exited $status; falling back to xcodebuild CODE_SIGNING_ALLOWED=NO" | tee -a "$OUT/build.log"
-  PROJ="$(ls -d "$APPLE_DIR"/*.xcodeproj | head -1)"
+  projs=("$APPLE_DIR"/*.xcodeproj); PROJ="${projs[0]}"
   SCHEME="$(basename "$PROJ" .xcodeproj)_iOS"
   xcodebuild -project "$PROJ" -scheme "$SCHEME" -configuration release -sdk iphoneos -destination 'generic/platform=iOS' \
     -derivedDataPath "$TMP/dd" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build 2>&1 | tee -a "$OUT/build.log"
@@ -269,10 +313,18 @@ for d in ${DERIVED[@]+"${DERIVED[@]}"}; do
   while IFS= read -r f; do LOGS+=("$f"); done < <(ls -tr "$d"/Logs/Build/*.xcactivitylog 2>/dev/null)
 done
 /usr/bin/python3 "$ROOT/scripts/tauri-reference-xcodelog.py" "$EXE" "$OUT" "${LOGS[@]}"
+# Xcode stamps its own build and the SDK's into the app: both must be the requested Xcode's.
+stamped="$(/usr/libexec/PlistBuddy -c 'Print :DTXcodeBuild' "$APP_BUNDLE/Info.plist" 2>/dev/null || true)"
+sdk_build="$(/usr/libexec/PlistBuddy -c 'Print :DTSDKBuild' "$APP_BUNDLE/Info.plist" 2>/dev/null || true)"
+want_sdk="$("$XBIN/xcrun" --sdk iphoneos --show-sdk-build-version)"
+[[ "$stamped" == "$XCODE_FOUND" && "$sdk_build" == "$want_sdk" ]] || {
+  echo "tauri-ios-reference: the app was built by Xcode build '$stamped' with SDK '$sdk_build', not $XCODE_FOUND with $want_sdk" >&2
+  exit 1; }
+check_xcode "$OUT"/*.jsonl "$OUT/build.log" "$OUT/link.txt" "$OUT/compile.json"
 
 report_app "$APP_BUNDLE"
 
-SDK="$(/usr/bin/xcrun --sdk iphoneos --show-sdk-path)"
+SDK="$("$XBIN/xcrun" --sdk iphoneos --show-sdk-path)"
 PREFIXES+=('$SDK' "$SDK")
 for d in ${DERIVED[@]+"${DERIVED[@]}"}; do PREFIXES+=('$DERIVED' "$d"); done
 normalize ios
