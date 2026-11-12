@@ -44,7 +44,7 @@ let refusedCases: [String: String] = [
 ]
 
 /// The Xcode builds whose ibtool outputs are committed (`golden/<build>/`), one per `XcodeToolsProfile`.
-let goldenBuilds = ["17A400", "17B100", "17B55", "17C52", "17C529", "17E192", "27A266a", "27A9275", "27B52"]
+let goldenBuilds = ["17A400", "17B100", "17B55", "17C52", "17C529", "17E192", "17E202", "27A266a", "27A9275", "27B52"]
 
 struct GoldenCase: CustomStringConvertible, Sendable {
     let name: String
