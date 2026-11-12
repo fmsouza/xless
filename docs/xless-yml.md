@@ -68,7 +68,7 @@ A failure here exits 17 as `[upload] …`; the build is already uploaded and pro
 ## Launch storyboard
 
 With `launchStoryboard` set, the iOS `assets` stage compiles the storyboard without ibtool, byte-identical to the ibtool of
-the image's Xcode (27B52, 27A9275, 27A266a, 17E202, 17E192, 17C529, 17C52, 17B100, 17B55 or 17A400; any other Xcode is refused, [research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)).
+the image's Xcode (27B52, 27A9275, 27A266a, 17F42, 17E202, 17E192, 17C529, 17C52, 17B100, 17B55 or 17A400; any other Xcode is refused, [research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)).
 `xless storyboard compile` is the same compiler as a standalone command (`--xcode-build` picks the Xcode; by default the image's):
 
 - The `--target-device` set comes from `UIDeviceFamily` in the app's Info.plist: `[1]` → iPhone, `[1, 2]` → iPhone + iPad

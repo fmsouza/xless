@@ -322,10 +322,10 @@ private func fixtureMetadata() throws -> (data: Data, work: URL, registry: URL) 
             + ["SwiftRs.o", "Tauri.o", "XlessTauriSwift.o"].map { real(products.appendingPathComponent($0)) })
     }
 
-    /// Every 6.3.x names the target (6.3.0 for Xcode 26.4, 6.3.1 for Xcode 26.4.1); 6.2 and 6.4 name the product.
+    /// Every 6.3.x names the target (6.3.0 for Xcode 26.4, 6.3.1 for Xcode 26.4.1, 6.3.2 for Xcode 26.5); 6.2 and 6.4 name the product.
     @Test func libtoolWorkaroundCoversEverySwift63Release() {
         func links(_ v: String) -> Bool { SwiftPackages.linksLibraryProductWithLibtool(SwiftToolchain(version: v, root: "/opt/xless/toolchains/swift-\(v)")) }
-        #expect(links("6.3.0") && links("6.3.1"))
+        #expect(links("6.3.0") && links("6.3.1") && links("6.3.2"))
         #expect(!links("6.2.4") && !links("6.4.0") && !links("6.4.2"))
     }
 

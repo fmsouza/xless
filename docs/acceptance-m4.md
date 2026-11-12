@@ -10,7 +10,7 @@ Scope: the toolchain only. Registry publication, CD workflows, upload from CD, T
 
 ## G1. Tools follow the pin
 
-- `actool`, `ibtool`, `copypng` and the `assets` stage take their output formats from the image's Xcode build (`/opt/xless/toolchain-meta.json`) through a tools profile. Profiles exist for Xcode 26.0.1 (17A400), 26.1 (17B55), 26.1.1 (17B100), 26.2 (17C52), 26.3 (17C529), 26.4 (17E192), 26.4.1 (17E202), 27.0 (27A266a), 27.1 (27A9275) and 27.2 (27B52), measured black-box ([research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)); the per-build golden files are byte-identical.
+- `actool`, `ibtool`, `copypng` and the `assets` stage take their output formats from the image's Xcode build (`/opt/xless/toolchain-meta.json`) through a tools profile. Profiles exist for Xcode 26.0.1 (17A400), 26.1 (17B55), 26.1.1 (17B100), 26.2 (17C52), 26.3 (17C529), 26.4 (17E192), 26.4.1 (17E202), 26.5 (17F42), 27.0 (27A266a), 27.1 (27A9275) and 27.2 (27B52), measured black-box ([research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)); the per-build golden files are byte-identical.
 - Match against an Xcode 26.2 reference: `samples/HelloRN/xless.overlay-26.2.yml` (pinned to Xcode 26.2) built in the Xcode 26.2 image matches a reference recorded from `xcodebuild` of Xcode 26.2 on a Mac, app and extension, with no allowed gaps beyond the documented app-icon one, asset catalogs rendition by rendition (`scripts/test-rn-linux.sh`, both runs: fresh and offline).
 - Refusal of an unprofiled build: `make images` and `scripts/rn-reference.sh` refuse an Xcode with no profile (`scripts/xcode-tools.sh`), and an image whose Xcode build has no profile is refused by the `actool` and `ibtool` shims with exit 70 and a fix naming `make images`; they never fall back to another Xcode's output. Covered by `Tests/shell/xcode-tools.test.sh` and the Swift tests.
 
@@ -44,7 +44,7 @@ Note: the Tauri sample's reference was recorded with Xcode 27.0. Built in the Xc
 ## Known gaps
 
 - amd64 was verified under Rosetta on an Apple-silicon Mac, not on a native x86_64 host (deployment work is a later plan). The Docker VM must run amd64 through Rosetta; with Colima that needs the `vz` VM type with Rosetta enabled, which on some Colima and Lima releases has to be set in the VM's Lima configuration (`vmOpts.vz.rosetta`, with `enabled: true` and `binfmt: true`). Under QEMU user-mode emulation gcc and Swift crashed at random.
-- Tools profiles exist for Xcode 26.0.1 (17A400), 26.1 (17B55), 26.1.1 (17B100), 26.2 (17C52), 26.3 (17C529), 26.4 (17E192), 26.4.1 (17E202), 27.0 (27A266a), 27.1 (27A9275) and 27.2 (27B52) only; any other build is refused until it is measured (26.0.1, 26.1, 26.1.1, 26.3, 26.4, 26.4.1, 27.1 and 27.2 were added after this milestone).
+- Tools profiles exist for Xcode 26.0.1 (17A400), 26.1 (17B55), 26.1.1 (17B100), 26.2 (17C52), 26.3 (17C529), 26.4 (17E192), 26.4.1 (17E202), 26.5 (17F42), 27.0 (27A266a), 27.1 (27A9275) and 27.2 (27B52) only; any other build is refused until it is measured (26.0.1, 26.1, 26.1.1, 26.3, 26.4, 26.4.1, 26.5, 27.1 and 27.2 were added after this milestone).
 - The Tauri sample has a reference for Xcode 27.0 only.
 
 Everything else: [react-native.md](react-native.md#known-gaps).
