@@ -51,8 +51,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 PLATFORM=ios
 if [[ "${1:-}" == --platform ]]; then PLATFORM="${2:-}"; shift 2 || true; fi
-[[ "$PLATFORM" == ios || "$PLATFORM" == macos ]] && [[ $# -eq 2 ]] \
-  || { echo "usage: $0 [--platform ios|macos] <tauri-app-root> <out-dir>" >&2; exit 2; }
+if [[ ( "$PLATFORM" != ios && "$PLATFORM" != macos ) || $# -ne 2 ]]; then
+  echo "usage: $0 [--platform ios|macos] <tauri-app-root> <out-dir>" >&2; exit 2
+fi
 [[ "$(uname)" == Darwin ]] || { echo "tauri-ios-reference: needs macOS (uname is $(uname))" >&2; exit 1; }
 # The Xcode: DEVELOPER_DIR if set, else the APFS clone at ~/.cache/xless/Xcode.app when it is versions.env's pinned
 # build, else xcode-select's (as scripts/rn-reference.sh). Any Xcode with an XcodeToolsProfile entry is a valid reference

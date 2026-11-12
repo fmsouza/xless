@@ -37,7 +37,7 @@ case "${1:-}" in
   check)
     [[ $# -ge 3 ]] || die "usage: $0 check <Developer dir> <file>…"
     dev="${2%/}"; shift 2
-    real="$(cd "$dev" 2>/dev/null && pwd -P || echo "$dev")"
+    real="$(cd "$dev" 2>/dev/null && pwd -P)" || real="$dev"
     # A path ends at whitespace, a quote or a list separator (PATH-style values, -flag=… and JSON strings).
     others="$( { grep -ohE "/[^\"'[:space:]:;,=\\\\]*\\.app/Contents/Developer|/Library/Developer/CommandLineTools" "$@" 2>/dev/null || true; } \
       | sort -u | grep -vxF -e "$dev" -e "$real" || true)"
