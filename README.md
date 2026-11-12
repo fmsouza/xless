@@ -45,6 +45,7 @@ Or in a browser:
    | 27.1 (build 27A9275) | `Xcode_27.1.xip` |
    | 27.0 (build 27A266a) | `Xcode_27.xip` |
    | 26.2 (build 17C52) | `Xcode_26.2_Universal.xip` |
+   | 26.1 (build 17B55) | `Xcode_26.1_Universal.xip` |
    | 26.0.1 (build 17A400) | `Xcode_26.0.1_Universal.xip` |
 
 3. Keep the file where your browser saved it. The commands below assume `~/Downloads`.
