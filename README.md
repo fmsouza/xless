@@ -44,6 +44,7 @@ Or in a browser:
    | 27.2 (build 27B52) | `Xcode_27.2.xip` |
    | 27.1 (build 27A9275) | `Xcode_27.1.xip` |
    | 27.0 (build 27A266a) | `Xcode_27.xip` |
+   | 26.4.1 (build 17E202) | `Xcode_26.4.1_Universal.xip` |
    | 26.4 (build 17E192) | `Xcode_26.4_Universal.xip` |
    | 26.3 (build 17C529) | `Xcode_26.3_Universal.xip` |
    | 26.2 (build 17C52) | `Xcode_26.2_Universal.xip` |
