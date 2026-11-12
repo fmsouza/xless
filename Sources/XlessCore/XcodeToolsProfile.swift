@@ -106,6 +106,21 @@ public struct XcodeToolsProfile: Sendable, Equatable {
             nibPlainViews: nib, nibOtherViews: nib)
     }()
 
+    /// Xcode 27.2 (27B52): the same formats as 27.1 except the version strings (the actool and ibtool bundle versions, and the
+    /// CAR header's CoreUI version, `MainVersion`, `AssetStorageVersion` and `Authoring Tool`).
+    public static let xcode27B52: XcodeToolsProfile = {
+        let nib = xcode27A266a.nibPlainViews
+        return XcodeToolsProfile(
+            xcodeBuild: "27B52", xcodeVersion: "27.2",
+            actoolBundleVersion: "25408", actoolShortVersion: "27.2",
+            carCoreUIVersion: 1011, carStorageVersion: 17,
+            carMainVersion: "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-1011.4 [LAR]",
+            carAssetStorageVersion: "Xcode 27.2 (27B52) via AssetCatalogAgent-AssetRuntime",
+            carAuthoringTool: "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-664 [LAR] [IIO-2851.1.8][LAR] AppleJPEG[1][32]  CMPhoto[1][222]] [IR-120(hw)]",
+            ibtoolBundleVersion: "25408", ibtoolShortVersion: "27.2",
+            nibPlainViews: nib, nibOtherViews: nib)
+    }()
+
     /// Xcode 26.2 (17C52).
     public static let xcode17C52 = XcodeToolsProfile(
         xcodeBuild: "17C52", xcodeVersion: "26.2",
@@ -123,7 +138,7 @@ public struct XcodeToolsProfile: Sendable, Equatable {
                                    italicTraits: .opticalSizeBands(low: 13, high: 28, between: [20])))
 
     /// Every measured build, keyed by `xcodeBuild`.
-    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode17C52].map { ($0.xcodeBuild, $0) })
+    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52].map { ($0.xcodeBuild, $0) })
 
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {

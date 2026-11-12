@@ -7,7 +7,7 @@ S="$repo/scripts/xcode-tools.sh"
 fail() { echo "FAIL: $*"; exit 1; }
 
 test_known_builds_pass() {
-  for b in 17C52 27A266a 27A9275; do "$S" "$b" >/dev/null 2>&1 || fail "build $b refused"; done
+  for b in 17C52 27A266a 27A9275 27B52; do "$S" "$b" >/dev/null 2>&1 || fail "build $b refused"; done
 }
 test_unknown_build_refused() {
   local rc=0 err

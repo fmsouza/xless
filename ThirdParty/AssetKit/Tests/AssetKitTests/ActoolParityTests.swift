@@ -43,7 +43,7 @@ struct ActoolParityTests {
     }
 
     /// The Xcode builds whose actool output is recorded (`Fixtures/Parity.expected.<build>.json`).
-    static let builds = ["17C52", "27A266a", "27A9275"]
+    static let builds = ["17C52", "27A266a", "27A9275", "27B52"]
 
     static func expectedURL(_ build: String) throws -> URL {
         try #require(Bundle.module.url(forResource: "Parity.expected.\(build)", withExtension: "json", subdirectory: "Fixtures"))

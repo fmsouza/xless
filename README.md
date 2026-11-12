@@ -41,6 +41,7 @@ Or in a browser:
 
    | Xcode | File to download |
    |---|---|
+   | 27.2 (build 27B52) | `Xcode_27.2.xip` |
    | 27.1 (build 27A9275) | `Xcode_27.1.xip` |
    | 27.0 (build 27A266a) | `Xcode_27.xip` |
    | 26.2 (build 17C52) | `Xcode_26.2_Universal.xip` |

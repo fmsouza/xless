@@ -68,7 +68,7 @@ A failure here exits 17 as `[upload] …`; the build is already uploaded and pro
 ## Launch storyboard
 
 With `launchStoryboard` set, the iOS `assets` stage compiles the storyboard without ibtool, byte-identical to the ibtool of
-the image's Xcode (27A9275, 27A266a or 17C52; any other Xcode is refused, [research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)).
+the image's Xcode (27B52, 27A9275, 27A266a or 17C52; any other Xcode is refused, [research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)).
 `xless storyboard compile` is the same compiler as a standalone command (`--xcode-build` picks the Xcode; by default the image's):
 
 - The `--target-device` set comes from `UIDeviceFamily` in the app's Info.plist: `[1]` → iPhone, `[1, 2]` → iPhone + iPad
@@ -81,7 +81,7 @@ the image's Xcode (27A9275, 27A266a or 17C52; any other Xcode is refused, [resea
 - Only a subset is supported: one view controller (optionally with a storyboard ID) with a root view, image views,
   labels, Auto Layout constraints, colors, safe area and accessibility traits, views nested at most 32 levels deep,
   files up to 4 MiB; this covers Expo's generated `SplashScreen.storyboard`. Anything else, or a storyboard saved by
-  an Xcode newer than 27.1, fails with
+  an Xcode newer than 27.2, fails with
   `[assets] launch storyboard <path>: unsupported … at line <n> — …` (exit code 13).
 
 Example: [samples/HelloShipLaunch](../samples/HelloShipLaunch) (`launchStoryboard: Resources/LaunchScreen.storyboard`).

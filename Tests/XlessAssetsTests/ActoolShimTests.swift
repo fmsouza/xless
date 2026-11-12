@@ -63,7 +63,7 @@ private func plist(_ url: URL) throws -> [String: Any] {
     try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as! [String: Any]
 }
 
-@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("17C52", "24506", "26.2")])
+@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("27B52", "25408", "27.2"), ("17C52", "24506", "26.2")])
 func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ short: String) async throws {
     let r = await runShim(["--version", "--output-format", "xml1"], build: build)
     #expect(r.exitCode == 0)
@@ -85,7 +85,7 @@ func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ s
 }
 
 /// The car and the dependency info carry the image's actool: CoreUI version and header strings as measured.
-@Test(arguments: ["27A266a", "27A9275", "17C52"])
+@Test(arguments: ["27A266a", "27A9275", "27B52", "17C52"])
 func compiledCarCarriesTheImagesActool(_ build: String) async throws {
     let p = try #require(XcodeToolsProfile.all[build])
     let out = try tmp("out"), temp = try tmp("temp")
