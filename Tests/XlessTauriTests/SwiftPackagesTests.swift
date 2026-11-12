@@ -322,6 +322,33 @@ private func fixtureMetadata() throws -> (data: Data, work: URL, registry: URL) 
             + ["SwiftRs.o", "Tauri.o", "XlessTauriSwift.o"].map { real(products.appendingPathComponent($0)) })
     }
 
+    /// SwiftPM 6.3's Swift Build links a library product with `libtool` (its toolset support has no librarian yet), which
+    /// the SDK does not have; the targets build the same prelinked archives without it, so that build names the target.
+    @Test func buildWithSwift63NamesTheTargetNotTheProductAndMergesTargetArchives() throws {
+        let bundle = tmp(), agg = tmp()
+        try write("{}", to: bundle.appendingPathComponent("toolset-swb.json"))
+        let swift = SwiftToolchain(version: "6.3.0", root: "/opt/xless/toolchains/swift-6.3.0")
+        let products = agg.appendingPathComponent(".build-swift-6.3.0/out/Products/Release-iphoneos")
+        var calls: [(String, [String])] = []
+        let lib = try SwiftPackages.build(aggregateDir: agg, minimumIOS: "16.0", sdk: DarwinSDK(bundle: bundle), env: [:], swift: swift) { exe, args, _ in
+            calls.append((exe, args))
+            if exe.hasSuffix("/swift") { for t in ["XlessTauriSwift", "Tauri"] { try write("!<arch>\n", to: products.appendingPathComponent("\(t).o")) } }
+        }
+        func real(_ u: URL) -> String { u.path.replacingOccurrences(of: "/private/var/", with: "/var/") }
+        #expect(real(lib) == real(products.appendingPathComponent("libXlessTauriSwift.a")))
+        #expect(calls[0].0 == "/opt/xless/toolchains/swift-6.3.0/usr/bin/swift")
+        #expect(calls[0].1.suffix(4) == ["--scratch-path", agg.appendingPathComponent(".build-swift-6.3.0").path, "--target", "XlessTauriSwift"])
+        #expect(!calls[0].1.contains("--product"))
+        #expect(calls[1].0 == "llvm-libtool-darwin")
+        // The other releases keep naming the product.
+        for v in ["6.2.3", "6.4.2"] {
+            var args: [String] = []
+            _ = try? SwiftPackages.build(aggregateDir: tmp(), minimumIOS: "16.0", sdk: DarwinSDK(bundle: bundle), env: [:],
+                                         swift: SwiftToolchain(version: v, root: "/opt/xless/toolchains/swift-\(v)")) { exe, a, _ in if exe.hasSuffix("/swift") { args = a } }
+            #expect(args.suffix(2) == ["--product", "XlessTauriSwift"], "\(v)")
+        }
+    }
+
     @Test func theArchiveMergeTakesOnlyThisBuildsArchives() throws {
         // A plugin removed since the last build leaves its archive in the products directory, which outlives builds.
         let bundle = tmp(), agg = tmp()

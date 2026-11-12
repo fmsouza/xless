@@ -189,8 +189,26 @@ public struct XcodeToolsProfile: Sendable, Equatable {
         ibtoolBundleVersion: "24506", ibtoolShortVersion: "26.3",
         nibPlainViews: xcode17C52.nibPlainViews, nibOtherViews: xcode17C52.nibOtherViews)
 
+    /// Xcode 26.4 (17E192): its own version strings and CoreUI version (actool and ibtool report bundle version 24765, short version
+    /// 26.4; the CAR header's `MainVersion`, `AssetStorageVersion` and `Authoring Tool` come from the simulator runtime installed, iOS 26.4),
+    /// and the newest document ibtool accepts is 26.4. The nibs are 26.2's except one thing: a nib of plain views writes the system
+    /// blue (the tint) as the compiler's table has it, (0, 136, 255), not 26.2's (0, 122, 255). The 17E192 goldens equal the 17C529
+    /// ones bar `IBTOOL_VERSION` and those 10 plain-view nibs, which equal the 27A266a ones.
+    public static let xcode17E192 = XcodeToolsProfile(
+        xcodeBuild: "17E192", xcodeVersion: "26.4",
+        actoolBundleVersion: "24765", actoolShortVersion: "26.4",
+        carCoreUIVersion: 974, carStorageVersion: 17,
+        carMainVersion: "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-974.1",
+        carAssetStorageVersion: "Xcode 26.4 (17E192) via AssetCatalogSimulatorAgent",
+        carAuthoringTool: "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-653.4  [IIO-2784.4.10]",
+        ibtoolBundleVersion: "24765", ibtoolShortVersion: "26.4",
+        nibPlainViews: NibEncoding(writesLNEVersionKey: true, roundsSystemColors: true, systemColorOverrides: [:],
+                                   verifiedSystemColors: xcode17C52.nibPlainViews.verifiedSystemColors,
+                                   writesNilLabelText: true, uniquesCustomFonts: true, italicTraits: .shared),
+        nibOtherViews: xcode17C52.nibOtherViews)
+
     /// Every measured build, keyed by `xcodeBuild`.
-    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100, xcode17C529].map { ($0.xcodeBuild, $0) })
+    public static let all: [String: XcodeToolsProfile] = Dictionary(uniqueKeysWithValues: [xcode27A266a, xcode27A9275, xcode27B52, xcode17C52, xcode17A400, xcode17B55, xcode17B100, xcode17C529, xcode17E192].map { ($0.xcodeBuild, $0) })
 
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {

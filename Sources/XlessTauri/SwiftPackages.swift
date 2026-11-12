@@ -281,7 +281,7 @@ public enum SwiftPackages {
         }
         var args = ["build", "-c", "release", "--package-path", aggregateDir.path, "--build-system", "swiftbuild",
                     "--triple", "arm64-apple-ios\(minimumIOS)", "--toolset", toolset.path, "--force-resolved-versions"]
-        if own != nil { args += ["--scratch-path", buildDir.path, "--product", aggregateName] }
+        if let own { args += ["--scratch-path", buildDir.path, linksLibraryProductWithLibtool(own) ? "--target" : "--product", aggregateName] }
         try run(swift?.tool("swift") ?? "swift", args, [
             "SDKROOT": nil,
             "XCODE_EXTRA_PLATFORM_FOLDERS": sdk.bundle.appendingPathComponent("Developer/Platforms").path,
@@ -304,6 +304,15 @@ public enum SwiftPackages {
                              fix: "check the swift build output above; remove \(buildDir.path) and build again")
         }
         return found[0]
+    }
+
+    /// SwiftPM 6.3's Swift Build links a library product with `libtool -static` and asks it for its version (`libtool -V`),
+    /// which the SDK does not have (measured with Swift 6.3.0: it runs `<package dir>/libtool -V` whatever the toolset's
+    /// `librarian` says; 6.2 and 6.4 do not). Naming the target builds the same prelinked per-target archives without that
+    /// step, and they are merged below.
+    static func linksLibraryProductWithLibtool(_ swift: SwiftToolchain) -> Bool {
+        let parts = swift.version.split(separator: ".")
+        return parts.count >= 2 && parts[0] == "6" && parts[1] == "3"
     }
 
     /// The aggregate prelinked into `<aggregate>.o` in a `Release-iphoneos` products directory under `buildDir`.
