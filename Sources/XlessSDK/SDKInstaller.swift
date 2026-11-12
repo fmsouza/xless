@@ -32,15 +32,27 @@ public enum SDKInstaller {
 
     /// From an export: `xtool sdk install <darwin.xtoolsdk>` against a private config root (it deletes an existing SDK
     /// before installing), and a copy of the metadata. `xtool`: the xtool to run (a native setup's own, by path).
+    /// `toolchain`: a Swift toolchain root (a native setup's own, `<root>/usr/bin/swiftc`) put first on xtool's PATH, as
+    /// xtool runs `swiftc` from PATH and a native setup's toolchain is on no PATH yet.
     @discardableResult
-    public static func install(xtoolsdk: URL, meta: URL, xtool: String = "xtool",
+    public static func install(xtoolsdk: URL, meta: URL, xtool: String = "xtool", toolchain: URL? = nil,
                                env: [String: String] = ProcessInfo.processInfo.environment) throws -> (sdk: URL, meta: URL) {
         _ = try ToolchainMeta.load(from: meta)
+        var xtoolEnv: [String: String?] = [:]
+        if let toolchain { xtoolEnv["PATH"] = path(toolchain: toolchain, env: env) }
         return try install(env: env) { sdkStage, metaStage in
-            try Shell.run(xtool, ["sdk", "install", xtoolsdk.path], env: ["XDG_CONFIG_HOME": sdkStage.path], stage: .sdk, passthrough: true)
+            xtoolEnv["XDG_CONFIG_HOME"] = sdkStage.path
+            try Shell.run(xtool, ["sdk", "install", xtoolsdk.path], env: xtoolEnv, baseEnvironment: env, stage: .sdk, passthrough: true)
             try FileManager.default.copyItem(at: meta, to: metaStage)
             return DarwinSDKLocator.bundle(env: ["XDG_CONFIG_HOME": sdkStage.path])
         }
+    }
+
+    /// `env`'s PATH with the toolchain's `usr/bin` first.
+    static func path(toolchain: URL, env: [String: String]) -> String {
+        let bin = toolchain.appendingPathComponent("usr/bin").path
+        guard let rest = env["PATH"], !rest.isEmpty else { return "\(bin):/usr/local/bin:/usr/bin:/bin" }
+        return "\(bin):\(rest)"
     }
 
     private static func swap(_ staged: URL, into dest: URL) throws {

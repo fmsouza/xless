@@ -18,7 +18,7 @@ Apple targets, Swift Build, the Xcode tool shims), so `xless run` refuses them o
   unpacking it, so a missing library is named then rather than in the middle of a build. On Debian or Ubuntu:
 
   ```sh
-  sudo apt-get install -y curl ca-certificates tar gzip zip unzip git python3 cpio binutils libc6-dev libcurl4-openssl-dev libedit2 libgcc-11-dev libpython3-dev libsqlite3-0 libstdc++-11-dev libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev
+  sudo apt-get install -y curl ca-certificates tar gzip zip unzip git python3 cpio binutils libc6-dev libcurl4-openssl-dev libedit2 libgcc-11-dev libncurses6 libpython3-dev libsqlite3-0 libstdc++-11-dev libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev
   ```
 
   (On a release newer than Ubuntu 22.04, use its versions of `libgcc-*-dev` and `libstdc++-*-dev`.)

@@ -48,7 +48,9 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     #expect(steps[3].argv == ["/n/bin/xtool", "sdk", "build", "/home/u/Downloads/Xcode_27.xip", "\(sdk)/arm64.partial"])
     #expect(steps[3].action == .export(partial: URL(fileURLWithPath: "\(sdk)/arm64.partial"), final: URL(fileURLWithPath: "\(sdk)/arm64")))
     #expect(steps[4].action == .meta(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"), out: URL(fileURLWithPath: "\(sdk)/toolchain-meta.json")))
-    #expect(steps[5].action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"), meta: URL(fileURLWithPath: "\(sdk)/toolchain-meta.json")))
+    // xtool runs swiftc from PATH: the step carries the toolchain this setup installs, which is on no PATH yet.
+    #expect(steps[5].action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"), meta: URL(fileURLWithPath: "\(sdk)/toolchain-meta.json"),
+                                           toolchain: URL(fileURLWithPath: "/n/toolchains/swift-6.4.0")))
     #expect(steps[6].argv == ["/share/scripts/native-toolchain.sh", "/n/toolchains/swift-6.4.0", "own", bundle.path, metaDest.path,
                               "/share/docker/toolchain", "/n/swift-toolchain.json"])
     #expect(steps[6].action == .run)
@@ -76,7 +78,8 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     let other = try plan(installed: .init(xcodeBuild: "17C52", swiftVersion: "6.2.3")) { present.contains($0.path) }
     #expect(other.count == 2)
     #expect(other.first?.action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "/cache/xless/sdk/xcode27.0-27A266a/arm64/darwin.xtoolsdk"),
-                                              meta: URL(fileURLWithPath: "/cache/xless/sdk/xcode27.0-27A266a/toolchain-meta.json")))
+                                              meta: URL(fileURLWithPath: "/cache/xless/sdk/xcode27.0-27A266a/toolchain-meta.json"),
+                                              toolchain: URL(fileURLWithPath: "/n/toolchains/swift-6.4.0")))
     // Everything in place: nothing to do.
     let done = present.union(["/n/swift-toolchain.json"])
     #expect(try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.contains($0.path) }.isEmpty)
@@ -102,7 +105,8 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     #expect(steps[0].action == .meta(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
                                      out: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))
     #expect(steps[1].action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
-                                           meta: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))
+                                           meta: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json"),
+                                           toolchain: URL(fileURLWithPath: "/n/toolchains/swift-6.4.0")))
     #expect(steps.allSatisfy { !$0.argv.joined(separator: " ").contains("/cache/xless") })
 }
 
@@ -120,4 +124,13 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     for x in try KnownXcodes.load(versionsEnv: root.appendingPathComponent("versions.env")) {
         for a in ["arm64", "amd64"] { #expect(throws: Never.self) { try plan(x, arch: a, table: t) } }
     }
+}
+
+/// docs/native-install.md gives the same packages that setup's own messages name (the Swift toolchain needs
+/// libncurses6, which an ubuntu:24.04 base lacks).
+@Test func theNativeInstallDocListsTheAptPackages() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let doc = try String(contentsOf: root.appendingPathComponent("docs/native-install.md"), encoding: .utf8)
+    #expect(NativeSetupPlan.aptPackages.contains("libncurses6"))
+    #expect(doc.contains(NativeSetupPlan.aptLine + "\n"))
 }
