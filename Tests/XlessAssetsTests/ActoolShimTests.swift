@@ -63,7 +63,7 @@ private func plist(_ url: URL) throws -> [String: Any] {
     try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as! [String: Any]
 }
 
-@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("27B52", "25408", "27.2"), ("17C529", "24506", "26.3"), ("17C52", "24506", "26.2"), ("17B55", "24412", "26.1"), ("17B100", "24412", "26.1.1"), ("17A400", "24128", "26.0.1")])
+@Test(arguments: [("27A266a", "25098", "27.0"), ("27A9275", "25098", "27.1"), ("27B52", "25408", "27.2"), ("17E192", "24765", "26.4"), ("17C529", "24506", "26.3"), ("17C52", "24506", "26.2"), ("17B55", "24412", "26.1"), ("17B100", "24412", "26.1.1"), ("17A400", "24128", "26.0.1")])
 func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ short: String) async throws {
     let r = await runShim(["--version", "--output-format", "xml1"], build: build)
     #expect(r.exitCode == 0)
@@ -85,7 +85,7 @@ func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ s
 }
 
 /// The car and the dependency info carry the image's actool: CoreUI version and header strings as measured.
-@Test(arguments: ["27A266a", "27A9275", "27B52", "17C529", "17C52", "17B55", "17B100", "17A400"])
+@Test(arguments: ["27A266a", "27A9275", "27B52", "17E192", "17C529", "17C52", "17B55", "17B100", "17A400"])
 func compiledCarCarriesTheImagesActool(_ build: String) async throws {
     let p = try #require(XcodeToolsProfile.all[build])
     let out = try tmp("out"), temp = try tmp("temp")
