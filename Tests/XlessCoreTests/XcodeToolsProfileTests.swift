@@ -10,7 +10,7 @@ private func meta(_ build: String) -> ToolchainMeta {
 }
 
 @Test func testMeasuredBuilds() {
-    #expect(XcodeToolsProfile.all.keys.sorted() == ["17A400", "17B100", "17B55", "17C52", "27A266a", "27A9275", "27B52"])
+    #expect(XcodeToolsProfile.all.keys.sorted() == ["17A400", "17B100", "17B55", "17C52", "17C529", "27A266a", "27A9275", "27B52"])
     for (build, p) in XcodeToolsProfile.all { #expect(p.xcodeBuild == build) }
 }
 
@@ -155,12 +155,31 @@ private func meta(_ build: String) -> ToolchainMeta {
     #expect(p.nibPlainViews == q.nibPlainViews && p.nibOtherViews == q.nibOtherViews)
 }
 
+/// Xcode 26.3 encodes nibs and cars as 26.2 does (the 17C529 goldens equal the 17C52 ones, bar `IBTOOL_VERSION`); only its short
+/// version strings differ, and ibtool refuses a document that needs Xcode 26.3.1.
+@Test func test17C529() throws {
+    let p = try #require(XcodeToolsProfile.all["17C529"])
+    let q = try #require(XcodeToolsProfile.all["17C52"])
+    #expect(p.xcodeVersion == "26.3")
+    #expect(p.actoolBundleVersion == "24506")
+    #expect(p.actoolShortVersion == "26.3")
+    #expect(p.ibtoolBundleVersion == "24506")
+    #expect(p.ibtoolShortVersion == "26.3")
+    #expect(p.carCoreUIVersion == 973)
+    #expect(p.carStorageVersion == 17)
+    #expect(p.carMainVersion == "@(#)PROGRAM:CoreUI  PROJECT:CoreUI-973.1")
+    #expect(p.carAssetStorageVersion == "Xcode 26.3 (17C529) via AssetCatalogSimulatorAgent")
+    #expect(p.carAuthoringTool == "@(#)PROGRAM:CoreThemeDefinition  PROJECT:CoreThemeDefinition-653.3  [IIO-2784.3.4]")
+    #expect(p.carCoreUIVersion == q.carCoreUIVersion && p.carMainVersion == q.carMainVersion && p.carAuthoringTool == q.carAuthoringTool)
+    #expect(p.nibPlainViews == q.nibPlainViews && p.nibOtherViews == q.nibOtherViews)
+}
+
 @Test func testUnknownBuildRefuses() throws {
     let e = #expect(throws: XlessError.self) { try XcodeToolsProfile.forImage(meta: meta("99A9999"), stage: .assets) }
     #expect(e?.stage == .assets)
     #expect(e?.cause == "this image's Xcode build 99A9999 has no measured asset/storyboard tools profile")
     #expect(e?.fix.contains("xless setup --xcode") == true)
-    #expect(e?.fix.contains("17A400, 17B100, 17B55, 17C52, 27A266a, 27A9275, 27B52") == true)
+    #expect(e?.fix.contains("17A400, 17B100, 17B55, 17C52, 17C529, 27A266a, 27A9275, 27B52") == true)
     #expect(try XcodeToolsProfile.forImage(meta: meta("17C52"), stage: .ib) == XcodeToolsProfile.all["17C52"])
 }
 
