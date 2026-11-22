@@ -2,6 +2,7 @@
 
 The commands grouped under **Apple account** in `xless --help` work on your Apple developer account and App Store
 Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows which credentials are used,
+[`xless auth api-key`](#xless-auth-api-key), which creates and revokes App Store Connect API keys,
 [`xless team`](#xless-team), which picks the default team, [`xless secrets`](secrets.md), which keeps the keys, and
 `xless api`, which calls any documented App Store Connect endpoint. More commands (devices, bundle IDs, certificates,
 profiles, apps, TestFlight, releases) follow the conventions on this page.
@@ -54,7 +55,55 @@ xless auth logout                 # forget the kept session
 `xless auth status` reads no secret and sends nothing: for `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` it says whether
 each comes from the environment, a `_FILE` variable (and its path) or the secret store (and the entry), for which team,
 and whether an Apple ID session is kept (for whom, until when). App Store Connect does not tell a key its own role, so
-the role is shown as unknown unless xless recorded it. `--json` prints the same as a document.
+the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#xless-auth-api-key)). `--json` prints the same as a document.
+
+## `xless auth api-key`
+
+```sh
+xless auth api-key create                         # an APP_MANAGER key for all apps, straight into the secret store
+xless auth api-key create --role ADMIN --name ci  # another role (repeatable), another name
+xless auth api-key create --app 1234567890        # a key that sees only that app (repeatable)
+xless auth api-key import --p8-file AuthKey_2X9R4HXF34.p8 --issuer-id 69a6de7e-...
+xless auth api-key list                           # the team's keys; * marks the one xless uses
+xless auth api-key revoke 2X9R4HXF34              # asks first (--yes without a terminal)
+```
+
+The first API key is the one thing an API key cannot create, so `create`, `list` and `revoke` use the
+[Apple ID web session](#the-apple-id-web-session) (App Store Connect's `/iris/v1/apiKeys`). Creating a team key needs an
+Apple ID that is the Account Holder, or an Admin the Account Holder allowed to generate keys; a 403 says so. The
+Account Holder may first have to request API access once, at App Store Connect > Users and Access > Integrations.
+
+`create`, in one process and one sign-in:
+
+1. checks the secret store before anything else: it must exist ([`xless secrets init`](secrets.md)), it is unlocked
+   (the passphrase is asked first), and it must not already hold an `ASC_KEY_P8` for the team (revoke or remove that
+   one first);
+2. creates the key (`--role`, default `APP_MANAGER`; `--name`, default `xless <date>`; all apps unless `--app`) and
+   downloads its private key **once**: Apple offers it a single time, so the download is never retried;
+3. seals it into the store as `ASC_KEY_P8@<TEAM_ID>` with its key ID, issuer ID, team and role (never on disk in
+   clear);
+4. checks it with one documented call (`GET /v1/apps?limit=1`; a brand-new key can be refused for a few seconds, so a
+   401 is retried a few times) before reporting success.
+
+If anything fails once the key exists (the download, the store, a body xless cannot read), the error says that key
+`<KEY_ID>` exists, that xless does not have its private key and that it cannot be downloaded again: revoke it with
+`xless auth api-key revoke <KEY_ID>`.
+
+Pick the narrowest role that covers what you plan: `APP_MANAGER` works for apps, the listing, TestFlight, builds,
+certificates and profiles; users and invitations need `ADMIN`; `DEVELOPER` cannot create certificates; `FINANCE`,
+`SALES` and `ACCESS_TO_REPORTS` read reports. App Store Connect never tells a key its own role, so xless records the
+role of the keys it creates (and of imported keys given `--role`), and `xless auth status` shows it.
+
+`import` needs no Apple ID: it reads the `.p8` once, checks that it is a P-256 private key and that App Store Connect
+accepts it (`GET /v1/apps`), stores it as `ASC_KEY_P8@<TEAM_ID>` (with `--team` or the saved team) or `ASC_KEY_P8`,
+then offers to delete the file. A key that does not work is not stored. `--key-id` defaults to the one in an
+`AuthKey_<KEY_ID>.p8` file name.
+
+`revoke` asks before it revokes (Apple cannot undo it; everything using the key stops working), then removes the
+store's entries for that key ID. A key that is already revoked only has its entries removed.
+
+Individual keys (each person's own key, App Store Connect's `/iris/v2/apiKeys`, with a key pair made on the client)
+and in-app purchase keys are not supported.
 
 ## `xless team`
 

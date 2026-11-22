@@ -6,7 +6,19 @@ excludes `*.p8` and `*.pem`.)
 
 ## 1. App Store Connect API key
 
-App Store Connect → Users and Access → Integrations → App Store Connect API → generate a key with the **Admin** role. Download the `.p8` (Apple offers it once).
+On your own machine, let xless create it (the Apple ID of the Account Holder, or of an Admin allowed to generate keys,
+signs in once on the terminal):
+
+```sh
+xless secrets init                         # once
+xless auth api-key create --role ADMIN     # the key goes straight into the secret store, checked, never on disk in clear
+```
+
+`--role ADMIN` because step 2 onwards creates certificates and, later, users; a key that only ships builds can be
+`APP_MANAGER` (the default). See [apple-account.md](apple-account.md#xless-auth-api-key). An existing `.p8` goes in with
+`xless auth api-key import --p8-file AuthKey_<KEY_ID>.p8 --issuer-id <ISSUER_ID>`.
+
+By hand instead (and for CI): App Store Connect → Users and Access → Integrations → App Store Connect API → generate a key with the **Admin** role. Download the `.p8` (Apple offers it once).
 
 Store three secrets:
 

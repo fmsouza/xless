@@ -15,7 +15,7 @@ struct AuthCommand: AsyncParsableCommand {
         the Apple ID web session, and say so in their --help. Each of them signs in and forgets the session at exit, unless \
         `xless auth login --keep 30m` kept one in the kernel keyring (Linux; at most an hour; `xless auth logout` drops it).
         """,
-        subcommands: [AuthLoginCommand.self, AuthLogoutCommand.self, AuthStatusCommand.self])
+        subcommands: [AuthLoginCommand.self, AuthLogoutCommand.self, AuthStatusCommand.self, AuthAPIKeyCommand.self])
 }
 
 struct AuthLoginCommand: AsyncParsableCommand {
@@ -83,7 +83,7 @@ struct AuthStatusCommand: ParsableCommand {
             guard let file = try VaultStore(location: .standard()).read(),
                   let entry = try VaultResolver.candidate(for: "ASC_KEY_P8", in: file, team: selected) else { return nil }
             return .init(name: entry.name, teamID: entry.metadata.teamID ?? AuthStatusReport.team(fromName: entry.name),
-                         hasKeyID: entry.metadata.keyID != nil, hasIssuerID: entry.metadata.issuerID != nil)
+                         hasKeyID: entry.metadata.keyID != nil, hasIssuerID: entry.metadata.issuerID != nil, role: entry.metadata.role)
         }
         let cache = AppleWebCLI.cache
         let report = AuthStatusReport.build(env: ProcessInfo.processInfo.environment, storeKey: storeKey, teamFlag: team.team,
@@ -116,6 +116,8 @@ struct AuthStatusReport: Encodable, Equatable {
         let teamID: String?
         let hasKeyID: Bool
         let hasIssuerID: Bool
+        /// The role xless recorded when it created or imported the key.
+        var role: String? = nil
     }
 
     let team: String?
@@ -132,6 +134,7 @@ struct AuthStatusReport: Encodable, Equatable {
     static func build(env: [String: String], storeKey: Result<StoreKey?, any Error>, teamFlag: String?, savedTeam: String?,
                       keyringAvailable: Bool, session info: KeptSessionInfo?, now: Date) -> AuthStatusReport {
         var keyTeam: String?
+        var keyRole: String?
         let credentials = names.map { name -> Credential in
             if let v = env[name], !v.isEmpty { return Credential(name: name, source: "environment", detail: "$\(name)") }
             if let path = env["\(name)_FILE"], !path.isEmpty { return Credential(name: name, source: "file", detail: "$\(name)_FILE: \(path)") }
@@ -144,6 +147,7 @@ struct AuthStatusReport: Encodable, Equatable {
                 let present = name == "ASC_KEY_P8" || (name == "ASC_KEY_ID" ? key.hasKeyID : key.hasIssuerID)
                 guard present else { return Credential(name: name, source: "missing", detail: "the store's \(key.name) has no \(name == "ASC_KEY_ID" ? "key" : "issuer") ID") }
                 keyTeam = key.teamID
+                if name == "ASC_KEY_P8" { keyRole = key.role }
                 return Credential(name: name, source: "store", detail: name == "ASC_KEY_P8" ? key.name : "\(key.name)'s \(name == "ASC_KEY_ID" ? "key" : "issuer") ID")
             }
         }
@@ -156,7 +160,7 @@ struct AuthStatusReport: Encodable, Equatable {
         }
         let team = teamFlag ?? savedTeam
         return AuthStatusReport(team: team, teamSource: teamFlag != nil ? "flag" : (savedTeam != nil ? "saved" : "none"),
-                                apiKey: credentials, keyTeam: keyTeam, keyRole: nil, session: session)
+                                apiKey: credentials, keyTeam: keyTeam, keyRole: keyRole, session: session)
     }
 
     var text: String {
@@ -173,7 +177,7 @@ struct AuthStatusReport: Encodable, Equatable {
             lines.append("  \(name)  \(c.source)\(c.detail.map { " (\($0))" } ?? "")")
         }
         if let keyTeam { lines.append("  key's team     \(keyTeam)") }
-        lines.append("  key's role     \(keyRole ?? "unknown to xless (see App Store Connect > Users and Access > Integrations)")")
+        lines.append("  key's role     \(keyRole.map { $0.replacingOccurrences(of: ",", with: ", ") } ?? "unknown to xless (see App Store Connect > Users and Access > Integrations)")")
         lines.append("Apple ID web session:")
         switch session.state {
         case "kept":

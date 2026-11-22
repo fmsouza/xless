@@ -86,7 +86,7 @@ private let kept = KeptSessionInfo(appleID: "me@example.com", created: Date(time
     #expect(text.contains("saved by `xless team use`"))
     #expect(text.contains("kept for me@example.com"))
     #expect(text.contains("20 min left"))
-    #expect(text.contains("key's role"))
+    #expect(text.contains("key's role     unknown"))
     #expect(!(try ASCOutputJSON(r)).contains("KEYSECRETISH"))
 }
 
@@ -141,11 +141,13 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
 // MARK: help
 
 @Test func everyCommandThatUsesTheWebSessionSaysSo() {
-    for command in [AuthLoginCommand.self, TeamListCommand.self] as [any ParsableCommand.Type] {
+    for command in [AuthLoginCommand.self, TeamListCommand.self, AuthAPIKeyCreateCommand.self, AuthAPIKeyListCommand.self,
+                    AuthAPIKeyRevokeCommand.self] as [any ParsableCommand.Type] {
         let help = command.helpMessage(columns: 10_000)
         #expect(help.contains("Uses the Apple ID web session, not the App Store Connect API"), "\(command)")
     }
     #expect(!AuthStatusCommand.helpMessage(columns: 10_000).contains("Uses the Apple ID web session"))
+    #expect(!AuthAPIKeyImportCommand.helpMessage(columns: 10_000).contains("Uses the Apple ID web session"))
 }
 
 @Test func theAppleAccountGroupListsAuthAndTeam() {

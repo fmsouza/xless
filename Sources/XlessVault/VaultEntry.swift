@@ -20,9 +20,13 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         /// Whole seconds (so the dates survive the file's ISO 8601 text unchanged).
         public var created: Date?
         public var expires: Date?
+        /// The App Store Connect role of an API key xless created or was told (`ADMIN`, `APP_MANAGER`; several joined
+        /// with commas): App Store Connect never tells a key its own role. Authenticated only when set, so entries
+        /// written before it existed keep their associated data (an older xless reads an entry with a role as altered).
+        public var role: String?
 
         public init(teamID: String? = nil, keyID: String? = nil, issuerID: String? = nil, certificateID: String? = nil,
-                    created: Date? = nil, expires: Date? = nil) {
+                    created: Date? = nil, expires: Date? = nil, role: String? = nil) {
             func clean(_ s: String?) -> String? {
                 guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
                 return t
@@ -33,6 +37,7 @@ public struct VaultEntry: Codable, Sendable, Equatable {
             self.certificateID = clean(certificateID)
             self.created = created.map(Self.wholeSeconds)
             self.expires = expires.map(Self.wholeSeconds)
+            self.role = clean(role)
         }
 
         static func wholeSeconds(_ d: Date) -> Date { Date(timeIntervalSince1970: d.timeIntervalSince1970.rounded(.down)) }
@@ -77,6 +82,10 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         field(metadata.certificateID)
         field(metadata.created.map { String(Int64($0.timeIntervalSince1970)) })
         field(metadata.expires.map { String(Int64($0.timeIntervalSince1970)) })
+        if let role = metadata.role {
+            field("role")
+            field(role)
+        }
         return out
     }
 }
