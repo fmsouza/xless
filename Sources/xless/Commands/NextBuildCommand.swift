@@ -25,6 +25,7 @@ struct NextBuildCommand: AsyncParsableCommand {
 extension NextBuild {
     /// `DatedBuildNumber.compute` with the process's credentials, as the `config` stage (`[config] …`, exit 10).
     static let datedLookup: Compute = { version, bundleID in
-        try await withStage(.config) { try await DatedBuildNumber.compute(version: version, bundleID: bundleID, secrets: Secrets()) }
+        SecretScope.enter() // reads the App Store Connect key (both next-build commands come here)
+        return try await withStage(.config) { try await DatedBuildNumber.compute(version: version, bundleID: bundleID, secrets: Secrets()) }
     }
 }

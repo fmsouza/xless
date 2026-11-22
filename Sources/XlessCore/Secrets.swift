@@ -5,10 +5,14 @@ public struct Secrets: Sendable {
 
     public init(env: [String: String] = ProcessInfo.processInfo.environment) { self.env = env }
 
-    /// Value of NAME, else contents of the file at NAME_FILE, else nil.
+    /// Value of NAME, else contents of the file at NAME_FILE, else nil. Handing out a value enters `SecretScope`.
     public func optional(_ name: String) throws -> String? {
-        if let v = env[name], !v.isEmpty { return v }
+        if let v = env[name], !v.isEmpty {
+            SecretScope.enter()
+            return v
+        }
         if let path = env["\(name)_FILE"], !path.isEmpty {
+            SecretScope.enter()
             guard let s = try? String(contentsOfFile: path, encoding: .utf8) else {
                 throw XlessError(.config, "\(name)_FILE points to an unreadable file", fix: "check the path in \(name)_FILE")
             }

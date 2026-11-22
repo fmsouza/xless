@@ -1,0 +1,100 @@
+import CXlessProcess
+import Foundation
+
+/// The Linux kernel keyring, for secrets a later command of the same login session may reuse for a bounded time (the
+/// secret store's unlock, the opt-in Apple ID session). Keys go into the session keyring as `user` keys readable only by
+/// a possessor (a process that has that session keyring, as with `ssh-agent`: the same login session, not other users),
+/// and the kernel itself expires them after at most an hour. Raw syscalls, no libkeyutils: the static musl build works.
+///
+/// Not available everywhere: macOS has no such keyring, and containers often block the syscalls (Docker's default
+/// seccomp profile does). Callers check `isAvailable` and treat a missing keyring as "no cache".
+public enum KernelKeyring {
+    public struct Key: Sendable, Hashable {
+        public let serial: Int32
+    }
+
+    /// A failed keyring call: the operation and its errno.
+    public struct Failure: Error, Sendable, Equatable, CustomStringConvertible {
+        public let operation: String
+        public let code: Int32
+        public var description: String { "kernel keyring: \(operation) failed: \(String(cString: strerror(code)))" }
+    }
+
+    /// The longest a key may live: one hour.
+    public static let maximumTimeout = 3600
+
+    /// Possessor view, read, write, search and setattr; nothing for the user, group or others
+    /// (`KEY_POS_VIEW | KEY_POS_READ | KEY_POS_WRITE | KEY_POS_SEARCH | KEY_POS_SETATTR`).
+    public static let possessorOnly: UInt32 = 0x3b00_0000
+
+    private static let sessionKeyring = Int32(XLESS_KEY_SPEC_SESSION_KEYRING)
+    /// ENOKEY, EKEYEXPIRED, EKEYREVOKED (Linux's values; the calls only succeed on Linux).
+    private static let gone: [Int32] = [126, 127, 128]
+
+    /// Whether the kernel keyring can be used by this process (a session keyring is there or can be joined).
+    public static var isAvailable: Bool { xless_key_keyring_id(sessionKeyring) >= 0 }
+
+    /// Stores `secret` as the `user` key `name` in the session keyring (replacing a key of that name), possessor-only,
+    /// expiring after `timeout` seconds (1…3600). If the permissions or the timeout cannot be set, the key is revoked
+    /// and the call fails: a key never outlives its bound or is readable more widely than asked.
+    @discardableResult
+    public static func store(name: String, secret: SecretBytes, timeout: Int) throws -> Key {
+        guard (1...maximumTimeout).contains(timeout) else {
+            throw Failure(operation: "store (timeout \(timeout)s is outside 1…\(maximumTimeout)s)", code: EINVAL)
+        }
+        let serial = secret.withUnsafeBytes { xless_key_add(name, $0.baseAddress, $0.count, sessionKeyring) }
+        guard serial >= 0 else { throw failure("add_key") }
+        let key = Key(serial: Int32(serial))
+        do {
+            try check(xless_key_setperm(key.serial, possessorOnly), "setperm")
+            try check(xless_key_set_timeout(key.serial, UInt32(timeout)), "set_timeout")
+        } catch {
+            _ = xless_key_revoke(key.serial)
+            throw error
+        }
+        return key
+    }
+
+    /// The key named `name` in the session keyring, or nil when there is none (or it expired or was revoked).
+    public static func find(name: String) throws -> Key? {
+        let serial = xless_key_search(sessionKeyring, name)
+        if serial >= 0 { return Key(serial: Int32(serial)) }
+        let code = errno
+        if gone.contains(code) { return nil }
+        throw Failure(operation: "search", code: code)
+    }
+
+    /// The key's payload, straight into a `SecretBytes`.
+    public static func read(_ key: Key) throws -> SecretBytes {
+        while true {
+            let size = xless_key_read(key.serial, nil, 0)
+            guard size >= 0 else { throw failure("read") }
+            let bytes = SecretBytes(count: Int(size))
+            let got = bytes.withUnsafeMutableBytes { xless_key_read(key.serial, $0.baseAddress, $0.count) }
+            guard got >= 0 else { throw failure("read") }
+            if got == size { return bytes }
+            // The key changed size between the two calls (it was updated): read again.
+        }
+    }
+
+    /// The key's permission mask, as the kernel reports it (KEYCTL_DESCRIBE).
+    public static func permissions(_ key: Key) throws -> UInt32 {
+        var buffer = [CChar](repeating: 0, count: 512)
+        let size = buffer.withUnsafeMutableBufferPointer { xless_key_describe(key.serial, $0.baseAddress, $0.count) }
+        guard size >= 0 else { throw failure("describe") }
+        let fields = String(cString: buffer).split(separator: ";", maxSplits: 4, omittingEmptySubsequences: false)
+        guard fields.count == 5, let perm = UInt32(fields[3], radix: 16) else { throw Failure(operation: "describe", code: EINVAL) }
+        return perm
+    }
+
+    /// Revokes the key: it can no longer be read and the kernel drops it.
+    public static func revoke(_ key: Key) throws {
+        try check(xless_key_revoke(key.serial), "revoke")
+    }
+
+    private static func check(_ result: Int, _ operation: String) throws {
+        if result < 0 { throw failure(operation) }
+    }
+
+    private static func failure(_ operation: String) -> Failure { Failure(operation: operation, code: errno) }
+}

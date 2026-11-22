@@ -8,9 +8,9 @@ public struct ShellResult: Sendable {
 
 public enum Shell {
     /// Secrets never handed to child processes: builds run third-party package code (SwiftPM macros and plugins,
-    /// unsandboxed on Linux), and signing/notarization get their keys through 0600 temp files instead.
-    public static let scrubbedEnvironment: [String] = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8", "XLESS_DIST_KEY", "XLESS_DEVID_KEY", "XLESS_INSTALLER_KEY"]
-        .flatMap { [$0, "\($0)_FILE"] }
+    /// unsandboxed on Linux), and signing/notarization get their keys through 0600 temp files instead. The list is
+    /// `SecretEnvironment`'s registry: a new secret is added there.
+    public static var scrubbedEnvironment: [String] { SecretEnvironment.names }
     /// Runs `executable` (resolved via PATH) with `arguments`. Throws XlessError(stage) on non-zero exit.
     /// The child inherits `baseEnvironment` (default: this process's environment; tests inject one instead of mutating the process) minus `scrubbedEnvironment`, plus `env` (explicit entries win;
     /// a nil value removes a variable). passthrough: stream output to the terminal instead of capturing it.

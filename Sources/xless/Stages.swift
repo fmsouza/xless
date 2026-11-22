@@ -100,6 +100,7 @@ enum StageRunner {
     static func sign(_ ctx: Context) async throws -> URL {
         try await withStage(.sign) {
             try ctx.requireDevice(.sign)
+            SecretScope.enter() // reads signing / notary / App Store Connect keys
             let input = try ctx.paths.bundle(in: ctx.paths.final, stage: .sign)
             // The Info.plists carry the map finalize applied: an overlay edited since (`--from sign`) is refused.
             try (ctx.rnOverlay?.identifiers ?? .none).checkFinalized(in: ctx.paths.final)
@@ -114,6 +115,7 @@ enum StageRunner {
     static func package(_ ctx: Context) async throws -> URL {
         try await withStage(.package) {
             try ctx.requireDevice(.package)
+            SecretScope.enter() // reads signing / notary / App Store Connect keys
             let input = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
             switch ctx.platform {
             case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out, dSYMs: ctx.paths.dSYMs)
@@ -148,6 +150,7 @@ enum StageRunner {
     static func upload(_ ctx: Context) async throws -> UploadOutcome {
         try await withStage(.upload) {
             try ctx.requireDevice(.upload)
+            SecretScope.enter() // reads signing / notary / App Store Connect keys
             // The App Store mac: the pkg (from package) to ASC's build-upload API under the mac
             // bundle id. Developer-ID mac builds stay distributed directly (the refusal below).
             if ctx.platform == .macos {

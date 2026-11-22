@@ -1,4 +1,5 @@
 import Crypto
+import XlessCore
 
 /// PBKDF2 with HMAC-SHA256 (RFC 8018 §5.2).
 enum PBKDF2 {
@@ -55,6 +56,6 @@ enum ApplePasswordKey {
 extension Array where Element == UInt8 {
     /// Overwrites the buffer with zeros (best effort: copies Swift made earlier are out of reach).
     mutating func resetBytes() {
-        for i in indices { self[i] = 0 }
+        withUnsafeMutableBytes { SecretBytes.zero($0) }
     }
 }

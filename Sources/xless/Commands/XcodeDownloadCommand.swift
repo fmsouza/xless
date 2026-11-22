@@ -44,7 +44,7 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
     }
 
     private func download() async throws {
-        CoreDumps.disable()
+        SecretScope.enter()
         let env = ProcessInfo.processInfo.environment
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let home = FileManager.default.homeDirectoryForCurrentUser
