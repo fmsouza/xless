@@ -1,6 +1,8 @@
 # One-time Apple setup
 
-Do these in order. Keep every secret in your CI secret store and a password manager; never commit them. (`.gitignore` already excludes `*.p8` and `*.pem`.)
+Do these in order. Keep every secret in your CI secret store and, on your own machine, in xless's encrypted secret store
+([secrets.md](secrets.md): `xless secrets import <NAME> --file <path>`); never commit them. (`.gitignore` already
+excludes `*.p8` and `*.pem`.)
 
 ## 1. App Store Connect API key
 

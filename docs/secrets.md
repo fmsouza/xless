@@ -1,0 +1,87 @@
+# The secret store (`xless secrets`)
+
+On your own machine, xless keeps Apple keys in an encrypted file rather than in plain `.p8` and `.pem` files. When a
+command needs a secret that the environment does not provide, it reads it from this store. CI keeps using environment
+variables and `_FILE` variables ([signing-and-testflight.md](signing-and-testflight.md#secrets)), and never opens the
+store.
+
+```sh
+xless secrets init                                   # asks a new passphrase, twice
+xless secrets import ASC_KEY_P8 --file AuthKey_ABC123DEFG.p8 --issuer-id 69a6de7e-...
+xless secrets import XLESS_DIST_KEY --file dist-key.pem
+xless secrets list                                   # names, kinds and IDs; never a value
+xless ship --platform ios                            # asks the passphrase once, when it needs a key
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `init` | Creates the store and asks its passphrase twice (at least 8 characters). The passphrase cannot be recovered. |
+| `status` | Where the store is, how many entries it has, and whether it is unlocked. |
+| `list` | Every entry's name, kind, team, key ID, issuer ID, certificate ID, creation and expiry dates. No passphrase needed. |
+| `import <name> --file <path>` | Adds the file's content. `--kind` (default: from the name), `--team-id`, `--key-id`, `--issuer-id`, `--certificate-id`, `--expires YYYY-MM-DD` record what it is. Then offers to delete the file. |
+| `export <name> --out <path>` | Writes the secret to a new file (mode 0600; an existing file is never overwritten). That copy is in clear: delete it once used. |
+| `rm <name>` | Removes an entry, after asking (`--yes` skips the question). It cannot be recovered. |
+| `unlock --remember 30m` | Keeps the store unlocked for at most an hour (see below). |
+| `lock` | Forgets a remembered unlock now. |
+| `passwd` | Changes the passphrase. |
+
+Kinds: `asc-api-key` (an App Store Connect API key: `.p8`, key ID and issuer ID required), `signing-key` (an RSA
+private key PEM from `xless sign bootstrap`), `auth-key` (an APNs, Sign in with Apple, DeviceCheck or MusicKit `.p8`),
+`password` and `generic`. Keys are checked when imported: a `.p8` must be a P-256 private key, a signing key an RSA one.
+A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID.
+
+## How the pipeline finds a secret
+
+For each secret, xless looks at `NAME`, then at the file named by `NAME_FILE`, then at the store's entry `NAME`. The
+store is only opened when it has such an entry, so a command that needs no key never asks the passphrase.
+
+| Secret | Store entry |
+|---|---|
+| `ASC_KEY_P8` | `ASC_KEY_P8` (kind `asc-api-key`) |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID` | the key ID and issuer ID recorded with `ASC_KEY_P8` |
+| `XLESS_DIST_KEY`, `XLESS_DEVID_KEY`, `XLESS_INSTALLER_KEY` | the entry of the same name (kind `signing-key`) |
+
+With several teams, name the entries `NAME@<TEAM_ID>` (for example `XLESS_DIST_KEY@ABCDE12345`) and record the team
+with `--team-id`. While only one entry stands for a name, it is used whatever its suffix; with several, xless stops and
+names them.
+
+The commands that run the pipeline in this process read the store: `xless ship` and the stage commands (`sign`,
+`package`, `upload`, …), `sign bootstrap` and `next-build`. `xless run` (and `--docker` builds) do not yet: they still
+need the `_FILE` variables of [signing-and-testflight.md](signing-and-testflight.md#secrets).
+
+The passphrase is read from the terminal (`/dev/tty`) only, never from a pipe, a file, an argument or the
+environment. A command that needs the store when it is locked and has no terminal (a script, `nohup`) stops with an
+error that says so.
+
+## Staying unlocked
+
+By default each command that needs the store asks the passphrase, and forgets the unlocked store when it exits.
+`--remember <duration>` (on `unlock`, `init`, `import` and `export`; at most `1h`) keeps it unlocked in the Linux kernel
+keyring instead: later commands in the same login session (the same terminal and its children) read the store without
+asking, until the time runs out or `xless secrets lock`. Other users, and other login sessions of yours, cannot read the
+cached key. macOS has no kernel keyring, and containers often block it; there `--remember` is refused.
+
+## The file
+
+The store is `$XDG_DATA_HOME/xless/vault/secrets.vault` (`~/.local/share/xless/vault/secrets.vault` by default), in a
+directory of mode 0700, with mode 0600. xless refuses to use it if the directory or the file is a symlink, belongs to
+another user, or can be read or written by anyone else; it never fixes the permissions itself.
+
+Each entry is encrypted with AES-256-GCM under a random 256-bit data key; the data key is encrypted with a key derived
+from the passphrase by scrypt (N = 2^17, r = 8, p = 1, recorded in the file). The names, kinds and IDs are in clear (so
+`list` works without the passphrase) but authenticated with the secret: an entry whose file was altered fails to open,
+with an error, and nothing of it is used. Writes go to a temporary file in the same directory that replaces the store
+in one step, under a lock, so concurrent commands do not lose each other's changes and a crash never leaves half a
+file.
+
+`passwd` encrypts the data key again under the new passphrase; it does not encrypt the entries again. A copy of the old
+file (a backup) still opens with the old passphrase, so after a passphrase leak, revoke the keys at Apple too.
+
+## What it protects against, and what it does not
+
+The store protects keys at rest: a stolen disk or laptop, a backup or a synced home directory, and other users of the
+machine. It does not protect against malware running as you while the store is unlocked (it can read the process's
+memory or the unlocked key in the kernel keyring, or wait for you to type the passphrase), nor against someone who
+has both the file and the passphrase.

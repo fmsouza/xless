@@ -1,12 +1,31 @@
 import Foundation
 
+/// Where a secret comes from when the environment does not have it: the encrypted secret store (`xless secrets`). Asked
+/// only after `NAME` and `NAME_FILE`, so CI (which sets them) never opens it. Returns nil when it has no such secret.
+public protocol SecretFallback: Sendable {
+    func lookup(_ name: String, stage: Stage) throws -> String?
+}
+
 public struct Secrets: Sendable {
     let env: [String: String]
+    let fallback: (any SecretFallback)?
 
-    public init(env: [String: String] = ProcessInfo.processInfo.environment) { self.env = env }
+    /// `fallback` defaults to the one the CLI installed at startup (`install(_:)`); none in tests and libraries.
+    public init(env: [String: String] = ProcessInfo.processInfo.environment, fallback: (any SecretFallback)? = Secrets.installedFallback) {
+        self.env = env
+        self.fallback = fallback
+    }
 
-    /// Value of NAME, else contents of the file at NAME_FILE, else nil. Handing out a value enters `SecretScope`.
-    public func optional(_ name: String) throws -> String? {
+    private static let installed = Installed()
+
+    /// The process-wide fallback every `Secrets()` uses (the CLI installs the secret store's resolver once, in `main`).
+    public static var installedFallback: (any SecretFallback)? { installed.value }
+
+    public static func install(_ fallback: (any SecretFallback)?) { installed.value = fallback }
+
+    /// Value of NAME, else contents of the file at NAME_FILE, else the secret store's (asked last, and only then).
+    /// Handing out a value enters `SecretScope`.
+    public func optional(_ name: String, stage: Stage = .config) throws -> String? {
         if let v = env[name], !v.isEmpty {
             SecretScope.enter()
             return v
@@ -18,12 +37,16 @@ public struct Secrets: Sendable {
             }
             return s
         }
+        if let fallback, let v = try fallback.lookup(name, stage: stage) {
+            SecretScope.enter()
+            return v
+        }
         return nil
     }
 
     public func required(_ name: String, stage: Stage) throws -> String {
-        guard let v = try optional(name) else {
-            throw XlessError(stage, "missing secret \(name)", fix: "set \(name) or \(name)_FILE")
+        guard let v = try optional(name, stage: stage) else {
+            throw XlessError(stage, "missing secret \(name)", fix: Self.missingFix(name))
         }
         return v
     }
@@ -31,5 +54,23 @@ public struct Secrets: Sendable {
     /// For IDs (key ID, issuer ID): trimmed of whitespace and newlines.
     public func identifier(_ name: String, stage: Stage) throws -> String {
         try required(name, stage: stage).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func missingFix(_ name: String) -> String {
+        switch name {
+        case "ASC_KEY_ID", "ASC_ISSUER_ID":
+            "set \(name) or \(name)_FILE, or keep the API key in the secret store with its IDs (`xless secrets import ASC_KEY_P8 --file AuthKey_<KEY_ID>.p8 --issuer-id <ISSUER_ID>`)"
+        default:
+            "set \(name) or \(name)_FILE, or keep it in the secret store (`xless secrets import \(name) --file <path>`)"
+        }
+    }
+}
+
+private final class Installed: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: (any SecretFallback)?
+    var value: (any SecretFallback)? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }

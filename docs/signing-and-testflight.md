@@ -12,8 +12,9 @@ team and `bundleID` to the registered bundle ID; the sample's values are placeho
 
 ## Secrets
 
-Secrets come only from environment variables or from a `NAME_FILE` variable naming a file that holds the value. They
-are never command-line flags and are never logged.
+Secrets come from environment variables, from a `NAME_FILE` variable naming a file that holds the value, or, on your
+own machine, from the encrypted secret store ([secrets.md](secrets.md)), in that order. They are never command-line
+flags and are never logged.
 
 | Variable | Purpose | Needed for |
 |---|---|---|

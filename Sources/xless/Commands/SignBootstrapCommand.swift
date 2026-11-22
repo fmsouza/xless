@@ -56,7 +56,7 @@ struct SignBootstrapCommand: AsyncParsableCommand {
         }
         print("""
         wrote private key to \(out)\(csrOnly ? " and CSR to \(out).csr" : "")
-        Store it as the secret \(type.secretName) (or \(type.secretName)_FILE) in your CI and password manager, then delete the local copy.
+        Keep it in the secret store (`xless secrets import \(type.secretName) --file \(out)`) and/or as the secret \(type.secretName) (or \(type.secretName)_FILE) in your CI, then delete the local copy.
         """)
     }
 }

@@ -66,9 +66,15 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "BigInt", package: "BigInt"),
         ]),
+        // The encrypted secret store (`xless secrets`) and `Secrets`' fallback to it.
+        .target(name: "XlessVault", dependencies: [
+            "XlessCore",
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "_CryptoExtras", package: "swift-crypto"),
+        ]),
         .executableTarget(name: "xless", dependencies: [
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
-            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID",
+            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
@@ -104,6 +110,11 @@ let package = Package(
             "XlessAppleID", "XlessCore",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "BigInt", package: "BigInt"),
+        ]),
+        .testTarget(name: "XlessVaultTests", dependencies: [
+            "XlessVault", "XlessCore",
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
         .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
