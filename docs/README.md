@@ -12,7 +12,7 @@ build. The pages below go further.
   notarized DMG, and running in CI.
 - [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, and how the
   pipeline reads it.
-- [apple-account.md](apple-account.md): the Apple account commands (`xless auth`, `xless team`, `xless api`, and the
+- [apple-account.md](apple-account.md): the Apple account commands (`xless auth`, `xless team`, `xless devices`, `xless api`, and the
   shared `--team`, `--json`, `--yes`, `--verbose`), the Apple ID web session, their JSON output, rate limits and
   `[account]` errors (exit code 20).
 - [bootstrap.md](bootstrap.md): the one-time Apple setup (API key, certificates, bundle ID, app record).
