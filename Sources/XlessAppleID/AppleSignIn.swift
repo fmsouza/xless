@@ -15,16 +15,23 @@ public struct AppleSignIn {
     let prompter: SignInPrompter
     let now: @Sendable () -> Date
     let srpPrivateKey: BigUInt?
+    /// The stage its errors report: `.sdk` for `xless xcode download`, `.account` for the Apple account commands.
+    let stage: Stage
 
-    public init(client: AppleWebClient, prompter: SignInPrompter) {
-        self.init(client: client, prompter: prompter, now: { Date() }, srpPrivateKey: nil)
+    public init(client: AppleWebClient, prompter: SignInPrompter, stage: Stage = .sdk) {
+        self.init(client: client, prompter: prompter, now: { Date() }, srpPrivateKey: nil, stage: stage)
     }
 
-    init(client: AppleWebClient, prompter: SignInPrompter, now: @escaping @Sendable () -> Date, srpPrivateKey: BigUInt?) {
-        self.client = client; self.prompter = prompter; self.now = now; self.srpPrivateKey = srpPrivateKey
+    init(client: AppleWebClient, prompter: SignInPrompter, now: @escaping @Sendable () -> Date, srpPrivateKey: BigUInt?,
+         stage: Stage = .sdk) {
+        self.client = client; self.prompter = prompter; self.now = now; self.srpPrivateKey = srpPrivateKey; self.stage = stage
     }
 
-    public func run() async throws {
+    private func fail(_ cause: String, fix: String) -> XlessError { XlessError(stage, cause, fix: fix) }
+
+    /// Signs in; returns the Apple ID (the email typed), for display only.
+    @discardableResult
+    public func run() async throws -> String {
         let account = try await prompter.ask("Apple ID (email): ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !account.isEmpty else { throw fail("no Apple ID given", fix: "type the email address of your Apple ID") }
         let password = try await prompter.askSecret("Password: ")
@@ -60,21 +67,25 @@ public struct AppleSignIn {
                   let scnt = response.value(forHTTPHeaderField: "scnt") else {
                 throw fail("Apple asked for a second factor without a session to verify it in", fix: Self.changedFix)
             }
-            var twoFactor = TwoFactor(client: client, prompter: prompter, widgetKey: widgetKey, sessionID: session, scnt: scnt)
+            var twoFactor = TwoFactor(client: client, prompter: prompter, widgetKey: widgetKey, sessionID: session, scnt: scnt, stage: stage)
             try await twoFactor.run()
         case 401:
             throw fail("Apple refused the Apple ID or password", fix: "check them and re-run (a few failed attempts can lock the Apple ID)")
         case 403:
             throw fail("Apple says the Apple ID is locked\(serviceMessage(data))", fix: "unlock it at https://iforgot.apple.com, then re-run")
         case 412:
-            throw fail("Apple wants this Apple ID to accept new terms or privacy notices",
-                       fix: "sign in once at https://developer.apple.com/account in a browser and accept what it asks, then re-run")
+            throw fail(Self.termsCause, fix: Self.termsFix)
         default:
             throw fail("Apple's sign-in answered HTTP \(response.statusCode)\(serviceMessage(data))", fix: Self.changedFix)
         }
         // Best effort, as xcodes does: lets App Store Connect set its cookies; a free Apple ID may be refused here.
         _ = try? await client.send(URLRequest(url: AppleEndpoints.olympusSession))
+        return account
     }
+
+    static let termsCause = "Apple wants this Apple ID to accept new terms, agreements or privacy notices (xless never accepts legal terms itself)"
+    static let termsFix = "sign in once in a browser at https://developer.apple.com/account (and https://appstoreconnect.apple.com/agreements for App Store Connect) and accept what it asks, then re-run"
+
 
     static let changedFix = "re-run; if it keeps failing, Apple's sign-in may have changed (report it)"
 
@@ -139,10 +150,14 @@ struct TwoFactor {
     let widgetKey: String
     let sessionID: String
     var scnt: String
+    let stage: Stage
 
-    init(client: AppleWebClient, prompter: SignInPrompter, widgetKey: String, sessionID: String, scnt: String) {
+    init(client: AppleWebClient, prompter: SignInPrompter, widgetKey: String, sessionID: String, scnt: String, stage: Stage = .sdk) {
         self.client = client; self.prompter = prompter; self.widgetKey = widgetKey; self.sessionID = sessionID; self.scnt = scnt
+        self.stage = stage
     }
+
+    private func fail(_ cause: String, fix: String) -> XlessError { XlessError(stage, cause, fix: fix) }
 
     mutating func run() async throws {
         let (data, response) = try await send(URLRequest(url: AppleEndpoints.auth))
@@ -209,8 +224,7 @@ struct TwoFactor {
                 }
                 prompter.say("That code was not accepted\(serviceMessage(data)). Try again.")
             case 412:
-                throw fail("Apple wants this Apple ID to accept new terms or privacy notices",
-                           fix: "sign in once at https://developer.apple.com/account in a browser and accept what it asks, then re-run")
+                throw fail(AppleSignIn.termsCause, fix: AppleSignIn.termsFix)
             default:
                 throw fail("Apple answered HTTP \(response.statusCode) to the verification code\(serviceMessage(data))", fix: AppleSignIn.changedFix)
             }
@@ -254,7 +268,7 @@ struct TwoFactor {
 
     private func securityKey() -> XlessError {
         fail("this Apple ID signs in with a hardware security key, which xless does not support",
-             fix: "use an Apple ID without security keys to download Xcode")
+             fix: stage == .sdk ? "use an Apple ID without security keys to download Xcode" : "use an Apple ID without security keys")
     }
 }
 

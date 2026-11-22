@@ -66,3 +66,14 @@ extension URLRequest {
     var bodyString: String { httpBody.map { String(decoding: $0, as: UTF8.self) } ?? "" }
     func header(_ name: String) -> String? { value(forHTTPHeaderField: name) }
 }
+
+/// A value shared with `@Sendable` closures.
+final class Box<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}

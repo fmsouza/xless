@@ -1,0 +1,156 @@
+import ArgumentParser
+import Foundation
+import Testing
+import XlessAppleID
+import XlessCore
+@testable import xless
+
+private func tempEnv() throws -> ([String: String], URL) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-config-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return (["XDG_CONFIG_HOME": dir.path, "HOME": "/nonexistent"], dir)
+}
+
+@Test func theConfigFileFollowsXDGElseHome() {
+    #expect(UserConfig.file(env: ["XDG_CONFIG_HOME": "/x/cfg", "HOME": "/home/u"]).path == "/x/cfg/xless/config.yml")
+    #expect(UserConfig.file(env: ["XDG_CONFIG_HOME": "relative", "HOME": "/home/u"]).path == "/home/u/.config/xless/config.yml")
+    #expect(UserConfig.file(env: ["HOME": "/home/u"]).path == "/home/u/.config/xless/config.yml")
+}
+
+@Test func theSavedTeamRoundTripsAndKeepsOtherKeys() throws {
+    let (env, dir) = try tempEnv()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    #expect(try UserConfig.load(env: env).team == nil)
+    #expect(AccountSession.savedTeam(env: env) == nil)
+    let file = UserConfig.file(env: env)
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("theme: dark\n".utf8).write(to: file)
+    try UserConfig.update(env: env) { $0.team = "ABCDE12345" }
+    #expect(AccountSession.savedTeam(env: env) == "ABCDE12345")
+    let text = try String(contentsOf: file, encoding: .utf8)
+    #expect(text.contains("theme: dark") && text.contains("team: ABCDE12345"), "\(text)")
+    let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+    #expect(mode?.intValue == 0o644)
+    try UserConfig.update(env: env) { $0.team = nil }
+    #expect(try UserConfig.load(env: env).team == nil)
+    #expect(try String(contentsOf: file, encoding: .utf8).contains("theme: dark"))
+}
+
+@Test func aSavedValueThatIsNotATeamIDIsIgnored() throws {
+    let (env, dir) = try tempEnv()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try UserConfig.update(env: env) { $0.team = "nope" }
+    #expect(AccountSession.savedTeam(env: env) == nil)
+}
+
+@Test func aBrokenConfigIsAConfigError() throws {
+    let (env, dir) = try tempEnv()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = UserConfig.file(env: env)
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("- a\n- b\n".utf8).write(to: file)
+    #expect(throws: XlessError.self) { try UserConfig.load(env: env) }
+    #expect(AccountSession.savedTeam(env: env) == nil)
+}
+
+@Test func teamUseValidatesItsArguments() throws {
+    #expect(throws: (any Error).self) { try TeamUseCommand.parse([]) }
+    #expect(throws: (any Error).self) { try TeamUseCommand.parse(["abcde12345"]) }
+    #expect(throws: (any Error).self) { try TeamUseCommand.parse(["ABCDE12345", "--clear"]) }
+    #expect(try TeamUseCommand.parse(["ABCDE12345"]).teamID == "ABCDE12345")
+    #expect(try TeamUseCommand.parse(["--clear"]).clear)
+}
+
+@Test func keepIsParsedAndBounded() throws {
+    #expect(try AuthLoginCommand.parse(["--keep", "30m"]).keep == "30m")
+    #expect(throws: XlessError.self) { try KeepDuration.seconds("2h") }
+}
+
+// MARK: auth status
+
+private let kept = KeptSessionInfo(appleID: "me@example.com", created: Date(timeIntervalSince1970: 1_000_000),
+                                   expires: Date(timeIntervalSince1970: 1_000_000 + 1800))
+
+@Test func statusSaysWhereEachCredentialComesFromAndNeverItsValue() throws {
+    let env = ["ASC_KEY_ID": "KEYSECRETISH", "ASC_ISSUER_ID_FILE": "/run/secrets/issuer", "ASC_KEY_P8": ""]
+    let store = AuthStatusReport.StoreKey(name: "ASC_KEY_P8@ABCDE12345", teamID: "ABCDE12345", hasKeyID: true, hasIssuerID: true)
+    let r = AuthStatusReport.build(env: env, storeKey: .success(store), teamFlag: nil, savedTeam: "ABCDE12345", keyringAvailable: true,
+                                   session: kept, now: Date(timeIntervalSince1970: 1_000_000 + 600))
+    #expect(r.apiKey.map(\.source) == ["environment", "file", "store"])
+    #expect(r.apiKey[1].detail == "$ASC_ISSUER_ID_FILE: /run/secrets/issuer")
+    #expect(r.apiKey[2].detail == "ASC_KEY_P8@ABCDE12345")
+    #expect(r.team == "ABCDE12345" && r.teamSource == "saved" && r.keyTeam == "ABCDE12345")
+    #expect(r.session.state == "kept" && r.session.remainingSeconds == 1200)
+    let text = r.text
+    #expect(!text.contains("KEYSECRETISH"))
+    #expect(text.contains("saved by `xless team use`"))
+    #expect(text.contains("kept for me@example.com"))
+    #expect(text.contains("20 min left"))
+    #expect(text.contains("key's role"))
+    #expect(!(try ASCOutputJSON(r)).contains("KEYSECRETISH"))
+}
+
+private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
+    let e = JSONEncoder()
+    e.outputFormatting = [.sortedKeys]
+    return String(decoding: try e.encode(r), as: UTF8.self)
+}
+
+@Test func statusReportsMissingErrorsAndNoSession() {
+    struct Boom: Error {}
+    let none = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: "ZZZZZ99999", savedTeam: "ABCDE12345",
+                                      keyringAvailable: false, session: nil, now: Date())
+    #expect(none.apiKey.map(\.source) == ["missing", "missing", "missing"])
+    #expect(none.team == "ZZZZZ99999" && none.teamSource == "flag")
+    #expect(none.session.state == "unavailable")
+    let broken = AuthStatusReport.build(env: [:], storeKey: .failure(XlessError(.config, "several entries", fix: "x")), teamFlag: nil,
+                                        savedTeam: nil, keyringAvailable: true, session: nil, now: Date())
+    #expect(broken.apiKey.allSatisfy { $0.source == "error" && $0.detail == "several entries" })
+    #expect(broken.session.state == "none" && broken.teamSource == "none")
+    let partial = AuthStatusReport.build(env: [:], storeKey: .success(.init(name: "ASC_KEY_P8", teamID: nil, hasKeyID: false, hasIssuerID: true)),
+                                         teamFlag: nil, savedTeam: nil, keyringAvailable: true, session: nil, now: Date())
+    #expect(partial.apiKey.map(\.source) == ["missing", "store", "store"])
+}
+
+@Test func theTeamOfAStoreEntryComesFromItsName() {
+    #expect(AuthStatusReport.team(fromName: "ASC_KEY_P8@ABCDE12345") == "ABCDE12345")
+    #expect(AuthStatusReport.team(fromName: "ASC_KEY_P8@work") == nil)
+    #expect(AuthStatusReport.team(fromName: "ASC_KEY_P8") == nil)
+}
+
+// MARK: team list
+
+@Test func teamListMatchesProvidersByNameAndMarksTheDefault() {
+    let teams = [PortalTeam(teamId: "ABCDE12345", name: "Example Ltd", type: "Company/Organization"),
+                 PortalTeam(teamId: "ZZZZZ99999", name: "Jane Doe", type: "Individual"),
+                 PortalTeam(teamId: "QQQQQ11111", name: "Twins")]
+    let providers = [OlympusProvider(providerId: 7, name: "example ltd"), OlympusProvider(providerId: 8, name: "Twins"),
+                     OlympusProvider(providerId: 9, name: "Twins")]
+    let rows = TeamListing.rows(teams, providers: providers, saved: "ZZZZZ99999")
+    #expect(rows.map(\.providerId) == [7, nil, nil])
+    #expect(rows.map(\.providerMatch) == ["one", "none", "several"])
+    #expect(rows.map(\.isDefault) == [false, true, false])
+    let table = TeamListing.table(teams, providers: providers, saved: "ZZZZZ99999")
+    #expect(table.contains("PROVIDER"))
+    #expect(table.split(separator: "\n")[2].hasPrefix("*  ZZZZZ99999"))
+    #expect(table.split(separator: "\n")[3].hasSuffix("?"))
+    #expect(!TeamListing.table(teams, providers: nil, saved: nil).contains("PROVIDER"))
+    #expect(TeamListing.rows(teams, providers: nil, saved: nil).allSatisfy { $0.providerMatch == "unknown" })
+}
+
+// MARK: help
+
+@Test func everyCommandThatUsesTheWebSessionSaysSo() {
+    for command in [AuthLoginCommand.self, TeamListCommand.self] as [any ParsableCommand.Type] {
+        let help = command.helpMessage(columns: 10_000)
+        #expect(help.contains("Uses the Apple ID web session, not the App Store Connect API"), "\(command)")
+    }
+    #expect(!AuthStatusCommand.helpMessage(columns: 10_000).contains("Uses the Apple ID web session"))
+}
+
+@Test func theAppleAccountGroupListsAuthAndTeam() {
+    let help = Xless.helpMessage()
+    guard let group = help.range(of: "APPLE ACCOUNT SUBCOMMANDS", options: .caseInsensitive) else { Issue.record("\(help)"); return }
+    let tail = help[group.upperBound...]
+    #expect(tail.contains("auth") && tail.contains("team"))
+}

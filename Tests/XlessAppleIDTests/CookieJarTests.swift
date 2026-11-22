@@ -95,3 +95,42 @@ final class CookieJarTests: XCTestCase {
         XCTAssertTrue(jar.isEmpty)
     }
 }
+
+final class CookieJarSnapshotTests: XCTestCase {
+    func testSnapshotRestoresTheSameHeaders() {
+        let jar = CookieJar()
+        let u = URL(string: "https://idmsa.apple.com/x")!
+        jar.store(from: HTTPURLResponse(url: u, statusCode: 200, httpVersion: nil,
+                                        headerFields: ["Set-Cookie": "myacinfo=abc; Domain=.apple.com; Path=/; Secure, aasp=1; Path=/"])!, for: u)
+        let copy = CookieJar()
+        copy.restore(jar.snapshot())
+        XCTAssertEqual(copy.header(for: u), jar.header(for: u))
+        XCTAssertEqual(copy.header(for: URL(string: "https://developer.apple.com/")!), "myacinfo=abc")
+    }
+
+    func testRestoreDropsExpiredCookiesAndReportsTheEarliestExpiry() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let clock = TestClock(t0)
+        let jar = CookieJar(now: { clock.now })
+        jar.restore([
+            .init(name: "old", value: "1", domain: "apple.com", hostOnly: false, path: "/", secure: true, expires: t0.addingTimeInterval(-1)),
+            .init(name: "soon", value: "2", domain: "apple.com", hostOnly: false, path: "/", secure: true, expires: t0.addingTimeInterval(600)),
+            .init(name: "later", value: "3", domain: "apple.com", hostOnly: false, path: "/", secure: true, expires: t0.addingTimeInterval(7200)),
+            .init(name: "session", value: "4", domain: "apple.com", hostOnly: false, path: "/", secure: true, expires: nil),
+        ])
+        XCTAssertEqual(jar.snapshot().map(\.name), ["soon", "later", "session"])
+        XCTAssertEqual(jar.earliestExpiry, t0.addingTimeInterval(600))
+        clock.now = t0.addingTimeInterval(601)
+        XCTAssertEqual(jar.earliestExpiry, t0.addingTimeInterval(7200))
+    }
+}
+
+final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var t: Date
+    init(_ t: Date) { self.t = t }
+    var now: Date {
+        get { lock.withLock { t } }
+        set { lock.withLock { t = newValue } }
+    }
+}

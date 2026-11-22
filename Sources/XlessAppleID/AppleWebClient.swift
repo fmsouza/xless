@@ -12,12 +12,31 @@ public actor AppleWebClient {
     private let transport: AppleTransport
     private let jar: CookieJar
     private let userAgent: String
+    /// The stage its own errors report (`.sdk` for `xless xcode download`, `.account` for the Apple account commands).
+    public nonisolated let stage: Stage
 
-    public init(transport: AppleTransport, userAgent: String = "xless") {
-        self.transport = transport
-        self.jar = CookieJar()
-        self.userAgent = userAgent
+    public init(transport: AppleTransport, userAgent: String = "xless", stage: Stage = .sdk) {
+        self.init(transport: transport, userAgent: userAgent, stage: stage, jar: CookieJar())
     }
+
+    init(transport: AppleTransport, userAgent: String = "xless", stage: Stage = .sdk, jar: CookieJar) {
+        self.transport = transport
+        self.jar = jar
+        self.userAgent = userAgent
+        self.stage = stage
+    }
+
+    /// The session's cookies, for the opt-in sealed cache only (`AppleSessionCache`).
+    func cookieSnapshot() -> [CookieJar.Cookie] { jar.snapshot() }
+
+    /// Puts a cached session's cookies back (replacing the jar's).
+    func restoreCookies(_ cookies: [CookieJar.Cookie]) { jar.restore(cookies) }
+
+    /// When the first of the session's cookies with an expiry runs out.
+    func earliestCookieExpiry() -> Date? { jar.earliestExpiry }
+
+    /// Whether the session holds any cookie (it signed in, or a kept session was restored).
+    public var hasCookies: Bool { !jar.isEmpty }
 
     public func send(_ request: URLRequest, followRedirects: Bool = true) async throws -> (Data, HTTPURLResponse) {
         let (data, response, _) = try await perform(request, followRedirects: followRedirects) { r in
@@ -44,7 +63,7 @@ public actor AppleWebClient {
         var hops = 0
         while true {
             guard let url = request.url, url.scheme?.lowercased() == "https" else {
-                throw XlessError(.sdk, "refused a non-https request to Apple", fix: "re-run; if it repeats, Apple's sign-in may have changed")
+                throw XlessError(stage, "refused a non-https request to Apple", fix: "re-run; if it repeats, Apple's sign-in may have changed")
             }
             request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue(jar.header(for: url), forHTTPHeaderField: "Cookie")
@@ -57,10 +76,10 @@ public actor AppleWebClient {
             }
             hops += 1
             guard hops <= Self.maxRedirects else {
-                throw XlessError(.sdk, "Apple redirected more than \(Self.maxRedirects) times", fix: "re-run; if it repeats, Apple's sign-in may have changed")
+                throw XlessError(stage, "Apple redirected more than \(Self.maxRedirects) times", fix: "re-run; if it repeats, Apple's sign-in may have changed")
             }
             guard next.scheme?.lowercased() == "https" else {
-                throw XlessError(.sdk, "Apple redirected to a non-https address; xless refuses it", fix: "re-run; if it repeats, report it")
+                throw XlessError(stage, "Apple redirected to a non-https address; xless refuses it", fix: "re-run; if it repeats, report it")
             }
             request = Self.redirect(request, to: next, status: response.statusCode)
         }
