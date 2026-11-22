@@ -1,5 +1,7 @@
 public enum Stage: String, Sendable, CaseIterable, Comparable {
     case config, sdk, prepare, build, assets, finalize, sign, package, upload, ib
+    /// The Apple account commands (`xless api`, and the resource commands of M7): not a pipeline stage.
+    case account
 
     public var exitCode: Int32 {
         switch self {
@@ -13,6 +15,7 @@ public enum Stage: String, Sendable, CaseIterable, Comparable {
         case .package: 16
         case .upload: 17
         case .ib: 18
+        case .account: 20
         }
     }
 
