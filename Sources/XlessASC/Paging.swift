@@ -23,3 +23,15 @@ enum ASCPaging {
         return (path, query)
     }
 }
+
+/// A listing that did not end within `ASCPaging.maxPages` pages. Callers report it in their own stage: acting on a
+/// truncated list (a group or build missed) would be worse than failing.
+public enum ASCPagingError: Error, Equatable, Sendable, CustomStringConvertible {
+    case didNotTerminate(path: String)
+
+    public var description: String {
+        switch self {
+        case .didNotTerminate(let path): "App Store Connect returned more than \(ASCPaging.maxPages) pages for \(path); pagination did not terminate"
+        }
+    }
+}
