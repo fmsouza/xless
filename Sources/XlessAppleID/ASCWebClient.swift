@@ -9,9 +9,12 @@ public struct OlympusProvider: Codable, Sendable, Equatable {
     public let providerId: Int
     public let name: String
     public let contentTypes: [String]?
+    /// The provider's public ID: the issuer ID of its App Store Connect API keys (UUID). App Store Connect sends it for
+    /// the current provider of `/olympus/v1/session`.
+    public let publicProviderId: String?
 
-    public init(providerId: Int, name: String, contentTypes: [String]? = nil) {
-        self.providerId = providerId; self.name = name; self.contentTypes = contentTypes
+    public init(providerId: Int, name: String, contentTypes: [String]? = nil, publicProviderId: String? = nil) {
+        self.providerId = providerId; self.name = name; self.contentTypes = contentTypes; self.publicProviderId = publicProviderId
     }
 }
 

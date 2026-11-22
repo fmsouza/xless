@@ -117,3 +117,34 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
     for ok in ["ASC_KEY_P8", "XLESS_DIST_KEY@ABCDE12345", "a.b-c", "9"] { #expect(VaultEntry.isValidName(ok), "\(ok)") }
     for bad in ["", "-x", "a b", "a/b", "../x", "é", String(repeating: "a", count: 129)] { #expect(!VaultEntry.isValidName(bad), "\(bad)") }
 }
+
+// MARK: role (#85)
+
+@Test func anEntryWithoutARoleKeepsTheAssociatedDataOlderReleasesWrote() {
+    // The layout before the role existed: eight length-prefixed fields after the tag, nothing more.
+    let entry = VaultEntry(name: "ASC_KEY_P8", kind: .ascAPIKey, metadata: .init(teamID: "TEAM123456"), sealed: Data())
+    var expected = Data("xless-vault-entry/1".utf8)
+    for field in ["ASC_KEY_P8", "asc-api-key", "TEAM123456"] as [String] {
+        expected.append(1)
+        withUnsafeBytes(of: UInt32(field.utf8.count).bigEndian) { expected.append(contentsOf: $0) }
+        expected.append(Data(field.utf8))
+    }
+    expected.append(contentsOf: [0, 0, 0, 0, 0])
+    #expect(entry.associatedData == expected)
+}
+
+@Test func theRoleIsRecordedAndAuthenticated() throws {
+    let key = SymmetricKey(size: .bits256)
+    let meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY1234567", issuerID: "iss", role: " APP_MANAGER ")
+    #expect(meta.role == "APP_MANAGER")
+    #expect(VaultEntry.Metadata(role: "  ").role == nil)
+    let entry = try VaultCrypto.seal(name: "ASC_KEY_P8", kind: .ascAPIKey, metadata: meta, secret: SecretBytes(utf8: "p8"), dataKey: key)
+    #expect(try VaultCrypto.open(entry, dataKey: key).utf8String() == "p8")
+    var promoted = meta
+    promoted.role = "ADMIN"
+    let altered = VaultEntry(name: entry.name, kind: entry.kind, metadata: promoted, sealed: entry.sealed)
+    #expect(throws: VaultError.self) { try VaultCrypto.open(altered, dataKey: key) }
+    var dropped = meta
+    dropped.role = nil
+    #expect(throws: VaultError.self) { try VaultCrypto.open(VaultEntry(name: entry.name, kind: entry.kind, metadata: dropped, sealed: entry.sealed), dataKey: key) }
+}
