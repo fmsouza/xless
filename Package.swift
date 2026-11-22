@@ -117,7 +117,7 @@ let package = Package(
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
-        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
+        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", .product(name: "Crypto", package: "swift-crypto"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )

@@ -37,6 +37,7 @@ public struct ASCAnyResource: Codable, Sendable, Equatable {
     public var attributes: [String: JSONValue]?
     public var relationships: [String: JSONValue]?
     public var links: [String: JSONValue]?
+    public var meta: [String: JSONValue]?
 
     public init(type: String, id: String, attributes: [String: JSONValue]? = nil, relationships: [String: JSONValue]? = nil) {
         self.type = type; self.id = id; self.attributes = attributes; self.relationships = relationships

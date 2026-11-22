@@ -1,13 +1,13 @@
 import Foundation
 
 /// Following App Store Connect's paged listings (`links.next`), shared by every paged read.
-enum ASCPaging {
+public enum ASCPaging {
     /// A listing with more pages than this did not terminate: callers throw rather than act on a truncated list.
-    static let maxPages = 1000
+    public static let maxPages = 1000
 
     /// Path and decoded query of a `links.next` URL. Parsed by hand: `URLComponents.queryItems` leaves values undecoded
     /// when the link carries raw brackets, and the client percent-encodes the query again when it sends it.
-    static func parseLink(_ link: String) -> (path: String, query: [(String, String)])? {
+    public static func parseLink(_ link: String) -> (path: String, query: [(String, String)])? {
         // Plain string splitting: URLComponents re-encodes a link with raw brackets as a whole, '%' included.
         guard let schemeEnd = link.range(of: "://") else { return nil }
         let rest = link[schemeEnd.upperBound...].split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
