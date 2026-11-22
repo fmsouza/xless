@@ -32,6 +32,11 @@ private key PEM from `xless sign bootstrap`), `auth-key` (an APNs, Sign in with 
 `password` and `generic`. Keys are checked when imported: a `.p8` must be a P-256 private key, a signing key an RSA one.
 A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID.
 
+[`xless auth api-key create`](apple-account.md#xless-auth-api-key) puts a new App Store Connect API key straight into
+the store (as `ASC_KEY_P8@<TEAM_ID>`, with its key ID, issuer ID, team and role), and `xless auth api-key import`
+checks a `.p8` against App Store Connect before storing it. The role is part of what the seal authenticates when it is
+recorded; an xless older than the one that added it reads such an entry as altered.
+
 ## How the pipeline finds a secret
 
 For each secret, xless looks at `NAME`, then at the file named by `NAME_FILE`, then at the store's entry `NAME`. The

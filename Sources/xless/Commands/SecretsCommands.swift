@@ -70,6 +70,18 @@ enum SecretStoreCLI {
         }
     }
 
+    /// Once a file's secret is in the store: asks (on a terminal) whether to delete the file; else says it is still there.
+    static func offerToDelete(_ file: String) throws {
+        if let terminal = try? TerminalPrompter.forSecretStore(),
+           try terminal.confirm("The secret is in the store. Delete \(file) now?") {
+            if unlink(file) == 0 { print("deleted \(file)") } else {
+                say("warning: could not delete \(file): \(String(cString: strerror(errno)))")
+            }
+        } else {
+            say("\(file) still holds the secret in clear; delete it once you no longer need it")
+        }
+    }
+
     static func say(_ line: String) { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
 }
 
@@ -164,14 +176,7 @@ struct SecretsImportCommand: ParsableCommand {
             }
             secret.wipe()
             print("imported \(name) (\(kind.rawValue)) into the secret store")
-            if let terminal = try? TerminalPrompter.forSecretStore(),
-               try terminal.confirm("The secret is in the store. Delete \(file) now?") {
-                if unlink(file) == 0 { print("deleted \(file)") } else {
-                    SecretStoreCLI.say("warning: could not delete \(file): \(String(cString: strerror(errno)))")
-                }
-            } else {
-                SecretStoreCLI.say("\(file) still holds the secret in clear; delete it once you no longer need it")
-            }
+            try SecretStoreCLI.offerToDelete(file)
         }
     }
 

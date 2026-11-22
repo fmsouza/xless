@@ -295,3 +295,35 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
     #expect(throws: XlessError.self) { try APIKeyRoles.parse(["OWNER"]) }
     #expect(APIKeyRoles.recorded(["ADMIN", "FINANCE"]) == "ADMIN,FINANCE")
 }
+
+// MARK: commands
+
+@Test func createChecksItsOptionsBeforeAnything() throws {
+    let c = try AuthAPIKeyCreateCommand.parse([])
+    #expect(c.roles.isEmpty && c.apps.isEmpty && c.nickname == nil)
+    let full = try AuthAPIKeyCreateCommand.parse(["--name", "ci", "--role", "developer", "--app", "123", "--app", "456", "--team", team])
+    #expect(full.roles == ["developer"] && full.apps == ["123", "456"] && full.nickname == "ci")
+    for bad in [["--all-apps", "--app", "1"], ["--role", "owner"], ["--role", "ADMIN", "--app", "1"], ["--app", "com.example.app"], ["--name", " "]] {
+        #expect(throws: (any Error).self, "\(bad)") { try AuthAPIKeyCreateCommand.parse(bad) }
+    }
+}
+
+@Test func importAndRevokeCheckTheirArguments() throws {
+    let i = try AuthAPIKeyImportCommand.parse(["--p8-file", "AuthKey_2X9R4HXF34.p8", "--issuer-id", issuer, "--role", "admin"])
+    #expect(i.p8File == "AuthKey_2X9R4HXF34.p8" && i.keyId == nil && i.role == "admin")
+    #expect(throws: (any Error).self) { try AuthAPIKeyImportCommand.parse(["--p8-file", "k.p8"]) }
+    #expect(throws: (any Error).self) { try AuthAPIKeyImportCommand.parse(["--p8-file", "k.p8", "--issuer-id", issuer, "--key-id", "abc"]) }
+    #expect(throws: (any Error).self) { try AuthAPIKeyImportCommand.parse(["--p8-file", "k.p8", "--issuer-id", issuer, "--role", "boss"]) }
+    #expect(try AuthAPIKeyRevokeCommand.parse(["2X9R4HXF34", "--yes"]).confirmation.yes)
+    #expect(throws: (any Error).self) { try AuthAPIKeyRevokeCommand.parse(["../x"]) }
+}
+
+@Test func statusShowsTheRoleXlessRecorded() {
+    let key = AuthStatusReport.StoreKey(name: "ASC_KEY_P8@\(team)", teamID: team, hasKeyID: true, hasIssuerID: true, role: "ADMIN,FINANCE")
+    let r = AuthStatusReport.build(env: [:], storeKey: .success(key), teamFlag: nil, savedTeam: nil, keyringAvailable: true, session: nil, now: Date())
+    #expect(r.keyRole == "ADMIN,FINANCE")
+    #expect(r.text.contains("key's role     ADMIN, FINANCE"))
+    let env = AuthStatusReport.build(env: ["ASC_KEY_P8": "x"], storeKey: .success(key), teamFlag: nil, savedTeam: nil, keyringAvailable: true,
+                                     session: nil, now: Date())
+    #expect(env.keyRole == nil, "the store's role is not the environment key's")
+}
