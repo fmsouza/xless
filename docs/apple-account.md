@@ -3,9 +3,10 @@
 The commands grouped under **Apple account** in `xless --help` work on your Apple developer account and App Store
 Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows which credentials are used,
 [`xless auth api-key`](#xless-auth-api-key), which creates and revokes App Store Connect API keys,
-[`xless team`](#xless-team), which picks the default team, [`xless secrets`](secrets.md), which keeps the keys, and
-`xless api`, which calls any documented App Store Connect endpoint. More commands (devices, bundle IDs, certificates,
-profiles, apps, TestFlight, releases) follow the conventions on this page.
+[`xless team`](#xless-team), which picks the default team, [`xless secrets`](secrets.md), which keeps the keys,
+[`xless devices`](#xless-devices), which registers the devices of development and ad hoc profiles, and
+[`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More commands (bundle IDs,
+certificates, profiles, apps, TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -115,6 +116,42 @@ xless team use --clear
 
 The default team is saved as `team:` in `$XDG_CONFIG_HOME/xless/config.yml` (`~/.config/xless/config.yml` when
 `XDG_CONFIG_HOME` is unset), a plain preference, not a secret. `--team` overrides it.
+
+## `xless devices`
+
+```sh
+xless devices list                                    # ID, name, UDID, platform, kind, model, status, date added
+xless devices list --platform ios --status enabled
+xless devices register "Fred's iPhone" 00008030-001A35E80C42802E
+xless devices register "Build Mac" 00008103-001234567890001E --platform macos   # an Apple-silicon Mac
+xless devices import devices.txt                      # Apple's device file; asks first (--yes without a terminal)
+xless devices rename 8U3T4X5YZA "Work iPhone"
+xless devices disable 00008030-001A35E80C42802E       # asks first; `enable` undoes it
+```
+
+They use the API key (`/v1/devices`), which needs the Admin role. A device is named by its ID (from `list`) or its
+UDID. Apple never deletes a device: `disable` takes it out of new profiles, `enable` puts it back.
+
+- **UDIDs are checked before anything is sent:** 40 hex digits (older iPhones and iPads) or 8 and 16 hex digits joined
+  by a dash (`00008030-001A35E80C42802E`: newer iPhones and iPads, and Apple-silicon Macs) for `ios`; a Mac's hardware
+  UUID (`12345678-1234-1234-1234-123456789ABC`) for `macos`. Without `--platform`, a hardware UUID is a Mac and the
+  other forms are iOS devices, so an Apple-silicon Mac's provisioning UDID needs `--platform macos`.
+- **Registering twice registers once:** a UDID that is already registered (in any case) is reported with its ID, name
+  and status, and nothing is sent; a disabled one is not re-enabled (`enable` does that).
+- **`import`** reads the developer portal's device file: one device per line, tab-separated `Device ID`, `Device Name`
+  and optionally `Device Platform` (`ios` or `mac`), with or without that header line; blank lines and `#` comments are
+  skipped. Every line is checked first, and a bad line or a UDID listed twice stops the import before anything is sent.
+  Devices already registered are skipped; the new ones are listed and registered after a confirmation. A failure
+  stops the import and names the devices registered before it, so re-running the import finishes the job.
+- **The yearly limit:** Apple allows 100 devices of each kind (iPhone, iPad, iPod touch, Apple Watch, Apple TV, Apple
+  Vision Pro, Mac) per membership year. A disabled device keeps its slot; when the membership renews, the Account
+  Holder can remove devices on [developer.apple.com](https://developer.apple.com/account/resources/devices/list) to
+  reset the count. `list` (without `--status`), `register` and `import` warn on standard error when a kind has 90 or
+  more devices, and Apple's refusal once the limit is reached is reported with that rule.
+
+With `--json`, `list` prints `{"data": [devices]}`, `register` and `import` print `{"registered": [devices],
+"existing": [devices]}`, and `enable`, `disable` and `rename` print the device; each device is App Store Connect's
+resource (`type`, `id`, `attributes`, …).
 
 ## JSON output
 
