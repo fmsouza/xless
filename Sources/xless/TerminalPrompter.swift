@@ -1,32 +1,50 @@
 import Foundation
 import XlessAppleID
 import XlessCore
+import XlessVault
 
-/// The sign-in's prompts, on the controlling terminal (`/dev/tty`) only: an Apple ID, password or code is never read from
-/// stdin, a pipe, a file, an argument or the environment. The password is read with echo off; a signal at that prompt
-/// gives the terminal its echo back (see `EchoGuard`).
-final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
+/// Prompts on the controlling terminal (`/dev/tty`) only: an Apple ID, password, code or the secret store's passphrase is
+/// never read from stdin, a pipe, a file, an argument or the environment. Secrets are read with echo off; a signal at
+/// that prompt gives the terminal its echo back (see `EchoGuard`).
+final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sendable {
     private let fd: Int32
     private let lock = NSLock()
+    private let stage: Stage
 
-    init() throws {
-        fd = open("/dev/tty", O_RDWR | O_NOCTTY)
+    init(stage: Stage = .sdk, need: String = "signing in to Apple needs an interactive terminal",
+         fix: String = "run xless xcode download in a terminal; it never reads the Apple ID, password or code from a pipe, a file or the environment") throws {
+        self.stage = stage
+        fd = open("/dev/tty", O_RDWR | O_NOCTTY | O_CLOEXEC)
         guard fd >= 0, isatty(fd) == 1 else {
-            throw XlessError(.sdk, "signing in to Apple needs an interactive terminal",
-                             fix: "run xless xcode download in a terminal; it never reads the Apple ID, password or code from a pipe, a file or the environment")
+            if fd >= 0 { close(fd) }
+            throw XlessError(stage, need, fix: fix)
         }
+    }
+
+    /// The terminal for the secret store's passphrase.
+    static func forSecretStore() throws -> TerminalPrompter {
+        try TerminalPrompter(stage: .config, need: "the secret store's passphrase is read from a terminal, and there is none",
+                             fix: "run this in an interactive terminal; the passphrase is never read from a pipe, a file, an argument or the environment")
     }
 
     deinit { close(fd) }
 
-    func ask(_ prompt: String) async throws -> String {
+    // Synchronous: they satisfy both the sign-in's async requirements and the secret store's synchronous ones.
+
+    func ask(_ prompt: String) throws -> String {
         try lock.withLock {
             write(prompt)
             return String(decoding: try readLine(), as: UTF8.self)
         }
     }
 
-    func askSecret(_ prompt: String) async throws -> SecretBytes {
+    /// A yes/no question; anything but y/yes is no.
+    func confirm(_ question: String) throws -> Bool {
+        let answer = try ask("\(question) [y/N] ").trimmingCharacters(in: .whitespaces).lowercased()
+        return answer == "y" || answer == "yes"
+    }
+
+    func askSecret(_ prompt: String) throws -> SecretBytes {
         try lock.withLock {
             write(prompt)
             var saved = termios()
@@ -65,10 +83,10 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
             let n = Foundation.read(fd, &byte, 1)
             if n < 0 {
                 if errno == EINTR { continue }
-                throw XlessError(.sdk, "cannot read from the terminal", fix: "re-run in an interactive terminal")
+                throw XlessError(stage, "cannot read from the terminal", fix: "re-run in an interactive terminal")
             }
             if n == 0 {
-                if out.isEmpty { throw XlessError(.sdk, "the terminal closed before an answer", fix: "re-run in an interactive terminal") }
+                if out.isEmpty { throw XlessError(stage, "the terminal closed before an answer", fix: "re-run in an interactive terminal") }
                 return out
             }
             if byte == 0x0A { return out }
@@ -87,16 +105,16 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
             let n = Foundation.read(fd, &byte, 1)
             if n < 0 {
                 if errno == EINTR { continue }
-                throw XlessError(.sdk, "cannot read from the terminal", fix: "re-run in an interactive terminal")
+                throw XlessError(stage, "cannot read from the terminal", fix: "re-run in an interactive terminal")
             }
             if n == 0 {
-                if length == 0 { throw XlessError(.sdk, "the terminal closed before an answer", fix: "re-run in an interactive terminal") }
+                if length == 0 { throw XlessError(stage, "the terminal closed before an answer", fix: "re-run in an interactive terminal") }
                 return line.prefix(length)
             }
             if byte == 0x0A { return line.prefix(length) }
             if byte == 0x0D { continue }
             guard length < line.count else {
-                throw XlessError(.sdk, "the answer is longer than \(line.count) bytes", fix: "re-run and check what is typed at the prompt")
+                throw XlessError(stage, "the answer is longer than \(line.count) bytes", fix: "re-run and check what is typed at the prompt")
             }
             line.withUnsafeMutableBytes { $0[length] = byte }
             length += 1
@@ -104,7 +122,7 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
     }
 
     private func noEcho() -> XlessError {
-        XlessError(.sdk, "cannot turn off the terminal's echo for the password", fix: "re-run in an interactive terminal")
+        XlessError(stage, "cannot turn off the terminal's echo for the secret", fix: "re-run in an interactive terminal")
     }
 }
 

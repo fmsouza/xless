@@ -10,6 +10,8 @@ build. The pages below go further.
 - [xless-yml.md](xless-yml.md): the `xless.yml` reference, for Swift package apps.
 - [signing-and-testflight.md](signing-and-testflight.md): secrets, build numbers, `xless run` up to TestFlight, the
   notarized DMG, and running in CI.
+- [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, and how the
+  pipeline reads it.
 - [bootstrap.md](bootstrap.md): the one-time Apple setup (API key, certificates, bundle ID, app record).
 - [react-native.md](react-native.md): React Native / Expo iOS apps, with app extensions and simulator builds.
 - [tauri.md](tauri.md): Tauri v2 apps, for iOS and macOS.

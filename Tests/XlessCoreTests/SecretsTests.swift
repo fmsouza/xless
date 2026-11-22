@@ -24,3 +24,54 @@ import Foundation
 @Test func emptyValueIsMissing() throws {
     #expect(try Secrets(env: ["X": ""]).optional("X") == nil)
 }
+
+/// A store that records what it was asked and answers from a table.
+private final class FakeStore: SecretFallback, @unchecked Sendable {
+    let values: [String: String]
+    private let lock = NSLock()
+    private var _asked: [String] = []
+    var asked: [String] { lock.withLock { _asked } }
+    init(_ values: [String: String]) { self.values = values }
+    func lookup(_ name: String, stage: Stage) throws -> String? {
+        lock.withLock { _asked.append(name) }
+        return values[name]
+    }
+}
+
+@Test func theEnvironmentWinsOverTheStoreAndTheStoreIsNeverAsked() throws {
+    let store = FakeStore(["ASC_KEY_ID": "FROMSTORE"])
+    let s = Secrets(env: ["ASC_KEY_ID": "FROMENV"], fallback: store)
+    #expect(try s.identifier("ASC_KEY_ID", stage: .upload) == "FROMENV")
+    #expect(store.asked.isEmpty)
+}
+
+@Test func theFileVariantWinsOverTheStoreAndTheStoreIsNeverAsked() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try "FROMFILE".write(to: url, atomically: true, encoding: .utf8)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let store = FakeStore(["XLESS_DIST_KEY": "FROMSTORE"])
+    let s = Secrets(env: ["XLESS_DIST_KEY_FILE": url.path], fallback: store)
+    #expect(try s.required("XLESS_DIST_KEY", stage: .sign) == "FROMFILE")
+    #expect(store.asked.isEmpty)
+}
+
+@Test func theStoreIsTheLastResort() throws {
+    let store = FakeStore(["XLESS_DIST_KEY": "FROMSTORE"])
+    let s = Secrets(env: [:], fallback: store)
+    #expect(try s.required("XLESS_DIST_KEY", stage: .sign) == "FROMSTORE")
+    #expect(store.asked == ["XLESS_DIST_KEY"])
+    #expect(try s.optional("NOT_THERE") == nil)
+}
+
+@Test func aMissingSecretPointsAtTheStore() {
+    do { _ = try Secrets(env: [:], fallback: FakeStore([:])).required("XLESS_DIST_KEY", stage: .sign); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.fix.contains("xless secrets import XLESS_DIST_KEY")) }
+    catch { Issue.record("\(error)") }
+    do { _ = try Secrets(env: [:], fallback: nil).identifier("ASC_ISSUER_ID", stage: .upload); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.fix.contains("xless secrets import ASC_KEY_P8")) }
+    catch { Issue.record("\(error)") }
+}
+
+@Test func noStoreIsInstalledByDefault() {
+    #expect(Secrets.installedFallback == nil)
+}
