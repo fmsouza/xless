@@ -70,37 +70,21 @@ public enum DatedBuildNumber {
 
     struct AppAttributes: Codable, Sendable { var bundleId: String? }
     struct BuildAttributes: Codable, Sendable { var version: String? }
-    struct List<D: Codable & Sendable>: Codable, Sendable {
-        struct Links: Codable, Sendable { var next: String? }
-        var data: [D]
-        var links: Links?
-    }
+    struct List<D: Codable & Sendable>: Codable, Sendable { var data: [D] }
 
     /// Every CFBundleVersion App Store Connect holds for this app and version (read-only). No app record yet means no
     /// builds: the first run then registers the bundle ID at `sign` and `upload` reports the missing record.
     public static func existingBuilds(client: ASCClient, bundleID: String, version: String) async throws -> [String] {
         let apps: List<ASCResource<AppAttributes>> = try await client.get("/v1/apps", query: [("filter[bundleId]", bundleID)])
         guard let app = apps.data.first(where: { $0.attributes.bundleId == bundleID }) else { return [] }
-        var builds: [String] = []
-        var next: (path: String, query: [(String, String)])? = ("/v1/builds", [
-            ("filter[app]", app.id), ("filter[preReleaseVersion.version]", version), ("fields[builds]", "version"), ("limit", "200"),
-        ])
-        var pages = 0
-        while let (path, query) = next {
-            let page: List<ASCResource<BuildAttributes>> = try await client.get(path, query: query)
-            builds += page.data.compactMap(\.attributes.version)
-            pages += 1
-            next = nil
-            if let link = page.links?.next, let target = ASCPaging.parseLink(link) {
-                // A partial list could let the ordering check pass wrongly, so running out of pages is an error, never a truncation.
-                guard pages < ASCPaging.maxPages else {
-                    throw XlessError(.config, "too many App Store Connect build pages for \(bundleID) \(version); pagination did not terminate",
-                                     fix: "report this as an xless bug; set --build-number to bypass the query")
-                }
-                next = target
-            }
+        let query = ASCQuery(filters: [("app", app.id), ("preReleaseVersion.version", version)], fields: [("builds", ["version"])])
+        do {
+            return try await ASCResources(client: client).list("/v1/builds", query: query, as: ASCResource<BuildAttributes>.self).items.compactMap(\.attributes.version)
+        } catch ASCPagingError.didNotTerminate {
+            // A partial list could let the ordering check pass wrongly, so running out of pages is an error, never a truncation.
+            throw XlessError(.config, "too many App Store Connect build pages for \(bundleID) \(version); pagination did not terminate",
+                             fix: "report this as an xless bug; set --build-number to bypass the query")
         }
-        return builds
     }
 
     /// Credentials-backed query + compute; used by `inspect` (never persists) and by `resolve`.

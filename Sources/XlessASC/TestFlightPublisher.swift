@@ -95,27 +95,15 @@ public struct TestFlightPublisher: Sendable {
         return TestFlightResult(buildID: buildID, buildNumber: buildNumber, locale: config.locale, groups: groups, whatToTestSet: whatToTestSet, notes: notes)
     }
 
-    /// Every item of a paged listing: `limit=200`, following `links.next` (a full URL whose path and query are reused,
-    /// `ASCPaging.parseLink`). A listing that does not end within `ASCPaging.maxPages` pages is an error, never a
-    /// truncated list (a missing group would be created a second time).
-    private func listAll<D: Codable & Sendable>(_ what: String, path: String, query: [(String, String)], done: String, as: D.Type) async throws -> [D] {
-        var items: [D] = []
-        var next: (path: String, query: [(String, String)])? = (path, query + [("limit", "200")])
-        var pages = 0
-        while let (p, q) = next {
-            let page: ListDocument<D> = try await step(what, done: done) { try await client.get(p, query: q) }
-            items += page.data
-            pages += 1
-            next = nil
-            if let link = page.links?.next, let target = ASCPaging.parseLink(link) {
-                guard pages < ASCPaging.maxPages else {
-                    throw XlessError(.upload, "\(what): App Store Connect returned more than \(ASCPaging.maxPages) pages; pagination did not terminate",
-                                     fix: "report this as an xless bug; \(done)")
-                }
-                next = target
+    /// Every item of a paged listing (`ASCResources.list`: `limit=200`, following `links.next`). A listing that does not
+    /// end within `ASCPaging.maxPages` pages is an error, never a truncated list (a missing group would be created a second time).
+    private func listAll<D: Decodable & Sendable>(_ what: String, path: String, query: [(String, String)], done: String, as: D.Type) async throws -> [D] {
+        try await step(what, done: done) {
+            do { return try await ASCResources(client: client).list(path, query: ASCQuery(extra: query), as: D.self).items } catch ASCPagingError.didNotTerminate {
+                throw XlessError(.upload, "\(what): App Store Connect returned more than \(ASCPaging.maxPages) pages; pagination did not terminate",
+                                 fix: "report this as an xless bug; \(done)")
             }
         }
-        return items
     }
 
     private func testerCount(groupID id: String, name: String, done: String) async throws -> Int {

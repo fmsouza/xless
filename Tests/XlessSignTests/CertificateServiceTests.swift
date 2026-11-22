@@ -97,3 +97,14 @@ func certJSON(id: String, der: [UInt8], type: String = "DISTRIBUTION") -> String
     #expect(try await svc.find(matching: key, kind: .installer).id == "I1")
     #expect(t.requests[0].url!.absoluteString.contains("MAC_INSTALLER_DISTRIBUTION"))
 }
+
+@Test func listFollowsEveryPage() async throws {
+    let key = try SigningKey.generate()
+    let next = #""links":{"next":"https://api.appstoreconnect.apple.com/v1/certificates?cursor=2&filter%5BcertificateType%5D=DISTRIBUTION&limit=200"}"#
+    let t = MockTransport([(200, #"{"data":[\#(certJSON(id: "1", der: try selfSigned(try SigningKey.generate())))],\#(next)}"#),
+                           (200, #"{"data":[\#(certJSON(id: "2", der: try selfSigned(key)))]}"#)])
+    let svc = CertificateService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    #expect(try await svc.list(.distribution).map(\.id) == ["1", "2"])
+    #expect(t.requests[0].url!.absoluteString.contains("limit=200"))
+    #expect(t.requests[1].url!.absoluteString.contains("cursor=2"))
+}
