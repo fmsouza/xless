@@ -241,20 +241,16 @@ struct SecretsExportCommand: ParsableCommand {
 struct SecretsRmCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "rm", abstract: "Remove an entry from the store (asks first). It cannot be recovered.")
     @Argument(help: "Entry name (see `xless secrets list`).") var name: String
-    @Flag(help: "Do not ask for confirmation.") var yes = false
+    @OptionGroup var confirmation: YesOption
 
     func run() throws {
         try SecretStoreCLI.run {
             let file = try SecretStoreCLI.existing()
             _ = try SecretStoreCLI.entry(name, in: file)
-            if !yes {
-                guard let terminal = try? TerminalPrompter.forSecretStore() else {
-                    throw VaultError(.invalidInput, "removing \(name) needs a confirmation and there is no terminal", fix: "re-run with --yes")
-                }
-                guard try terminal.confirm("Remove \(name) from the secret store? It cannot be recovered.") else {
-                    print("kept \(name)")
-                    return
-                }
+            guard try AccountConfirm.confirm("Remove \(name) from the secret store? It cannot be recovered.", action: "removing \(name)",
+                                             yes: confirmation.yes, stage: .config, terminal: { try? TerminalPrompter.forSecretStore() }) else {
+                print("kept \(name)")
+                return
             }
             try SecretStoreCLI.store.update { current in
                 var next = current

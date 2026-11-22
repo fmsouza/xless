@@ -46,3 +46,16 @@ import Foundation
     #expect(Stage.prepare.exitCode == 19)
     #expect(Stage.sdk < .prepare && Stage.prepare < .build)
 }
+
+@Test func accountIsExit20AndOutsideThePipeline() {
+    #expect(Stage.account.exitCode == 20)
+    #expect(Stage(rawValue: "account") == .account)
+    #expect(!StagePolicy.pipeline.contains(.account))
+    #expect(XlessError(.account, "x", fix: "y").description == "[account] x — y")
+}
+
+@Test func onlyPipelineStagesSuggestShipFrom() {
+    #expect(!XlessError.rerun(.account).contains("ship --from"))
+    #expect(!XlessError.rerun(.ib).contains("ship --from"))
+    #expect(XlessError.rerun(.sign).contains("ship --from sign"))
+}

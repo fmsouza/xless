@@ -34,7 +34,7 @@ extension XlessError {
     }
 
     static func rerun(_ stage: Stage) -> String {
-        stage >= .build ? "fix the cause above, then re-run (`xless ship --from \(stage.rawValue)` resumes here)" : "fix the cause above, then re-run"
+        stage >= .build && StagePolicy.pipeline.contains(stage) ? "fix the cause above, then re-run (`xless ship --from \(stage.rawValue)` resumes here)" : "fix the cause above, then re-run"
     }
 }
 

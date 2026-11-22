@@ -67,8 +67,9 @@ stage also removes its previous output.
 | package | `xless package` | `out/`: the `.ipa`, the notarized `.zip`, (Tauri and Cargo macOS) the notarized and stapled `.dmg`, or (App-Store macOS) the `.pkg`; next to it, `<App>.app.dSYM.zip` when the build kept dSYMs ([below](#dsyms)) | 16 |
 | upload | `xless upload` | `upload.json` (iOS only; rewritten at every state change, so it keeps the build ID if processing fails or times out). With a [`testflight:` block](xless-yml.md#testflight) it then delivers the processed build to your TestFlight groups. | 17 |
 
-Config errors exit 10 and SDK errors exit 11. `xless run` itself exits 2 for a usage or configuration error of its
-own (a missing project, overlay or secret file). Errors are printed as `[stage] cause — fix`.
+Config errors exit 10, SDK errors exit 11 and the Apple account commands' errors exit 20
+([apple-account.md](apple-account.md#errors)). `xless run` itself exits 2 for a usage or configuration error of its own
+(a missing project, overlay or secret file). Errors are printed as `[stage] cause — fix`.
 
 All stage commands take `--platform ios|macos`, `--project <dir>` (default `.`) and `--build-number`; overlays take
 `--config <overlay.yml>` and `--source <dir>` instead of `--project`. Sign, package and upload need an Apple Developer

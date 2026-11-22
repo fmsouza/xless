@@ -38,10 +38,10 @@ public struct CertificateService: Sendable {
     let client: ASCClient
     public init(client: ASCClient) { self.client = client }
 
+    /// Every certificate of `kind` (all pages).
     public func list(_ kind: CertificateKind) async throws -> [ASCResource<CertificateAttributes>] {
-        let doc: ASCDocument<[ASCResource<CertificateAttributes>]> = try await client.get(
-            "/v1/certificates", query: [("filter[certificateType]", kind.ascTypes.joined(separator: ",")), ("limit", "200")])
-        return doc.data
+        try await ASCResources(client: client).list("/v1/certificates", query: ASCQuery(filters: [("certificateType", kind.ascTypes.joined(separator: ","))]),
+                                                    as: ASCResource<CertificateAttributes>.self).items
     }
 
     public func find(matching key: SigningKey, kind: CertificateKind) async throws -> ASCResource<CertificateAttributes> {

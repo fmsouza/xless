@@ -47,3 +47,44 @@ private func mapped(_ stage: Stage, _ op: () async throws -> Void) async -> Xles
     catch let e as XlessError { #expect(e.stage == .upload); #expect(e.cause.contains("looking up the app record")) }
     catch { Issue.record("not an XlessError: \(error)") }
 }
+
+@Test func account401SaysRevokedOrWrongIssuer() async {
+    let e = await mapped(.account) { throw ASCError(status: 401, items: [.init(status: "401", code: "NOT_AUTHORIZED", title: nil, detail: nil)]) }
+    #expect(e?.stage == .account && e?.stage.exitCode == 20)
+    #expect(e?.fix.contains("revoked") == true && e?.fix.contains("issuer") == true && e?.fix.contains("clock") == true)
+}
+
+@Test(arguments: [("/v1/users", "Admin"), ("/v1/userInvitations/1", "Admin"), ("/v1/certificates", "Admin"),
+                  ("/v1/financeReports", "Finance"), ("/v1/salesReports", "Sales"), ("/v1/apps/1", "App Manager"),
+                  ("/v1/betaGroups", "App Manager")])
+func account403NamesTheRoleNeeded(path: String, role: String) async {
+    let e = await mapped(.account) { throw ASCError(status: 403, items: [], method: "GET", path: path) }
+    #expect(e?.fix.contains("the \(role) role") == true, "\(String(describing: e))")
+    #expect(e?.cause.contains("GET \(path)") == true)
+}
+
+@Test func account409NamesTheField() async {
+    let item = ASCErrorItem(status: "409", code: "ENTITY_ERROR.ATTRIBUTE.INVALID", title: "invalid", detail: "already used",
+                            source: .init(pointer: "/data/attributes/name"))
+    let e = await mapped(.account) { throw ASCError(status: 409, items: [item], method: "POST", path: "/v1/bundleIds") }
+    #expect(e?.fix.contains("`name`") == true, "\(String(describing: e))")
+    #expect(e?.cause.contains("already used") == true)
+}
+
+@Test func account429SaysHowLongToWait() async {
+    let e = await mapped(.account) { throw ASCError(status: 429, items: [], retryAfter: 1800) }
+    #expect(e?.fix.contains("30 minutes") == true, "\(String(describing: e))")
+}
+
+@Test func account404AndPagingErrorsMap() async {
+    let e = await mapped(.account) { throw ASCError(status: 404, items: [], method: "GET", path: "/v1/apps/nope") }
+    #expect(e?.fix.contains("ID") == true)
+    let p = await mapped(.account) { throw ASCPagingError.didNotTerminate(path: "/v1/apps") }
+    #expect(p?.stage == .account && p?.cause.contains("/v1/apps") == true && p?.fix.contains("bug") == true)
+}
+
+@Test func otherStagesKeepTheirFixes() async {
+    let e = await mapped(.sign) { throw ASCError(status: 403, items: [], method: "POST", path: "/v1/users") }
+    #expect(e?.fix.contains("Admin role") == true)
+    #expect(e?.cause.hasPrefix("App Store Connect HTTP 403") == true)
+}
