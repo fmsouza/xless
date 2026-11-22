@@ -8,7 +8,8 @@ import FoundationNetworking
 /// Expires and Max-Age. A Domain must contain the response's host and have a dot in it, so a cookie never reaches a host
 /// outside the domain that set it.
 final class CookieJar: @unchecked Sendable {
-    private struct Cookie {
+    /// One cookie, as `snapshot()` hands it out for the opt-in session cache (`AppleSessionCache`), which seals it.
+    struct Cookie: Codable, Equatable, Sendable {
         let name: String
         var value: String
         let domain: String
@@ -27,6 +28,24 @@ final class CookieJar: @unchecked Sendable {
     var isEmpty: Bool { lock.withLock { cookies.isEmpty } }
 
     func clear() { lock.withLock { cookies.removeAll() } }
+
+    /// Every unexpired cookie, for the sealed session cache only.
+    func snapshot() -> [Cookie] {
+        let t = now()
+        return lock.withLock { cookies.filter { $0.expires.map { $0 > t } ?? true } }
+    }
+
+    /// Replaces the jar's content with `records` (expired ones dropped).
+    func restore(_ records: [Cookie]) {
+        let t = now()
+        lock.withLock { cookies = records.filter { $0.expires.map { $0 > t } ?? true } }
+    }
+
+    /// The soonest an unexpired cookie with an expiry runs out; nil when no cookie has one.
+    var earliestExpiry: Date? {
+        let t = now()
+        return lock.withLock { cookies.compactMap(\.expires).filter { $0 > t }.min() }
+    }
 
     func store(from response: HTTPURLResponse, for url: URL) {
         guard let raw = response.value(forHTTPHeaderField: "Set-Cookie"), let host = url.host?.lowercased() else { return }

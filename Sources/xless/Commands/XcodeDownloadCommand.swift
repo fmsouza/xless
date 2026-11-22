@@ -61,8 +61,9 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
         let prompter = try TerminalPrompter()
         let transport = URLSessionAppleTransport()
         defer { transport.invalidate() }
-        let client = AppleWebClient(transport: transport, userAgent: "xless/\(XlessVersion.current)")
-        try await AppleSignIn(client: client, prompter: prompter).run()
+        // The Apple ID web session, signed in for this run only and reporting `[sdk]` errors, as before.
+        let client = AppleWebClient(transport: transport, userAgent: "xless/\(XlessVersion.current)", stage: .sdk)
+        _ = try await AppleWebSession.signIn(web: client, prompter: prompter)
         prompter.say("Signed in to Apple.")
         let downloads = try await DeveloperDownloads.list(client: client)
 

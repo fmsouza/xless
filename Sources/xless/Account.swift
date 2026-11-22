@@ -8,7 +8,7 @@ import XlessVault
 // confirmation before a destructive call, and the `[account]` error contract (exit code 20). docs/apple-account.md.
 
 struct TeamOption: ParsableArguments {
-    @Option(help: "The Apple team (10-character team ID) whose API key is used: picks the store's ASC_KEY_P8 entry of that team. Default: the only (or unteamed) key.")
+    @Option(help: "The Apple team (10-character team ID) whose API key is used: picks the store's ASC_KEY_P8 entry of that team. Default: the team saved by `xless team use`, else the only (or unteamed) key.")
     var team: String?
 
     func validate() throws {
@@ -57,8 +57,11 @@ struct AccountSession {
     /// `--team`, else the saved default team (`xless team use`, #84), else none: the API key that resolves without a team.
     static func resolveTeam(flag: String?, saved: String?) -> String? { flag ?? saved }
 
-    /// The team saved by `xless team use`. None until #84 stores one.
-    static func savedTeam() -> String? { nil }
+    /// The team saved by `xless team use` (config.yml), when it is a team ID.
+    static func savedTeam(env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        guard let team = (try? UserConfig.load(env: env))?.team, isTeamID(team) else { return nil }
+        return team
+    }
 
     /// - Parameter fallback: the secret store's resolver for `team` (default: the store, filtered by the team when there is one).
     static func open(team flag: String?, verbose: Bool, env: [String: String] = ProcessInfo.processInfo.environment,

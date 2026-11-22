@@ -269,4 +269,26 @@ final class AppleSignInTests: XCTestCase {
             for n in needles { XCTAssertFalse(haystack.contains(n), "\(r.url!.path) carries password material") }
         }
     }
+
+    func testAccountStageAndTheAppleIDReturned() async throws {
+        let apple = FakeApple()
+        apple.completeStatus = 200
+        let ok = MockTransport { try apple.handle($0) }
+        let id = try await AppleSignIn(client: AppleWebClient(transport: ok),
+                                       prompter: ScriptedPrompter(answers: [" me@example.com "], secret: FakeApple.password), stage: .account).run()
+        XCTAssertEqual(id, "me@example.com")
+
+        let refusing = FakeApple()
+        refusing.completeStatus = 412
+        let mock = MockTransport { try refusing.handle($0) }
+        do {
+            try await AppleSignIn(client: AppleWebClient(transport: mock),
+                                  prompter: ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password), stage: .account).run()
+            XCTFail("expected an error")
+        } catch let e as XlessError {
+            XCTAssertEqual(e.stage, .account)
+            XCTAssertTrue(e.fix.contains("appstoreconnect.apple.com/agreements"), e.fix)
+            XCTAssertTrue(e.cause.contains("never accepts"), e.cause)
+        }
+    }
 }

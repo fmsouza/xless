@@ -1,0 +1,70 @@
+import Foundation
+import XlessAppleID
+import XlessCore
+
+// What the commands that use the Apple ID web session share (docs/apple-account.md#the-apple-id-web-session): the
+// help text that says so, the terminal, the transport (traced with --verbose) and the opt-in kept session.
+
+enum AppleWebHelp {
+    /// Part of the `--help` of every command that uses the Apple ID web session.
+    static let note = """
+    Uses the Apple ID web session, not the App Store Connect API: Apple's own web interface, undocumented, for what the \
+    API cannot do. It signs in with your Apple ID, password and two-factor code on the terminal, unless \
+    `xless auth login --keep` kept a session; nothing of the session is written to disk.
+    """
+}
+
+enum AppleWebCLI {
+    static let cache = AppleSessionCache()
+
+    /// The terminal for the sign-in of an account command.
+    static func prompter() throws -> TerminalPrompter {
+        try TerminalPrompter(stage: .account, need: "signing in to Apple needs an interactive terminal",
+                             fix: "run it in a terminal (the Apple ID, password and code are never read from a pipe, a file or the environment), or keep a session first with `xless auth login --keep 30m` in this login session")
+    }
+
+    /// A web client for one command; `invalidate` the transport at the end.
+    static func client(verbose: Bool) -> (AppleWebClient, URLSessionAppleTransport) {
+        let transport = URLSessionAppleTransport()
+        let wire: AppleTransport = verbose ? TracingAppleTransport(transport, trace: .standardError) : transport
+        return (AppleWebClient(transport: wire, userAgent: "xless/\(XlessVersion.current)", stage: .account), transport)
+    }
+
+    /// The kept session, else a sign-in on the terminal (forgotten when the command ends).
+    static func open(verbose: Bool) async throws -> (AppleWebSession, URLSessionAppleTransport) {
+        SecretScope.enter()
+        let (web, transport) = client(verbose: verbose)
+        do {
+            let session = try await AppleWebSession.open(web: web, cache: cache) { try prompter() }
+            if session.kept == nil { say("Signed in to Apple as \(session.appleID).") }
+            return (session, transport)
+        } catch {
+            transport.invalidate()
+            throw error
+        }
+    }
+
+    /// Asks which provider, when several App Store Connect teams share the portal team's name; nil without a terminal.
+    static func chooser() -> (([OlympusProvider]) async throws -> OlympusProvider)? {
+        guard let terminal = try? prompter() else { return nil }
+        return { providers in
+            terminal.say("App Store Connect has several teams with that name:")
+            for (i, p) in providers.enumerated() { terminal.say("  \(i + 1): \(p.name) (provider \(p.providerId))") }
+            for _ in 0..<5 {
+                let answer = try terminal.ask("Which one? [1-\(providers.count)]: ")
+                if let n = Int(answer.trimmingCharacters(in: .whitespaces)), providers.indices.contains(n - 1) { return providers[n - 1] }
+                terminal.say("Type a number from 1 to \(providers.count).")
+            }
+            throw XlessError(.account, "no App Store Connect team chosen", fix: "re-run and type the number of a team")
+        }
+    }
+
+    /// Warns (standard error) about agreements App Store Connect says are pending; xless never accepts them.
+    static func warnAboutAgreements(_ session: AppleWebSession) async {
+        guard let pending = await session.asc.pendingAgreements(), !pending.isEmpty else { return }
+        say("warning: App Store Connect has agreements pending; the Account Holder accepts them at https://appstoreconnect.apple.com/agreements (xless never does):")
+        for line in pending { say("  - \(line)") }
+    }
+
+    static func say(_ line: String) { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
+}
