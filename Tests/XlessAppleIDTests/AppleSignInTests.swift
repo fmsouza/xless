@@ -24,9 +24,9 @@ final class ScriptedPrompter: SignInPrompter, @unchecked Sendable {
             return answers.removeFirst()
         }
     }
-    func askSecret(_ prompt: String) async throws -> [UInt8] {
+    func askSecret(_ prompt: String) async throws -> SecretBytes {
         lock.withLock { prompts.append(prompt) }
-        return Array(secret.utf8)
+        return SecretBytes(utf8: secret)
     }
     func say(_ line: String) { lock.withLock { said.append(line) } }
 }

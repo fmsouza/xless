@@ -1,9 +1,10 @@
 import Foundation
+import XlessCore
 
-/// The terminal the sign-in talks to. `askSecret` returns the typed bytes (never echoed); the caller zeroes them.
+/// The terminal the sign-in talks to. `askSecret` returns the typed bytes (never echoed), zeroed when released.
 public protocol SignInPrompter: Sendable {
     func ask(_ prompt: String) async throws -> String
-    func askSecret(_ prompt: String) async throws -> [UInt8]
+    func askSecret(_ prompt: String) async throws -> SecretBytes
     func say(_ line: String)
 }
 

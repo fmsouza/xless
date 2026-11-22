@@ -27,10 +27,14 @@ public struct AppleSignIn {
     public func run() async throws {
         let account = try await prompter.ask("Apple ID (email): ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !account.isEmpty else { throw fail("no Apple ID given", fix: "type the email address of your Apple ID") }
-        var password = try await prompter.askSecret("Password: ")
+        let password = try await prompter.askSecret("Password: ")
         guard !password.isEmpty else { throw fail("no password given", fix: "type the Apple ID's password") }
-        var passwordSHA256 = Array(SHA256.hash(data: password))
-        password.resetBytes()
+        var passwordSHA256 = password.withUnsafeBytes { bytes in
+            var hash = SHA256()
+            hash.update(bufferPointer: bytes)
+            return Array(hash.finalize())
+        }
+        password.wipe()
         defer { passwordSHA256.resetBytes() }
 
         let widgetKey = try await serviceKey()

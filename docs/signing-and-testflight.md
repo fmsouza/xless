@@ -31,6 +31,10 @@ through mode-0600 temporary files. A file named by a `_FILE` variable is another
 machine or in the same container as the build, as the same user, can still read it. That is why overlay apps are
 built in [three steps](#the-three-step-split).
 
+Once xless reads a secret (`sign`, `package`, `upload`, `next-build`, `sign bootstrap`), core dumps are off for the
+rest of the command and for the tools it runs, so a crash cannot write a key to disk; on Linux the process is also
+marked non-dumpable, so another process of the same user cannot read its memory (ptrace, `/proc/<pid>/mem`).
+
 ## Build numbers
 
 The build number comes from `build` in `xless.yml`, overridden by `XLESS_BUILD_NUMBER` or `--build-number` (the flag

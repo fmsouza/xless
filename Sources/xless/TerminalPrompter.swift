@@ -26,7 +26,7 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
         }
     }
 
-    func askSecret(_ prompt: String) async throws -> [UInt8] {
+    func askSecret(_ prompt: String) async throws -> SecretBytes {
         try lock.withLock {
             write(prompt)
             var saved = termios()
@@ -40,7 +40,7 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
                 EchoGuard.disarm()
                 write("\n")
             }
-            return try readLine()
+            return try readSecretLine()
         }
     }
 
@@ -73,6 +73,33 @@ final class TerminalPrompter: SignInPrompter, @unchecked Sendable {
             }
             if byte == 0x0A { return out }
             if byte != 0x0D { out.append(byte) }
+        }
+    }
+
+    /// `readLine` for a secret: the bytes go straight into one zeroed-on-release buffer that never grows (so no stray
+    /// copy is left in freed memory); a line longer than it is refused.
+    private func readSecretLine() throws -> SecretBytes {
+        let line = SecretBytes(count: 1024)
+        var length = 0
+        var byte: UInt8 = 0
+        defer { byte = 0 }
+        while true {
+            let n = Foundation.read(fd, &byte, 1)
+            if n < 0 {
+                if errno == EINTR { continue }
+                throw XlessError(.sdk, "cannot read from the terminal", fix: "re-run in an interactive terminal")
+            }
+            if n == 0 {
+                if length == 0 { throw XlessError(.sdk, "the terminal closed before an answer", fix: "re-run in an interactive terminal") }
+                return line.prefix(length)
+            }
+            if byte == 0x0A { return line.prefix(length) }
+            if byte == 0x0D { continue }
+            guard length < line.count else {
+                throw XlessError(.sdk, "the answer is longer than \(line.count) bytes", fix: "re-run and check what is typed at the prompt")
+            }
+            line.withUnsafeMutableBytes { $0[length] = byte }
+            length += 1
         }
     }
 

@@ -26,6 +26,7 @@ struct SignBootstrapCommand: AsyncParsableCommand {
     @Flag(help: "Only write key + CSR (<out>.csr) for manual upload at developer.apple.com.") var csrOnly = false
 
     func run() async throws {
+        SecretScope.enter() // generates a private key and reads the App Store Connect key
         // Persist the key exclusively BEFORE any network call so a write failure can never burn a certificate slot.
         let key = try await withStage(.sign) { try SigningKey.generate() }
         try key.writeExclusively(toPath: out)

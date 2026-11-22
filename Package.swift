@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/attaswift/BigInt", from: "5.4.0"), // Apple ID sign-in: SRP's big-number arithmetic
     ],
     targets: [
-        .target(name: "XlessCore", dependencies: [.product(name: "Yams", package: "Yams")]),
+        .target(name: "XlessCore", dependencies: ["CXlessProcess", .product(name: "Yams", package: "Yams")]),
         .target(name: "XlessSDK", dependencies: ["XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
         .target(name: "XlessMachO"),
         .target(name: "XlessBuild", dependencies: ["XlessCore", "XlessMachO"]),
@@ -56,7 +56,8 @@ let package = Package(
             "XlessCore", "XlessMachO", "XlessTauri",
             .product(name: "Yams", package: "Yams"),
         ]),
-        // C for what Swift cannot call (variadic prctl): keeping the sign-in's memory out of core dumps.
+        // C for what Swift cannot call: variadic prctl (SecretScope), explicit_bzero/memset_s (SecretBytes), and the kernel
+        // keyring's add_key/keyctl syscalls (KernelKeyring) without libkeyutils, so the static musl build keeps working.
         .target(name: "CXlessProcess"),
         // Apple ID sign-in (SRP, 2FA) and Xcode .xip downloads from developer.apple.com (`xless xcode download`).
         .target(name: "XlessAppleID", dependencies: [
@@ -104,6 +105,8 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "BigInt", package: "BigInt"),
         ]),
+        // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
+        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", .product(name: "ArgumentParser", package: "swift-argument-parser")]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
