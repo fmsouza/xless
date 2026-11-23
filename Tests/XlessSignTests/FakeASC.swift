@@ -16,16 +16,22 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
     var capabilities: [String: [String]] = [:]
     /// App groups assigned to an identifier by hand in the developer portal.
     var assignedGroups: [String: [String]] = [:]
+    /// iCloud containers assigned to an identifier by hand in the developer portal.
+    var assignedContainers: [String: [String]] = [:]
     /// Groups assigned to every identifier without an `assignedGroups` entry.
     var groupsForAll: [String] = []
     /// Entitlements of capabilities enabled by hand in the portal (no API type), per identifier.
     var portal: [String: [String: Any]] = [:]
     struct Profile { var id: String; var name: String; var bundleResource: String; var content: Data }
     var profiles: [Profile] = []
+    /// Capability types App Store Connect refuses to enable (409).
+    var refuse: Set<String> = []
     /// "METHOD /path" of every request, in order.
     var log: [String] = []
     /// Capability types created, as (identifier, type).
     var created: [(String, String)] = []
+    /// The settings each created capability was sent with, as "TYPE KEY=OPTION".
+    var createdSettings: [String] = []
     private var serial = 0
 
     init(team: String = "ABCDE12345", certificateJSON: String) { self.team = team; self.certificate = certificateJSON }
@@ -37,6 +43,12 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
         if caps.contains("PUSH_NOTIFICATIONS") { e["aps-environment"] = "production" }
         if caps.contains("ASSOCIATED_DOMAINS") { e["com.apple.developer.associated-domains"] = "*" }
         if caps.contains("AUTOFILL_CREDENTIAL_PROVIDER") { e["com.apple.developer.authentication-services.autofill-credential-provider"] = true }
+        if caps.contains("ICLOUD") {
+            e["com.apple.developer.icloud-container-identifiers"] = assignedContainers[identifier] ?? []
+            e["com.apple.developer.icloud-services"] = "*"
+            e["com.apple.developer.ubiquity-kvstore-identifier"] = "\(team).*"
+        }
+        if caps.contains("APPLE_ID_AUTH") { e["com.apple.developer.applesignin"] = ["Default"] }
         if caps.contains("APP_GROUPS") { e["com.apple.security.application-groups"] = assignedGroups[identifier] ?? groupsForAll }
         for (k, v) in portal[identifier] ?? [:] { e[k] = v }
         return e
@@ -68,9 +80,15 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
         case ("GET", 4, "bundleIds"):
             let data = (capabilities[parts[2]] ?? []).map { ["type": "bundleIdCapabilities", "id": "\(parts[2])_\($0)", "attributes": ["capabilityType": $0]] }
             (status, text) = (200, json(["data": data]))
+        case ("POST", 2, "bundleIdCapabilities") where refuse.contains(attrs["capabilityType"] as? String ?? ""):
+            (status, text) = (409, #"{"errors":[{"status":"409","code":"ENTITY_ERROR","title":"There is a problem with the request entity","detail":"This capability is not available for this platform."}]}"#)
         case ("POST", 2, "bundleIdCapabilities"):
             let type = attrs["capabilityType"] as! String, resource = relID("bundleId")!
             capabilities[resource, default: []].append(type)
+            for setting in attrs["settings"] as? [[String: Any]] ?? [] {
+                let option = ((setting["options"] as? [[String: Any]])?.first?["key"] as? String) ?? ""
+                createdSettings.append("\(type) \(setting["key"] as? String ?? "")=\(option)")
+            }
             created.append((bundleIDs.first { $0.value == resource }!.key, type))
             (status, text) = (201, json(["data": ["type": "bundleIdCapabilities", "id": next("K"), "attributes": ["capabilityType": type]]]))
         case ("GET", 2, "profiles"):

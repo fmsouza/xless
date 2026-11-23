@@ -29,10 +29,7 @@ public struct ProfileService: Sendable {
 
     /// App Store Connect only accepts ASCII letters, digits and spaces in a bundle ID's `name` (HTTP 409 otherwise).
     static func bundleIDName(for identifier: String) -> String {
-        let mapped = String(identifier.unicodeScalars.map { s in
-            s.isASCII && (CharacterSet.alphanumerics.contains(s)) ? Character(s) : " " })
-        let words = mapped.split(separator: " ").joined(separator: " ")
-        return String(("xless " + words).trimmingCharacters(in: .whitespaces).prefix(255))
+        String(("xless " + PortalName.from(identifier: identifier)).trimmingCharacters(in: .whitespaces).prefix(255))
     }
 
     /// Returns the resource ID of `identifier`, registering it (as UNIVERSAL, whatever `platform` is) if it does not exist.

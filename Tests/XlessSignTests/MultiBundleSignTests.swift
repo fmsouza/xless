@@ -366,12 +366,81 @@ func unsafeOrInvalidExtensionsAreRefusedBeforeAppStoreConnect(_ kind: String) as
     #expect(capture.entitlements.keys.sorted() == [""])
 }
 
+/// Signs a one-bundle iOS app whose entitlements file is `entitlements`, against `asc`.
+private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: SigningKey, capture: SignCapture = SignCapture()) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("single-\(UUID())", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let input = root.appendingPathComponent("final/X.app", isDirectory: true), project = root.appendingPathComponent("proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: input, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    try Plist.write(["CFBundleExecutable": "X", "CFBundleIdentifier": appID], to: input.appendingPathComponent("Info.plist"), stage: .sign)
+    try Plist.write(entitlements, to: project.appendingPathComponent("ios.entitlements"), format: .xml, stage: .sign)
+    let config = try ProjectConfig.parse(yaml: """
+    bundleID: \(appID)
+    teamID: ABCDE12345
+    version: "1.0"
+    build: 1
+    platforms:
+      ios: { minimumOS: "17.0", product: X, entitlements: ios.entitlements }
+    """)
+    _ = try await SignStage.run(input: input, outputDir: root.appendingPathComponent("signed"), platform: .ios, config: config, project: project,
+                                secrets: Secrets(env: ["XLESS_DIST_KEY": key.pem]), client: ASCClient(credentials: testCreds, transport: asc, sleep: { _ in }),
+                                manifest: nil, codesign: { try capture.record($0) })
+}
+
+/// iCloud and Sign in with Apple: `sign` enables both, with their settings, and signs without a portal visit.
+@Test func iCloudAndSignInWithAppleAreEnabledBySign() async throws {
+    let key = try SigningKey.generate()
+    let asc = FakeASC(certificateJSON: certJSON(id: "C1", der: try selfSigned(key)))
+    let capture = SignCapture()
+    try await signSingle(["com.apple.developer.icloud-container-identifiers": [String](), "com.apple.developer.icloud-services": "*",
+                          "com.apple.developer.applesignin": ["Default"]], asc: asc, key: key, capture: capture)
+    #expect(asc.created.map { "\($0.0) \($0.1)" } == ["\(appID) APPLE_ID_AUTH", "\(appID) ICLOUD"])
+    #expect(asc.createdSettings == ["APPLE_ID_AUTH APPLE_ID_AUTH_APP_CONSENT=PRIMARY_APP_CONSENT", "ICLOUD ICLOUD_VERSION=XCODE_6"])
+    #expect(capture.entitlements[""]?["com.apple.developer.applesignin"] as? [String] == ["Default"])
+    #expect(capture.entitlements[""]?["com.apple.developer.icloud-services"] as? String == "*")
+}
+
+/// An iCloud container the profile does not list stops `sign` with the steps to assign it; once assigned, it signs.
+@Test func anUnassignedICloudContainerIsRefusedWithTheStepsThenSigns() async throws {
+    let key = try SigningKey.generate()
+    let asc = FakeASC(certificateJSON: certJSON(id: "C1", der: try selfSigned(key)))
+    let container = "iCloud.\(appID)"
+    let ents: [String: Any] = ["com.apple.developer.icloud-container-identifiers": [container], "com.apple.developer.icloud-services": ["CloudKit"]]
+    let capture = SignCapture()
+    do { try await signSingle(ents, asc: asc, key: key, capture: capture); Issue.record("expected throw") }
+    catch let e as XlessError {
+        #expect(e.cause == "entitlement 'com.apple.developer.icloud-container-identifiers' value '\(container)' is not allowed by the provisioning profile for \(appID) (it allows: nothing)")
+        #expect(e.fix.contains("Identifiers → + → iCloud Containers → Continue → identifier \(container) → Register"))
+        #expect(e.fix.contains("\(appID) → iCloud → Edit → select \(container) → Save"))
+    }
+    #expect(capture.arguments.isEmpty)
+    asc.assignedContainers[appID] = [container]
+    try await signSingle(ents, asc: asc, key: key, capture: capture)
+    #expect(capture.entitlements[""]?["com.apple.developer.icloud-container-identifiers"] as? [String] == [container])
+}
+
+/// A capability Apple refuses to enable stops `sign` with what to do.
+@Test func aCapabilityAppleRefusesStopsSignWithTheWayOut() async throws {
+    let key = try SigningKey.generate()
+    let asc = FakeASC(certificateJSON: certJSON(id: "C1", der: try selfSigned(key)))
+    asc.refuse = ["USER_MANAGEMENT"]
+    do { try await signSingle(["com.apple.developer.user-management": ["get-current-user"]], asc: asc, key: key); Issue.record("expected throw") }
+    catch let e as XlessError {
+        #expect(e.stage == .sign)
+        #expect(e.cause.hasPrefix("App Store Connect refused to enable USER_MANAGEMENT (User Management) on \(appID): App Store Connect HTTP 409"))
+        #expect(e.fix.contains("entitlements.remove"))
+    }
+}
+
 // MARK: Units
 
-@Test func theFourMappedKeysNeedTheirCapabilityTypesOnIOSOnly() {
+@Test func theMappedKeysNeedTheirCapabilityTypesOnEachPlatform() {
     let ents: [String: Any] = ["aps-environment": "production", domains: ["applinks:example.com"], autofill: true, appGroups: ["group.x"]]
     #expect(Capabilities.required(entitlements: ents, platform: .ios).types == ["PUSH_NOTIFICATIONS", "ASSOCIATED_DOMAINS", "AUTOFILL_CREDENTIAL_PROVIDER", "APP_GROUPS"])
-    #expect(Capabilities.required(entitlements: ents, platform: .macos).types.isEmpty)
+    // macOS spells push `com.apple.developer.aps-environment`: the iOS key is left to the profile check there.
+    let mac = Capabilities.required(entitlements: ents, platform: .macos)
+    #expect(mac.types == ["ASSOCIATED_DOMAINS", "AUTOFILL_CREDENTIAL_PROVIDER", "APP_GROUPS"] && mac.unmapped == ["aps-environment"])
 }
 
 @Test func signingPrefixesExpandToTheTeam() {

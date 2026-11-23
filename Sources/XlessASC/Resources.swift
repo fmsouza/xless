@@ -117,9 +117,11 @@ public struct ASCResources: Sendable {
 
     /// Every item of the listing at `path` (at most `maxItems`), following `links.next`. A listing that does not end
     /// within `ASCPaging.maxPages` pages throws `ASCPagingError.didNotTerminate`, never returns a truncated list.
-    public func list<D: Decodable & Sendable>(_ path: String, query: ASCQuery = ASCQuery(), as: D.Type, maxItems: Int? = nil) async throws -> ASCListing<D> {
+    /// `sendsLimit: false` leaves the page size to Apple, for the endpoints that refuse `limit` (a bundle ID's capabilities).
+    public func list<D: Decodable & Sendable>(_ path: String, query: ASCQuery = ASCQuery(), as: D.Type, maxItems: Int? = nil,
+                                              sendsLimit: Bool = true) async throws -> ASCListing<D> {
         var q = query
-        if q.limit == nil, !q.extra.contains(where: { $0.0 == "limit" }) { q.limit = maxItems.map { min($0, Self.defaultLimit) } ?? Self.defaultLimit }
+        if sendsLimit, q.limit == nil, !q.extra.contains(where: { $0.0 == "limit" }) { q.limit = maxItems.map { min($0, Self.defaultLimit) } ?? Self.defaultLimit }
         var listing = ASCListing<D>()
         var next: (path: String, query: [(String, String)])? = (path, q.items)
         var pages = 0

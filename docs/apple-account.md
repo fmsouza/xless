@@ -4,9 +4,11 @@ The commands grouped under **Apple account** in `xless --help` work on your Appl
 Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows which credentials are used,
 [`xless auth api-key`](#xless-auth-api-key), which creates and revokes App Store Connect API keys,
 [`xless team`](#xless-team), which picks the default team, [`xless secrets`](secrets.md), which keeps the keys,
-[`xless devices`](#xless-devices), which registers the devices of development and ad hoc profiles, and
-[`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More commands (bundle IDs,
-certificates, profiles, apps, TestFlight, releases) follow the conventions on this page.
+[`xless devices`](#xless-devices), which registers the devices of development and ad hoc profiles,
+[`xless bundle-ids`](#xless-bundle-ids), which registers bundle IDs and enables their capabilities,
+[`xless merchant-ids`](#xless-merchant-ids), which registers Apple Pay merchant IDs, and
+[`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More commands (certificates,
+profiles, apps, TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -152,6 +154,120 @@ UDID. Apple never deletes a device: `disable` takes it out of new profiles, `ena
 With `--json`, `list` prints `{"data": [devices]}`, `register` and `import` print `{"registered": [devices],
 "existing": [devices]}`, and `enable`, `disable` and `rename` print the device; each device is App Store Connect's
 resource (`type`, `id`, `attributes`, …).
+
+## `xless bundle-ids`
+
+```sh
+xless bundle-ids list --platform ios                  # ID, identifier, name, platform, seed ID
+xless bundle-ids show com.example.app                 # the bundle ID and its capabilities, with their settings
+xless bundle-ids create com.example.app --name "Example App" --platform universal
+xless bundle-ids delete com.example.app               # asks first: profiles that use it become invalid
+xless bundle-ids capabilities com.example.app list
+xless bundle-ids capabilities com.example.app enable ICLOUD --setting ICLOUD_VERSION=XCODE_6
+xless bundle-ids capabilities com.example.app enable APPLE_ID_AUTH
+xless bundle-ids capabilities com.example.app disable GAME_CENTER   # asks first
+```
+
+They use the API key (`/v1/bundleIds`, `/v1/bundleIdCapabilities`), which needs the Admin role. A bundle ID is named by
+its ID (from `list`) or its identifier. The [`sign` stage](signing-and-testflight.md) registers its own bundle IDs and
+enables the capabilities their entitlements need ([below](#what-sign-enables)); these commands are for the rest.
+
+- **`create`** takes a reverse-DNS identifier (`com.example.app`) or a wildcard (`com.example.*`), checked before anything
+  is sent. The name defaults to the identifier's words (`com example app`); Apple accepts only ASCII letters, digits and
+  spaces in it. The platform defaults to `universal` (iOS and macOS), as `sign` registers. An identifier the team has
+  already is reported with its ID, and nothing is sent.
+- **Capabilities** are named as the API names them, in any case (`icloud`, `push-notifications`): `ICLOUD`,
+  `IN_APP_PURCHASE`, `GAME_CENTER`, `PUSH_NOTIFICATIONS`, `WALLET`, `INTER_APP_AUDIO`, `MAPS`, `ASSOCIATED_DOMAINS`,
+  `PERSONAL_VPN`, `APP_GROUPS`, `HEALTHKIT`, `HOMEKIT`, `WIRELESS_ACCESSORY_CONFIGURATION`, `APPLE_PAY`, `DATA_PROTECTION`,
+  `SIRIKIT`, `NETWORK_EXTENSIONS`, `MULTIPATH`, `HOT_SPOT`, `NFC_TAG_READING`, `CLASSKIT`, `AUTOFILL_CREDENTIAL_PROVIDER`,
+  `ACCESS_WIFI_INFORMATION`, `NETWORK_CUSTOM_PROTOCOL`, `COREMEDIA_HLS_LOW_LATENCY`, `SYSTEM_EXTENSION_INSTALL`,
+  `USER_MANAGEMENT` and `APPLE_ID_AUTH` (Sign in with Apple). Other portal capabilities (App Attest, Declared Age Range,
+  Family Controls, …) are not in the API: enable them on
+  [developer.apple.com](https://developer.apple.com/account/resources/identifiers).
+- **Settings:** three capabilities take one, given as `--setting KEY=OPTION`; without it, a capability being enabled
+  gets the default and one enabled already keeps its own.
+
+  | Capability | Setting | Options (default first) |
+  |---|---|---|
+  | `ICLOUD` | `ICLOUD_VERSION` | `XCODE_6` (CloudKit), `XCODE_5` |
+  | `DATA_PROTECTION` | `DATA_PROTECTION_PERMISSION_LEVEL` | `COMPLETE_PROTECTION`, `PROTECTED_UNLESS_OPEN`, `PROTECTED_UNTIL_FIRST_USER_AUTH` |
+  | `APPLE_ID_AUTH` | `APPLE_ID_AUTH_APP_CONSENT` | `PRIMARY_APP_CONSENT` |
+
+- **`enable`** on a capability that is enabled already sends nothing, or changes its setting when `--setting` names
+  another option. **`disable`** asks first and sends nothing when the capability is not enabled.
+- **Linked identifiers:** App Groups, iCloud and Apple Pay are enabled here, but the app group, iCloud container or
+  merchant ID they use must still be assigned to the bundle ID on
+  [developer.apple.com](https://developer.apple.com/account/resources/identifiers): the API cannot do it. `enable` says so.
+- **Profiles:** a provisioning profile keeps the entitlements it was made with. After a change, regenerate the
+  profiles that use the bundle ID; `sign` regenerates its own.
+
+With `--json`, `list` prints `{"data": [bundle IDs]}`, `show` prints `{"data": bundle ID, "capabilities": [...]}`,
+`create` prints `{"registered": [...], "existing": [...]}`, `delete` prints `{"deleted": bundle ID}`, `capabilities list`
+prints `{"data": [capabilities]}`, `enable` prints the capability and `disable` prints `{"disabled": [capability]}`
+(empty when it was not enabled); each is App Store Connect's resource.
+
+### What `sign` enables
+
+`sign` enables, on each bundle's identifier, the capability of every entitlement key that has one, with the setting
+the entitlements imply: iCloud with CloudKit (`XCODE_6`), Sign in with Apple as its own primary app, and Data Protection
+at the level `com.apple.developer.default-data-protection` names (`NSFileProtectionComplete…`; Complete otherwise). A
+capability enabled already is left as it is. On macOS, the profile's push environment
+(`com.apple.developer.aps-environment`) replaces the entitlements file's, as on iOS.
+
+| Capability | iOS keys | macOS keys |
+|---|---|---|
+| `PUSH_NOTIFICATIONS` | `aps-environment` | `com.apple.developer.aps-environment` |
+| `ICLOUD` | `com.apple.developer.icloud-container-identifiers`, `…icloud-container-development-container-identifiers`, `…icloud-container-environment`, `…icloud-services`, `…ubiquity-container-identifiers`, `…ubiquity-kvstore-identifier` | the same |
+| `APPLE_ID_AUTH` | `com.apple.developer.applesignin` | the same |
+| `APP_GROUPS` | `com.apple.security.application-groups` | the same |
+| `ASSOCIATED_DOMAINS` | `com.apple.developer.associated-domains` | the same |
+| `AUTOFILL_CREDENTIAL_PROVIDER` | `com.apple.developer.authentication-services.autofill-credential-provider` | the same |
+| `APPLE_PAY` | `com.apple.developer.in-app-payments` | the same |
+| `GAME_CENTER` | `com.apple.developer.game-center` | the same |
+| `WALLET` | `com.apple.developer.pass-type-identifiers` | the same |
+| `PERSONAL_VPN` | `com.apple.developer.networking.vpn.api` | the same |
+| `HOMEKIT` | `com.apple.developer.homekit` | the same |
+| `SIRIKIT` | `com.apple.developer.siri` | the same |
+| `NETWORK_EXTENSIONS` | `com.apple.developer.networking.networkextension` | the same |
+| `COREMEDIA_HLS_LOW_LATENCY` | `com.apple.developer.coremedia.hls.low-latency` | the same |
+| `HEALTHKIT` | `com.apple.developer.healthkit`, `…healthkit.access`, `…healthkit.background-delivery` | |
+| `DATA_PROTECTION` | `com.apple.developer.default-data-protection` | |
+| `INTER_APP_AUDIO` | `inter-app-audio` | |
+| `WIRELESS_ACCESSORY_CONFIGURATION` | `com.apple.external-accessory.wireless-configuration` | |
+| `MULTIPATH` | `com.apple.developer.networking.multipath` | |
+| `HOT_SPOT` | `com.apple.developer.networking.HotspotConfiguration` | |
+| `NFC_TAG_READING` | `com.apple.developer.nfc.readersession.formats` | |
+| `CLASSKIT` | `com.apple.developer.ClassKit-environment` | |
+| `ACCESS_WIFI_INFORMATION` | `com.apple.developer.networking.wifi-info` | |
+| `NETWORK_CUSTOM_PROTOCOL` | `com.apple.developer.networking.custom-protocol` | |
+| `USER_MANAGEMENT` | `com.apple.developer.user-management` | |
+| `MAPS` | | `com.apple.developer.maps` |
+| `SYSTEM_EXTENSION_INSTALL` | | `com.apple.developer.system-extension.install` |
+
+`IN_APP_PURCHASE` has no entitlement: enable it with `capabilities … enable`. A gated key with no API type (App Attest,
+Declared Age Range, the increased memory limit, …) is left to the portal: `sign` regenerates the profile once in case
+it was enabled by hand, then stops and names the capability to enable. When a key whose capability xless enabled is
+still missing from the profile, `sign` stops with the `xless bundle-ids capabilities` command that shows it. iCloud
+containers (`…icloud-container-identifiers`, `…ubiquity-container-identifiers`) and merchant IDs
+(`com.apple.developer.in-app-payments`) must also be assigned to the bundle ID, which the API cannot do: an identifier
+the profile does not list stops `sign` with the steps to create and assign it (`xless merchant-ids create` for a
+merchant ID), as for [app groups](react-native.md#capabilities). A capability Apple refuses to enable (one that needs
+its approval, or does not apply to the platform) stops `sign` with Apple's answer.
+
+## `xless merchant-ids`
+
+```sh
+xless merchant-ids list                               # ID, identifier, name
+xless merchant-ids create merchant.com.example.store --name "Example Store"
+xless merchant-ids delete merchant.com.example.store  # asks first
+```
+
+They use the API key (`/v1/merchantIds`), which needs the Admin role. A merchant ID is named by its ID or its
+identifier, which starts with `merchant.`; `--name` takes ASCII letters, digits and spaces. Registering an identifier
+the team has already sends nothing. An app takes Apple Pay payments to a merchant ID through the `APPLE_PAY` capability
+of its bundle ID; assigning the merchant ID to the bundle ID is not in the API, so it is done on
+[developer.apple.com](https://developer.apple.com/account/resources/identifiers). With `--json`, `list` prints
+`{"data": [merchant IDs]}`, `create` `{"registered": [...], "existing": [...]}` and `delete` `{"deleted": merchant ID}`.
 
 ## JSON output
 

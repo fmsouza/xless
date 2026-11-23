@@ -10,7 +10,8 @@ struct Xless: AsyncParsableCommand {
                       PackageCommand.self, UploadCommand.self, InspectCommand.self, NextBuildCommand.self, SDKCommand.self, NibCommand.self, StoryboardCommand.self, ShimCommand.self, TauriCommand.self, CargoCommand.self, XcodeCommand.self, SetupCommand.self, RunCommand.self, DockerCommand.self, CleanCommand.self],
         groupedSubcommands: [
             // M7: the Apple developer account and App Store Connect from the terminal (docs/apple-account.md).
-            CommandGroup(name: "Apple account", subcommands: [AuthCommand.self, TeamCommand.self, SecretsCommand.self, DevicesCommand.self, APICommand.self]),
+            CommandGroup(name: "Apple account", subcommands: [AuthCommand.self, TeamCommand.self, SecretsCommand.self, DevicesCommand.self, BundleIDsCommand.self,
+                                                             MerchantIDsCommand.self, APICommand.self]),
         ]
     )
 }

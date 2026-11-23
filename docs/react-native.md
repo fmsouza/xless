@@ -228,9 +228,12 @@ Refused before any App Store Connect call:
 
 ## Capabilities
 
-| Enabled by xless through the App Store Connect API (iOS) | Portal only |
+| Enabled by xless through the App Store Connect API | Portal only |
 |---|---|
-| Push Notifications (`aps-environment`), Associated Domains, AutoFill Credential Provider, App Groups (the capability, not the group) | App Attest, Declared Age Range, Increased Memory Limit, Extended Virtual Address Space, and any other capability the API has no type for |
+| Every capability with an entitlement key: Push Notifications (`aps-environment`), iCloud, Sign in with Apple, Associated Domains, AutoFill Credential Provider, App Groups, Apple Pay, HealthKit, NFC Tag Reading, Data Protection… ([the full list](apple-account.md#what-sign-enables)). For App Groups, iCloud and Apple Pay, the capability, not the group, container or merchant ID | App Attest, Declared Age Range, Increased Memory Limit, Extended Virtual Address Space, Family Controls, and any other capability the API has no type for |
+
+Capabilities can also be listed, enabled and disabled by hand with
+[`xless bundle-ids capabilities`](apple-account.md#xless-bundle-ids).
 
 **Portal-only capability.** When a profile lacks a key the API cannot enable, `sign` regenerates the profile once, in case it was enabled by hand since. If the key is still missing it stops:
 
@@ -396,6 +399,8 @@ Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12
 | 15 | `[sign] entitlement '…' is not granted … enable the matching capability (…)` | A portal-only capability: [enable it by hand](#capabilities), or drop it with `entitlements.remove`. |
 | 15 | `[sign] identifiers.replace changed since finalize …` | The Info.plists carry the map `finalize` applied. Run again from `finalize` (`--from finalize`). |
 | 15 | `[sign] app group … is not in the provisioning profiles of …` | Create and assign the group in the portal ([steps](#capabilities)), or map it with `identifiers.replace`. |
+| 15 | `[sign] entitlement 'com.apple.developer.icloud-container-identifiers' value '…' is not allowed` (or `…in-app-payments`) | Create the iCloud container or merchant ID and assign it to the bundle ID in the portal, as the message lists ([more](apple-account.md#what-sign-enables)). |
+| 15 | `[sign] App Store Connect refused to enable …` | The capability needs Apple's approval or does not apply to the platform: request it, or drop its key with `entitlements.remove`. |
 | 15 | `[sign] entitlement 'keychain-access-groups' value '…' is not allowed` | Write the group as `$(AppIdentifierPrefix)<group>`, or map it with `identifiers.replace`. |
 | 15 | `[sign] … entitlements.json … run xless build` | The `.app` and the manifest disagree; run the build again (`--from build`). |
 | 15, 16, 17 | | As for any xless project: [troubleshooting.md](troubleshooting.md). |

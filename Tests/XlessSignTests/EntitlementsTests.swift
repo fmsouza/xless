@@ -92,3 +92,27 @@ func fakeProfile(_ ents: [String: Any]) throws -> Data {
     #expect(throws: XlessError.self) { try Entitlements.checkTeam(profile: ["application-identifier": "QWERT12345.a.b"], teamID: "ABCDE12345") }
     #expect(throws: Never.self) { try Entitlements.checkTeam(profile: ["application-identifier": "ABCDE12345.a.b"], teamID: "ABCDE12345") }
 }
+
+@Test func macPushTakesTheProfilesEnvironment() throws {
+    let m = try Entitlements.merge(user: ["com.apple.developer.aps-environment": "development"],
+                                   profile: ["com.apple.application-identifier": "T.a.b", "com.apple.developer.aps-environment": "production"],
+                                   platform: .macos, teamID: "T", bundleID: "a.b")
+    #expect(m["com.apple.developer.aps-environment"] as? String == "production")
+}
+
+@Test func merchantIDsAndICloudContainersMustBeInTheProfile() throws {
+    let profile: [String: Any] = ["com.apple.developer.in-app-payments": ["merchant.com.a"], "com.apple.developer.icloud-container-identifiers": ["iCloud.a.b"]]
+    for platform in Platform.allCases {
+        #expect(Entitlements.problems(user: ["com.apple.developer.in-app-payments": ["merchant.com.a"], "com.apple.developer.icloud-container-identifiers": ["iCloud.a.b"]],
+                                      profile: profile, platform: platform).isEmpty)
+        #expect(Entitlements.problems(user: ["com.apple.developer.in-app-payments": ["merchant.com.b"]], profile: profile, platform: platform)
+                == [.notAllowed(key: "com.apple.developer.in-app-payments", values: ["merchant.com.b"], allowed: ["merchant.com.a"])])
+    }
+    do {
+        _ = try Entitlements.merge(user: ["com.apple.developer.in-app-payments": ["merchant.com.b"]], profile: profile, platform: .macos, teamID: "T", bundleID: "a.b")
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.fix.hasPrefix("(1) register the merchant ID with `xless merchant-ids create <identifier> --name <name>` (merchant.com.b; skip one that exists)"))
+        #expect(e.fix.contains("a.b → Apple Pay Payment Processing → Edit → select merchant.com.b → Save"))
+    }
+}
