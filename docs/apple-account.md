@@ -636,7 +636,8 @@ person is named by email address (their Apple ID, compared without regard to cas
   link; the person becomes a user when they accept it.
 - **`update`** changes the roles (`--role` replaces them all), the apps (`--all-apps`, `--app`) and the provisioning
   access (`--provisioning`, `--no-provisioning`) in one request, with only what differs; when nothing differs, nothing
-  is sent.
+  is sent. The Account Holder's roles cannot be changed, and an `ADMIN` cannot be limited to some apps without
+  giving other roles.
 - **`remove`** and **`invitations cancel`** ask first (or need `--yes`). The Account Holder cannot be removed.
   An address that only has an invitation is not a user: `show`, `update` and `remove` say so and point at
   `invitations`.

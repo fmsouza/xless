@@ -99,8 +99,8 @@ private func body(_ r: URLRequest) throws -> JSONValue { try JSONDecoder().decod
 }
 
 @Test func inviteResolvesAppsAndSendsOnce() async throws {
-    let t = FakeTransport([(200, listing([app("111", "com.example.app")])),           // apps?filter[bundleId]
-                           (200, listing([])), (200, listing([])),                  // users, invitations
+    let t = FakeTransport([(200, listing([])), (200, listing([])),                  // users, invitations
+                           (200, listing([app("111", "com.example.app")])),           // apps?filter[bundleId]
                            (201, single(invitation("I1", "grace@example.com")))])
     let out = try await cli(t).invite(email: "grace@example.com", firstName: "Grace", lastName: "Hopper", roles: [.developer],
                                       allApps: false, apps: ["com.example.app"], provisioning: false)
@@ -116,6 +116,11 @@ private func body(_ r: URLRequest) throws -> JSONValue { try JSONDecoder().decod
     let out = try await cli(t, said: said).invite(email: "grace@example.com", firstName: "G", lastName: "H", roles: [.developer],
                                                   allApps: true, apps: [], provisioning: false)
     #expect(out == "Grace@example.com is already a user of this team (user U1, ADMIN); nothing was sent\n")
+    // the apps are not looked up for someone already there: a re-run cannot fail on them
+    let rerun = FakeTransport([(200, listing([user("U1", "grace@example.com")]))])
+    _ = try await cli(rerun).invite(email: "grace@example.com", firstName: "G", lastName: "H", roles: [.developer],
+                                    allApps: false, apps: ["com.gone.app"], provisioning: false)
+    #expect(rerun.requests.count == 1)
     #expect(said.lines == ["to change their roles: `xless users update Grace@example.com --role DEVELOPER`"])
     #expect(t.requests.count == 1)
 
@@ -178,4 +183,59 @@ private func body(_ r: URLRequest) throws -> JSONValue { try JSONDecoder().decod
         #expect(e.cause.hasPrefix("GET /v1/users: App Store Connect HTTP 403"))
         #expect(e.fix.contains("Admin role") && e.fix.contains("`xless auth api-key create --role ADMIN`"))
     }
+}
+
+@Test func updateResolvesTheAppsAndReplacesThem() async throws {
+    let t = FakeTransport([(200, listing([user("U1", "ada@example.com", allApps: false)])),
+                           (200, listing([app("111", "com.example.app")])),                            // apps?filter[bundleId]
+                           (200, #"{"data":[{"type":"apps","id":"222"}],"links":{"self":"x"}}"#),       // current linkage
+                           (200, single(user("U1", "ada@example.com", allApps: false)))])
+    let out = try await cli(t).update(" ada@example.com".trimmingCharacters(in: .whitespaces), roles: nil, allApps: false,
+                                      apps: ["com.example.app"], provisioning: nil)
+    #expect(out == "updated ada@example.com (user U1): DEVELOPER, apps com.example.app, provisioning no\n")
+    let sent = try body(t.requests[3])
+    #expect(t.requests[3].httpMethod == "PATCH")
+    #expect(sent["data"]?["relationships"]?["visibleApps"]?["data"]?[0]?["id"] == .string("111"))
+    #expect(sent["data"]?["attributes"] == .object([:]))
+}
+
+@Test func updateRefusesWhatAppleWouldRefuse() async throws {
+    let holder = FakeTransport([(200, listing([user("U1", "ada@example.com", roles: ["ACCOUNT_HOLDER", "ADMIN"])]))])
+    do { _ = try await cli(holder).update("ada@example.com", roles: [.admin], allApps: true, apps: nil, provisioning: nil); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.cause.contains("Account Holder") && holder.requests.count == 1) }
+
+    let admin = FakeTransport([(200, listing([user("U1", "ada@example.com", roles: ["ADMIN"])]))])
+    do { _ = try await cli(admin).update("ada@example.com", roles: nil, allApps: false, apps: ["com.example.app"], provisioning: nil); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.cause.contains("is an ADMIN") && admin.requests.count == 1) }
+
+    // the holder's provisioning can still be changed, and the invite hint never suggests changing their roles
+    let said = Said()
+    let invite = FakeTransport([(200, listing([user("U1", "ada@example.com", roles: ["ACCOUNT_HOLDER", "ADMIN"])]))])
+    _ = try await cli(invite, said: said).invite(email: "ada@example.com", firstName: "A", lastName: "L", roles: [.developer],
+                                                 allApps: true, apps: [], provisioning: false)
+    #expect(said.lines.isEmpty)
+}
+
+@Test func adminImpliesEveryAppOnUpdate() async throws {
+    let parsed = try UsersUpdateCommand.parse(["U1", "--role", "admin"])
+    let roles = try parsed.role.parsed()
+    #expect(parsed.visibility.allApps == false && roles == [.admin])
+    let t = FakeTransport([(200, single(user("U1", "ada@example.com", allApps: false))),
+                           (200, single(user("U1", "ada@example.com", roles: ["ADMIN"])))])
+    _ = try await cli(t).update("U1", roles: [.admin], allApps: true, apps: nil, provisioning: nil)
+    #expect(try body(t.requests[1])["data"]?["attributes"] == .object(["roles": .array([.string("ADMIN")]), "allAppsVisible": .bool(true)]))
+}
+
+@Test func removeAndCancelJSON() async throws {
+    let t = FakeTransport([(200, listing([user("U1", "ada@example.com")])), (204, "")])
+    let doc = try JSONDecoder().decode(JSONValue.self, from: Data(try await cli(t, json: true).remove("ada@example.com", yes: true).utf8))
+    #expect(doc["removed"]?["id"] == .string("U1"))
+    let c = FakeTransport([(200, listing([invitation("I1", "g@example.com")])), (204, "")])
+    let cancelled = try JSONDecoder().decode(JSONValue.self, from: Data(try await cli(c, json: true).cancel("g@example.com", yes: true).utf8))
+    #expect(cancelled["cancelled"]?["id"] == .string("I1"))
+}
+
+@Test func personArgumentsAreTrimmed() throws {
+    #expect(PersonArgument.normalized("  ada@example.com ") == "ada@example.com")
+    _ = try UsersShowCommand.parse([" ada@example.com"])
 }

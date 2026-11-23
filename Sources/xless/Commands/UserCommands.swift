@@ -64,7 +64,11 @@ enum PersonArgument {
         ArgumentHelp("The \(what)'s email address, or its ID (see `\(list)`).", valueName: "email-or-id")
     }
 
-    static func validate(_ text: String) throws {
+    /// The argument as it is looked up: trimmed.
+    static func normalized(_ text: String) -> String { text.trimmingCharacters(in: .whitespaces) }
+
+    static func validate(_ raw: String) throws {
+        let text = normalized(raw)
         if UserEmail.isEmail(text) {
             do { _ = try UserEmail.validate(text) } catch let e as IdentifierInputError { throw ValidationError(e.description) }
         } else if !ASCUsers.isID(text) {
@@ -109,7 +113,7 @@ struct UsersShowCommand: AsyncParsableCommand {
     func validate() throws { try PersonArgument.validate(user) }
 
     func run() async throws {
-        try await runUsers(account.team.team, verbose: account.trace.verbose, json: account.output.json) { try await $0.show(user) }
+        try await runUsers(account.team.team, verbose: account.trace.verbose, json: account.output.json) { try await $0.show(PersonArgument.normalized(user)) }
     }
 }
 
@@ -179,7 +183,7 @@ struct UsersUpdateCommand: AsyncParsableCommand {
     func run() async throws {
         let roles = try role.parsed()
         try await runUsers(account.team.team, verbose: account.trace.verbose, json: account.output.json) {
-            try await $0.update(user, roles: roles.isEmpty ? nil : roles, allApps: visibility.allApps || roles.contains(.admin),
+            try await $0.update(PersonArgument.normalized(user), roles: roles.isEmpty ? nil : roles, allApps: visibility.allApps || roles.contains(.admin),
                                 apps: visibility.apps.isEmpty ? nil : visibility.apps, provisioning: provisioning)
         }
     }
@@ -197,7 +201,7 @@ struct UsersRemoveCommand: AsyncParsableCommand {
 
     func run() async throws {
         try await runUsers(account.team.team, verbose: account.trace.verbose, json: account.output.json) {
-            try await $0.remove(user, yes: account.confirmation.yes)
+            try await $0.remove(PersonArgument.normalized(user), yes: account.confirmation.yes)
         }
     }
 }
@@ -230,7 +234,7 @@ struct UsersInvitationsCancelCommand: AsyncParsableCommand {
 
     func run() async throws {
         try await runUsers(account.team.team, verbose: account.trace.verbose, json: account.output.json) {
-            try await $0.cancel(invitation, yes: account.confirmation.yes)
+            try await $0.cancel(PersonArgument.normalized(invitation), yes: account.confirmation.yes)
         }
     }
 }
@@ -285,16 +289,16 @@ struct UserCLI {
 
     func invite(email: String, firstName: String, lastName: String, roles: [UserRole], allApps: Bool, apps appArguments: [String],
                 provisioning: Bool) async throws -> String {
-        var appIDs: [String] = []
-        if !allApps {
-            for argument in appArguments {
-                let id = try await apps.resolve(argument).id
-                if !appIDs.contains(id) { appIDs.append(id) }
-            }
+        // Someone already there is reported before the apps are looked up, so a re-run never fails on them.
+        let result: ASCUsers.Invitation
+        if let found = try await users.existing(email: email) {
+            result = found
+        } else {
+            let appIDs = allApps ? [] : try await resolve(appArguments)
+            let request = UserInvitationRequest(email: email, firstName: firstName, lastName: lastName, roles: roles,
+                                                allAppsVisible: allApps, appIDs: appIDs, provisioningAllowed: provisioning)
+            result = try await users.invite(request, checked: true)
         }
-        let request = UserInvitationRequest(email: email, firstName: firstName, lastName: lastName, roles: roles,
-                                            allAppsVisible: allApps, appIDs: appIDs, provisioningAllowed: provisioning)
-        let result = try await users.invite(request)
         let wanted = Set(roles.map(\.rawValue))
         switch result {
         case .invited(let i):
@@ -302,7 +306,7 @@ struct UserCLI {
             let expiry = i.attributes.expirationDate.map { ", expires \($0.prefix(10))" } ?? ""
             return "invited \(i.email) (\(i.fullName)) as \(UserRole.display(i.roles)), \(allApps ? "all apps" : "apps \(appArguments.joined(separator: ", "))"): invitation \(i.id)\(expiry); Apple emails them the link\n"
         case .existingUser(let u):
-            if Set(u.roles) != wanted { say("to change their roles: `xless users update \(u.email) --role \(roles.map(\.rawValue).joined(separator: ","))`") }
+            if Set(u.roles) != wanted, !u.isAccountHolder { say("to change their roles: `xless users update \(u.email) --role \(roles.map(\.rawValue).joined(separator: ","))`") }
             if json { return try ASCOutput.json(InviteReport(result: "existing-user", data: u.resource)) }
             return "\(u.email) is already a user of this team (user \(u.id), \(UserRole.display(u.roles))); nothing was sent\n"
         case .existingInvitation(let i):
@@ -315,15 +319,15 @@ struct UserCLI {
 
     func update(_ argument: String, roles: [UserRole]?, allApps: Bool, apps appArguments: [String]?, provisioning: Bool?) async throws -> String {
         let user = try await users.resolve(argument)
-        var appIDs: [String]?
-        if let appArguments {
-            var ids: [String] = []
-            for app in appArguments {
-                let id = try await apps.resolve(app).id
-                if !ids.contains(id) { ids.append(id) }
-            }
-            appIDs = ids
+        if roles != nil, user.isAccountHolder {
+            throw XlessError(.account, "\(user.email) is the team's Account Holder, whose roles App Store Connect does not let anyone change",
+                             fix: "drop --role; only a transfer of the Account Holder role (developer.apple.com → Membership details) changes them")
         }
+        if appArguments != nil, (roles?.map(\.rawValue) ?? user.roles).contains(UserRole.admin.rawValue) {
+            throw XlessError(.account, "\(user.email) is an ADMIN, who sees every app", fix: "drop --app, or give other roles with --role")
+        }
+        var appIDs: [String]?
+        if let appArguments { appIDs = try await resolve(appArguments) }
         guard let updated = try await users.update(user, roles: roles, allApps: allApps, appIDs: appIDs, provisioning: provisioning) else {
             if json { return try ASCOutput.json(Listing(data: user, included: [])) }
             return "\(user.email) (user \(user.id)) already has these settings; nothing was sent\n"
@@ -331,6 +335,16 @@ struct UserCLI {
         if json { return try ASCOutput.json(Listing(data: updated, included: [])) }
         let seen = updated.allAppsVisible ? "all apps" : appArguments.map { "apps \($0.joined(separator: ", "))" } ?? "the same apps"
         return "updated \(updated.email) (user \(updated.id)): \(UserRole.display(updated.roles)), \(seen), provisioning \(updated.provisioningAllowed ? "yes" : "no")\n"
+    }
+
+    /// The app IDs of `--app` arguments (app IDs or bundle identifiers), each once.
+    private func resolve(_ arguments: [String]) async throws -> [String] {
+        var ids: [String] = []
+        for argument in arguments {
+            let id = try await apps.resolve(argument).id
+            if !ids.contains(id) { ids.append(id) }
+        }
+        return ids
     }
 
     func remove(_ argument: String, yes: Bool) async throws -> String {
@@ -361,7 +375,8 @@ struct UserCLI {
 }
 
 enum UserTable {
-    /// `all`, the bundle IDs of the included apps (IDs when not included), or `none`; `+N` past what a listing includes.
+    /// `all`, the bundle IDs of the included apps (IDs when not included), or `none`; `,…` when the listing may have
+    /// included only part of them (Apple includes at most 50 per person).
     static func apps<A: ASCPersonAttributes>(_ person: ASCKeptResource<A>, included: [ASCAnyResource]) -> String {
         if person.allAppsVisible { return "all" }
         guard let ids = person.visibleAppIDs else { return "-" }

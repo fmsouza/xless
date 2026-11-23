@@ -288,12 +288,19 @@ public struct ASCUsers: Sendable {
         throw XlessError(.account, "no pending invitation for \(text) on this team", fix: "check `xless users invitations list` (and --team)")
     }
 
+    /// The user, else the pending invitation, with this email address; nil when the address is neither.
+    public func existing(email: String) async throws -> Invitation? {
+        if let user = try await find(email: email) { return .existingUser(user) }
+        if let invitation = try await findInvitation(email: email) { return .existingInvitation(invitation) }
+        return nil
+    }
+
     /// Invites someone, unless the address is already a user of the team or already invited: then that one is returned and
     /// nothing is sent. The POST is sent once; when Apple refuses it as a conflict and the address now shows up as a
     /// user or an invitation, that one is returned.
-    public func invite(_ request: UserInvitationRequest) async throws -> Invitation {
-        if let user = try await find(email: request.email) { return .existingUser(user) }
-        if let invitation = try await findInvitation(email: request.email) { return .existingInvitation(invitation) }
+    /// - Parameter checked: the caller has just found, with `existing(email:)`, that the address is neither.
+    public func invite(_ request: UserInvitationRequest, checked: Bool = false) async throws -> Invitation {
+        if !checked, let found = try await existing(email: request.email) { return found }
         struct Attributes: Encodable, Sendable {
             var email: String; var firstName: String; var lastName: String; var roles: [String]; var allAppsVisible: Bool; var provisioningAllowed: Bool
         }
@@ -308,8 +315,7 @@ public struct ASCUsers: Sendable {
                                                                                    attributes: attributes, relationships: relationships)
             return .invited(created.data)
         } catch let e as ASCError where e.status == 409 {
-            if let user = try await find(email: request.email) { return .existingUser(user) }
-            if let invitation = try await findInvitation(email: request.email) { return .existingInvitation(invitation) }
+            if let found = try await existing(email: request.email) { return found }
             throw e
         }
     }

@@ -34,7 +34,7 @@ public struct TestFlightResult: Codable, Sendable, Equatable {
 
     public var warnings: [String] {
         notes + groups.filter { $0.testerCount == 0 }.map {
-            "warning: group \($0.name) has 0 testers, so nobody can install this build yet. Internal testers must be App Store Connect users: add them once in the web UI (Users and Access, then TestFlight, \($0.name), Testers)"
+            "warning: group \($0.name) has 0 testers, so nobody can install this build yet. Internal testers must be App Store Connect users (invite them with `xless users invite`): add them to the group once in the web UI (TestFlight, \($0.name), Testers)"
         }
     }
 }
