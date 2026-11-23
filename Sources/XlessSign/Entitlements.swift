@@ -122,6 +122,12 @@ public enum Entitlements {
         var key: String { switch self { case .missing(let k), .notAllowed(let k, _, _): k } }
     }
 
+    /// The gated entitlement keys a profile does not grant as `user` asks for them (absent, or values it does not list),
+    /// a keychain group outside the team's pattern aside: what regenerating the profile would fix (`xless provision`).
+    public static func profileLacks(user: [String: Any], profile: [String: Any], platform: Platform) -> [String] {
+        problems(user: user, profile: profile, platform: platform).map(\.key).filter { $0 != keychainGroupsKey }
+    }
+
     static let keychainGroupsKey = "keychain-access-groups"
     static let appGroupsKey = "com.apple.security.application-groups"
     static let associatedDomainsKey = "com.apple.developer.associated-domains"

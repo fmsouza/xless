@@ -13,9 +13,14 @@ public struct StorePush: Sendable {
         public var resendDemoAccount: Bool
         /// The day prices are compared on: a scheduled price change from this day or earlier is in effect.
         public var today: Date
+        /// Plan nothing that deletes (a change of action delete, or media that replaces or drops files): those changes
+        /// go to `StorePlan.held` instead (`xless provision` never deletes; it reports them).
+        public var holdDeletes: Bool
 
-        public init(parts: [StorePushPart] = StorePushPart.allCases, prune: Bool = false, resendDemoAccount: Bool = false, today: Date = Date()) {
+        public init(parts: [StorePushPart] = StorePushPart.allCases, prune: Bool = false, resendDemoAccount: Bool = false, today: Date = Date(),
+                    holdDeletes: Bool = false) {
             self.parts = parts; self.prune = prune; self.resendDemoAccount = resendDemoAccount; self.today = today
+            self.holdDeletes = holdDeletes
         }
     }
 
@@ -187,6 +192,10 @@ public struct StorePush: Sendable {
         var plan = context.plan
         // The new version comes first: the rest is planned again once it exists.
         plan.changes = plan.changes.filter(\.replans) + plan.changes.filter { !$0.replans }
+        if options.holdDeletes {
+            plan.held = plan.changes.filter(\.deletes)
+            plan.changes.removeAll(where: \.deletes)
+        }
         return (plan, Report(target: target, plan: plan))
     }
 

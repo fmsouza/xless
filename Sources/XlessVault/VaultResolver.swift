@@ -85,6 +85,10 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
         return found.first
     }
 
+    /// The store's data key, unlocked once per process and shared with every lookup: a command that both reads secrets
+    /// and writes new entries (`xless provision apply`) asks the passphrase once.
+    public func dataKey(for file: VaultFile, reason: String) throws -> SymmetricKey { try key(for: file, reason: reason) }
+
     private func key(for file: VaultFile, reason: String) throws -> SymmetricKey {
         SecretScope.enter() // before the passphrase and the data key are in memory
         return try lock.withLock {

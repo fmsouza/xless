@@ -99,6 +99,10 @@ public struct StoreChange: Sendable, Equatable {
         self.media = media; self.privacy = privacy
     }
 
+    /// Whether sending the change removes something from App Store Connect: a delete, or media work that replaces or
+    /// drops files.
+    public var deletes: Bool { action == .delete || !(media?.deletes.isEmpty ?? true) }
+
     public var text: String {
         let sign = switch action { case .create: "+"; case .update: "~"; case .delete: "-" }
         guard !fields.isEmpty else { return "\(sign) \(subject)" }
@@ -143,6 +147,8 @@ public struct StorePlan: Sendable, Equatable {
     /// media.lock entries planning found (a local file that is an upload App Store Connect has), recorded once the
     /// plan is applied.
     public var lock: [String: MediaLock.Entry] = [:]
+    /// With `StorePush.Options.holdDeletes`: the changes left out because they delete something.
+    public var held: [StoreChange] = []
 
     public init(changes: [StoreChange] = [], notes: [String] = []) { self.changes = changes; self.notes = notes }
 
