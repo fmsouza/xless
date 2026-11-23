@@ -161,11 +161,11 @@ enum ProvisionCLI {
     static func open(_ options: ProvisionInputOptions, verbose: Bool, env: [String: String] = ProcessInfo.processInfo.environment) throws -> Opened {
         SecretScope.enter()
         let inputs = try ProvisionInputs.load(project: options.projectURL, config: options.configURL, source: options.source, storeDir: options.dir, env: env)
-        let store = VaultStore(location: .standard())
-        // One resolver for the API key and the new entries: the passphrase is asked once.
-        let resolver = VaultResolver(store: store, team: nil, prompter: { try? TerminalPrompter.forSecretStore() })
-        let session = try AccountSession.open(team: inputs.team, verbose: verbose, env: env, fallback: { _ in resolver.preferring(team: inputs.team) })
-        let vault = ProvisionVault(store: store, env: env, unlock: { try resolver.dataKey(for: $0, reason: $1) })
+        // One store for the API key and the new entries: the passphrase is asked once.
+        let store = try SecretStoreCLI.store()
+        let session = try AccountSession.open(team: inputs.team, verbose: verbose, env: env,
+                                              fallback: { _ in VaultResolver(secrets: store).preferring(team: inputs.team) })
+        let vault = ProvisionVault(store: store, env: env)
         var opened = Opened(inputs: inputs, account: APIProvisionAccount(resources: session.resources), vault: vault)
         if let dir = inputs.storeDir, let bundle = inputs.appStoreBundleID {
             switch manifest(dir, bundleID: bundle) {

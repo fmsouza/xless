@@ -92,24 +92,29 @@ protocol ProvisionListing: Sendable {
 /// The secret store and the environment: which signing and auth keys exist (no passphrase), their values when needed
 /// (the passphrase, asked once per process: `unlock` is the resolver the API key came from).
 struct ProvisionVault: @unchecked Sendable {
-    let store: VaultStore
+    let store: any SecretStore
     let env: [String: String]
-    let unlock: (VaultFile, String) throws -> SymmetricKey
 
     /// The store as it is now (nil when `xless secrets init` was never run); needs no passphrase.
-    func file() throws -> VaultFile? {
-        do { return try store.read() } catch { throw XlessError.wrapping(error, stage: .account) }
+    func file() throws -> SecretCatalog? {
+        do { return try store.catalog() } catch { throw XlessError.wrapping(error, stage: .account) }
+    }
+
+    /// The store as it is now; an error when there is none.
+    func existing() throws -> SecretCatalog {
+        do { return try store.existingCatalog() } catch { throw XlessError.wrapping(error, stage: .account) }
     }
 
     /// A key given in the environment, `NAME` or `NAME_FILE` (the secret store is not asked).
     func environmentKey(_ name: String) throws -> String? { try Secrets(env: env, fallback: nil).optional(name, stage: .account) }
 
-    func dataKey(_ file: VaultFile, reason: String) throws -> SymmetricKey {
-        do { return try unlock(file, reason) } catch { throw XlessError.wrapping(error, stage: .account) }
+    /// Unlocks the store for `file` (asks the vault's passphrase, once per process).
+    func unlock(_ file: SecretCatalog, reason: String) throws {
+        do { try store.unlock(file, remember: nil, reason: reason) } catch { throw XlessError.wrapping(error, stage: .account) }
     }
 
-    func open(_ entry: VaultEntry, in file: VaultFile, reason: String) throws -> SecretBytes {
-        do { return try VaultCrypto.open(entry, dataKey: try dataKey(file, reason: reason)) } catch { throw XlessError.wrapping(error, stage: .account) }
+    func open(_ entry: VaultEntry, in file: SecretCatalog, reason: String) throws -> SecretBytes {
+        do { return try store.secret(entry, in: file, reason: reason) } catch { throw XlessError.wrapping(error, stage: .account) }
     }
 }
 

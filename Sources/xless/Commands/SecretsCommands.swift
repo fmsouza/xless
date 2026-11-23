@@ -18,6 +18,10 @@ struct SecretsCommand: AsyncParsableCommand {
         The pipeline reads a secret from NAME, else NAME_FILE, else the store's entry NAME (or NAME@<suffix>, one per \
         team); CI keeps using the environment. ASC_KEY_ID and ASC_ISSUER_ID come from the ASC_KEY_P8 entry's IDs.
         Well-known names: ASC_KEY_P8, XLESS_DIST_KEY, XLESS_DEVID_KEY, XLESS_INSTALLER_KEY.
+
+        With `secrets: { backend: helper, helper: <name> }` in ~/.config/xless/config.yml, an external credential \
+        helper (xless-credential-<name> on PATH: your desktop keyring through secret-tool, pass, …) holds the secrets \
+        instead, and these commands work on it the same way (docs/secrets.md).
         """,
         subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self,
                       SecretsExportCommand.self, SecretsRmCommand.self, SecretsUnlockCommand.self, SecretsLockCommand.self,
@@ -26,9 +30,31 @@ struct SecretsCommand: AsyncParsableCommand {
 
 /// What the `secrets` commands share.
 enum SecretStoreCLI {
-    static var location: VaultLocation { .standard() }
-    static var store: VaultStore { VaultStore(location: location) }
     static let cache = KernelKeyringCache()
+
+    /// The store config.yml's `secrets.backend` names, made once per process and shared by every command and by the
+    /// pipeline's lookups (`main`), so the vault's passphrase is asked at most once.
+    private static let configured = Result { try ConfiguredSecretStore.load(cache: cache, prompter: { try? TerminalPrompter.forSecretStore() }) }
+
+    static func backend() throws -> ConfiguredSecretStore { try configured.get() }
+
+    /// The configured store (the vault, or the credential helper).
+    static func store() throws -> any SecretStore { try backend().store }
+
+    /// The secret-store fallback `main` installs: the configured store, or (config.yml is wrong, the helper is missing)
+    /// one that reports why whenever a secret is looked up in it.
+    static var fallback: any SecretFallback {
+        switch configured {
+        case .success(let configured): VaultResolver(secrets: configured.store)
+        case .failure(let error): UnavailableStore(error: error)
+        }
+    }
+
+    /// What the vault-only commands (`passwd`) say with a credential helper.
+    static func vaultOnly(_ what: String, helper: HelperSecretStore) -> VaultError {
+        VaultError(.unsupportedByBackend, "\(what) is for the encrypted vault; the secrets are kept by \(helper.place) (secrets.backend in \(UserConfig.file().path))",
+                   fix: "use the keyring's or the password manager's own tools for its password")
+    }
 
     /// Runs a command's body hardened (`SecretScope`), any failure as a `[config] cause — fix` error.
     static func run<T>(_ body: () throws -> T) throws -> T {
@@ -36,12 +62,13 @@ enum SecretStoreCLI {
         do { return try body() } catch { throw XlessError.wrapping(error, stage: .config) }
     }
 
-    static func existing() throws -> VaultFile {
-        guard let file = try store.read() else { throw VaultStore.notInitialized(location) }
+    /// The vault's file; an error when there is none.
+    static func existing(_ vault: VaultSecretStore) throws -> VaultFile {
+        guard let file = try vault.vault.read() else { throw VaultStore.notInitialized(vault.vault.location) }
         return file
     }
 
-    static func entry(_ name: String, in file: VaultFile) throws -> VaultEntry {
+    static func entry(_ name: String, in file: some SecretEntries) throws -> VaultEntry {
         guard let entry = file.entry(named: name) else {
             throw VaultError(.noEntry, "the secret store has no entry \(name)", fix: "see the names with `xless secrets list`")
         }
@@ -51,6 +78,10 @@ enum SecretStoreCLI {
     /// The `--remember` duration, refused up front (before any passphrase) where there is no keyring to keep it in.
     static func remember(_ text: String?) throws -> Int? {
         guard let text else { return nil }
+        if case .helper = try backend() {
+            say("note: --remember is for the encrypted vault; the credential helper keeps its own lock")
+            return nil
+        }
         let seconds = try RememberDuration.seconds(text)
         guard cache.isAvailable else {
             throw VaultError(.cacheUnavailable, "--remember needs the kernel keyring, which is not available here (macOS, or a container that blocks it)",
@@ -59,12 +90,8 @@ enum SecretStoreCLI {
         return seconds
     }
 
-    static func unlock(_ file: VaultFile, remember: Int?, reason: String) throws -> SymmetricKey {
-        try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { try? TerminalPrompter.forSecretStore() }, remember: remember, reason: reason)
-    }
-
     /// Fails if the store was replaced since `file` was read (the key in hand would not be its key).
-    static func same(_ file: VaultFile, as unlocked: VaultFile) throws {
+    static func same(_ file: SecretCatalog, as unlocked: SecretCatalog) throws {
         guard file.id == unlocked.id else {
             throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command")
         }
@@ -96,18 +123,27 @@ struct SecretsInitCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
+            let vault: VaultSecretStore
+            switch try SecretStoreCLI.backend() {
+            case .helper(let helper):
+                let count = try helper.existingCatalog().entries.count
+                print("\(helper.place) answers and holds \(count) xless entr\(count == 1 ? "y" : "ies"); there is no store to create (secrets.backend is helper)")
+                return
+            case .vault(let v): vault = v
+            }
             let remember = try SecretStoreCLI.remember(options.remember)
-            if try SecretStoreCLI.store.read() != nil || SecretStoreCLI.location.fileExists {
-                throw VaultError(.alreadyInitialized, "a secret store already exists at \(SecretStoreCLI.location.file.path)",
+            let location = vault.vault.location
+            if try vault.vault.read() != nil || location.fileExists {
+                throw VaultError(.alreadyInitialized, "a secret store already exists at \(location.file.path)",
                                  fix: "use it (`xless secrets status`), or change its passphrase with `xless secrets passwd`")
             }
             let terminal = try TerminalPrompter.forSecretStore()
             terminal.say("The passphrase protects every key in the store; there is no way to recover it. Choose a long one.")
             let passphrase = try VaultUnlocker.newPassphrase(terminal)
             let (file, key) = try VaultCrypto.newVault(passphrase: passphrase)
-            try SecretStoreCLI.store.create(file)
+            try vault.vault.create(file)
             if let remember { try SecretStoreCLI.cache.store(id: file.id, key: VaultCrypto.keyBytes(key), seconds: remember) }
-            print("created the secret store at \(SecretStoreCLI.location.file.path)")
+            print("created the secret store at \(location.file.path)")
         }
     }
 }
@@ -117,10 +153,15 @@ struct SecretsStatusCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
-            let file = try SecretStoreCLI.store.read()
-            let cache = SecretStoreCLI.cache
-            let unlocked: Bool? = file.flatMap { f in cache.isAvailable ? ((try? cache.load(id: f.id)) ?? nil) != nil : nil }
-            print(VaultReport.status(location: SecretStoreCLI.location, file: file, unlocked: unlocked))
+            switch try SecretStoreCLI.backend() {
+            case .helper(let helper):
+                print(VaultReport.status(helper: helper, catalog: try helper.existingCatalog()))
+            case .vault(let vault):
+                let file = try vault.vault.read()
+                let cache = SecretStoreCLI.cache
+                let unlocked: Bool? = file.flatMap { f in cache.isAvailable ? ((try? cache.load(id: f.id)) ?? nil) != nil : nil }
+                print(VaultReport.status(location: vault.vault.location, file: file, unlocked: unlocked))
+            }
         }
     }
 }
@@ -129,7 +170,7 @@ struct SecretsListCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "list", abstract: "List the entries: names, kinds and IDs (never a value; no passphrase needed).")
 
     func run() throws {
-        try SecretStoreCLI.run { print(VaultReport.list(try SecretStoreCLI.existing())) }
+        try SecretStoreCLI.run { print(VaultReport.list(try SecretStoreCLI.store().existingCatalog())) }
     }
 }
 
@@ -164,15 +205,14 @@ struct SecretsImportCommand: ParsableCommand {
             }
             let secret = try Self.readFile(file)
             try VaultImport.validate(secret, kind: kind)
-            let current = try SecretStoreCLI.existing()
+            let store = try SecretStoreCLI.store()
+            let current = try store.existingCatalog()
             if current.entry(named: name) != nil { throw Self.exists(name) }
-            let key = try SecretStoreCLI.unlock(current, remember: remember, reason: "importing \(name)")
-            try SecretStoreCLI.store.update { file in
+            try store.unlock(current, remember: remember, reason: "importing \(name)")
+            try store.update(reason: "importing \(name)") { file in
                 try SecretStoreCLI.same(file, as: current)
                 if file.entry(named: name) != nil { throw Self.exists(name) }
-                var next = file
-                next.entries.append(try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret, dataKey: key))
-                return next
+                return [.add(name: name, kind: kind, metadata: metadata, secret: secret)]
             }
             secret.wipe()
             print("imported \(name) (\(kind.rawValue)) into the secret store")
@@ -226,9 +266,11 @@ struct SecretsExportCommand: ParsableCommand {
     func run() throws {
         try SecretStoreCLI.run {
             let remember = try SecretStoreCLI.remember(options.remember)
-            let file = try SecretStoreCLI.existing()
+            let store = try SecretStoreCLI.store()
+            let file = try store.existingCatalog()
             let entry = try SecretStoreCLI.entry(name, in: file)
-            let secret = try VaultCrypto.open(entry, dataKey: try SecretStoreCLI.unlock(file, remember: remember, reason: "exporting \(name)"))
+            try store.unlock(file, remember: remember, reason: "exporting \(name)")
+            let secret = try store.secret(entry, in: file, reason: "exporting \(name)")
             var data = secret.withUnsafeBytes { Data($0) }
             defer {
                 data.withUnsafeMutableBytes { SecretBytes.zero($0) }
@@ -250,18 +292,16 @@ struct SecretsRmCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
-            let file = try SecretStoreCLI.existing()
-            _ = try SecretStoreCLI.entry(name, in: file)
+            let store = try SecretStoreCLI.store()
+            _ = try SecretStoreCLI.entry(name, in: try store.existingCatalog())
             guard try AccountConfirm.confirm("Remove \(name) from the secret store? It cannot be recovered.", action: "removing \(name)",
                                              yes: confirmation.yes, stage: .config, terminal: { try? TerminalPrompter.forSecretStore() }) else {
                 print("kept \(name)")
                 return
             }
-            try SecretStoreCLI.store.update { current in
-                var next = current
-                next.entries.removeAll { $0.name == name }
-                guard next.entries.count < current.entries.count else { throw VaultError(.noEntry, "the secret store has no entry \(name)", fix: "see `xless secrets list`") }
-                return next
+            try store.update(reason: "removing \(name)") { current in
+                guard current.entry(named: name) != nil else { throw VaultError(.noEntry, "the secret store has no entry \(name)", fix: "see `xless secrets list`") }
+                return [.remove(name: name)]
             }
             print("removed \(name) from the secret store")
         }
@@ -275,9 +315,12 @@ struct SecretsUnlockCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
+            guard case .vault(let vault) = try SecretStoreCLI.backend() else {
+                print("the credential helper keeps its own lock (unlock your keyring or agent with its own tools); nothing to do")
+                return
+            }
             let seconds = try SecretStoreCLI.remember(remember) ?? 0
-            let file = try SecretStoreCLI.existing()
-            _ = try SecretStoreCLI.unlock(file, remember: seconds, reason: "unlocking")
+            _ = try vault.key(for: try SecretStoreCLI.existing(vault), remember: seconds, reason: "unlocking")
             print("the secret store stays unlocked for \(seconds / 60 > 0 ? "\(seconds / 60) min" : "\(seconds) s") (until `xless secrets lock`)")
         }
     }
@@ -288,7 +331,11 @@ struct SecretsLockCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
-            let file = try SecretStoreCLI.existing()
+            guard case .vault(let vault) = try SecretStoreCLI.backend() else {
+                print("the credential helper keeps its own lock (lock your keyring or agent with its own tools); nothing to do")
+                return
+            }
+            let file = try SecretStoreCLI.existing(vault)
             print(try SecretStoreCLI.cache.forget(id: file.id) ? "locked the secret store" : "the secret store was not unlocked")
         }
     }
@@ -302,13 +349,18 @@ struct SecretsPasswdCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
-            let file = try SecretStoreCLI.existing()
+            let vault: VaultSecretStore
+            switch try SecretStoreCLI.backend() {
+            case .helper(let helper): throw SecretStoreCLI.vaultOnly("`xless secrets passwd`", helper: helper)
+            case .vault(let v): vault = v
+            }
+            let file = try SecretStoreCLI.existing(vault)
             let terminal = try TerminalPrompter.forSecretStore()
             // Always the current passphrase, even when a remembered unlock is there.
             let key = try VaultUnlocker.dataKey(for: file, cache: nil, prompter: { terminal }, reason: "changing the passphrase")
             let passphrase = try VaultUnlocker.newPassphrase(terminal)
-            try SecretStoreCLI.store.update { current in
-                try SecretStoreCLI.same(current, as: file)
+            try vault.vault.update { current in
+                guard current.id == file.id else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
                 return try VaultCrypto.rewrap(current, dataKey: key, passphrase: passphrase)
             }
             print("changed the secret store's passphrase")
@@ -344,12 +396,21 @@ struct SecretsMaterializeCommand: ParsableCommand {
             if let team, team.wholeMatch(of: /[A-Z0-9]{10}/) == nil {
                 throw XlessError(.config, "--team \(team) is not a 10-character Apple team ID", fix: "copy it from `xless team list`")
             }
-            let materializer = VaultMaterializer(store: SecretStoreCLI.store, team: team, cache: SecretStoreCLI.cache,
-                                                 prompter: { try? TerminalPrompter.forSecretStore() })
+            let materializer = VaultMaterializer(secrets: try SecretStoreCLI.store(), team: team)
             if check { return try materializer.check(parsed) }
             let base = try SecretRunBase.choose(allowDisk: allowDisk)
             // Unbuffered: the script reads this line even when the command is stopped half-way.
             _ = try materializer.write(parsed, base: base) { FileHandle.standardOutput.write(Data("\($0.path)\n".utf8)) }
         }
+    }
+}
+
+/// The secret-store fallback when the configured store cannot be used: each lookup that reaches it fails with why.
+struct UnavailableStore: SecretFallback {
+    let error: any Error
+
+    func lookup(_ name: String, stage: Stage) throws -> String? {
+        let e = XlessError.wrapping(error, stage: stage)
+        throw XlessError(stage, "\(name) is not in the environment, and the secret store cannot be used: \(e.cause)", fix: e.fix)
     }
 }

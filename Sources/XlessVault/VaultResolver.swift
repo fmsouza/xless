@@ -1,28 +1,26 @@
-import Crypto
 import Foundation
 import XlessCore
 
-/// `Secrets`' last resort: a secret from the store. Opens the store (and asks the passphrase) only when it holds an entry
-/// for the name asked; otherwise answers nil without a prompt, so the usual "missing secret" error follows.
+/// `Secrets`' last resort: a secret from the store (`SecretStore`: the vault, or a credential helper). Opens the store
+/// (and asks the passphrase) only when it holds an entry for the name asked; otherwise answers nil without a prompt, so
+/// the usual "missing secret" error follows.
 ///
 /// Names: an entry named `NAME`, or `NAME@<anything>` (one per team: `XLESS_DIST_KEY@ABCDE12345`), filtered by the
 /// selected team when there is one. `ASC_KEY_ID` and `ASC_ISSUER_ID` come from the `ASC_KEY_P8` entry's metadata. The
-/// data key, once unlocked, is kept in this process only (for the rest of the command).
+/// vault's data key, once unlocked, is kept by its `VaultSecretStore` (for the rest of the command).
 public final class VaultResolver: SecretFallback, @unchecked Sendable {
-    let store: VaultStore
+    public let store: any SecretStore
     let team: String?
-    let cache: (any VaultKeyCache)?
-    let prompter: () -> (any PassphrasePrompter)?
-    private let lock = NSLock()
-    private var dataKey: (id: String, key: SymmetricKey)?
 
-    /// - Parameter prompter: the terminal, or nil when there is none (called only when the passphrase is needed).
-    public init(store: VaultStore, team: String? = nil, cache: (any VaultKeyCache)? = KernelKeyringCache(),
-                prompter: @escaping () -> (any PassphrasePrompter)?) {
+    public init(secrets store: any SecretStore, team: String? = nil) {
         self.store = store
         self.team = team
-        self.cache = cache
-        self.prompter = prompter
+    }
+
+    /// - Parameter prompter: the terminal, or nil when there is none (called only when the passphrase is needed).
+    public convenience init(store: VaultStore, team: String? = nil, cache: (any VaultKeyCache)? = KernelKeyringCache(),
+                            prompter: @escaping () -> (any PassphrasePrompter)?) {
+        self.init(secrets: VaultSecretStore(store: store, cache: cache, prompter: prompter), team: team)
     }
 
     /// Variables whose value is metadata of the `ASC_KEY_P8` entry.
@@ -42,17 +40,18 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
     public func preferring(team: String) -> any SecretFallback { TeamPreferring(base: self, team: team) }
 
     /// The value of `name` (or the ID it stands for) from the entry `pick` chooses; nil when there is none.
-    func lookup(_ name: String, stage: Stage, pick: (String, VaultFile) throws -> VaultEntry?) throws -> String? {
+    func lookup(_ name: String, stage: Stage, pick: (String, SecretCatalog) throws -> VaultEntry?) throws -> String? {
         do {
-            guard let file = try store.read() else { return nil }
+            guard let catalog = try store.catalog() else { return nil }
             if let field = Self.metadataField(name) {
-                guard let entry = try pick("ASC_KEY_P8", file) else { return nil }
-                // Open it first: the metadata is only authenticated with the secret.
-                _ = try VaultCrypto.open(entry, dataKey: try key(for: file, reason: "the secret \(name)"))
+                guard let entry = try pick("ASC_KEY_P8", catalog) else { return nil }
+                // Open it first: in the vault, the metadata is only authenticated with the secret.
+                try store.secret(entry, in: catalog, reason: "the secret \(name)").wipe()
                 return field(entry.metadata)
             }
-            guard let entry = try pick(name, file) else { return nil }
-            let secret = try VaultCrypto.open(entry, dataKey: try key(for: file, reason: "the secret \(name)"))
+            guard let entry = try pick(name, catalog) else { return nil }
+            let secret = try store.secret(entry, in: catalog, reason: "the secret \(name)")
+            defer { secret.wipe() }
             return secret.utf8String()
         } catch let e as VaultError {
             throw e.stageError(stage)
@@ -62,7 +61,7 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
     /// The entry standing for `name` for a run of `team`'s project: `team`'s own (`NAME@team`, or recorded with that
     /// team ID), else one recorded for no team (no `@`, no team ID). Another team's entries are never chosen; several
     /// left is an error.
-    public static func preferredCandidate(for name: String, in file: VaultFile, team: String) throws -> VaultEntry? {
+    public static func preferredCandidate(for name: String, in file: some SecretEntries, team: String) throws -> VaultEntry? {
         let all = file.entries.filter { $0.name == name || $0.name.hasPrefix(name + "@") }
         let own = all.filter { $0.metadata.teamID == team || $0.name == "\(name)@\(team)" }
         let found = own.isEmpty ? all.filter { $0.metadata.teamID == nil && !$0.name.contains("@") } : own
@@ -75,7 +74,7 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
 
     /// The entry standing for `name`: `name` itself or `name@…`, of `team` when one is selected; nil when none; an error
     /// when several remain.
-    public static func candidate(for name: String, in file: VaultFile, team: String?) throws -> VaultEntry? {
+    public static func candidate(for name: String, in file: some SecretEntries, team: String?) throws -> VaultEntry? {
         var found = file.entries.filter { $0.name == name || $0.name.hasPrefix(name + "@") }
         if let team { found = found.filter { $0.metadata.teamID == team || $0.name == "\(name)@\(team)" } }
         guard found.count <= 1 else {
@@ -85,19 +84,6 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
         return found.first
     }
 
-    /// The store's data key, unlocked once per process and shared with every lookup: a command that both reads secrets
-    /// and writes new entries (`xless provision apply`) asks the passphrase once.
-    public func dataKey(for file: VaultFile, reason: String) throws -> SymmetricKey { try key(for: file, reason: reason) }
-
-    private func key(for file: VaultFile, reason: String) throws -> SymmetricKey {
-        SecretScope.enter() // before the passphrase and the data key are in memory
-        return try lock.withLock {
-            if let dataKey, dataKey.id == file.id { return dataKey.key }
-            let key = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: prompter, reason: reason)
-            dataKey = (file.id, key)
-            return key
-        }
-    }
 }
 
 /// `VaultResolver.preferring(team:)`: lookups through the same resolver (and its unlocked key), by `preferredCandidate`.

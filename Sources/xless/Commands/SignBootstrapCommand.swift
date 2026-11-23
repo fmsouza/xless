@@ -87,9 +87,7 @@ struct SignBootstrapCommand: AsyncParsableCommand {
             let creation = CertificateCreation(api: ASCCertificates(resources: ASCResources(client: client)), stage: .sign, refuseIfAny: !allowNew,
                                                say: AppleWebCLI.say)
             let created = try await creation.run(type: type.certificateType, relatedID: nil, entry: entry, team: team, keys: {
-                let file = try APIKeyWebCLI.existingStore()
-                return CertificateKeyStore(store: APIKeyWebCLI.store, fileID: file.id,
-                                           dataKey: try SecretStoreCLI.unlock(file, remember: nil, reason: "storing the new signing key"))
+                try APIKeyWebCLI.unlocked(reason: "storing the new signing key") { CertificateKeyStore(store: $0, catalogID: $1.id) }
             })
             print(created.text, terminator: "")
             print("`xless sign` reads it from the store as \(type.secretName); CI sets \(type.secretName) (or \(type.secretName)_FILE) instead: export it once with `xless secrets export \(created.entry ?? entry) --out <file>`.")

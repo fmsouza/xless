@@ -80,7 +80,7 @@ struct AuthStatusCommand: ParsableCommand {
         let saved = AccountSession.savedTeam()
         let selected = AccountSession.resolveTeam(flag: team.team, saved: saved)
         let storeKey = Result { () -> AuthStatusReport.StoreKey? in
-            guard let file = try VaultStore(location: .standard()).read(),
+            guard let file = try SecretStoreCLI.store().catalog(),
                   let entry = try VaultResolver.candidate(for: "ASC_KEY_P8", in: file, team: selected) else { return nil }
             return .init(name: entry.name, teamID: entry.metadata.teamID ?? AuthStatusReport.team(fromName: entry.name),
                          hasKeyID: entry.metadata.keyID != nil, hasIssuerID: entry.metadata.issuerID != nil, role: entry.metadata.role)

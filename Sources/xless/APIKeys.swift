@@ -54,7 +54,7 @@ struct APIKeyStore {
 
     /// Refuses, before anything is created, when the store already holds the entry or resolves an `ASC_KEY_P8` for the
     /// team: a second one would make the pipeline's choice ambiguous.
-    static func precheck(_ file: VaultFile, name: String, team: String?) throws {
+    static func precheck(_ file: some SecretEntries, name: String, team: String?) throws {
         let existing: VaultEntry?
         do { existing = try file.entry(named: name) ?? VaultResolver.candidate(for: base, in: file, team: team) } catch {
             throw XlessError(.account, "the secret store already has several \(base) entries\(team.map { " for team \($0)" } ?? "")",
@@ -66,39 +66,35 @@ struct APIKeyStore {
                          fix: "replace it: \(id.map { "`xless auth api-key revoke \($0)` revokes it and removes the entry, or " } ?? "")`xless secrets rm \(existing.name)` removes the entry; then re-run")
     }
 
-    let store: VaultStore
-    /// The store this command unlocked (its key is `dataKey`).
-    let fileID: String
-    let dataKey: SymmetricKey
+    /// The store, unlocked by this command (`SecretStore.unlock`) before anything was asked of Apple.
+    let store: any SecretStore
+    /// The store this command read and unlocked.
+    let catalogID: String
 
-    /// Seals the key into the store; returns the entry name used: `name`, or `name.<KEY_ID>` when `name` was taken
+    /// Puts the key into the store; returns the entry name used: `name`, or `name.<KEY_ID>` when `name` was taken
     /// since the precheck (the key is never dropped for a name).
     func save(name: String, secret: SecretBytes, metadata: VaultEntry.Metadata) throws -> String {
         var used = name
-        try store.update { file in
-            guard file.id == fileID else {
+        try store.update(reason: "storing the new API key") { file in
+            guard file.id == catalogID else {
                 throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command")
             }
             used = name
             if file.entry(named: used) != nil { used = "\(name).\(metadata.keyID ?? "new")" }
             var n = 2
             while file.entry(named: used) != nil { used = "\(name).\(metadata.keyID ?? "new").\(n)"; n += 1 }
-            var next = file
-            next.entries.append(try VaultCrypto.seal(name: used, kind: .ascAPIKey, metadata: metadata, secret: secret, dataKey: dataKey))
-            return next
+            return [.add(name: used, kind: .ascAPIKey, metadata: metadata, secret: secret)]
         }
         return used
     }
 
     /// Removes the store's API-key entries of `keyID` (any team); returns their names. Needs no passphrase.
-    static func removeKeys(id keyID: String, from store: VaultStore) throws -> [String] {
-        guard let file = try store.read(), file.entries.contains(where: { matches($0, keyID) }) else { return [] }
+    static func removeKeys(id keyID: String, from store: any SecretStore) throws -> [String] {
+        guard let file = try store.catalog(), file.entries.contains(where: { matches($0, keyID) }) else { return [] }
         var removed: [String] = []
-        try store.update { current in
-            var next = current
+        try store.update(reason: "removing API key \(keyID)") { current in
             removed = current.entries.filter { matches($0, keyID) }.map(\.name)
-            next.entries.removeAll { matches($0, keyID) }
-            return next
+            return removed.map { .remove(name: $0) }
         }
         return removed
     }
@@ -264,7 +260,7 @@ enum APIKeyListing {
 
     /// The key ID xless would use: `ASC_KEY_ID` (or `ASC_KEY_ID_FILE`), else the store's `ASC_KEY_P8` entry for the
     /// team. Reads no secret.
-    static func usedKeyID(env: [String: String], store: () throws -> VaultFile?, team: String?) -> String? {
+    static func usedKeyID(env: [String: String], store: () throws -> (any SecretEntries)?, team: String?) -> String? {
         if let id = try? Secrets(env: env, fallback: nil).optional("ASC_KEY_ID", stage: .account) { return id }
         guard let file = try? store(), let entry = try? VaultResolver.candidate(for: APIKeyStore.base, in: file, team: team) else { return nil }
         return entry.metadata.keyID
