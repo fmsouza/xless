@@ -17,8 +17,30 @@ https://developer.apple.com/sample-code/app-store-connect/app-store-connect-open
 | Create What to Test | `POST /v1/betaBuildLocalizations` | |
 | Update What to Test | `PATCH /v1/betaBuildLocalizations/{id}` | |
 
-Paths that exist but are not used: `DELETE /v1/betaGroups/{id}` (xless never deletes), `PATCH /v1/betaGroups/{id}`,
-`POST /v1/builds/{id}/relationships/betaGroups` (the other direction of the same link).
+`xless ship` never deletes a group nor changes an existing one. `xless testflight` (#100) also uses
+`PATCH`/`DELETE /v1/betaGroups/{id}` and the paths below.
+
+## Testers, external testing and public links (`xless testflight`, `testflight.testers`, `testflight.external`)
+| Purpose | Request | Notes |
+|---|---|---|
+| An app's (or a group's) testers | `GET /v1/betaTesters?filter[apps]=<app>[&filter[betaGroups]=<group>]&include=betaGroups` | `fields[betaGroups]=name`, `limit[betaGroups]=50`. |
+| A tester by address | `GET /v1/betaTesters?filter[email]=<email>` | Compared again client-side without regard to case; addresses with a comma are refused (array filter). |
+| Create a tester in a group | `POST /v1/betaTesters` | `BetaTesterCreateRequest`: `email*`, `firstName`, `lastName`, relationships `betaGroups`; sent once, a `409` is settled by looking the address up. |
+| Add / remove testers of a group | `POST` / `DELETE /v1/betaGroups/{id}/relationships/betaTesters` | `[ {type: betaTesters, id} ]`. |
+| Remove testers from an app | `DELETE /v1/apps/{id}/relationships/betaTesters` | Every group and build of the app. |
+| Send an invitation again | `POST /v1/betaTesterInvitations` | Relationships `app*`, `betaTester`; no attributes. |
+| Groups that have a build | `GET /v1/betaGroups?filter[app]=<app>&filter[builds]=<build>` | |
+| Add / remove a build to groups | `POST` / `DELETE /v1/builds/{id}/relationships/betaGroups` | |
+| Beta texts | `GET /v1/apps/{id}/betaAppLocalizations`, `POST /v1/betaAppLocalizations`, `PATCH /v1/betaAppLocalizations/{id}` | `feedbackEmail`, `marketingUrl`, `privacyPolicyUrl`, `description`, `locale` (create only). |
+| Beta App Review details | `GET /v1/apps/{id}/betaAppReviewDetail`, `PATCH /v1/betaAppReviewDetails/{id}` | Read with `fields[betaAppReviewDetails]` without `demoAccountPassword`; no create (one per app). |
+| Beta license agreement | `GET /v1/apps/{id}/betaLicenseAgreement`, `PATCH /v1/betaLicenseAgreements/{id}` | `agreementText`. |
+| Beta app review | `GET /v1/betaAppReviewSubmissions?filter[build]=<build>`, `POST /v1/betaAppReviewSubmissions` | Relationship `build*`; `betaReviewState`: `WAITING_FOR_REVIEW`, `IN_REVIEW`, `REJECTED`, `APPROVED`. |
+| Public link | `PATCH /v1/betaGroups/{id}` | `publicLinkEnabled`, `publicLinkLimitEnabled`, `publicLinkLimit`; the response's `publicLink` is the URL. |
+
+Not verified against a real account: internal testers created with `POST /v1/betaTesters` (fastlane and the open-source
+`asc` CLI do it for App Store Connect users), the `409` wording on a duplicate tester, `DELETE` on an app's testers,
+the invitation endpoint for internal testers, the beta review states after submission, `publicLink` in the `PATCH`
+answer.
 
 ## BetaGroupCreateRequest
 `data { type: "betaGroups", attributes { name*, isInternalGroup?, hasAccessToAllBuilds?, publicLinkEnabled?, publicLinkLimitEnabled?, publicLinkLimit?, feedbackEnabled? }, relationships { app* { data { type: "apps", id } }, builds?, betaTesters? } }`
@@ -52,5 +74,5 @@ leave a duplicate group). The fix text always says the build itself is already u
 ## Not verifiable from the spec
 - Whether `POST .../relationships/builds` on a group with `hasAccessToAllBuilds: true` is accepted or answers `409` because the
   build is already there. For automatic-distribution groups xless treats `409` and `422` as "check membership" (bounded query above) and, if still unconfirmed, warns that the build will appear via automatic distribution. Other groups keep the error.
-- Internal testers are App Store Connect users: the API has `POST /v1/betaTesters`, but adding an ASC user to a group is a
-  web UI step (Users and Access, then TestFlight), which is why xless only warns when a group has no testers.
+- Internal testers are App Store Connect users of the team: xless checks the address against `/v1/users` (Admin key)
+  before it adds one to an internal group, and otherwise lets Apple decide.

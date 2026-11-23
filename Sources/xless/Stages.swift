@@ -194,8 +194,14 @@ enum StageRunner {
             try enc.encode(record).write(to: recordURL, options: .atomic)
         }
         guard let tf = ctx.config.testflight, let buildID = record.buildID else { return UploadOutcome(record: record, testflight: nil) }
+        let secrets = ctx.secrets
         let result = try await TestFlightPublisher(client: client).publish(
-            bundleID: bundleID, buildID: buildID, buildNumber: build, config: tf)
+            bundleID: bundleID, buildID: buildID, buildNumber: build, config: tf) { name in
+            // testflight.external.review.demoAccount: the password, from its secret, only when it must be sent.
+            do { return try StorePushCLI.demoPassword(name, secrets: secrets, source: "testflight.external.review.demoAccount.passwordSecret in xless.yml") } catch let e as XlessError {
+                throw XlessError(.upload, e.cause, fix: e.fix)
+            }
+        }
         for w in result.warnings { FileHandle.standardError.write(Data((w + "\n").utf8)) }
         return UploadOutcome(record: record, testflight: result)
     }

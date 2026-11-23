@@ -76,7 +76,7 @@ Only for signing and uploading. Building up to `finalize` needs none of this.
 | A registered bundle ID | `sign`, the app record | developer.apple.com, or the first `xless ship` ([bootstrap.md](bootstrap.md#4-bundle-id-before-the-app-record)) |
 | An App Store Connect app record | `upload` | `xless apps create` (Apple ID sign-in: the API cannot create it), or App Store Connect by hand ([bootstrap.md](bootstrap.md#5-app-record)) |
 | Provisioning profiles | `sign` | Created by `xless sign` through the API; nothing to do (other types: [`xless profiles`](apple-account.md#xless-profiles)) |
-| TestFlight testers | delivery to a group | App Store Connect users, added to the group once in the web UI ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)) |
+| TestFlight testers | delivery to a group | Internal: App Store Connect users ([`xless users invite`](apple-account.md#xless-users)); external: any address, once Apple approves the build. Added by `testflight.testers` in xless.yml or [`xless testflight testers add`](apple-account.md#xless-testflight) |
 
 All of it is done in a web browser or with xless itself; none of it needs a Mac.
 

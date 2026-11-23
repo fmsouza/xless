@@ -22,6 +22,15 @@ public enum SecretEnvironment {
 
     public static func isSecret(_ variable: String) -> Bool { names.contains(variable) }
 
+    /// Whether a secret's name (as a store entry, optionally `@TEAM`) is a key's or a token's: refused where a password
+    /// (the App Review demo account's) is meant, so a key is never sent to Apple as a password.
+    public static func isKeyOrToken(_ name: String) -> Bool {
+        let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
+        if base == "XLESS_DEMO_PASSWORD" { return false }
+        if isSecret(base) || base.hasPrefix("ASC_") { return true }
+        return ["_KEY", "_TOKEN", "_P8", "_PEM", "_SECRET"].contains { base.hasSuffix($0) || base.hasSuffix($0 + "_FILE") }
+    }
+
     /// Whether a command-line option or argument named `name` (`--api-key`, `password`, `privateKey`) would carry a
     /// secret. Secrets never come from argv: it is visible to every user in `ps` and /proc/<pid>/cmdline, and lands in
     /// shell history. An option giving the *path* of a file or an ID is fine (`--key-file`, `--key-id`).

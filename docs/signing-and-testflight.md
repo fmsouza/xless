@@ -102,8 +102,10 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   copy sees that the run holding the lock is gone, and stops what it left before it starts: its containers (labelled
   `xless.work=<hash>`) and, natively, the xless it was running.
 - **Testers.** Internal testers must be App Store Connect users of the team: invite them with
-  [`xless users invite`](apple-account.md#xless-users) (an Admin API key). Then add them to the group once in the web
-  UI (TestFlight); xless creates missing groups but does not add testers to them yet. API details:
+  [`xless users invite`](apple-account.md#xless-users) (an Admin API key). List them in `testflight.testers` of
+  [xless.yml](xless-yml.md#testflight) and every run adds the missing ones to the groups, or add them once with
+  [`xless testflight testers add`](apple-account.md#xless-testflight). External testing (external groups, beta app
+  review, public links): `testflight.external` and `xless testflight`. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
 
 With a project directory everything runs in one process (one container with `--docker`), so package code built there
