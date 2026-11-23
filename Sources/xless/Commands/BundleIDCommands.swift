@@ -94,7 +94,8 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
         abstract: "Register a bundle ID; an identifier the team already has is reported, never registered twice.",
         discussion: """
         The identifier is reverse-DNS (com.example.app), or a wildcard ending in .* (com.example.*). Without --name, the \
-        name is the identifier's words (com example app): Apple accepts only ASCII letters, digits and spaces in it. \
+        name is xless and the identifier's words (xless com example app), the name sign and provision give: Apple \
+        accepts only ASCII letters, digits and spaces in it. \
         Without --platform, the bundle ID is universal (iOS and macOS), as the sign stage registers its own.
         """)
 

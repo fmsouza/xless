@@ -635,7 +635,7 @@ struct ProvisionApplier {
             do {
                 if step.web, side == nil { side = try await web() }
                 var found: [ProvisionDrift] = []
-                let result = try await run(step, state: &state, web: side, drift: &found)
+                let result = try await run(step, state: &state, web: side, drift: &found, planNotes: plan.notes)
                 applied.done.append(ProvisionDone(area: step.area, subject: step.subject, result: result))
                 say("\(i + 1)/\(plan.steps.count) \(result)")
                 for d in found where !plan.drift.contains(d) && !applied.drift.contains(d) {
@@ -678,7 +678,8 @@ struct ProvisionApplier {
     func storeFile() throws -> SecretCatalog { try vault.existing() }
 
     /// Runs one step; drift it finds (the listing planned again while pushing) goes into `drift`.
-    func run(_ step: ProvisionStep, state: inout ProvisionState, web: ProvisionWebSide?, drift: inout [ProvisionDrift]) async throws -> String {
+    func run(_ step: ProvisionStep, state: inout ProvisionState, web: ProvisionWebSide?, drift: inout [ProvisionDrift],
+             planNotes: [String] = []) async throws -> String {
         switch step.work {
         case .bundleID(let id):
             state.bundles[id] = try await account.register(bundleID: id)
@@ -749,6 +750,8 @@ struct ProvisionApplier {
             guard let store else { return "no appstore/ to push" }
             let pushed = try await store.listing.apply(appID: try await app(&state))
             drift += pushed.held.map(ProvisionPlanner.listingDrift)
+            // The plan's own notes were shown with it; what planning the listing again found is said now.
+            for note in pushed.notes where !planNotes.contains(note) { say("note: \(note)") }
             return "pushed the App Store listing (\(pushed.sent) change\(pushed.sent == 1 ? "" : "s"))"
 
         case .privacy(let want):

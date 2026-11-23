@@ -32,6 +32,7 @@ private final class World: @unchecked Sendable {
     var listingPushed = false
     /// What the listing's push holds back once planned again after it made a new version (Apple copied the old one's).
     var heldAfterPush: [String] = []
+    var notesAfterPush: [String] = []
     var privacySent = false
     /// App Store Connect declares a category app.yml no longer has.
     var privacyExtra = false
@@ -192,7 +193,7 @@ private struct FakeListing: ProvisionListing {
     func apply(appID: String) async throws -> ProvisionListingApplied {
         try world.write("push", appID)
         world.listingPushed = true
-        return ProvisionListingApplied(sent: 1, held: world.heldAfterPush)
+        return ProvisionListingApplied(sent: 1, held: world.heldAfterPush, notes: world.notesAfterPush)
     }
 }
 
@@ -557,6 +558,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     let s = Setup(vault: v)
     // The plan could not see it: the app record (and so the version Apple fills from the last one) did not exist yet.
     s.world.heldAfterPush = ["screenshots en-US APP_IPHONE_67", "version text it-IT"]
+    s.world.notesAfterPush = ["version text it-IT at App Store Connect that appstore/ does not have: kept"]
     let plan = try await s.plan()
     #expect(plan.drift.isEmpty)
     let lines = Lines()
@@ -564,6 +566,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(applied.drift.map(\.subject) == ["screenshots en-US APP_IPHONE_67", "version text it-IT"])
     #expect(applied.drift.allSatisfy { $0.area == .listing && $0.fix.contains("xless store push") })
     #expect(lines.all.contains("drift: version text it-IT: the manifest would delete or replace it — `xless store push` (it asks before deleting)"))
+    #expect(lines.all.contains("note: version text it-IT at App Store Connect that appstore/ does not have: kept"))
     let text = try ProvisionApplyCommand.output(plan: plan, applied: applied, json: false)
     #expect(text.hasPrefix("Drift found while applying (left as it is: provision never deletes, revokes or replaces):\n  ! screenshots en-US APP_IPHONE_67:"), "\(text)")
     #expect(text.hasSuffix("applied 16 steps\n"))

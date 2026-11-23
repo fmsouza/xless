@@ -358,6 +358,9 @@ extension CargoOverlay {
                                              ("entitlements", r.entitlements, false)] {
                 if let value { try checkPath(value, "\(which).\(key)", allowInput: allowInput) }
             }
+            // Checked here too, so the error names the overlay's key (`ios.extensions`), not xless.yml's.
+            try ExtensionConfig.validate(r.extensions ?? [], platform: which == "ios" ? .ios : .macos, appBundleID: r.bundleID ?? raw.bundleID,
+                                         key: "overlay \(name): \(which).extensions")
             for (i, e) in (r.extensions ?? []).enumerated() {
                 if let path = e.entitlements { try checkPath(path, "\(which).extensions[\(i)].entitlements", allowInput: false) }
             }

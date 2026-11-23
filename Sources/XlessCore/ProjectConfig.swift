@@ -46,7 +46,7 @@ public struct ExtensionConfig: Sendable, Equatable, Decodable {
     public static func validate(_ extensions: [ExtensionConfig], platform: Platform, appBundleID: String, key: String) throws {
         guard !extensions.isEmpty else { return }
         guard platform == .ios else {
-            throw XlessError(.config, "\(key): only an iOS app's extensions are signed and provisioned", fix: "remove \(key) (macOS app extensions are not supported)")
+            throw XlessError(.config, "\(key): only an iOS app's extensions are signed and provisioned", fix: "remove the macOS block's extensions (macOS app extensions are not supported)")
         }
         var paths = Set<String>(), ids = Set<String>()
         for (i, e) in extensions.enumerated() {

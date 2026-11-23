@@ -45,7 +45,11 @@ infoPlist: Resources/Info.plist
 
 ## App extensions
 
-An iOS app that embeds app extensions declares each one under `platforms.ios.extensions`:
+An iOS app that embeds app extensions declares each one under `platforms.ios.extensions`. The `build` stage does not
+build or embed app extensions itself (xtool, Tauri and cargo builds make the app alone): declare only extensions the
+built `.app` holds, put there by your own tooling before `sign` (a React Native app's come from its Xcode project
+instead, [react-native.md](react-native.md)). The declaration lets the account be prepared before the build and signs
+each extension with its own entitlements:
 
 ```yaml
 platforms:
@@ -63,7 +67,7 @@ platforms:
 entitlements need, creates and assigns its app groups and iCloud containers and makes its profile, before the first
 build. `sign` signs each extension with its own profile and its declared entitlements (prefixes expanded, as for the
 app); with extensions declared, the built app must hold exactly those (path and `CFBundleIdentifier`), else `[sign]`
-refuses before App Store Connect is called. Without `extensions`, an extension found in the app is signed with its own
+refuses before App Store Connect is called: declaring one the build does not embed stops every `ship` at `sign`. Without `extensions`, an extension found in the app is signed with its own
 profile and no entitlements, as before. A path that is not `PlugIns/<Name>.appex` or `Extensions/<Name>.appex`, a
 bundle ID outside the app's, a duplicate, or `extensions` under `macos` is a `[config]` error. The same list goes under
 `ios:` in a [Tauri](tauri.md) or [cargo](cargo.md) overlay.

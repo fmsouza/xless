@@ -87,6 +87,8 @@ struct ProvisionListingPlan: Sendable, Equatable {
 struct ProvisionListingApplied: Sendable, Equatable {
     var sent: Int
     var held: [String] = []
+    /// That plan's notes (a localization App Store Connect has and the manifest lacks, kept).
+    var notes: [String] = []
 }
 
 /// The `appstore/` listing (`xless store push`, with nothing that deletes).
@@ -223,7 +225,8 @@ struct StorePushListing: ProvisionListing {
         let sender = StoreSender(client: client, secret: { try StorePushCLI.demoPassword($0, secrets: secrets) })
         let applied = try await push.apply(plan, app: app, manifest: manifest, dir: dir, options: options, sender: sender)
         // Planned again after a new version (or product) was made: what that plan held back is drift the plan did not show.
-        return ProvisionListingApplied(sent: applied.sent.count, held: (applied.replanned ?? plan).held.map(\.subject))
+        let last = applied.replanned ?? plan
+        return ProvisionListingApplied(sent: applied.sent.count, held: last.held.map(\.subject), notes: last.notes)
     }
 }
 

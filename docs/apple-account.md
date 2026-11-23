@@ -228,7 +228,7 @@ enables the capabilities their entitlements need ([below](#what-sign-enables)); 
 
 - **`create`** takes a reverse-DNS identifier (`com.example.app`) or a wildcard (`com.example.*`), checked before anything
   is sent. The name defaults to `xless` and the identifier's words (`xless com example app`), the name `sign`,
-  `provision` and `apps create` give the bundle IDs they register (a wildcard needs `--name`); Apple accepts only ASCII
+  `provision` and `apps create` give the bundle IDs they register (a bare `*` needs `--name`); Apple accepts only ASCII
   letters, digits and spaces in it. The platform defaults to `universal` (iOS and macOS), as `sign` registers. An identifier the team has
   already is reported with its ID, and nothing is sent.
 - **Capabilities** are named as the API names them, in any case (`icloud`, `push-notifications`): `ICLOUD`,
@@ -1040,9 +1040,10 @@ and containers and profile, planned like the app's.
   reads again what it changes, so a second `apply` finds nothing to do. The first failure stops it: the error names the
   step, and standard error lists what was done and what is left; running `apply` again does only what is left. A plan
   with blockers sends nothing. When the listing push creates a new App Store version (or the app record was created
-  by this apply), it is planned again against what Apple then has: what that plan would delete or replace (a
-  screenshot or a localization Apple copied from the previous version) is reported as **drift found while applying**,
-  on standard output after the steps and as `drift` in `--json`.
+  by this apply), it is planned again against what Apple then has: what that plan would delete or replace (a screenshot
+  Apple copied from the previous version that the manifest replaces) is reported as **drift found while applying**, on
+  standard output after the steps and as `drift` in `--json`; that plan's notes (a localization the manifest lacks,
+  kept) go to standard error.
 - **Never deletes or revokes.** What differs that way is drift, reported with the command that would change it: a
   capability no entitlement needs (`xless bundle-ids capabilities … disable`; In-App Purchase and Game Center, which
   Apple enables on every new bundle ID, are not reported), an app group or container assigned but not named (`xless
@@ -1059,7 +1060,8 @@ With `--json`, `plan` prints `{"team", "steps": [{"area", "action", "subject", "
 "drift": [{"area", "subject", "message", "fix"}], "blockers": [{"area", "message", "fix"}], "notes"}`, and `apply`
 `{"plan", "done": [{"area", "subject", "result"}], "drift", "failed", "left"}`: `drift` is what applying found that the
 plan did not show, `failed` the step that stopped it (`{"area", "action", "subject", "cause", "fix"}`; `null` when it
-went through, or when blockers stopped it before anything was sent), `left` the steps not attempted (as in `steps`).
+went through, or when blockers stopped it before anything was sent), `left` the steps not attempted (as in `steps`;
+the failed step is not among them, while the error's "k of n steps were done, m left" counts it as left).
 `apply --json` prints this document whether it succeeds or fails; a failure keeps its exit code (20) and its error on
 standard error. Areas: `bundle-ids`, `capabilities`, `app-groups`,
 `icloud-containers`, `certificates`, `keys`, `profiles`, `app`, `listing`, `privacy`, `testflight`; actions: `create`,
