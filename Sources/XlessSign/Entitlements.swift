@@ -1,4 +1,5 @@
 import Foundation
+import XlessASC
 import XlessCore
 
 public enum Entitlements {
@@ -131,7 +132,8 @@ public enum Entitlements {
     static let ubiquityContainersKey = "com.apple.developer.ubiquity-container-identifiers"
     static let merchantIDsKey = "com.apple.developer.in-app-payments"
     /// Keys whose values are identifiers assigned to the bundle ID (iCloud containers, merchant IDs), on both platforms:
-    /// xless enables their capability, but the API cannot assign the identifiers, and a profile lists only those assigned.
+    /// xless enables their capability, but the API cannot assign the identifiers (`xless icloud-containers assign` does,
+    /// through the Apple ID web session), and a profile lists only those assigned.
     static let linkedIdentifierKeys: Set<String> = [iCloudContainersKey, ubiquityContainersKey, merchantIDsKey]
 
     static func problems(user: [String: Any], profile: [String: Any], platform: Platform) -> [Problem] {
@@ -167,7 +169,7 @@ public enum Entitlements {
             // (an iCloud container, a merchant ID…) or a capability disabled since; `xless bundle-ids` shows and fixes it.
             if let type = Capabilities.map(for: platform)[key] {
                 let command = "xless bundle-ids capabilities \(bundleID)"
-                let linked = type.linkedIdentifier.map { " \(type.displayName) also needs \($0) assigned to \(bundleID) at \(portal) (\(type.displayName) → Configure)." } ?? ""
+                let linked = type.linkedIdentifier.map { " \(type.displayName) also needs \($0) assigned to \(bundleID)\(assignHow(type, bundleID: bundleID))." } ?? ""
                 return XlessError(.sign, cause, fix: "check that \(type.displayName) is enabled with `\(command) list` (enable it with `\(command) enable \(type.rawValue)`).\(linked) Then re-run. \(finishFirst)")
             }
             let name = Capabilities.portalNames[key].map { " (\($0))" } ?? ""
@@ -181,8 +183,8 @@ public enum Entitlements {
             let cause = "entitlement '\(key)' value\(values.count == 1 ? "" : "s") \(values.map { "'\($0)'" }.joined(separator: ", ")) "
                 + "\(values.count == 1 ? "is" : "are") not allowed by the provisioning profile for \(bundleID) (it allows: \(allowed.isEmpty ? "nothing" : allowed.joined(separator: ", ")))"
             if key == iCloudContainersKey || key == ubiquityContainersKey {
-                let ids = values.joined(separator: ", ")
-                return XlessError(.sign, cause, fix: "at \(portal): (1) create the container: Identifiers → + → iCloud Containers → Continue → identifier \(ids) → Register (skip one that exists); (2) \(bundleID) → iCloud → Edit → select \(ids) → Save; (3) re-run (xless regenerates the profile). \(finishFirst)")
+                let create = values.map { "`xless icloud-containers create \($0)`" }.joined(separator: ", ")
+                return XlessError(.sign, cause, fix: "with the Apple ID web session (`sign` does not sign in): (1) \(create) (it reports a container that exists); (2) `xless icloud-containers assign \(bundleID) \(values.joined(separator: " "))`; (3) re-run (xless regenerates the profile). \(finishFirst)")
             }
             if key == merchantIDsKey {
                 let ids = values.joined(separator: ", ")
@@ -196,13 +198,14 @@ public enum Entitlements {
     }
 
     /// Every run that still finds something missing deletes and recreates the affected profiles.
-    static let finishFirst = "Finish every portal step before re-running: each run regenerates the profiles that still lack something"
+    static let finishFirst = "Finish every step before re-running: each run regenerates the profiles that still lack something"
 
     // MARK: App groups
 
     /// iOS: every app group a bundle's entitlements name must be assigned to its identifier, so that its profile lists
-    /// it. App Store Connect's API can neither create an app group nor assign one (Apple's OpenAPI spec 4.5.1 has no
-    /// app-group resource and no group setting), so a missing group is one refusal with the portal steps for all bundles.
+    /// it. App Store Connect's API can neither create an app group nor assign one (Apple's OpenAPI spec has no app-group
+    /// resource and no group setting), so a missing group is one refusal with the `xless app-groups` commands for all
+    /// bundles (they use the Apple ID web session, which `sign` never opens by itself).
     static func checkAppGroups(_ bundles: [(bundleID: String, user: [String: Any], profile: [String: Any])]) throws {
         var missing: [(group: String, bundleIDs: [String])] = []
         for b in bundles {
@@ -222,15 +225,23 @@ public enum Entitlements {
         let cause = (missing.count == 1
             ? "app group \(groups[0]) is not in the provisioning profile\(ids.count == 1 ? "" : "s") of \(ids.joined(separator: ", "))"
             : "app groups are missing from provisioning profiles: " + missing.map { "\($0.group) (\($0.bundleIDs.joined(separator: ", ")))" }.joined(separator: "; "))
-            + "; the App Store Connect API cannot create or assign app groups"
+            + "; assigning app groups needs the Apple ID web session, which `sign` does not use"
+        let create = groups.map { "`xless app-groups create \($0)`" }.joined(separator: ", ")
         let assign = ids.map { id in
-            "\(id) → App Groups → Configure → select \(missing.filter { $0.bundleIDs.contains(id) }.map(\.group).joined(separator: ", ")) → Save"
-        }.joined(separator: "; ")
-        let fix = "at developer.apple.com/account/resources/identifiers: (1) create the group: Identifiers → + → App Groups → "
-            + "Continue → identifier \(groups.joined(separator: ", then another with ")) → Register (skip a group that exists); "
-            + "(2) on each App ID (App Groups is enabled already): \(assign); (3) re-run (xless regenerates the profiles). "
+            "`xless app-groups assign \(id) \(missing.filter { $0.bundleIDs.contains(id) }.map(\.group).joined(separator: " "))`"
+        }.joined(separator: ", ")
+        let fix = "(1) \(create) (it reports a group that exists); (2) \(assign); (3) re-run (xless regenerates the profiles). "
             + "A test build under another team: map the group to one this team owns with the overlay's identifiers.replace. "
             + finishFirst
         return XlessError(.sign, cause, fix: fix)
+    }
+
+    /// How a linked identifier gets assigned: the xless command for app groups and iCloud containers, else the portal.
+    static func assignHow(_ type: CapabilityType, bundleID: String) -> String {
+        switch type {
+        case .appGroups: ": `xless app-groups assign \(bundleID) <group>`"
+        case .icloud: ": `xless icloud-containers assign \(bundleID) <container>`"
+        default: " at developer.apple.com/account/resources/identifiers (\(type.displayName) → Configure)"
+        }
     }
 }

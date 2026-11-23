@@ -146,9 +146,8 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     do { _ = try await f.run(capture: capture); Issue.record("expected throw") }
     catch let e as XlessError {
         #expect(e.stage == .sign)
-        #expect(e.cause == "app group group.\(appID) is not in the provisioning profiles of \(extID), \(appID); the App Store Connect API cannot create or assign app groups")
-        #expect(e.fix.contains("Identifiers → + → App Groups → Continue → identifier group.\(appID) → Register"))
-        #expect(e.fix.contains("\(extID) → App Groups → Configure → select group.\(appID) → Save; \(appID) → App Groups → Configure → select group.\(appID) → Save"))
+        #expect(e.cause == "app group group.\(appID) is not in the provisioning profiles of \(extID), \(appID); assigning app groups needs the Apple ID web session, which `sign` does not use")
+        #expect(e.fix.hasPrefix("(1) `xless app-groups create group.\(appID)` (it reports a group that exists); (2) `xless app-groups assign \(extID) group.\(appID)`, `xless app-groups assign \(appID) group.\(appID)`; (3) re-run"))
         #expect(e.fix.contains("identifiers.replace"))
         #expect(e.fix.hasSuffix(Entitlements.finishFirst))
     }
@@ -204,7 +203,7 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     do { _ = try await f.run(); Issue.record("expected throw") } catch let e as XlessError {
         #expect(e.cause == "entitlement '\(appAttest)' is not granted by the provisioning profile for \(extID); xless cannot enable this capability automatically")
         #expect(e.stage == .sign)
-        #expect(e.fix == "enable the matching capability (App Attest) for \(extID) at developer.apple.com/account/resources/identifiers, then re-run. Finish every portal step before re-running: each run regenerates the profiles that still lack something")
+        #expect(e.fix == "enable the matching capability (App Attest) for \(extID) at developer.apple.com/account/resources/identifiers, then re-run. Finish every step before re-running: each run regenerates the profiles that still lack something")
     }
     // The next run finds the capabilities enabled, so it regenerates the profile once (R13) before refusing again.
     let before = f.asc.log.count
@@ -411,8 +410,8 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
     do { try await signSingle(ents, asc: asc, key: key, capture: capture); Issue.record("expected throw") }
     catch let e as XlessError {
         #expect(e.cause == "entitlement 'com.apple.developer.icloud-container-identifiers' value '\(container)' is not allowed by the provisioning profile for \(appID) (it allows: nothing)")
-        #expect(e.fix.contains("Identifiers → + → iCloud Containers → Continue → identifier \(container) → Register"))
-        #expect(e.fix.contains("\(appID) → iCloud → Edit → select \(container) → Save"))
+        #expect(e.fix.contains("(1) `xless icloud-containers create \(container)` (it reports a container that exists); (2) `xless icloud-containers assign \(appID) \(container)`; (3) re-run"))
+        #expect(e.fix.contains("`sign` does not sign in"))
     }
     #expect(capture.arguments.isEmpty)
     asc.assignedContainers[appID] = [container]
