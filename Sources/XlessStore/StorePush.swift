@@ -219,14 +219,31 @@ public struct StorePush: Sendable {
         var result = Applied()
         // What was uploaded stays recorded in media.lock, even when a later change fails.
         defer { recordLock([plan] + (result.replanned.map { [$0] } ?? []), sender: sender, dir: dir) }
+        func failed(_ error: any Error, of total: Int) -> any Error {
+            let n = result.sent.count
+            say("note: \(n) of \(total) change\(total == 1 ? "" : "s") \(n == 1 ? "was" : "were") sent before this failure; re-run `xless store push` to send the rest (it sends only what still differs)")
+            return error
+        }
+        func takeNotes(sorted: Bool = false) {
+            let notes = sender.record.takeNotes()
+            for note in sorted ? notes.sorted() : notes {
+                say("note: \(note)")
+                result.notes.append(note)
+            }
+        }
         func send(_ changes: [StoreChange], of total: Int) async throws {
-            for change in changes {
-                defer {
-                    for note in sender.record.takeNotes() {
-                        say("note: \(note)")
-                        result.notes.append(note)
-                    }
+            var index = changes.startIndex
+            while index < changes.endIndex {
+                // Media-only changes (sets of different locales and display types) go at once; nothing else waits on them.
+                let together = changes[index...].prefix(while: Self.goesAlongside)
+                if together.count > 1 {
+                    try await sendTogether(Array(together), of: total)
+                    index += together.count
+                    continue
                 }
+                let change = changes[index]
+                index += 1
+                defer { takeNotes() }
                 do {
                     if change.privacy != nil {
                         guard let privacy else { throw XlessError(.account, "App Privacy needs the Apple ID web session", fix: "this is a bug in xless; please report it") }
@@ -235,12 +252,39 @@ public struct StorePush: Sendable {
                         try await sender.apply(change)
                     }
                 } catch {
-                    let n = result.sent.count
-                    say("note: \(n) of \(total) change\(total == 1 ? "" : "s") \(n == 1 ? "was" : "were") sent before this failure; re-run `xless store push` to send the rest (it sends only what still differs)")
-                    throw error
+                    throw failed(error, of: total)
                 }
                 result.sent.append(change)
             }
+        }
+        /// Sends `changes` at once; each that went through counts as sent (in plan order), then the first failure (in
+        /// plan order) is thrown and the others are noted.
+        func sendTogether(_ changes: [StoreChange], of total: Int) async throws {
+            let outcomes = await withTaskGroup(of: (Int, (any Error)?).self) { group in
+                for (k, change) in changes.enumerated() {
+                    group.addTask {
+                        do {
+                            try await sender.apply(change)
+                            return (k, nil)
+                        } catch {
+                            return (k, error)
+                        }
+                    }
+                }
+                var all: [(Int, (any Error)?)] = []
+                for await outcome in group { all.append(outcome) }
+                return all.sorted { $0.0 < $1.0 }
+            }
+            takeNotes(sorted: true)
+            for (k, error) in outcomes where error == nil { result.sent.append(changes[k]) }
+            let failures = outcomes.compactMap { k, error in error.map { (changes[k], $0) } }
+            let real = failures.filter { !($0.1 is StoreSender.Halted) }
+            for (change, error) in real.dropFirst() {
+                let note = "\(change.subject) failed too: \((error as? XlessError)?.cause ?? "\(error)")"
+                say("note: \(note)")
+                result.notes.append(note)
+            }
+            if let first = real.first ?? failures.first { throw failed(first.1, of: total) }
         }
         // Changes that create what the rest depends on (a new version, a new in-app purchase, a subscription group)
         // come first: they are sent, then the rest is planned again against what App Store Connect now has, which
@@ -285,6 +329,9 @@ public struct StorePush: Sendable {
             total = result.sent.count + next.changes.count
         }
     }
+
+    /// Whether a change may be sent alongside its neighbours: it only uploads, deletes and orders files of one set.
+    static func goesAlongside(_ change: StoreChange) -> Bool { change.privacy == nil && change.requests.isEmpty && change.media != nil }
 
     /// How many times `apply` plans again after creating.
     static let maxReplans = 3

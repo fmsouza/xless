@@ -6,18 +6,35 @@ import XlessCore
 /// resource); so is a request carrying the demo account's password, which is read from its secret only here, put into
 /// that one body, and scrubbed from whatever App Store Connect answers. Media changes are uploaded with `uploader`;
 /// what was uploaded and deleted is kept in `record` (for media.lock).
+///
+/// Files go up `concurrency` at a time across the whole push (one `limiter`; several media changes may run at once,
+/// see `StorePush.apply`), and their processing is waited for in parallel. Once an upload fails, no other transfer
+/// starts; those already started finish and are recorded.
 public struct StoreSender: Sendable {
+    /// How many files are sent to App Store Connect at once.
+    public static let uploadConcurrency = 4
+
     public let client: ASCClient
     /// The value of a secret, by name (`Secrets.required`).
     public let secret: @Sendable (String) throws -> String
     public let uploader: AssetUploader
     public let record = MediaRecord()
+    /// Bounds the transfers (reserve, parts, commit) of the whole push.
+    public let limiter: AsyncLimiter
 
     let cache = SecretCache()
+    let halt = HaltFlag()
 
-    public init(client: ASCClient, secret: @escaping @Sendable (String) throws -> String, uploader: AssetUploader? = nil) {
+    public init(client: ASCClient, secret: @escaping @Sendable (String) throws -> String, uploader: AssetUploader? = nil,
+                concurrency: Int = StoreSender.uploadConcurrency) {
         self.client = client; self.secret = secret
         self.uploader = uploader ?? AssetUploader(client: client, stage: .account, rerun: "re-run `xless store push` (it uploads only what App Store Connect still lacks)")
+        limiter = AsyncLimiter(concurrency)
+    }
+
+    /// A transfer not started because another upload of this push failed.
+    struct Halted: Error, CustomStringConvertible {
+        var description: String { "not uploaded: another upload of this push failed" }
     }
 
     /// A secret's value, read once per push (a store passphrase is asked at most once).
@@ -83,26 +100,74 @@ public struct StoreSender: Sendable {
             }
         }
         if work.deleteFirst { try await deletes() }
-        var order: [String] = []
-        for slot in work.slots {
-            switch slot {
-            case .keep(let id): order.append(id)
-            case .upload(let u):
-                let result = try await uploader.upload(AssetUpload(type: kind.itemType, file: u.file, fileName: u.fileName, fileSize: u.fileSize, md5: u.md5,
-                                                                   relationship: kind.parent.relationship, parentType: kind.parent.type, parentID: holder,
-                                                                   commit: u.commit, display: u.path))
-                record.uploaded(u.path, MediaLock.Entry(md5: u.md5, appleChecksum: u.md5, id: result.id))
-                if case .pending(_, let state) = result {
-                    record.note("\(u.path) is uploaded; App Store Connect is still processing it (\(state))")
-                }
-                order.append(result.id)
-            }
+        let ids = try await uploadAll(work.slots, kind: kind, holder: holder)
+        let order = work.slots.enumerated().map { i, slot -> String in
+            if case .keep(let id) = slot { return id }
+            return ids[i]!
         }
         if !work.deleteFirst { try await deletes() }
         if work.reorder, let setType = kind.setType {
             let path = "/v1/\(setType)/\(holder)/relationships/\(kind.itemType)"
             _ = try await send(StoreRequest(method: "PATCH", path: path, body: StoreRequest.links(kind.itemType, order)), path: path)
         }
+    }
+
+    /// Uploads the set's new files at once (transfers bounded by `limiter`), each waited for as soon as it is committed;
+    /// their IDs by slot index. Every file App Store Connect accepted is recorded, even when another failed; the first
+    /// failure (in the set's order) is then thrown and the others are noted.
+    func uploadAll(_ slots: [StoreMediaWork.Slot], kind: StoreMediaKind, holder: String) async throws -> [Int: String] {
+        let uploads = slots.enumerated().compactMap { i, slot -> (Int, StoreUpload)? in
+            if case .upload(let u) = slot { return (i, u) }
+            return nil
+        }
+        guard !uploads.isEmpty else { return [:] }
+        let outcomes = await withTaskGroup(of: (Int, StoreUpload, Result<AssetUploadResult, any Error>).self) { group in
+            for (index, u) in uploads {
+                group.addTask {
+                    do {
+                        return (index, u, .success(try await upload(u, kind: kind, holder: holder)))
+                    } catch {
+                        if !(error is Halted) { halt.set() }
+                        return (index, u, .failure(error))
+                    }
+                }
+            }
+            var all: [(Int, StoreUpload, Result<AssetUploadResult, any Error>)] = []
+            for await outcome in group { all.append(outcome) }
+            return all.sorted { $0.0 < $1.0 }
+        }
+        var ids: [Int: String] = [:]
+        var notes: [String] = []
+        var failures: [(StoreUpload, any Error)] = []
+        for (index, u, outcome) in outcomes {
+            switch outcome {
+            case .success(let result):
+                ids[index] = result.id
+                record.uploaded(u.path, MediaLock.Entry(md5: u.md5, appleChecksum: u.md5, id: result.id))
+                if case .pending(_, let state) = result { notes.append("\(u.path) is uploaded; App Store Connect is still processing it (\(state))") }
+            case .failure(let error):
+                failures.append((u, error))
+            }
+        }
+        let real = failures.filter { !($0.1 is Halted) }
+        for (u, error) in real.dropFirst() {
+            notes.append("\(u.path) was not uploaded either: \((error as? XlessError)?.cause ?? "\(error)")")
+        }
+        record.note(notes)
+        if let first = real.first ?? failures.first { throw first.1 }
+        return ids
+    }
+
+    /// One file: transferred once a permit is free (unless the push already failed), then waited for without one.
+    func upload(_ u: StoreUpload, kind: StoreMediaKind, holder: String) async throws -> AssetUploadResult {
+        let asset = AssetUpload(type: kind.itemType, file: u.file, fileName: u.fileName, fileSize: u.fileSize, md5: u.md5,
+                                relationship: kind.parent.relationship, parentType: kind.parent.type, parentID: holder,
+                                commit: u.commit, display: u.path)
+        let id = try await limiter.run { () async throws -> String in
+            if halt.isSet { throw Halted() }
+            return try await uploader.transfer(asset)
+        }
+        return try await uploader.wait(id: id, asset: asset)
     }
 
     /// The ID of a version localization, looked up by locale when this push created it.
@@ -169,6 +234,14 @@ public struct StoreSender: Sendable {
 }
 
 /// The secrets one push has read, kept for its own requests only.
+/// Set once an upload of the push fails: no other transfer starts.
+final class HaltFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.withLock { value = true } }
+    var isSet: Bool { lock.withLock { value } }
+}
+
 final class SecretCache: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String: String] = [:]
@@ -188,6 +261,8 @@ public final class MediaRecord: @unchecked Sendable {
     func uploaded(_ path: String, _ entry: MediaLock.Entry) { lock.withLock { entries[path] = entry } }
     func deleted(_ id: String) { lock.withLock { _ = deletedIDs.insert(id) } }
     func note(_ text: String) { lock.withLock { pending.append(text) } }
+    /// Several notes, kept together.
+    func note(_ texts: [String]) { lock.withLock { pending += texts } }
 
     public var uploads: [String: MediaLock.Entry] { lock.withLock { entries } }
     public var deleted: Set<String> { lock.withLock { deletedIDs } }
