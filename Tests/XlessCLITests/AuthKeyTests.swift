@@ -172,11 +172,35 @@ func aFailedAuthKeyDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownl
     defer { vault.cleanup() }
     let replaced = AuthKeyStore(store: vault.store.secretStore, catalogID: "another-store")
     let e = await accountError {
-        _ = try await AuthKeyCreation(web: FakePortal(events: Events()), vault: replaced).run(name: "Push", services: [.apns], bundleIDs: [], team: team)
+        _ = try await AuthKeyCreation(web: FakePortal(events: Events()), vault: replaced, rescue: KeyRescue(env: [:], ask: { _ in nil }))
+            .run(name: "Push", services: [.apns], bundleIDs: [], team: team)
     }
     #expect(e?.cause.contains("auth key NEWKEY1234 was created") == true)
     #expect(e?.cause.contains("the secret store could not keep it") == true)
+    #expect(e?.cause.contains("could not be saved to a file either (there is no terminal to ask where to save it)") == true, "\(e?.cause ?? "")")
     #expect(e?.fix.contains("xless keys revoke NEWKEY1234") == true)
+}
+
+@Test func aStoreThatCannotKeepTheKeyRescuesItToAFileToImport() async throws {
+    let vault = try KeyVault()
+    defer { vault.cleanup() }
+    let runtime = FileManager.default.temporaryDirectory.appendingPathComponent("xless-rescue-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: runtime) }
+    let replaced = AuthKeyStore(store: vault.store.secretStore, catalogID: "another-store")
+    let e = await accountError {
+        _ = try await AuthKeyCreation(web: FakePortal(events: Events()), vault: replaced,
+                                      rescue: KeyRescue(env: ["XDG_RUNTIME_DIR": runtime.path], ask: { _ in Issue.record("asked"); return nil }))
+            .run(name: "Push", services: [.apns], bundleIDs: [], team: team)
+    }
+    let path = runtime.appendingPathComponent("xless-rescued-AuthKey_NEWKEY1234.p8").path
+    #expect(e?.cause.contains("auth key NEWKEY1234 was created, but the secret store could not keep it") == true)
+    #expect(e?.cause.contains("its private key is saved in \(path) (mode 0600") == true, "\(e?.cause ?? "")")
+    #expect(e?.fix.contains("`xless secrets import XLESS_APNS_KEY@\(team) --file \(path) --kind auth-key --team-id \(team) --key-id NEWKEY1234 --services apns`") == true,
+            "\(e?.fix ?? "")")
+    #expect(e?.fix.contains("xless keys revoke NEWKEY1234") == true)
+    #expect(FileManager.default.contents(atPath: path).map { String(decoding: $0, as: UTF8.self) }?.contains("BEGIN PRIVATE KEY") == true)
+    #expect(try vault.read().entries.isEmpty)
 }
 
 @Test func aCreateErrorIsPassedOnAndNothingIsDownloaded() async throws {

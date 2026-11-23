@@ -15,9 +15,10 @@ public enum ManifestValidator {
     public static let releaseTypes = ["MANUAL", "AFTER_APPROVAL", "SCHEDULED"]
     public static let deviceFamilies = ["IPHONE", "IPAD", "MAC", "APPLE_TV", "APPLE_WATCH", "VISION"]
 
-    /// Whether a `passwordSecret` names one of xless's other secrets, or something named like a key or token: `store push`
-    /// would send its value to App Store Connect as the demo password, where App Review (and the app's team) can read it.
-    public static func isReservedSecret(_ name: String) -> Bool { SecretEnvironment.isKeyOrToken(name) }
+    /// Whether a `passwordSecret` names one of xless's other secrets, something named like a key or token (`store push`
+    /// would send its value to App Store Connect as the demo password, where App Review and the app's team can read it),
+    /// or a variable the system, the shell or xless itself uses (`SecretEnvironment.passwordNameProblem`).
+    public static func isReservedSecret(_ name: String) -> Bool { SecretEnvironment.passwordNameProblem(name) != nil }
 
     /// What is wrong with app.yml's `privacy` section (`path`: app.yml as issues name it). IDs are checked for their
     /// shape; one outside xless's lists is a warning (Apple adds some), `store push` checks them against Apple's own.
@@ -203,8 +204,8 @@ public enum ManifestValidator {
             if let secret = demo.passwordSecret, !Self.isSecretName(secret) {
                 error(appPath, "review.demoAccount.passwordSecret \(secret) is not a secret name",
                       "name the secret-store entry (or environment variable) that holds the password, e.g. XLESS_DEMO_PASSWORD; never the password itself")
-            } else if let secret = demo.passwordSecret, ManifestValidator.isReservedSecret(secret) {
-                error(appPath, "review.demoAccount.passwordSecret \(secret) names a key or token, not a password",
+            } else if let secret = demo.passwordSecret, let problem = SecretEnvironment.passwordNameProblem(secret) {
+                error(appPath, "review.demoAccount.passwordSecret \(secret) \(problem)",
                       "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD (`xless secrets import XLESS_DEMO_PASSWORD --file <file> --kind password`)")
             }
             if demo.required == true {

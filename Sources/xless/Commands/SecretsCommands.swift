@@ -2,6 +2,7 @@ import ArgumentParser
 import Crypto
 import Foundation
 import XlessCore
+import XlessAppleID
 import XlessSign
 import XlessVault
 
@@ -187,7 +188,25 @@ struct SecretsImportCommand: ParsableCommand {
     @Option(help: "App Store Connect issuer ID (required for asc-api-key).") var issuerId: String?
     @Option(help: "Certificate ID (signing-key).") var certificateId: String?
     @Option(help: "Expiry date, YYYY-MM-DD.") var expires: String?
+    @Option(help: ArgumentHelp("The API key's role(s), comma-separated (asc-api-key; shown by `xless auth status`).", valueName: "roles")) var role: String?
+    @Option(help: ArgumentHelp("The auth key's services, comma-separated: \(AuthKeyServiceArgument.names) (auth-key).", valueName: "services")) var services: String?
     @OptionGroup var options: RememberOption
+
+    func validate() throws {
+        let kind = kind ?? VaultImport.inferredKind(for: name)
+        if let role {
+            guard kind == .ascAPIKey else { throw ValidationError("--role is an App Store Connect API key's (--kind asc-api-key)") }
+            guard !role.trimmingCharacters(in: .whitespaces).isEmpty else { throw ValidationError("--role is empty") }
+            do { _ = try APIKeyRoles.parse(role.split(separator: ",").map(String.init)) } catch let e as XlessError { throw ValidationError("\(e.cause); \(e.fix)") }
+        }
+        if let services {
+            guard kind == .authKey else { throw ValidationError("--services is an auth key's (--kind auth-key)") }
+            guard services.split(separator: ",").allSatisfy({ AuthKeyService(argument: $0.trimmingCharacters(in: .whitespaces)) != nil }),
+                  !services.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw ValidationError("--services \(services) is not a list of auth key services: use \(AuthKeyServiceArgument.names), comma-separated")
+            }
+        }
+    }
 
     func run() throws {
         try SecretStoreCLI.run {
@@ -198,7 +217,9 @@ struct SecretsImportCommand: ParsableCommand {
             let remember = try SecretStoreCLI.remember(options.remember)
             let metadata = VaultEntry.Metadata(
                 teamID: teamId, keyID: keyId ?? (kind == .ascAPIKey || kind == .authKey ? VaultImport.keyID(fromFileName: URL(fileURLWithPath: file).lastPathComponent) : nil),
-                issuerID: issuerId, certificateID: certificateId, created: Date(), expires: try expires.map(Self.day))
+                issuerID: issuerId, certificateID: certificateId, created: Date(), expires: try expires.map(Self.day),
+                role: try role.map { APIKeyRoles.recorded(try APIKeyRoles.parse($0.split(separator: ",").map(String.init))) } ?? nil,
+                services: try services.map { AuthKeyStore.recorded(try AuthKeyServiceArgument.parse([$0])) })
             if kind == .ascAPIKey, metadata.keyID == nil || metadata.issuerID == nil {
                 throw VaultError(.invalidInput, "an App Store Connect API key needs its key ID and issuer ID",
                                  fix: "pass --issuer-id (App Store Connect > Users and Access > Integrations) and --key-id unless the file is AuthKey_<KEY_ID>.p8")

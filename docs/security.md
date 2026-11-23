@@ -107,8 +107,11 @@ directory, and refuses it when the file, its directory or that PATH directory ca
 belongs to someone other than you or root. It gets its verb as its only argument, a cut-down environment with no secret
 variable, no open file of xless's, the terminal while it runs, the secret on a pipe only; its answer is read into at most 4 MiB of memory that is
 zeroed afterwards, and it is killed with its process group after 120 seconds. The entries' names, kinds and IDs are kept
-by the keyring too (unsealed: their integrity is the keyring's), and two xless commands writing at once are not
-serialised.
+by the keyring too (unsealed: their integrity is the keyring's). Two xless commands writing at once take turns under
+the vault's writers' lock file. Before Apple creates a key it offers once, the helper must store, read back and erase a
+throwaway entry; and a key the store fails to keep after all is written to a new 0600 file in `$XDG_RUNTIME_DIR` (or
+a path asked on the terminal) with the `xless secrets import` command to run, rather than dropped
+([secrets.md](secrets.md#when-the-helper-cannot-keep-a-key-apple-offers-once)).
 
 ## Caches: off by default, at most an hour
 

@@ -39,6 +39,9 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
         try secret(entry, in: catalog, reason: reason).wipe()
     }
 
+    /// Nothing to probe: `unlock` has the key and `update` checks the file under the writers' lock.
+    public func probeWrites(reason: String) throws {}
+
     public func update(reason: String, _ body: (SecretCatalog) throws -> [SecretChange]) throws {
         try vault.update { file in
             var next = file

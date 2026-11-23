@@ -52,6 +52,47 @@ public enum SecretEnvironment {
         return ["_KEY", "_TOKEN", "_P8", "_PEM", "_SECRET"].contains { base.hasSuffix($0) || base.hasSuffix($0 + "_FILE") }
     }
 
+    /// Why `name` cannot name a password of the user's own (a demo account's `passwordSecret`), or nil when it can. The
+    /// password is read from the variable of that name (and the secret store's entry), and every program xless runs loses
+    /// that variable (`scrub`), so it may name none that something else relies on: a key or a token (`isKeyOrToken`), a
+    /// secret's `_FILE` variable, one of xless's own `XLESS_*` variables (other than `XLESS_DEMO_PASSWORD`), a variable
+    /// of the system or the shell (`PATH`, `HOME`, `ENV`, `LD_*`, …), or one of scripts/testflight.sh's own (it reads the
+    /// password with `${!NAME}`). Compared without case, before any `@TEAMID`.
+    public static func passwordNameProblem(_ name: String) -> String? {
+        let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
+        if isKeyOrToken(name) { return "names a key or token, not a password" }
+        if base.hasSuffix("_FILE") { return "names a _FILE variable (the path of a secret's file), not a secret" }
+        if base.hasPrefix("XLESS_"), !entries.contains(where: { $0.name == base }) { return "names one of xless's own variables, not a password" }
+        if reservedVariables.contains(base) || reservedPrefixes.contains(where: base.hasPrefix) {
+            return "names a variable the system, the shell or xless's scripts use (\(base)), not a password"
+        }
+        return nil
+    }
+
+    /// Variables of the system, the shell, the build toolchains, and scripts/testflight.sh's globals (a test keeps those
+    /// in step).
+    static let reservedVariables: Set<String> = [
+        // POSIX and the shells
+        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "TERMINFO", "COLUMNS", "LINES", "TZ", "TMPDIR",
+        "TMP", "TEMP", "IFS", "ENV", "CDPATH", "HOSTNAME", "HOSTTYPE", "OSTYPE", "MACHTYPE", "MAIL", "MAILCHECK", "MAILPATH",
+        "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND", "SHLVL", "SHELLOPTS", "BASH", "BASHOPTS", "BASHPID", "UID", "EUID",
+        "PPID", "GROUPS", "RANDOM", "SECONDS", "LINENO", "REPLY", "OPTARG", "OPTIND", "OPTERR", "FUNCNAME", "HISTFILE",
+        "HISTSIZE", "HISTCONTROL", "LANG", "LANGUAGE", "NLSPATH", "POSIXLY_CORRECT", "DISPLAY", "XAUTHORITY", "EDITOR",
+        "VISUAL", "PAGER", "BROWSER", "MANPATH", "INFOPATH", "GNUPGHOME", "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS",
+        "SDKROOT", "DEVELOPER_DIR", "NO_PROXY", "ALL_PROXY", "CI",
+        // the toolchains of the Rust, Tauri and React Native builds
+        "RUSTFLAGS", "RUSTDOCFLAGS", "JAVA_HOME", "JAVA_OPTS",
+        // scripts/testflight.sh
+        "ALLOW_DISK", "ARGS", "CARGO", "CONFIG", "DESTINATION", "ENV_FILE", "NAME", "OVERLAY", "PLATFORM", "PROJECT", "SIM",
+        "SOURCE", "SOURCE_MOUNT", "SOURCE_SUB", "TEAM", "XCODE_PIN", "XCODE_TAG", "XCODE_VERSION",
+    ]
+
+    static let reservedPrefixes = [
+        "LC_", "LD_", "DYLD_", "XDG_", "BASH_", "SSH_", "SUDO_", "DOCKER_", "GIT_", "GPG_", "PASSWORD_STORE_", "DBUS_",
+        "WAYLAND_", "MALLOC_", "SWIFT_", "HTTP_", "HTTPS_", "CARGO_", "RUSTUP_", "RUSTC", "ANDROID_", "GRADLE_", "NODE_",
+        "NPM_CONFIG_", "PYTHON",
+    ]
+
     /// Whether a command-line option or argument named `name` (`--api-key`, `password`, `privateKey`) would carry a
     /// secret. Secrets never come from argv: it is visible to every user in `ps` and /proc/<pid>/cmdline, and lands in
     /// shell history. An option giving the *path* of a file or an ID is fine (`--key-file`, `--key-id`).

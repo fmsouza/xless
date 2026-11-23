@@ -43,12 +43,16 @@ enum APIKeyWebCLI {
     static func existingStore() throws -> SecretCatalog { try store().existingCatalog() }
 
     /// `make` with the store unlocked now (the passphrase asked before anything is created at Apple) and the catalog
-    /// it was unlocked for.
+    /// it was unlocked for; a credential helper must first pass a test write (`SecretStore.probeWrites`).
     static func unlocked<T>(reason: String, _ make: (any SecretStore, SecretCatalog) -> T) throws -> T {
-        let store = try store()
+        try unlocked(store: try store(), reason: reason, make)
+    }
+
+    static func unlocked<T>(store: any SecretStore, reason: String, _ make: (any SecretStore, SecretCatalog) -> T) throws -> T {
         let catalog = try store.existingCatalog()
         try catalog.requireWritable()
         try store.unlock(catalog, remember: nil, reason: reason)
+        try store.probeWrites(reason: reason)
         return make(store, catalog)
     }
 }
@@ -61,10 +65,12 @@ struct AuthAPIKeyCreateCommand: AsyncParsableCommand {
 
 
         Needs an Apple ID that is the team's Account Holder, or an Admin the Account Holder allowed to generate API keys, \
-        and a secret store (`xless secrets init`); the store is unlocked before anything is created. Apple offers a new \
-        key's private key once: xless downloads it once, never retries, seals it into the store as ASC_KEY_P8@<TEAM_ID> \
-        (with its key ID, issuer ID and role), then checks it with one documented call (GET /v1/apps). If anything fails \
-        after the key was created, the error says so: the key exists and should be revoked.
+        and a secret store (`xless secrets init`); the store is unlocked (a credential helper must pass a test write) \
+        before anything is created. Apple offers a new key's private key once: xless downloads it once, never retries, \
+        seals it into the store as ASC_KEY_P8@<TEAM_ID> (with its key ID, issuer ID and role), then checks it with one \
+        documented call (GET /v1/apps). If anything fails after the key was created, the error says so: the key exists \
+        and should be revoked; if only the store failed, the key is saved to a new 0600 file ($XDG_RUNTIME_DIR, or a path \
+        asked on the terminal) and the error gives the `xless secrets import` command that stores it.
 
         Roles (--role, repeatable): pick the narrowest that covers what you plan. APP_MANAGER (the default) works for \
         apps, the listing, TestFlight, builds and the release; bundle IDs, devices, certificates and profiles (so \

@@ -9,7 +9,7 @@ After `xless setup` and a few builds, xless takes space in these places:
 | The exported SDKs, Tauri work copies and downloads | `~/.cache/xless` (`$XDG_CACHE_HOME/xless` when that is set) | about 3.5 GB per Xcode and architecture, plus the work copies |
 | With `--docker`: the images `xless-base`, `xless`, `xless-tauri`, `xless-rn`, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 21 to 31 GB per Xcode and architecture ([measured](acceptance-m5.md#runs-in-the-vm)) |
 | With `--docker`: Docker volumes of `xless run --docker` (Rust toolchains, React Native work copies and caches) | Docker's data root | a few GB per app |
-| The secret store, if you made one (your keys) | `~/.local/share/xless/vault` (`$XDG_DATA_HOME/xless/vault`) | a few KB |
+| The secret store, if you made one (your keys); with a credential helper, only its writers' `lock` file | `~/.local/share/xless/vault` (`$XDG_DATA_HOME/xless/vault`) | a few KB |
 
 Part of the Docker figure is Docker's build cache, which `xless clean` leaves alone ([below](#free-the-build-cache)).
 

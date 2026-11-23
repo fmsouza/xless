@@ -21,7 +21,7 @@ xless ship --platform ios                            # asks the passphrase once,
 | `init` | Creates the store and asks its passphrase twice (at least 8 characters). The passphrase cannot be recovered. |
 | `status` | Where the store is, how many entries it has, and whether it is unlocked. |
 | `list` | Every entry's name, kind, team, key ID, issuer ID, certificate ID, certificate type, API key role, auth key services, creation and expiry dates. No passphrase needed. |
-| `import <name> --file <path>` | Adds the file's content. `--kind` (default: from the name), `--team-id`, `--key-id`, `--issuer-id`, `--certificate-id`, `--expires YYYY-MM-DD` record what it is. Then offers to delete the file. |
+| `import <name> --file <path>` | Adds the file's content. `--kind` (default: from the name), `--team-id`, `--key-id`, `--issuer-id`, `--certificate-id`, `--expires YYYY-MM-DD`, `--role` (an API key's), `--services` (an auth key's: `apns,siwa`) record what it is. Then offers to delete the file. |
 | `export <name> --out <path>` | Writes the secret to a new file (mode 0600; an existing file is never overwritten). That copy is in clear: delete it once used. |
 | `rm <name>` | Removes an entry, after asking (`--yes` skips the question). It cannot be recovered. |
 | `unlock --remember 30m` | Keeps the store unlocked for at most an hour (see below). |
@@ -108,7 +108,8 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
 - **The TestFlight demo account's password** (a run that uploads with `testflight.external.review.demoAccount` in
   [xless.yml](xless-yml.md#testflight) or the overlay) goes to the container that uploads only: step 3, the project's
   one container, or the macOS App-Store ship; never to step 1 or the build. Its secret is `passwordSecret`
-  (`XLESS_DEMO_PASSWORD` by default), a name of your own if you like (`NAME@<TEAM_ID>` too); the xless on your machine
+  (`XLESS_DEMO_PASSWORD` by default), a name of your own if you like (`NAME@<TEAM_ID>` too; not a key's or token's,
+  nor a variable the system or xless uses, such as `PATH`, `HOME`, `ENV` or `XLESS_*`); the xless on your machine
   reads it from the configuration (`xless secrets named-by`, not listed in `--help`). `NAME_FILE` wins, mounted
   read-only into that container; otherwise it comes from the store like the keys, from an entry of kind `password`.
   Apple never gives the password back, so xless sends it only when the demo account is new, renamed or newly required:
@@ -176,7 +177,36 @@ go only through its stdin and stdout pipes; xless reads at most 4 MiB of answer 
 stops the helper (and anything it started) after 120 seconds. Its stderr is xless's, so the keyring's or GnuPG's own
 messages reach you; xless never quotes what a failed `get` or `store` printed. While it runs, the helper has the
 terminal (when xless has it): it may prompt on `/dev/tty`, and Ctrl-C stops it. With a helper, the integrity of the names and IDs
-is the keyring's, and there is no lock between two xless commands writing at the same time.
+is the keyring's.
+
+Two xless commands writing through the helper at the same time take turns: each write (list, then store or erase)
+holds the vault's writers' lock, `$XDG_DATA_HOME/xless/vault/lock` (the directory is created, mode 0700, when it does
+not exist yet), so neither works from a list the other has changed.
+
+### When the helper cannot keep a key Apple offers once
+
+An App Store Connect API key's and an auth key's private key can be downloaded once only. So before `xless auth
+api-key create`, `xless keys create` or `xless provision apply` asks Apple for one (and before `xless certs create`,
+`sign bootstrap`, `xless webhooks create` and `xless auth api-key import` store anything), xless checks that the helper
+works: it stores a throwaway entry `xless-helper-probe.<random>`, reads it back and erases it (once per command; GnuPG
+or the keyring may ask to be unlocked for it). A helper that fails any of the three stops the command before anything is
+created at Apple. If it could not erase the entry, the error names it: remove it with `xless secrets rm <name>` once the
+helper works.
+
+If the store still fails after Apple created the key (with either backend: the keyring locked meanwhile, a full disk),
+xless keeps the private key in memory and writes it to a new file instead of dropping it: `$XDG_RUNTIME_DIR/xless-rescued-AuthKey_<KEY_ID>.p8`
+when `$XDG_RUNTIME_DIR` is a directory only you can enter (a tmpfs emptied when you log out, on systemd hosts), else
+a path it asks on the terminal (Enter gives up). The file is new (an existing file is never overwritten, a symlink
+never followed) and has mode 0600. The command still fails, and its error gives the exact command that puts the key
+into the store with its IDs, for example:
+
+```sh
+xless secrets import ASC_KEY_P8@ABCDE12345 --file /run/user/1000/xless-rescued-AuthKey_2X9R4HXF34.p8 \
+  --kind asc-api-key --team-id ABCDE12345 --key-id 2X9R4HXF34 --issuer-id 69a6de7e-… --role APP_MANAGER
+```
+
+`import` offers to delete the file afterwards. With neither a usable `$XDG_RUNTIME_DIR` nor a terminal, the key is
+lost and the error says so: revoke it (`xless auth api-key revoke <KEY_ID>`, `xless keys revoke <KEY_ID>`).
 
 ### Writing a credential helper
 

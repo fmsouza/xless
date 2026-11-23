@@ -395,8 +395,8 @@ struct TestFlightBetaInfoSetCommand: AsyncParsableCommand {
         for (option, value) in [("--marketing-url", marketingUrl), ("--privacy-policy-url", privacyPolicyUrl)] {
             if let value, !value.isEmpty, !(value.hasPrefix("https://") || value.hasPrefix("http://")) { throw ValidationError("\(option) \(value) is not an http(s) URL") }
         }
-        if let name = demoPasswordSecretName, SecretEnvironment.isKeyOrToken(name) {
-            throw ValidationError("--demo-password-secret-name \(name) names a key or token, not a password: keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
+        if let name = demoPasswordSecretName, let problem = SecretEnvironment.passwordNameProblem(name) {
+            throw ValidationError("--demo-password-secret-name \(name) \(problem): keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
         }
         if description == nil, descriptionFile == nil, feedbackEmail == nil, marketingUrl == nil, privacyPolicyUrl == nil, !reviewGiven, licenseFile == nil {
             throw ValidationError("nothing to set: give a text, a review detail or --license-file")

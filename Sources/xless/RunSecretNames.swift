@@ -12,7 +12,15 @@ import XlessTauri
 enum RunSecretNames {
     /// For an overlay (`config`) or a project directory's xless.yml (`project`), shipped for `platform`.
     static func upload(config: URL?, project: URL?, platform: Platform) throws -> [String] {
-        [try testFlight(config: config, project: project, platform: platform)?.demoPasswordSecret].compactMap { $0 }
+        let names = [try testFlight(config: config, project: project, platform: platform)?.demoPasswordSecret].compactMap { $0 }
+        // An overlay is only parsed here (its loader validates later): refuse what that validation would.
+        for name in names {
+            if let problem = SecretEnvironment.passwordNameProblem(name) {
+                throw XlessError(.config, "testflight.external.review.demoAccount.passwordSecret \(name) \(problem)",
+                                 fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD (`xless secrets import XLESS_DEMO_PASSWORD --file <file> --kind password`)")
+            }
+        }
+        return names
     }
 
     /// The `testflight:` block the run's upload publishes with, as each loader resolves it for `platform`: a Tauri app's
