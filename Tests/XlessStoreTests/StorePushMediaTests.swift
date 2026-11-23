@@ -249,6 +249,12 @@ private func item(_ type: String, _ id: String, _ checksum: String, name: String
     routes["/v1/appEncryptionDeclarations/E2/appEncryptionDeclarationDocument"] = (200, single(item("appEncryptionDeclarationDocuments", "D1", MD5Hex.of(pdf), name: "export.pdf")))
     #expect(try await pusher(RoutedTransport(routes)).plan(app: fakeASCApp, manifest: m, dir: dir, options: declarations).0.changes.isEmpty)
 
+    // It has another one, which App Store Connect does not let anyone replace: noted, nothing sent.
+    var other = routes
+    other["/v1/appEncryptionDeclarations/E2/appEncryptionDeclarationDocument"] = (200, single(item("appEncryptionDeclarationDocuments", "D1", "other", name: "old.pdf")))
+    let (kept, _) = try await pusher(RoutedTransport(other)).plan(app: fakeASCApp, manifest: m, dir: dir, options: declarations)
+    #expect(kept.changes.isEmpty && kept.notes.contains { $0.contains("does not let anyone replace") })
+
     // A new declaration takes it.
     m.app.encryption = ["appDescription": .string("Uses HTTPS only."), "availableOnFrenchStore": .bool(true),
                         "containsProprietaryCryptography": .bool(true), "containsThirdPartyCryptography": .bool(false)]

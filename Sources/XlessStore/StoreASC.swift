@@ -80,7 +80,9 @@ public struct StoreMediaAttributes: ASCAttributes, Equatable {
     public init() {}
 
     /// Where the upload is: COMPLETE, FAILED, …
-    public var state: String? { videoDeliveryState?.state ?? assetDeliveryState?.state }
+    public var state: String? {
+        [videoDeliveryState?.state, assetDeliveryState?.state].contains("FAILED") ? "FAILED" : videoDeliveryState?.state ?? assetDeliveryState?.state
+    }
 }
 
 /// One screenshot or preview set of a version localization, its items in display order.

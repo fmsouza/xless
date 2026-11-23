@@ -9,7 +9,7 @@ import XlessCore
 /// One HTTP request of a change: a JSON:API document for App Store Connect's documented API.
 public struct StoreRequest: Sendable, Equatable {
     public var method: String
-    /// The path; `{id}` stands for the ID of the resource the change's previous request created.
+    /// The path; `{id}` stands for the ID of the resource the change's first creating request created.
     public var path: String
     public var body: JSONValue?
     /// The secret whose value goes into `data.attributes.demoAccountPassword` when the request is sent.
@@ -204,6 +204,8 @@ public enum StoreMediaKind: String, Sendable, Equatable {
         case .encryptionDocument: ("appEncryptionDeclaration", "appEncryptionDeclarations")
         }
     }
+
+    static let allItemTypes: Set<String> = Set([StoreMediaKind.screenshots, .previews, .reviewAttachments, .encryptionDocument].map(\.itemType))
 
     /// How many files Apple takes in one set.
     public var maxItems: Int? {

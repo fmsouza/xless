@@ -75,7 +75,7 @@ extension PushContext {
 
         let max = kind.maxItems ?? Int.max
         if match.slots.count > max {
-            throw XlessError(.account, "\(subject) would hold \(match.slots.count) files, Apple allows \(max): App Store Connect has \(match.extras.count) the directory does not",
+            throw XlessError(.account, "\(subject) would hold \(match.slots.count) files, Apple allows \(max): App Store Connect has \(match.slots.count - set.files.count) the directory does not",
                              fix: "re-run with --prune to delete them, or add them to \(name)/\(directory)/ (`xless store pull`)")
         }
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -104,7 +104,7 @@ extension PushContext {
         for path in match.uploads {
             fields.append(StoreFieldChange((path as NSString).lastPathComponent, from: match.replaced.contains(path) ? "old upload" : nil, to: "upload"))
         }
-        for item in match.failed { fields.append(StoreFieldChange(shown(item.id), from: "failed upload", to: nil)) }
+        for item in match.failed { fields.append(StoreFieldChange(shown(item.id), from: Self.junk(item), to: nil)) }
         if match.uploads.isEmpty, match.reorder { fields.append(StoreFieldChange("order", from: nil, to: "as in \(directory)")) }
         guard !fields.isEmpty || !match.deletes.isEmpty else { return }
         try requireEditableVersion(subject)
@@ -125,6 +125,8 @@ extension PushContext {
                              slots: slots, deletes: match.deletes, deleteFirst: before > max, reorder: match.reorder)
         add(StoreChange(remote == nil ? .create : .update, .media, subject, fields: fields, requests: requests, media: work))
     }
+
+    static func junk(_ item: MediaMatcher.Remote) -> String { item.state == "FAILED" ? "failed upload" : "unfinished upload" }
 
     static func remote(_ item: ASCKeptResource<StoreMediaAttributes>) -> MediaMatcher.Remote {
         MediaMatcher.Remote(id: item.id, checksum: item.attributes.sourceFileChecksum, fileName: item.attributes.fileName, state: item.attributes.state)
@@ -155,7 +157,7 @@ extension PushContext {
         }
         let pruned = match.pruned.map { StoreChange(.delete, kind == .reviewAttachments ? .review : .declarations, "\(subject) \(shown($0.id))", requests: [.delete(kind.itemType, id: $0.id)]) }
         var fields = match.uploads.map { StoreFieldChange(($0 as NSString).lastPathComponent, from: match.replaced.contains($0) ? "old upload" : nil, to: "upload") }
-        fields += match.failed.map { StoreFieldChange(shown($0.id), from: "failed upload", to: nil) }
+        fields += match.failed.map { StoreFieldChange(shown($0.id), from: Self.junk($0), to: nil) }
         guard !match.uploads.isEmpty || !match.deletes.isEmpty else { return (nil, fields, pruned) }
         let uploads = Dictionary(files.map { ($0.local.path, $0.upload) }, uniquingKeysWith: { a, _ in a })
         let slots = match.uploads.map { StoreMediaWork.Slot.upload(uploads[$0]!) }

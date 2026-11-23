@@ -46,6 +46,11 @@ public struct StoreSender: Sendable {
             }
             let id = try await send(request, path: request.path)
             if created == nil { created = id }
+            // A media file deleted (--prune) leaves media.lock.
+            if request.method == "DELETE", let type = request.path.split(separator: "/").dropFirst().first,
+               StoreMediaKind.allItemTypes.contains(String(type)) {
+                record.deleted(String(request.path.split(separator: "/").last!))
+            }
         }
         if let media = change.media { try await applyMedia(media, created: created, subject: change.subject) }
     }

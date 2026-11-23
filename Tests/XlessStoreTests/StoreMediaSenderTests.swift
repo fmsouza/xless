@@ -101,6 +101,14 @@ private func json(_ r: URLRequest) -> [String: Any] { (r.httpBody.flatMap { try?
     #expect((reserve["attributes"] as! [String: Any])["fileName"] as? String == "walkthrough.mov")
 }
 
+@Test func aPrunedFileLeavesTheLock() async throws {
+    let t = RoutedTransport(fakeApp())
+    let sender = mediaSender(t)
+    try await sender.apply(StoreChange(.delete, .media, "screenshots en-US APP_IPHONE_67 old.png", requests: [.delete("appScreenshots", id: "SS3")]))
+    try await sender.apply(StoreChange(.delete, .text, "version text de-DE", requests: [.delete("appStoreVersionLocalizations", id: "VL2")]))
+    #expect(sender.record.deleted == ["SS3"])
+}
+
 @Test func anUploadStillProcessingIsANote() async throws {
     let dir = try tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }

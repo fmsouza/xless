@@ -25,6 +25,10 @@ public enum MediaMatcher {
         public init(id: String, checksum: String?, fileName: String?, state: String?) {
             self.id = id; self.checksum = checksum; self.fileName = fileName; self.state = state
         }
+
+        /// An upload that will never show: App Store Connect could not process it, or it was reserved and never
+        /// committed (a push interrupted mid-upload).
+        public var isJunk: Bool { state == "FAILED" || state == "AWAITING_UPLOAD" }
     }
 
     public enum Slot: Sendable, Equatable {
@@ -40,6 +44,7 @@ public enum MediaMatcher {
         public var deletes: [String] = []
         /// Paths of changed files whose old upload is replaced.
         public var replaced: [String] = []
+        /// Uploads that failed or were never finished (deleted with the set's change).
         public var failed: [Remote] = []
         /// Items the manifest does not have, kept (no prune).
         public var extras: [Remote] = []
@@ -59,7 +64,7 @@ public enum MediaMatcher {
         var result = Result()
         var claimed: Set<String> = []
         func take(_ match: (Remote) -> Bool) -> Remote? {
-            guard let found = remote.first(where: { !claimed.contains($0.id) && match($0) }) else { return nil }
+            guard let found = remote.first(where: { !claimed.contains($0.id) && !$0.isJunk && match($0) }) else { return nil }
             claimed.insert(found.id)
             return found
         }
@@ -68,8 +73,8 @@ public enum MediaMatcher {
                 ?? entry.appleChecksum.flatMap { checksum in take { $0.checksum == checksum } }
         }
 
-        // Position (by file name) → slot.
-        var byName: [String: Slot] = [:]
+        // Position (by path, ordered by file name) → slot.
+        var byPath: [String: Slot] = [:]
         func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
         // 1. Files App Store Connect has: by the lock (a pulled copy), else by checksum.
@@ -85,28 +90,31 @@ public enum MediaMatcher {
                 }
             }
             guard let item else { unmatched.append(file); continue }
-            byName[name(file.path)] = .keep(item.id)
+            byPath[file.path] = .keep(item.id)
             result.lock[file.path] = MediaLock.Entry(md5: file.md5, appleChecksum: item.checksum, id: item.id)
         }
         // 2. Uploads pull could not download: in place.
         let local = Set(files.map(\.path))
         for (path, entry) in lock.files.values.sorted(by: { $0.key < $1.key })
         where entry.md5 == nil && !local.contains(path) && (path as NSString).deletingLastPathComponent == directory {
-            if let item = lockedItem(entry) { byName[name(path)] = .keep(item.id) }
+            if let item = lockedItem(entry) { byPath[path] = .keep(item.id) }
         }
         // 3. The other files are uploaded, replacing the upload the lock ties their path to.
         for file in unmatched {
-            byName[name(file.path)] = .upload(file.path)
+            byPath[file.path] = .upload(file.path)
             if let entry = lock.files[file.path], entry.md5 != nil, let old = lockedItem(entry) {
                 result.deletes.append(old.id)
                 result.replaced.append(file.path)
             }
         }
-        result.slots = MediaOrder.sorted(Array(byName.keys)).map { byName[$0]! }
+        result.slots = byPath.keys.sorted { a, b in
+            let (na, nb) = (name(a), name(b))
+            return na == nb ? a < b : MediaOrder.sorted([na, nb]).first == na
+        }.map { byPath[$0]! }
 
         // 4. What is left at App Store Connect.
         for item in remote where !claimed.contains(item.id) {
-            if item.state == "FAILED" {
+            if item.isJunk {
                 result.failed.append(item)
                 result.deletes.append(item.id)
             } else if prune {

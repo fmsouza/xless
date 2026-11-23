@@ -214,7 +214,7 @@ xless store push --dry-run                 # the plan: what differs, nothing sen
 xless store push                           # send it
 xless store push --only text,review        # some parts only
 xless store push --only media              # screenshots and previews only
-xless store push --prune                   # also delete locales the directory does not have
+xless store push --prune                   # also delete locales, media sets and files the directory does not have
 ```
 
 `push` makes App Store Connect's listing match `appstore/`, with the API key (App Manager is enough) and only the
@@ -253,7 +253,8 @@ The parts, in the order they are sent (`--only` chooses):
   Connect lists), export compliance (a new encryption declaration when `appDescription`, `availableOnFrenchStore`,
   `containsProprietaryCryptography` or `containsThirdPartyCryptography` differ from the latest one, all four needed;
   `exempt` is App Store Connect's verdict and is not sent), its compliance document (`encryptionDocument`: uploaded
-  with a new declaration, or onto the latest one when that has no such document yet) and accessibility
+  with a new declaration, or onto the latest one when that has no document yet; App Store Connect does not let a
+  declaration's document be replaced, so a changed one waits for the next new declaration) and accessibility
   (per device family in `app.yml`, the draft declaration is updated, or a new one created, and published; a draft that
   already has `app.yml`'s answers is published).
 - **`media`**: per locale and display (or preview) type, the screenshot and preview sets: created when App Store
@@ -264,7 +265,7 @@ The parts, in the order they are sent (`--only` chooses):
 Connect keeps of each upload (`sourceFileChecksum`, which is the MD5 xless sent) and with `media.lock` (for copies
 `pull` downloaded, renamed ones included), so an unchanged set uploads nothing and a renamed file only moves. A file
 whose content changed replaces the upload `media.lock` ties its path to; an upload App Store Connect could not process
-(FAILED) is removed. An upload is App Store Connect's documented protocol: the file is reserved with its name and size,
+(FAILED), or one reserved and never finished (an interrupted push), is removed. An upload is App Store Connect's documented protocol: the file is reserved with its name and size,
 sent in the parts App Store Connect asks for (read from disk one part at a time, each part retried on its own, no
 credentials sent to Apple's storage), committed with its MD5, then watched until App Store Connect has processed it.
 A file it refuses fails the push with App Store Connect's message (the failed upload is removed, so a re-run starts

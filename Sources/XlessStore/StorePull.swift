@@ -195,7 +195,9 @@ public struct StorePull: Sendable {
         manifest.app = a
         report.locales = manifest.orderedLocales
         // Attachments and the compliance document are not pulled: their lock entries stay.
-        for (path, entry) in oldLock.files.values where path.split(separator: "/").first.map({ ManifestReader.reservedDirectories.contains(String($0)) }) == true {
+        let named = Set((old?.review?.attachments ?? []) + (old?.encryptionDocument.map { [$0] } ?? []))
+        for (path, entry) in oldLock.files.values
+        where named.contains(path) || path.split(separator: "/").first.map({ ManifestReader.reservedDirectories.contains(String($0)) }) == true {
             lock.files[path] = entry
         }
         // Local media App Store Connect does not have (never pushed) are not part of what was pulled: say so.

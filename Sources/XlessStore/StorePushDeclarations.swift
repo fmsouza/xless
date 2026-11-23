@@ -129,6 +129,18 @@ extension PushContext {
             return
         }
         let existing = try await asc.encryptionDocument(of: declaration.id)
+        if let existing, existing.attributes.state != "FAILED", existing.attributes.state != "AWAITING_UPLOAD" {
+            let local = try localFile(document)
+            let lock = MediaLock.read(dir).files[document]
+            let same = existing.attributes.sourceFileChecksum == local.local.md5
+                || (lock?.md5 == local.local.md5 && lock?.appleChecksum == existing.attributes.sourceFileChecksum)
+            if same {
+                plan.lock[document] = MediaLock.Entry(md5: local.local.md5, appleChecksum: existing.attributes.sourceFileChecksum, id: existing.id)
+            } else {
+                note("\(name)/\(document) differs from the compliance document of the latest encryption declaration, which App Store Connect does not let anyone replace: it is sent with the next new declaration (change an answer under `encryption:`)")
+            }
+            return
+        }
         let files = try planFiles(.encryptionDocument, subject: documentSubject, paths: [document], remote: existing.map { [$0] } ?? [],
                                   parent: declaration.id, deletable: false)
         guard let work = files.work else { return }

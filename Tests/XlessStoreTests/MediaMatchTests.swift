@@ -77,3 +77,16 @@ private func remote(_ id: String, _ checksum: String?, state: String? = "COMPLET
     #expect(r.slots == [.keep("R1")] && r.uploads.isEmpty)
     #expect(r.lock == ["\(set)/03-a.png": .init(md5: "copy", appleChecksum: "orig", id: "R1")])
 }
+
+@Test func anUploadThatFailedOrWasNeverFinishedIsNeverTheFile() {
+    let r = MediaMatcher.match(files: [local("01-a.png", "m1")], remote: [remote("RF", "m1", state: "FAILED"), remote("RW", nil, state: "AWAITING_UPLOAD")],
+                               lock: MediaLock(), directory: set, prune: false)
+    #expect(r.slots == [.upload("\(set)/01-a.png")])
+    #expect(r.deletes == ["RF", "RW"] && r.extras.isEmpty)
+}
+
+@Test func filesOfTheSameNameInDifferentDirectoriesAreBothKept() {
+    let r = MediaMatcher.match(files: [.init(path: "review/a/notes.pdf", md5: "a"), .init(path: "review/b/notes.pdf", md5: "b")],
+                               remote: [remote("R1", "a")], lock: MediaLock(), directory: "", prune: true)
+    #expect(r.slots == [.keep("R1"), .upload("review/b/notes.pdf")] && r.pruned.isEmpty)
+}

@@ -162,7 +162,10 @@ public struct AssetUploader: Sendable {
                                                       fix: "it was uploaded; \(rerun) (it is not uploaded again)") {
                 try JSONDecoder().decode(Polled.self, from: try await client.request("GET", "\(path)/\(id)").data)
             }
-            let state = polled.data.attributes?.videoDeliveryState ?? polled.data.attributes?.assetDeliveryState
+            let attributes = polled.data.attributes
+            // A preview reports in videoDeliveryState; a failure in either is final.
+            let state = attributes?.assetDeliveryState?.state == "FAILED" ? attributes?.assetDeliveryState
+                : attributes?.videoDeliveryState ?? attributes?.assetDeliveryState
             switch state?.state {
             case "COMPLETE": return .complete(id)
             case "FAILED":
