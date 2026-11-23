@@ -77,7 +77,8 @@ Docker removes an image when its last tag goes. The plain `:local-<arch>` tags b
 
 ## Uninstall
 
-To return the machine to its state before xless:
+To return the machine to its state before xless (with the default prefix, the second `rm` removes the secret store
+too: read the paragraph below first):
 
 ```sh
 xless clean --all

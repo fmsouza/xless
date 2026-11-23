@@ -20,8 +20,7 @@ You need:
 - an **Apple Developer Program** membership, and an Apple ID that is its **Account Holder**, or an **Admin** the
   Account Holder allowed to generate API keys, with two-factor authentication by code (hardware security keys are not
   supported);
-- xless installed on a Linux machine ([README](../README.md)). macOS works too, without the opt-in caches (no kernel
-  keyring), so it asks the passphrase and the Apple ID sign-in more often.
+- xless installed on a Linux machine ([README](../README.md)).
 
 A few things only a person can do, in a browser, and xless never does for you:
 
@@ -49,8 +48,8 @@ xless team use ABCDE12345                   # your team ID, from that list
 xless auth api-key create --role ADMIN      # the key goes straight into the store, checked, never on disk in clear
 ```
 
-`--keep 30m` keeps the session for the next commands of this terminal (Linux, at most an hour); without it each
-web-session command signs in again. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
+`--keep 30m` keeps the session in the kernel keyring for the next commands of your login session (at most an hour;
+`xless auth logout` drops it); without it each web-session command signs in again. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
 and users need it; a key that only ships builds, edits the listing and releases can be `APP_MANAGER`, the default
 ([roles](apple-account.md#xless-auth-api-key)).
 
@@ -93,10 +92,13 @@ it again. Details: [`xless provision`](apple-account.md#xless-provision).
 **5. Build and ship.** Install the SDK once (`xless setup --xcode Xcode_27.xip`, [README](../README.md#set-up)), then:
 
 ```sh
-xless run .                 # build, sign, upload, deliver to the TestFlight groups of xless.yml
+xless secrets lock; xless auth logout   # see below
+xless run .                             # build, sign, upload, deliver to the TestFlight groups of xless.yml
 ```
 
-The keys come from the store: one passphrase per run, nothing in a secrets file
+Before a native build, drop what is kept: `xless secrets lock` and `xless auth logout`. The build runs the project's
+SwiftPM plugins and macros as you, in your login session, where they could read a remembered unlock or a kept Apple
+ID session ([security.md](security.md#the-build-and-your-secrets)). The keys come from the store: one passphrase per run, nothing in a secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)). For CI, export what it needs once
 (`xless secrets export ASC_KEY_P8@ABCDE12345 --out key.p8`, and the same for `XLESS_DIST_KEY@…`), put the contents into
 the CI's secret store, and delete the files ([CI](signing-and-testflight.md#continuous-integration)).
@@ -150,14 +152,18 @@ Certificates expire after a year or more; `xless provision plan` notes one that 
 
 ```sh
 xless certs list --type distribution --expiring 30
-xless secrets rm XLESS_DIST_KEY@ABCDE12345          # forget the old key here; its certificate stays valid
+xless secrets export XLESS_DIST_KEY@ABCDE12345 --out old-dist.pem   # a copy, in case the next steps fail
+xless secrets rm XLESS_DIST_KEY@ABCDE12345          # forget the old key in the store; its certificate stays valid
 xless certs create --type distribution              # a new key into the store, then its certificate
+rm old-dist.pem                                     # once the new certificate exists
 xless run .                                         # sign replaces its profile with one that holds the new certificate
 xless certs revoke 8U3T4X5YZA                       # optional, once nothing uses the old one; asks first
 ```
 
 `certs create` refuses while the store still holds the key `sign` would read for the team, hence the `secrets rm`
-first. `sign` finds the new certificate by its key and, when its own profile (`xless <bundle ID> IOS_APP_STORE`) does
+first; the exported copy is in clear, so delete it as soon as the new certificate exists (if `certs create` fails, put
+it back with `xless secrets import XLESS_DIST_KEY@ABCDE12345 --file old-dist.pem --team-id ABCDE12345`, which offers to
+delete the file). `sign` finds the new certificate by its key and, when its own profile (`xless <bundle ID> IOS_APP_STORE`) does
 not hold it, creates one that does. Other profiles keep the certificates they were made with (`xless profiles renew`
 too): delete them and create them again, as for a [new device](#add-a-device). For a certificate that already expired
 or was revoked, `xless provision apply` is enough: it requests a new certificate for the key already in the store.
@@ -246,7 +252,7 @@ pause|resume|complete`). App Review's reasons for a rejection are not in the API
 
 | Credential | Commands |
 |---|---|
-| App Store Connect API key (from the environment, a `_FILE` variable or the store) | `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `apps list/show/update/price-points`, `store pull/validate/push` (but App Privacy), `builds`, `users`, `testflight`, `release`, `provision plan` (mostly), `api`, and the pipeline (`sign`, `upload`, TestFlight delivery) |
+| App Store Connect API key (from the environment, a `_FILE` variable or the store) | `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `apps list/show/update/price-points`, `store pull/push` (but App Privacy), `builds`, `users`, `testflight`, `release`, `provision plan` (mostly), `api`, and the pipeline (`sign`, `upload`, TestFlight delivery) |
 | Apple ID web session (*web session*) | `auth login`, `team list`, `auth api-key create/list/revoke`, `apps create`, `store privacy`, `app-groups`, `icloud-containers`, `keys`, and the steps of `provision apply` that need them |
 | Neither | `auth status`, `auth logout`, `team use`, `secrets`, `store validate` |
 

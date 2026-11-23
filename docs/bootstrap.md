@@ -29,8 +29,8 @@ xless auth login --keep 30m         # Apple ID, password and the two-factor code
 xless team use ABCDE12345           # the default team of the account commands
 ```
 
-`--keep 30m` keeps the Apple ID session for the next commands in this terminal, in the Linux kernel keyring, for at
-most an hour; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). Without
+`--keep 30m` keeps the Apple ID session for the next commands of your login session, in the Linux kernel keyring,
+for at most an hour; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). Without
 it, each command that needs the session signs in again.
 
 ## 2. App Store Connect API key
@@ -115,8 +115,9 @@ role, App Store Connect answers 403. Then make the key and its CSR as files:
 xless sign bootstrap --type developer-id --out devid-key.pem --csr-only
 ```
 
-and have the Account Holder create the certificate from the CSR, with
-`xless certs create --type developer-id --csr devid-key.pem.csr`. Store the key with
+and have the Account Holder create the certificate from `devid-key.pem.csr`: with an API key App Store Connect lets
+create it, `xless certs create --type developer-id --csr devid-key.pem.csr`, or at developer.apple.com →
+Certificates, IDs & Profiles → Certificates → + → Developer ID Application. Store the key with
 `xless secrets import XLESS_DEVID_KEY@<TEAM_ID> --file devid-key.pem --team-id <TEAM_ID>`, then delete the file.
 
 ### 5d. Mac Installer Distribution key (the Mac App Store package)
@@ -178,9 +179,12 @@ To use the images on other machines (a CI runner, a build server), push them to 
 ## 7. Ship
 
 ```sh
-xless run <project-dir>             # or, in the images: xless run --docker <project-dir>
+xless secrets lock; xless auth logout   # a native build runs the project's plugins as you: keep nothing for them
+xless run <project-dir>                 # or, in the images: xless run --docker <project-dir>
 ```
 
+A native build runs the project's SwiftPM plugins and macros in your login session, where they could read a
+remembered unlock or a kept Apple ID session: drop both first ([security.md](security.md#the-build-and-your-secrets)).
 The keys come from the secret store: one passphrase per run, no secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight), which also covers the overlay apps and
 running `xless ship` in a container yourself).

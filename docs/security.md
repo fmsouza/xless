@@ -27,11 +27,11 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 - **Someone who gets the disk, a backup or a synced home directory.** Keys are in the encrypted store, never in clear
   files (unless you export one). The Apple ID session and the store unlock are never written to disk.
 - **Other users of the machine.** The store, its directory and its lock are yours only (refused otherwise), and the
-  kernel keyring's cached keys are readable only by your login session.
-- **Code your build runs** (npm scripts, `build.rs`, SwiftPM plugins, CocoaPods hooks, Xcode build phases). xless
-  removes every secret variable from the environment of the tools it runs, runs an overlay app's build in a container
-  that has no secret, and keeps that build out of reach of a remembered store unlock
-  ([below](#process-hardening)).
+  kernel keyring's cached keys are readable only by processes of your login session.
+- **Code your build runs** (npm scripts, `build.rs`, SwiftPM plugins and macros, CocoaPods hooks, Xcode build phases),
+  partly. xless removes every secret variable from the environment of the tools it runs, and runs an overlay app's
+  build in a container that has no secret. A project directory built natively is another matter: its build code runs
+  as you, in your login session ([below](#the-build-and-your-secrets)).
 - **Logs, terminals and bug reports.** No secret is printed, put in an error, in a `--verbose` trace or on a command
   line.
 - **A network observer.** Everything goes over HTTPS to Apple's hosts; xless refuses a non-HTTPS request or redirect
@@ -40,8 +40,7 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 Out of scope: malware or a person running **as you** while the store is unlocked or a session is kept (it can read
 the process's memory, the kernel keyring of your login session, or wait for you to type the passphrase), someone who
 has both the store file and its passphrase, and a compromised Apple account or Apple service. Code that runs on your
-machine as you can read your files: that is why the overlays build in Docker, and why a project directory built
-natively is [split around the build](signing-and-testflight.md#one-command-testflight) when that matters to you.
+machine as you can read your files and your login session's keyring: that is why the overlays build in Docker.
 
 ## Guarantees
 
@@ -58,10 +57,15 @@ natively is [split around the build](signing-and-testflight.md#one-command-testf
    `xless secrets lock` and `xless auth logout` drop them at once.
 4. **No secret on a command line, in a log, in an error, in a core dump or in a child's environment.** Secrets come
    from the terminal, the store, `NAME` or `NAME_FILE`; no option takes one (a test walks every command and fails on an
-   option named like a secret).
+   option named like a secret). One exception to the environment: a demo account password given under a name of
+   your own (app.yml's `passwordSecret` other than `XLESS_DEMO_PASSWORD`) as an environment variable is not removed
+   from the tools' environment; keep it in the store instead.
 5. **Least privilege, and a question before anything destructive.** `xless auth api-key create` makes an `APP_MANAGER`
-   key unless you ask for more; every revoke, delete, removal or cancellation asks first, and without a terminal it is
-   refused unless `--yes` is given. `xless provision apply` never deletes or revokes anything.
+   key unless you ask for more; the commands that revoke, delete, remove or cancel something at Apple ask first, and
+   without a terminal they are refused unless `--yes` is given. `xless provision apply` never deletes or revokes
+   anything. Two things replace without asking, because that is how they update: `sign` deletes and recreates its
+   own `xless <bundle ID> <TYPE>` profile when it lacks the certificate or expires within 7 days, and `xless store
+   privacy push` deletes the App Privacy answers app.yml no longer declares.
 
 ## The secret store
 
@@ -82,8 +86,10 @@ natively is [split around the build](signing-and-testflight.md#one-command-testf
 - **The passphrase** is read from `/dev/tty` with echo off, never from a pipe, a file, an argument or the environment.
   It cannot be recovered. `passwd` seals the data key again under a new passphrase; the entries are not re-encrypted,
   so an old copy of the file still opens with the old passphrase.
-- **What the store does not detect:** someone who can write the file can delete entries, or put back an older copy of
-  the whole file (with entries you removed since). Neither reveals a secret; keep the store's directory yours.
+- **What the store does not detect:** someone who can write the file can delete entries, put back an older copy of
+  the whole file (with entries you removed since), or strip the optional `role`, `certificateType` and `services`
+  fields of an entry (they are authenticated only when present, so that entries written before they existed still
+  open). None of it reveals a secret; keep the store's directory yours.
 
 CI does not use the store: it gives secrets as `NAME` or `NAME_FILE` variables, which xless reads the same way.
 
@@ -94,11 +100,15 @@ CI does not use the store: it gives secrets as `NAME` or `NAME_FILE` variables, 
 | Store unlock | `--remember <duration>` on `xless secrets unlock`, `init`, `import`, `export` | the store's data key, named after the store's random ID | the session keyring | `xless secrets lock`, the time running out |
 | Apple ID session | `xless auth login --keep <duration>` | the session's cookies, sealed with AES-256-GCM under a random key made for them; the sealed cookies and that key are two separate keys | the session keyring | `xless auth logout`, the time running out, or the cookies' own expiry if sooner |
 
-- Durations are `90s`, `30m`, `1h` or seconds, from one second to one hour. The kernel expires the keys itself; when
-  xless cannot set the bound or the permissions, it revokes the key and fails rather than keep it longer or wider.
+- Durations are `90s`, `30m`, `1h` or seconds, at most one hour (`--keep` at least a minute: a session that would run
+  out sooner is not kept). The kernel expires the keys itself; when xless cannot set the bound or the permissions, it
+  revokes the key and fails rather than keep it longer or wider.
 - The keys are `user` keys in the **session keyring**, readable only by a process that holds that keyring (a
-  "possessor": the terminal you ran the command in and its children, as with `ssh-agent`). Other users, and your other
-  login sessions, cannot read them. The permissions give nothing to the user, group or others outside possession.
+  "possessor"). Which processes those are is the system's choice: usually every process of your login session (on a
+  desktop, every terminal of the login), and where no login session keyring was set up, your user's default session
+  keyring, which all your processes without one share. Other users cannot read them; the permissions give nothing to
+  the user, group or others outside possession. Every process that possesses the keys can read them, including code
+  you build ([below](#the-build-and-your-secrets)).
 - There is no cache on macOS (it has no kernel keyring) or in containers that block the keyring calls (Docker's default
   seccomp profile does): `--remember` and `--keep` are refused there, and every command asks again.
 - `xless auth logout` forgets the kept session on this machine. It does not sign you out at Apple: the cookies stay
@@ -120,12 +130,8 @@ CI does not use the store: it gives secrets as `NAME` or `NAME_FILE` variables, 
   notarizes, gets the keys it needs as files, mode 0600, in a fresh 0700 directory of the temporary directory
   (`$TMPDIR`, else `/tmp`), removed when the call ends: point `TMPDIR` at a tmpfs if that directory is on a disk you
   worry about.
-- **The build step of `xless run`** runs with `XLESS_NO_SECRET_STORE=1`: its xless never opens the store, and it
-  leaves the session keyring for a new, empty one, so the build code it runs cannot reach a remembered unlock or a kept
-  session. With `--docker`, the store is in no container: the secrets each signing container needs are written for the
-  run to a tmpfs (`$XDG_RUNTIME_DIR/xless/<random>/`, 0700 and 0600), mounted read-only into that container only, and
-  removed when it ends; without a tmpfs the run refuses unless `--allow-disk-secrets`
-  ([secrets.md](secrets.md#xless-run-and-docker-builds)).
+- **The build and your secrets** (see [below](#the-build-and-your-secrets)): an overlay app's build never runs next to
+  a secret; a project directory's native build runs in your session.
 - **`--verbose` traces are redacted** so you can paste them into an issue: the `Authorization` header, cookies, any
   header named like an auth, token, secret, session, password, CSRF or signature header, every query string but the
   App Store Connect API's own (so a presigned upload address's signature never shows), the SRP exchange's values, and
@@ -136,6 +142,37 @@ CI does not use the store: it gives secrets as `NAME` or `NAME_FILE` variables, 
   from Apple's error messages.
 - **Errors never contain a secret.** A failed unlock, a refused key or a broken store entry says what failed and what
   to do, never part of the value.
+
+## The build and your secrets
+
+An app's build runs code you did not write. What that code can reach depends on how it is built:
+
+- **An overlay app (Tauri, Cargo, React Native: `xless run --docker --config`)** builds in three containers. The build
+  container (step 2) gets no secret and no secret file; the store is in no container. Before the first step, the
+  xless on your machine writes the secrets each other step needs to a tmpfs (`$XDG_RUNTIME_DIR/xless/<random>/`,
+  0700 and 0600), mounts each step's directory read-only into that step's container only, and removes it when that
+  container ends; without a tmpfs the run refuses unless `--allow-disk-secrets`
+  ([secrets.md](secrets.md#xless-run-and-docker-builds)). Docker's default seccomp profile also keeps containers out
+  of the kernel keyring.
+- **A project directory (`xless run <dir>`)** is one `xless ship`: build, sign and upload in one process (one
+  container with `--docker`, which gets the secrets the run needs). The secret variables are removed from the build
+  tools' environment, but natively its SwiftPM plugins and macros run as you, in your login session: they can read
+  your files, the key files a `_FILE` variable names, and **a remembered store unlock or a kept Apple ID session**
+  (they possess the session keyring, so they could read the store's data key or the session's cookies).
+
+So before a native build of a project you do not fully trust, drop the caches, and if it matters, keep the signing in
+a second run:
+
+```sh
+xless secrets lock
+xless auth logout
+export XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 ))
+xless run ~/MyApp --to finalize       # build only: reads no secret, opens no store
+xless run ~/MyApp --from sign         # sign and upload what it built: no build code runs
+```
+
+(`XLESS_NO_SECRET_STORE=1`, which makes an xless leave the session keyring and never open the store, is set by
+`xless run` for the build step of an overlay split; the native project path does not use it.)
 
 ## What goes to which host
 
@@ -148,14 +185,14 @@ Every request is HTTPS. xless sends no telemetry.
 | Apple's notary service, through rcodesign | The app or disk image to notarize | API key (a JWT rcodesign makes from the key file) | macOS `package` |
 | `idmsa.apple.com` | The Apple ID sign-in: SRP-6a (the password itself is never sent, only proofs derived from it), the two-factor code | the Apple ID | `xless auth login` and every web-session command, `xless xcode download` |
 | `appstoreconnect.apple.com` (`/olympus/v1`, `/iris/v1`) | App Store Connect's own web interface: session and team, app record creation, API keys, App Privacy, agreements check | Apple ID session cookies | the [web-session commands](#the-apple-id-web-session) |
-| `developer.apple.com` (`/services-account/…`) | The developer portal's web interface: teams, app groups, iCloud containers, assigning them to bundle IDs, auth keys | Apple ID session cookies | the [web-session commands](#the-apple-id-web-session) |
-| `developerservices2.apple.com`, `download.developer.apple.com` | The Xcode download list and the `.xip` download | Apple ID session cookies | `xless xcode download` only ([xcode-download.md](xcode-download.md)) |
+| `developer.apple.com` (`/services-account/…`) | The developer portal's web interface: teams, app groups, iCloud containers, assigning them to bundle IDs, auth keys; the Xcode download list | Apple ID session cookies | the [web-session commands](#the-apple-id-web-session), `xless xcode download` |
+| `developerservices2.apple.com`, `download.developer.apple.com` | The `.xip` download | Apple ID session cookies | `xless xcode download` only ([xcode-download.md](xcode-download.md)) |
 | `download.swift.org`, `github.com` | Downloads of pinned tools, checked by SHA-256 | none | `xless setup`, the installer ([native-install.md](native-install.md)) |
 
 Cookies are sent only to hosts within the domain that set them, and no other header of a request follows a redirect
 to another host (but `Accept`, `User-Agent` and `Range`). The App Store
-Connect API key is never sent to any host but `api.appstoreconnect.apple.com` (and, as a JWT, by rcodesign to the
-notary service).
+Connect API key's JWT goes only on requests xless addresses to `api.appstoreconnect.apple.com` (and, made by
+rcodesign, to the notary service); upload and download addresses get no credential.
 
 ## The Apple ID web session
 
@@ -188,6 +225,12 @@ everything else a release needs runs on the API key.
 
 ## Wiping everything
 
+Removing the store removes xless's only copy of the keys it created, and cannot be undone. **First** revoke at Apple
+what you no longer use: `xless auth api-key revoke <KEY_ID>`, `xless certs revoke <ID>` (not a Developer ID
+certificate you shipped with: the apps it signed stop opening), `xless keys revoke <ID>` (each asks first), and export
+what you keep. A key Apple still accepts stays dangerous wherever a copy of it is: an old backup of the store opens
+with the passphrase it had then. Then:
+
 ```sh
 xless secrets lock                       # forget a remembered unlock now
 xless auth logout                        # forget a kept Apple ID session (Apple's side expires on its own)
@@ -195,11 +238,8 @@ rm -rf ~/.local/share/xless/vault        # the secret store itself ($XDG_DATA_HO
 rm -f ~/.config/xless/config.yml         # the default team (a preference, not a secret)
 ```
 
-Removing the store removes xless's only copy of the keys it created. Before you do, revoke at Apple what you no longer
-use: `xless auth api-key revoke <KEY_ID>`, `xless certs revoke <ID>`, `xless keys revoke <ID>` (each asks first). A key
-Apple still accepts stays dangerous wherever a copy of it is: an old backup of the store opens with the passphrase it
-had then. The kernel keyring's keys also go when the login session's keyring is released (once no process of that
-session is left) and at a reboot.
+The kernel keyring's keys also go when the login session's keyring is released (once no process of that session is
+left) and at a reboot.
 
 Files xless never deletes for you: exported keys (`xless secrets export`, `sign bootstrap --out`) and the files you
 imported from when you declined the offer to delete them. CI keeps its secrets in its own secret store.

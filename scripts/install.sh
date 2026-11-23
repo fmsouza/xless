@@ -72,6 +72,8 @@ main() {
         # The secret store goes back with the old share first; if it cannot, the new share (holding it) stays.
         if [ ! -e "$prefix/share/xless/vault" ] || [ -e "$stage/previous/vault" ] || mv "$prefix/share/xless/vault" "$stage/previous/vault"; then
           rm -rf "$prefix/share/xless"; mv "$stage/previous" "$prefix/share/xless"
+        else
+          echo "xless install: could not move the secret store back; it stays in $prefix/share/xless/vault, with the new share/xless" >&2
         fi
       elif [ "$hadold" = 0 ]; then rm -rf "$prefix/share/xless"; fi
     fi
@@ -127,6 +129,7 @@ main() {
   # The secret store is $XDG_DATA_HOME/xless/vault, so share/xless/vault with the default prefix: it is the user's, not
   # the release's, and moves into the new share as it is (a rollback moves it back).
   if [ -e "$stage/previous/vault" ]; then
+    [ ! -e "$prefix/share/xless/vault" ] || die "the release has a share/xless/vault of its own; the secret store was left as it was"
     mv "$stage/previous/vault" "$prefix/share/xless/vault" || die "could not keep the secret store $prefix/share/xless/vault"
   fi
   mv -f "$newbin" "$prefix/bin/xless" || die "could not install $prefix/bin/xless"

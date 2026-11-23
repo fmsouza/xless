@@ -336,7 +336,7 @@ struct ProvisionPlanner {
             func found(_ cert: ASCCertificate, from source: String) {
                 plan.known.certificates[kind] = cert.id
                 if let expires = cert.expires, expires < now.addingTimeInterval(30 * 86_400) {
-                    plan.notes.append("the \(name) certificate \(cert.id) (\(source)) expires on \(CertTable.day(expires)): create the next one before then (`xless certs create --type \(kind.certificateType.argument)`)")
+                    plan.notes.append("the \(name) certificate \(cert.id) (\(source)) expires on \(CertTable.day(expires)): create the next one before then (docs/account.md#rotate-a-certificate)")
                 }
             }
             if let pem = try vault.environmentKey(kind.secretName) {

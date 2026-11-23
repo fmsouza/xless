@@ -53,7 +53,7 @@ Measurements and decisions behind the code, in [research/](research/):
 
 - [App Store Connect build uploads](research/asc-build-uploads.md) and [TestFlight delivery](research/asc-testflight.md)
 - [What the App Store Connect API covers](research/asc-account-coverage.md), and the web endpoints xless uses for the rest
-- [Why there is no Mac App Store `.pkg`](research/mas-pkg.md)
+- [The Mac App Store `.pkg` from Linux](research/mas-pkg.md)
 - [Parity known gaps](research/parity-known-gaps.md) between Xcode builds and xless builds
 - [Asset and storyboard tools by Xcode version](research/xcode-tools-by-version.md)
 - [ibtool's invocation](research/ib-invocation.md) and [the NIB encoding](research/nib-encoding.md)
