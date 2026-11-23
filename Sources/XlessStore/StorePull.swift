@@ -96,6 +96,7 @@ public struct StorePull: Sendable {
                 listing.subtitle = Self.text(l.attributes.subtitle)
                 listing.privacyURL = Self.url(l.attributes.privacyPolicyUrl)
                 listing.privacyChoicesURL = Self.url(l.attributes.privacyChoicesUrl)
+                listing.privacyPolicyText = Self.text(l.attributes.privacyPolicyText)
                 manifest.locales[locale] = listing
             }
         }

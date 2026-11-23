@@ -47,6 +47,10 @@ straight into the store (as `XLESS_APNS_KEY@<TEAM_ID>`, `XLESS_SIWA_KEY`, `XLESS
 or `XLESS_AUTH_KEY`, kind `auth-key`, with its key ID, team and services); `xless keys revoke` removes it again. The
 services are authenticated the same way as an API key's role.
 
+The App Review demo account's password, which [`xless store push`](appstore-manifest.md#xless-store-push) sends, is the
+secret `app.yml` names (`review.demoAccount.passwordSecret`, `XLESS_DEMO_PASSWORD` by default):
+`xless secrets import XLESS_DEMO_PASSWORD --file demo-password.txt` stores it as a `password`.
+
 ## How the pipeline finds a secret
 
 For each secret, xless looks at `NAME`, then at the file named by `NAME_FILE`, then at the store's entry `NAME`. The
@@ -57,6 +61,7 @@ store is only opened when it has such an entry, so a command that needs no key n
 | `ASC_KEY_P8` | `ASC_KEY_P8` (kind `asc-api-key`) |
 | `ASC_KEY_ID`, `ASC_ISSUER_ID` | the key ID and issuer ID recorded with `ASC_KEY_P8` |
 | `XLESS_DIST_KEY`, `XLESS_DEVID_KEY`, `XLESS_INSTALLER_KEY` | the entry of the same name (kind `signing-key`) |
+| `XLESS_DEMO_PASSWORD` (or the name in `passwordSecret`) | the entry of the same name (kind `password`) |
 
 With several teams, name the entries `NAME@<TEAM_ID>` (for example `XLESS_DIST_KEY@ABCDE12345`) and record the team
 with `--team-id`. While only one entry stands for a name, it is used whatever its suffix; with several, xless stops and

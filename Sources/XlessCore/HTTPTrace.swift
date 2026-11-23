@@ -23,20 +23,36 @@ public struct HTTPTrace: Sendable {
         var lines = ["> \(method) \(Self.redact(url: url))"]
         lines += Self.redact(headers: headers).map { "> \($0)" }
         if let text = Self.redact(body: body, contentType: Self.value(of: "Content-Type", in: headers)) { lines.append("> \(text)") }
-        sink(lines.joined(separator: "\n"))
+        emit(lines.joined(separator: "\n"))
     }
 
     public func response(status: Int, url: URL?, headers: [String: String], body: Data?) {
         var lines = ["< \(status) \(Self.redact(url: url))"]
         lines += Self.redact(headers: headers).map { "< \($0)" }
         if let text = Self.redact(body: body, contentType: Self.value(of: "Content-Type", in: headers)) { lines.append("< \(text)") }
-        sink(lines.joined(separator: "\n"))
+        emit(lines.joined(separator: "\n"))
     }
+
+    /// Hides `value` wherever a trace would show it from now on, in any field: for a secret xless sends in a body,
+    /// which an answer may repeat (Apple's error text quoting a demo account's password).
+    public static func hide(_ value: String) {
+        guard !value.isEmpty else { return }
+        hidden.insert(value)
+        // As a JSON body shows it, when it has characters JSON escapes.
+        if let data = try? JSONSerialization.data(withJSONObject: [value], options: [.withoutEscapingSlashes]) {
+            let escaped = String(decoding: data, as: UTF8.self).dropFirst(2).dropLast(2)
+            if !escaped.isEmpty, escaped != value { hidden.insert(String(escaped)) }
+        }
+    }
+
+    private static let hidden = HiddenValues()
+
+    func emit(_ text: String) { sink(Self.hidden.scrub(text)) }
 
     /// A request that got no response. Only the error's kind is shown: error descriptions carry the full URL.
     public func failure(url: URL?, error: any Error) {
         let kind = (error as? URLError).map { "URLError \($0.code.rawValue)" } ?? String(describing: type(of: error))
-        sink("! \(Self.redact(url: url)) failed: \(kind)")
+        emit("! \(Self.redact(url: url)) failed: \(kind)")
     }
 
     public func request(_ request: URLRequest) {
@@ -129,5 +145,23 @@ public struct HTTPTrace: Sendable {
 
     static func value(of header: String, in headers: [String: String]) -> String? {
         headers.first { $0.key.caseInsensitiveCompare(header) == .orderedSame }?.value
+    }
+}
+
+/// The values `HTTPTrace.hide` was given (longest first, so a value containing another is hidden whole).
+private final class HiddenValues: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+
+    func insert(_ value: String) {
+        lock.withLock {
+            guard !values.contains(value) else { return }
+            values.append(value)
+            values.sort { $0.count > $1.count }
+        }
+    }
+
+    func scrub(_ text: String) -> String {
+        lock.withLock { values.reduce(text) { $0.replacingOccurrences(of: $1, with: HTTPTrace.placeholder) } }
     }
 }

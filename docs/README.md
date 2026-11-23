@@ -15,8 +15,8 @@ build. The pages below go further.
 - [apple-account.md](apple-account.md): the Apple account commands (`xless auth`, `xless team`, `xless devices`,
   `xless bundle-ids`, `xless merchant-ids`, `xless certs`, `xless api`, and the shared `--team`, `--json`, `--yes`, `--verbose`), the
   Apple ID web session, their JSON output, rate limits and `[account]` errors (exit code 20).
-- [appstore-manifest.md](appstore-manifest.md): the App Store listing as an `appstore/` directory, `xless store pull`
-  and `xless store validate`.
+- [appstore-manifest.md](appstore-manifest.md): the App Store listing as an `appstore/` directory, `xless store pull`,
+  `xless store validate` and `xless store push`.
 - [bootstrap.md](bootstrap.md): the one-time Apple setup (API key, certificates, bundle ID, app record).
 - [react-native.md](react-native.md): React Native / Expo iOS apps, with app extensions and simulator builds.
 - [tauri.md](tauri.md): Tauri v2 apps, for iOS and macOS.

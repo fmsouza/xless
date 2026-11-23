@@ -29,6 +29,7 @@ public struct StoreAppInfoLocalizationAttributes: ASCAttributes, Equatable {
     public var subtitle: String?
     public var privacyPolicyUrl: String?
     public var privacyChoicesUrl: String?
+    public var privacyPolicyText: String?
     public init() {}
 }
 
@@ -86,6 +87,8 @@ public struct StoreRemoteSet: Sendable {
 public struct StoreEULA: Sendable, Equatable {
     public var text: String
     public var territories: [String]
+    /// The agreement's resource ID.
+    public var id: String = ""
 }
 
 public struct StoreAvailability: Sendable, Equatable {
@@ -149,9 +152,16 @@ public struct StoreASC: Sendable {
 
     /// The age rating declaration's answers, Apple's attribute names as they are (null answers left out).
     public func ageRating(of infoID: String) async throws -> StorePart<[String: JSONValue]> {
-        try await optional("age rating declaration") {
-            try await one("/v1/appInfos/\(infoID)/ageRatingDeclaration").data?.attributes
+        switch try await ageRatingDeclaration(of: infoID) {
+        case .value(let d): return d.attributes.map { .value($0) } ?? .absent
+        case .absent: return .absent
+        case .forbidden: return .forbidden
         }
+    }
+
+    /// The age rating declaration itself (its ID is what `push` updates).
+    public func ageRatingDeclaration(of infoID: String) async throws -> StorePart<ASCAnyResource> {
+        try await optional("age rating declaration") { try await one("/v1/appInfos/\(infoID)/ageRatingDeclaration").data }
     }
 
     public func versionLocalizations(of versionID: String) async throws -> [ASCKeptResource<StoreVersionLocalizationAttributes>] {
@@ -160,18 +170,49 @@ public struct StoreASC: Sendable {
 
     /// Review details without the demo account's password (a sparse fieldset that leaves it out).
     public func reviewDetail(of versionID: String) async throws -> StorePart<StoreReviewDetailAttributes> {
+        switch try await reviewDetailResource(of: versionID) {
+        case .value(let d): return .value(d.attributes)
+        case .absent: return .absent
+        case .forbidden: return .forbidden
+        }
+    }
+
+    /// The review details with their ID, read the same way (never the password).
+    public func reviewDetailResource(of versionID: String) async throws -> StorePart<ASCKeptResource<StoreReviewDetailAttributes>> {
         try await optional("App Review details") {
             let query = ASCQuery(fields: [("appStoreReviewDetails", StoreReviewDetailAttributes.fields)])
             return try await one("/v1/appStoreVersions/\(versionID)/appStoreReviewDetail", query: query).data
-                .map { ASCKeptResource<StoreReviewDetailAttributes>(resource: $0).attributes }
+                .map { ASCKeptResource<StoreReviewDetailAttributes>(resource: $0) }
         }
     }
 
     /// Whether the version has a phased release (absent: it has none).
     public func phasedRelease(of versionID: String) async throws -> StorePart<Bool> {
-        try await optional("phased release") {
-            try await one("/v1/appStoreVersions/\(versionID)/appStoreVersionPhasedRelease").data != nil
+        switch try await phasedReleaseResource(of: versionID) {
+        case .value: return .value(true)
+        case .absent: return .absent
+        case .forbidden: return .forbidden
         }
+    }
+
+    /// The version's phased release (its ID and state).
+    public func phasedReleaseResource(of versionID: String) async throws -> StorePart<ASCAnyResource> {
+        try await optional("phased release") { try await one("/v1/appStoreVersions/\(versionID)/appStoreVersionPhasedRelease").data }
+    }
+
+    /// The categories App Store Connect offers for `platform`: each top-level category ID → its subcategory IDs.
+    public func categories(platform: String) async throws -> [String: Set<String>] {
+        let query = ASCQuery(filters: [("platforms", platform)], include: ["subcategories"],
+                             extra: [("exists[parent]", "false"), ("limit[subcategories]", "50")])
+        var out: [String: Set<String>] = [:]
+        for c in try await resources.list("/v1/appCategories", query: query, as: ASCAnyResource.self).items {
+            var subs: Set<String> = []
+            if case .array(let items)? = c.relationships?["subcategories"]?["data"] {
+                for item in items { if let id = item["id"]?.string { subs.insert(id) } }
+            }
+            out[c.id] = subs
+        }
+        return out
     }
 
     public func screenshotSets(of localizationID: String) async throws -> [StoreRemoteSet] {
@@ -202,7 +243,7 @@ public struct StoreASC: Sendable {
         try await optional("licence agreement") {
             guard let eula = try await one("/v1/apps/\(appID)/endUserLicenseAgreement").data else { return nil }
             let territories = try await resources.list("/v1/endUserLicenseAgreements/\(eula.id)/territories", as: ASCRef.self).items.map(\.id)
-            return StoreEULA(text: eula.attributes?["agreementText"]?.string ?? "", territories: territories)
+            return StoreEULA(text: eula.attributes?["agreementText"]?.string ?? "", territories: territories, id: eula.id)
         }
     }
 

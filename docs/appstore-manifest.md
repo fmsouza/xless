@@ -3,8 +3,9 @@
 An app's App Store listing (its text in every language, screenshots, previews, categories, age rating, App Review
 contact, licence agreement, price and availability) lives in an `appstore/` directory next to the project, reviewed
 like code, the way fastlane's `deliver` keeps it. [`xless store pull`](#xless-store-pull) writes it from an app that
-already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple. Sending it to App
-Store Connect (`xless store push`) and App Privacy come next in [M7](https://github.com/fmsouza/xless/issues/80).
+already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple;
+[`xless store push`](#xless-store-push) sends what differs. Pushing screenshots and previews, price and availability,
+and App Privacy come next in [M7](https://github.com/fmsouza/xless/issues/80).
 
 ```text
 appstore/
@@ -16,6 +17,7 @@ appstore/
     subtitle.txt                   30 characters
     privacy_url.txt                the privacy policy URL
     privacy_choices_url.txt        the privacy choices URL
+    privacy_policy_text.txt        the privacy policy as text (tvOS)
     description.txt                4000 characters
     keywords.txt                   100 bytes, comma-separated
     promotional_text.txt           170 characters
@@ -35,7 +37,7 @@ appstore/
 
 Each field is one UTF-8 file. Line breaks at the end of a file are not part of the value (editors add one); Windows
 line ends read as plain line breaks; a URL file's surrounding spaces are ignored. A missing file and an empty file mean
-the same thing: the field is not set. `name`, `subtitle` and the two privacy URLs belong to the app's information
+the same thing: the field is not set. `name`, `subtitle` and the privacy URLs and text belong to the app's information
 (they change with a new version's review), the other fields to the App Store version.
 
 Locale directories use App Store Connect's codes exactly: `en-US`, `de-DE`, `fr-FR`, `ja`, `zh-Hans`, `pt-BR`…
@@ -195,3 +197,68 @@ It checks:
 
 It exits with 20 when there is an error, 0 otherwise. `--json` prints `{"valid": bool, "issues": [{"severity", "path",
 "message", "fix"}]}`.
+
+## `xless store push`
+
+```sh
+xless store push --dry-run                 # the plan: what differs, nothing sent
+xless store push                           # send it
+xless store push --only text,review        # some parts only
+xless store push --prune                   # also delete locales the directory does not have
+```
+
+`push` makes App Store Connect's listing match `appstore/`, with the API key (App Manager is enough) and only the
+documented API. It first checks the directory as `store validate --draft` does (an error stops it before anything is
+read from Apple), reads what App Store Connect has, and prints the plan, one line per resource:
+
+```text
+com.example.app (IOS 1.1, PREPARE_FOR_SUBMISSION):
+  ~ app info en-US: subtitle: "Does things" → "Does more"
+  + app info fr-FR: name: "Exemple"
+  ~ version text en-US
+      description (18 → 110 characters)
+      whatsNew: "Fixes." → (none)
+  ~ App Review details: demoAccountPassword (from XLESS_DEMO_PASSWORD)
+4 changes: 1 to create, 3 to update
+```
+
+`--dry-run` stops there. Otherwise it sends the plan, deletions only after asking (or with `--yes`), and says how many
+changes it sent. A push that finds nothing to change sends nothing, so `pull` then `push` is a no-op. If a request
+fails, what was sent stays sent: re-run `push`, which sends only what still differs.
+
+The parts, in the order they are sent (`--only` chooses):
+
+- **`text`**: the App Store version of `app.yml`'s `version` and `platform`. When App Store Connect has no such
+  version, `push` renames the version being prepared, or creates it (with its copyright and release), then plans the
+  rest again against the new version. The version's copyright, release type and date, and phased release; the app's
+  primary locale; the categories, checked against App Store Connect's list for the platform; and per locale the app
+  information (name, subtitle, privacy policy URL and text, privacy choices URL) and the version's text (description,
+  keywords, what's new, promotional text, support and marketing URLs). A version on the App Store, or in review, takes
+  only new promotional text; the app information changes only with a new version.
+- **`review`**: App Review's contact, notes and demo account.
+- **`declarations`**: the age rating (only the answers `app.yml` gives are compared and sent), the content rights
+  declaration, the licence agreement (`standard` deletes a custom one; `territories: all` is every territory App Store
+  Connect lists), export compliance (a new encryption declaration when `appDescription`, `availableOnFrenchStore`,
+  `containsProprietaryCryptography` or `containsThirdPartyCryptography` differ from the latest one, all four needed;
+  `exempt` is App Store Connect's verdict and is not sent; a compliance document is not uploaded yet) and accessibility
+  (per device family in `app.yml`, the draft declaration is updated, or a new one created, and published).
+
+What `push` leaves alone:
+
+- an `app.yml` key that is absent (no `review:`, no `ageRating:`… means App Store Connect keeps what it has);
+- a locale App Store Connect has and `appstore/` does not: reported, and deleted with `--prune` (never the primary
+  locale). In a locale directory that exists, a missing text file clears the field, as `pull` would have written it;
+  `name.txt` is never cleared, and a new locale needs one;
+- screenshots and previews, price and availability, and App Privacy, which later versions of `push` send.
+
+**The demo account's password** comes from the secret `review.demoAccount.passwordSecret` names: the secret store's
+entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.md)). App Store Connect never gives it
+back, so it cannot be compared: `push` sends it when it creates the review details with a required demo account, when
+the demo account becomes required or its name changes, and with `--resend-demo-account` (after changing the
+password). It is read once, before anything is sent (a missing secret sends nothing), goes into that one request, sent
+once and never retried, and is never printed, written, or shown in a `--verbose` trace or an error, even when App Store
+Connect's answer repeats it.
+
+`--json` prints `{"appID", "bundleID", "platform", "version", "versionState", "dryRun", "applied", "changes":
+[{"action", "part", "subject", "fields": [{"name", "from", "to", "secret"}]}], "notes"}` (`secret` names the secret a
+field's value comes from; the value itself is never there). Errors are `[account]` errors, exit code 20.

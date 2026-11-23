@@ -5,12 +5,13 @@ import XlessCore
 
 /// What `xless secrets import` infers and checks before a file's content goes into the store.
 public enum VaultImport {
-    /// The kind a well-known name implies: `ASC_KEY_P8` an App Store Connect API key, `XLESS_*_KEY` a signing key.
+    /// The kind a well-known name implies: `ASC_KEY_P8` an App Store Connect API key, `XLESS_*_KEY` a signing key, `XLESS_DEMO_PASSWORD` a password.
     public static func inferredKind(for name: String) -> VaultEntry.Kind {
         let base = name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name
         switch base {
         case "ASC_KEY_P8": return .ascAPIKey
         case "XLESS_DIST_KEY", "XLESS_DEVID_KEY", "XLESS_INSTALLER_KEY": return .signingKey
+        case "XLESS_DEMO_PASSWORD": return .password
         default: return .generic
         }
     }

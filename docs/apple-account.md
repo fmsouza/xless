@@ -532,12 +532,14 @@ With `--json`, `list` prints `{"data": [apps]}`, `show` `{"data": app, "appInfos
 ```sh
 xless store pull --app com.example.app    # the app's listing into ./appstore
 xless store validate                      # offline checks of ./appstore
+xless store push --dry-run                # what differs at App Store Connect
+xless store push                          # send it
 ```
 
 The App Store listing (text per locale, screenshots, previews, categories, age rating, App Review contact, licence
-agreement, price and availability) lives in an `appstore/` directory reviewed like code: its format, `pull` and
-`validate` are in [appstore-manifest.md](appstore-manifest.md). `pull` uses the API key only, and never reads the demo
-account's password.
+agreement, price and availability) lives in an `appstore/` directory reviewed like code: its format, `pull`,
+`validate` and `push` are in [appstore-manifest.md](appstore-manifest.md). `pull` and `push` use the API key only;
+`pull` never reads the demo account's password, and `push` sends it from the secret store only when it must.
 
 ## JSON output
 
