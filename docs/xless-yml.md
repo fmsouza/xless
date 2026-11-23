@@ -61,7 +61,7 @@ After `upload` reaches `VALID`, xless (iOS only; ignored for macOS):
 - reuses each group by exact (case-sensitive) name, matched client-side so names containing commas work, or creates it as an **internal** group with automatic distribution (`hasAccessToAllBuilds`). An existing external group with that name is an error. Nothing is ever deleted and existing groups are not modified;
 - adds the new build to each group explicitly;
 - sets or updates "What to Test" for `locale` when `whatToTest` is given;
-- prints the build number, the groups and `available to N testers`, and warns about groups with 0 testers. Internal testers must be App Store Connect users, added once in the web UI (Users and Access, then TestFlight).
+- prints the build number, the groups and `available to N testers`, and warns about groups with 0 testers. Internal testers must be App Store Connect users ([`xless users invite`](apple-account.md#xless-users)), added to the group once in the web UI (TestFlight).
 
 A failure here exits 17 as `[upload] …`; the build is already uploaded and processed, so the message says so (ship again with a higher build number, or finish in App Store Connect). One-command usage: [signing-and-testflight.md](signing-and-testflight.md#one-command-testflight).
 

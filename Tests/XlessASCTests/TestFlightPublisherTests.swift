@@ -118,7 +118,7 @@ private func query(_ r: URLRequest, _ name: String) -> String? {
     #expect(result.groups.first?.testerCount == 0)
     #expect(result.summary.contains("  group Internal — available to 0 testers"))
     let warning = result.warnings.first ?? ""
-    #expect(warning.contains("Internal") && warning.contains("0 testers") && warning.contains("Users and Access"))
+    #expect(warning.contains("Internal") && warning.contains("0 testers") && warning.contains("xless users invite"))
 }
 
 @Test func multipleGroupsAreProcessedInOrder() async throws {

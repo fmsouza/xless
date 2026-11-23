@@ -27,7 +27,8 @@ extension ASCError: StageReportableError {
             fix = "App Store Connect rejected the API key: it may have been revoked, ASC_ISSUER_ID may not be the issuer of ASC_KEY_ID, or this machine's clock is off; check the key under App Store Connect → Users and Access → Integrations"
         case 403:
             let role = ASCRoles.needed(path: path ?? "")
-            fix = "the API key's role does not allow this request: it needs the \(role) role\(role == "Admin" ? "" : " (or Admin)"); create a key with that role (App Store Connect → Users and Access → Integrations) and use it"
+            let argument = role.uppercased().replacingOccurrences(of: " ", with: "_")
+            fix = "the API key's role does not allow this request: it needs the \(role) role\(role == "Admin" ? "" : " (or Admin)"); create a key with that role (`xless auth api-key create --role \(argument)`, or App Store Connect → Users and Access → Integrations) and use it"
         case 404:
             fix = "App Store Connect has no such resource: check the ID and the path (and that the key's team owns it)"
         case 409:

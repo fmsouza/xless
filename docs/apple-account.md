@@ -14,9 +14,9 @@ which register app groups and iCloud containers and assign them to bundle IDs, [
 creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with their `.p8` in the secret store,
 [`xless apps`](#xless-apps), which lists, shows, updates and creates app records, [`xless store`](#xless-store), which
 keeps the App Store listing in an `appstore/` directory, [`xless builds`](#xless-builds), which lists uploaded builds,
-waits for their processing, answers their export compliance and expires them, and [`xless api`](#xless-api), which
-calls any documented App Store Connect endpoint. More commands (TestFlight, releases) follow the conventions on this
-page.
+waits for their processing, answers their export compliance and expires them, [`xless users`](#xless-users), which
+invites, updates and removes the team's App Store Connect users, and [`xless api`](#xless-api), which calls any
+documented App Store Connect endpoint. More commands (TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -604,6 +604,49 @@ With `--json`, `list` prints `{"data": [builds], "included": [versions and apps]
 `expire` print `{"data": build, "included": [...]}`: App Store Connect's resources, the build's `version` being its
 build number and its `preReleaseVersion` (in `included`) its version and platform.
 
+## `xless users`
+
+```sh
+xless users list                                   # ID, email, name, roles, apps seen, provisioning access
+xless users list --role admin,app-manager
+xless users show grace@example.com                 # every app the user sees
+xless users invite grace@example.com --first-name Grace --last-name Hopper --role developer --app com.example.app
+xless users invite ops@example.com --first-name Ops --last-name Team --role admin
+xless users update grace@example.com --role developer,marketing --all-apps --provisioning
+xless users remove grace@example.com               # asks first
+xless users invitations list                       # invitations not accepted yet, with their expiry
+xless users invitations cancel grace@example.com   # asks first
+```
+
+Internal TestFlight testers must be App Store Connect users of the team: `invite` makes one. These commands use the
+API key (`/v1/users`, `/v1/userInvitations`), which needs the **Admin** role; a narrower key gets a 403 whose fix says
+so and how to create an Admin key (`xless auth api-key create --role ADMIN`, see [above](#xless-auth-api-key)). A
+person is named by email address (their Apple ID, compared without regard to case) or by ID (from `list`).
+
+- **Roles** (`--role`, repeatable or comma-separated, any case, `-` or `_`): `ADMIN`, `FINANCE`, `SALES`,
+  `MARKETING`, `APP_MANAGER`, `DEVELOPER`, `ACCESS_TO_REPORTS`, `CUSTOMER_SUPPORT`, `CREATE_APPS`,
+  `CLOUD_MANAGED_DEVELOPER_ID`, `CLOUD_MANAGED_APP_DISTRIBUTION` and `GENERATE_INDIVIDUAL_KEYS`. `ACCOUNT_HOLDER` can
+  only be listed (`list --role account-holder`): Apple gives it to the person who enrolled.
+- **Apps:** `--all-apps` (every app, present and future) or `--app <app>` for each app the person sees (an app ID or a
+  bundle identifier). An `ADMIN` sees every app, so `--app` is refused with it and `--all-apps` is implied.
+  `--provisioning` gives access to Certificates, Identifiers & Profiles.
+- **`invite` invites once:** an address that is already a user of the team, or already has a pending invitation, is
+  reported with its ID and roles, and nothing is sent; when the roles differ, a hint says how to change them
+  (`update`, or `invitations cancel` and invite again). The invitation is sent once, never retried. Apple emails the
+  link; the person becomes a user when they accept it.
+- **`update`** changes the roles (`--role` replaces them all), the apps (`--all-apps`, `--app`) and the provisioning
+  access (`--provisioning`, `--no-provisioning`) in one request, with only what differs; when nothing differs, nothing
+  is sent. The Account Holder's roles cannot be changed, and an `ADMIN` cannot be limited to some apps without
+  giving other roles.
+- **`remove`** and **`invitations cancel`** ask first (or need `--yes`). The Account Holder cannot be removed.
+  An address that only has an invitation is not a user: `show`, `update` and `remove` say so and point at
+  `invitations`.
+
+With `--json`, `list` and `invitations list` print `{"data": [users or invitations], "included": [apps]}`, `show`
+prints `{"data": user, "included": [apps]}`, `update` prints `{"data": user, "included": []}`, `invite` prints
+`{"result": "invited" | "existing-user" | "existing-invitation", "data": resource}`, `remove` prints
+`{"removed": user}` and `invitations cancel` prints `{"cancelled": invitation}`.
+
 ## JSON output
 
 `--json` output is meant for scripts and stays stable: one JSON document on standard output, keys sorted, indented by
@@ -649,7 +692,7 @@ session was kept). For the App Store Connect API, the fix depends on the status:
 | Status | Fix |
 |---|---|
 | 401 | The key was revoked, `ASC_ISSUER_ID` is not its issuer, or the machine's clock is off. |
-| 403 | The key's role is too narrow: the fix names the role the request needs (Admin for users and certificates, identifiers, devices and profiles; Finance or Sales for their reports; App Manager for the app's own resources). |
+| 403 | The key's role is too narrow: the fix names the role the request needs (Admin for users and certificates, identifiers, devices and profiles; Finance or Sales for their reports; App Manager for the app's own resources) and how to create a key with it (`xless auth api-key create --role <ROLE>`). |
 | 404 | No such resource: check the ID, and that it belongs to the key's team. |
 | 409 | A conflict: the fix names the field Apple refused (`name`, `identifier`, …). |
 | 429 | The hour's request budget is spent: the fix says how long to wait. |
