@@ -194,12 +194,12 @@ X
 chmod +x "$t/bin/xless"
 real=("${base[@]}" XLESS_TESTFLIGHT_DRY_RUN=0 XLESS_USE_DOCKER=0 XLOG="$t/xlog")
 : > "$t/xlog"; "${real[@]}" "$S" --config "$t/ov/my.overlay.yml" >/dev/null 2>&1 || fail "native run failed: $(cat "$t/xlog")"
-[[ $(wc -l < "$t/xlog") -eq 3 ]] || fail "native run: want 3 invocations: $(cat "$t/xlog")"
+[[ $(grep -vc "^secrets named-by" "$t/xlog") -eq 3 ]] || fail "native run: want 3 steps: $(cat "$t/xlog")"
 grep -q "^tauri next-build .*ASC_KEY_ID=KEYID" "$t/xlog" || fail "step 1 lacks the key: $(cat "$t/xlog")"
 grep -q -- "--to finalize | ASC_KEY_ID=unset ASC_KEY_P8_FILE=unset BN=1.0.0.2026101503$" "$t/xlog" || fail "step 2 env wrong: $(cat "$t/xlog")"
 grep -q -- "--from sign --to upload | ASC_KEY_ID=KEYID .* BN=1.0.0.2026101503$" "$t/xlog" || fail "step 3 env wrong: $(cat "$t/xlog")"
 : > "$t/xlog"; code=0; "${real[@]}" STEP2_EXIT=12 "$S" --config "$t/ov/my.overlay.yml" >/dev/null 2>&1 || code=$?
-[[ $code -eq 12 && $(wc -l < "$t/xlog") -eq 2 ]] || fail "step 2 failure: exit $code, $(cat "$t/xlog")"
+[[ $code -eq 12 && $(grep -vc "^secrets named-by" "$t/xlog") -eq 2 ]] || fail "step 2 failure: exit $code, $(cat "$t/xlog")"
 # --platform macos: a Tauri DMG. No step 1; step 2 without secrets; step 3 with the Developer ID key and the App Store Connect key
 printf 'x' > "$t/devid.pem"
 mac=("${base[@]}" XLESS_DEVID_KEY_FILE="$t/devid.pem")
@@ -467,10 +467,10 @@ code=0; "${base[@]}" FONTS_DIR="$t/nowhere" "$S" --config "$t/cg/o.yml" >/dev/nu
 [[ $code -eq 2 ]] && grep -q "fonts" "$t/err" || fail "a missing path input: exit $code $(cat "$t/err")"
 # a step 3 only run asks for no inputs (and mounts none)
 : > "$t/xinputs.log"; out=$("${cg[@]}" "$S" --config "$t/cg/o.yml" --from sign 2>/dev/null) || fail "cargo --from sign failed"
-[[ $(wc -l <<<"$out") -eq 1 && "$out" != *"/inputs"* && ! -s "$t/xinputs.log" ]] || fail "cargo --from sign: $out"
+[[ $(wc -l <<<"$out") -eq 1 && "$out" != *"/inputs"* && -z "$(grep -v "^secrets named-by" "$t/xinputs.log")" ]] || fail "cargo --from sign: $out"
 # natively xless reads the paths directly: nothing is mounted or listed
 : > "$t/xinputs.log"; out=$("${cg[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/cg/o.yml" 2>/dev/null) || fail "native cargo failed"
-[[ "$(sed -n 1p <<<"$out")" == "xless next-build --config $t/cg/o.yml " && "$out" != *"/inputs"* && ! -s "$t/xinputs.log" ]] || fail "native cargo: '$out'"
+[[ "$(sed -n 1p <<<"$out")" == "xless next-build --config $t/cg/o.yml " && "$out" != *"/inputs"* && -z "$(grep -v "^secrets named-by" "$t/xinputs.log")" ]] || fail "native cargo: '$out'"
 # macOS: the same steps as a Tauri DMG; the path input reaches the build step
 out=$("${mac[@]}" FONTS_DIR="$t/fonts" "$S" --config "$t/cg/o.yml" --platform macos 2>"$t/err") || fail "cargo macos failed: $(cat "$t/err")"
 [[ $(wc -l <<<"$out") -eq 2 && "$out" != *"next-build"* ]] || fail "cargo macos: want two steps, no next-build: $out"

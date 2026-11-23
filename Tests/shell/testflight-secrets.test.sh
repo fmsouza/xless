@@ -20,18 +20,29 @@ RUN="$t/run/xless/0123456789abcdef0123456789abcdef"
 
 # The fake xless: `secrets materialize` writes each SET=NAME,… as $RUN/SET/NAME, printing $RUN first (MAT_EXIT: fails
 # instead; MAT_SLEEP: stops after printing, as when it waits for the passphrase; MAT_DIR: prints that path instead).
+# `secrets named-by` prints NAMES (comma-separated) and logs to $XLOG.named; ABSENT: optional (?NAME) secrets the
+# store does not have.
 cat > "$t/bin/xless" <<'X'
 #!/usr/bin/env bash
-echo "$* | NOSTORE=${XLESS_NO_SECRET_STORE-unset}" >> "$XLOG"
+if [[ "$1 $2" == "secrets named-by" ]]; then echo "$*" >> "$XLOG.named"; [[ -z "${NAMES:-}" ]] || tr , '\n' <<<"$NAMES"; exit "${NAMED_EXIT:-0}"; fi
+echo "$* | NOSTORE=${XLESS_NO_SECRET_STORE-unset}${MY_REVIEW_PW_FILE+ PWF=$MY_REVIEW_PW_FILE}${MY_REVIEW_PW+ PW=set}" >> "$XLOG"
 [[ "$1 $2" == "secrets materialize" ]] || { case "$*" in *next-build*) echo 1.0.0.2026112301 ;; esac; exit "${XLESS_EXIT:-0}"; }
 [[ -z "${MAT_EXIT:-}" ]] || { echo "error: [config] the secret store has no XLESS_DIST_KEY" >&2; exit "$MAT_EXIT"; }
-[[ "$3" != --check ]] || exit "${CHECK_EXIT:-0}"
+if [[ "$3" == --check ]]; then   # prints the optional (?NAME) secrets the store has
+  for a in "$@"; do case "$a" in *=*) IFS=, read -r -a names <<<"${a#*=}"
+    for n in "${names[@]}"; do [[ "$n" != \?* || ",${ABSENT:-}," == *",${n#\?},"* ]] || echo "${n#\?}"; done ;; esac; done
+  exit "${CHECK_EXIT:-0}"
+fi
 d="${MAT_DIR:-$XDG_RUNTIME_DIR/xless/0123456789abcdef0123456789abcdef}"
 mkdir -p "$d"; echo "$d"
 [[ -z "${MAT_SLEEP:-}" ]] || { echo $$ > "$MPID"; exec sleep 30; }
 for a in "$@"; do
   case "$a" in *=*) mkdir -p "$d/${a%%=*}"
-    IFS=, read -r -a names <<<"${a#*=}"; for n in "${names[@]}"; do printf 'v' > "$d/${a%%=*}/$n"; done ;; esac
+    IFS=, read -r -a names <<<"${a#*=}"
+    for n in "${names[@]}"; do
+      if [[ "$n" == \?* ]]; then n="${n#\?}"; [[ ",${ABSENT:-}," != *",$n,"* ]] || continue; fi
+      printf 'v' > "$d/${a%%=*}/$n"
+    done ;; esac
 done
 X
 # The fake docker: each `run` logs its command and, for each /secrets/store mount, which files it can see, and what the
@@ -52,7 +63,7 @@ D
 chmod +x "$t/bin/xless" "$t/bin/docker"
 docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
         XDG_RUNTIME_DIR="$t/run" RUN="$RUN" XLOG="$t/xlog" DLOG="$t/dlog" DPID="$t/dpid" MPID="$t/mpid")
-reset() { : > "$t/xlog"; : > "$t/dlog"; rm -rf "$t/run/xless" "$t/dpid" "$t/mpid"; }
+reset() { : > "$t/xlog"; : > "$t/xlog.named"; : > "$t/dlog"; rm -rf "$t/run/xless" "$t/dpid" "$t/mpid"; }
 
 # A project directory with nothing set: one materialisation (with the project's team), one container gets the set
 reset
@@ -177,4 +188,109 @@ reset; code=0
 reset
 "${native[@]}" XLESS_DIST_KEY=pem ASC_KEY_P8=p8 ASC_KEY_ID=K ASC_ISSUER_ID=I "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "native values: $(cat "$t/err")"
 grep -q "materialize" "$t/xlog" && fail "native values still checked in the store: $(cat "$t/xlog")"
+
+mkdir -p "$t/pw"; printf 'pw' > "$t/pw/review"
+# The TestFlight demo account's password (fmsouza/xless#140): the host's xless names its secret (`secrets named-by`);
+# only the container that uploads gets it, as an optional secret of its set (or from its _FILE), never step 1 or 2.
+reset
+"${docker[@]}" NAMES=XLESS_DEMO_PASSWORD "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "project dir with a demo password: $(cat "$t/err")"
+[[ "$(cat "$t/xlog.named")" == "secrets named-by --project $t/proj" ]] || fail "named-by call: $(cat "$t/xlog.named")"
+grep -q "^secrets materialize --team ABCDE12345 sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,?XLESS_DEMO_PASSWORD | " "$t/xlog" \
+  || fail "the demo password is not an optional secret of the set: $(cat "$t/xlog")"
+grep -q -- "-e XLESS_DEMO_PASSWORD_FILE=/secrets/store/XLESS_DEMO_PASSWORD " "$t/dlog" && grep -q "  sees ASC_ISSUER_ID ASC_KEY_ID ASC_KEY_P8 XLESS_DEMO_PASSWORD XLESS_DIST_KEY $" "$t/dlog" \
+  || fail "the container does not get the demo password: $(cat "$t/dlog")"
+[[ ! -e "$RUN" ]] || fail "the demo password outlived the run"
+# an overlay, under a name of the user's own: step 3 only, removed when it ends
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "overlay with a demo password: $(cat "$t/err")"
+[[ "$(cat "$t/xlog.named")" == "secrets named-by --config $t/ov/app.yml --platform ios" ]] || fail "overlay named-by call: $(cat "$t/xlog.named")"
+grep -q "^secrets materialize --team ABCDE12345 next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,?MY_REVIEW_PW | " "$t/xlog" \
+  || fail "overlay sets with the demo password: $(cat "$t/xlog")"
+s1=$(grep -A3 "^run .*next-build" "$t/dlog"); s2=$(grep -A1 "^run .*--to finalize" "$t/dlog"); s3=$(grep -A3 "^run .*--from sign" "$t/dlog")
+[[ "$s1" != *MY_REVIEW_PW* && "$s2" != *MY_REVIEW_PW* && "$s2" != *"/secrets"* ]] || fail "the demo password reached step 1 or 2: $s1 / $s2"
+[[ "$s3" == *"-e MY_REVIEW_PW_FILE=/secrets/store/MY_REVIEW_PW "* && "$s3" == *"sees ASC_ISSUER_ID ASC_KEY_ID ASC_KEY_P8 MY_REVIEW_PW XLESS_DIST_KEY "* ]] || fail "step 3 lacks the demo password: $s3"
+[[ ! -e "$RUN" ]] || fail "the demo password outlived the overlay run"
+# ... a team's entry (NAME@TEAMID) keeps its name, which xless asks for
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW@ABCDE12345 "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "a team's demo password: $(cat "$t/err")"
+grep -q -- "-e MY_REVIEW_PW@ABCDE12345_FILE=/secrets/store/MY_REVIEW_PW@ABCDE12345 " "$t/dlog" || fail "a team's demo password: $(cat "$t/dlog")"
+# the store does not have it: nothing stops (it is sent only when the demo account changes), the run says so
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW ABSENT=MY_REVIEW_PW "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "a store without the demo password: $(cat "$t/err")"
+grep -q "the secret store has no MY_REVIEW_PW" "$t/err" || fail "no note for a missing demo password: $(cat "$t/err")"
+grep -q "MY_REVIEW_PW_FILE" "$t/dlog" && fail "a missing demo password passed as a file: $(cat "$t/dlog")"
+grep -q "^secrets materialize --check --team ABCDE12345 next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,?MY_REVIEW_PW | " "$t/xlog" \
+  && grep -q "^secrets materialize --team ABCDE12345 next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY | " "$t/xlog" \
+  || fail "the store is asked first, and the missing demo password left out: $(cat "$t/xlog")"
+# every other secret a file: a store without the password is never opened (nor a tmpfs needed); one with it is
+printf 'x' > "$t/keys/key.p8"; printf 'x' > "$t/keys/dist.pem"
+allfiles=(XLESS_TESTFLIGHT_ENV="$t/tf.env" XLESS_DIST_KEY_FILE="$t/keys/dist.pem" NAMES=XLESS_DEMO_PASSWORD)
+reset
+"${docker[@]}" "${allfiles[@]}" ABSENT=XLESS_DEMO_PASSWORD XDG_RUNTIME_DIR= "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "all files, no password in the store: $(cat "$t/err")"
+grep -q "^secrets materialize --check --team ABCDE12345 sign=?XLESS_DEMO_PASSWORD | " "$t/xlog" && ! grep -q "^secrets materialize --team" "$t/xlog" \
+  || fail "the store was opened for a password it does not have: $(cat "$t/xlog")"
+grep -q "dst=/secrets/store" "$t/dlog" && fail "an empty set was mounted: $(cat "$t/dlog")"
+reset
+"${docker[@]}" "${allfiles[@]}" "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "all files, the password in the store: $(cat "$t/err")"
+grep -q "^secrets materialize --team ABCDE12345 sign=?XLESS_DEMO_PASSWORD | " "$t/xlog" && grep -q "  sees XLESS_DEMO_PASSWORD $" "$t/dlog" \
+  && grep -q -- "-e XLESS_DEMO_PASSWORD_FILE=/secrets/store/XLESS_DEMO_PASSWORD " "$t/dlog" || fail "all files, the password from the store: $(cat "$t/xlog" "$t/dlog")"
+# ... and a store that cannot be read at all gives no optional secret, and stops nothing
+reset
+"${docker[@]}" "${allfiles[@]}" CHECK_EXIT=10 "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "all files, an unreadable store: $(cat "$t/err")"
+grep -q "the secret store has no XLESS_DEMO_PASSWORD" "$t/err" && ! grep -q "^secrets materialize --team" "$t/xlog" || fail "an unreadable store: $(cat "$t/err" "$t/xlog")"
+# ... while a needed secret it cannot check stops the run, as before
+reset; code=0
+"${docker[@]}" NAMES=XLESS_DEMO_PASSWORD CHECK_EXIT=10 "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 10 && ! -s "$t/dlog" ]] || fail "a failed check of needed secrets: exit $code $(cat "$t/err")"
+# a project directory's one container takes the password's file (the env file's NAME_FILE too)
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW MY_REVIEW_PW_FILE="$t/pw/review" "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "project dir, a password file: $(cat "$t/err")"
+grep -q -- "--mount type=bind,src=$t/pw/review,dst=/secrets/passwords/MY_REVIEW_PW,readonly -e MY_REVIEW_PW_FILE=/secrets/passwords/MY_REVIEW_PW " "$t/dlog" || fail "project dir password file: $(cat "$t/dlog")"
+# a name that is one of the script's own variables (ENV: ENV_FILE is the env file) never reads it
+reset
+"${docker[@]}" NAMES=ENV "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "a password named ENV: $(cat "$t/err")"
+grep -q "dst=/secrets/passwords" "$t/dlog" && fail "the env file was taken for a password: $(cat "$t/dlog")"
+# its _FILE wins: mounted into step 3 only, and not asked of the store
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW MY_REVIEW_PW_FILE="$t/pw/review" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "a demo password file: $(cat "$t/err")"
+grep -q "MY_REVIEW_PW" "$t/xlog" && fail "the store was asked for a demo password given as a file: $(cat "$t/xlog")"
+s1=$(grep "^run .*next-build" "$t/dlog"); s2=$(grep "^run .*--to finalize" "$t/dlog"); s3=$(grep "^run .*--from sign" "$t/dlog")
+[[ "$s3" == *"--mount type=bind,src=$t/pw/review,dst=/secrets/passwords/MY_REVIEW_PW,readonly -e MY_REVIEW_PW_FILE=/secrets/passwords/MY_REVIEW_PW "* ]] || fail "step 3 lacks the demo password file: $s3"
+[[ "$s1" != *MY_REVIEW_PW* && "$s2" != *MY_REVIEW_PW* ]] || fail "the demo password file reached step 1 or 2: $s1 / $s2"
+# ... but not from inside the folder mounted into the build
+printf 'pw' > "$t/ov/review-pw"; reset; code=0
+"${docker[@]}" NAMES=MY_REVIEW_PW MY_REVIEW_PW_FILE="$t/ov/review-pw" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 2 ]] && grep -q "MY_REVIEW_PW_FILE .* is inside the overlay's directory" "$t/err" || fail "a demo password in the overlay's folder: exit $code $(cat "$t/err")"
+rm -f "$t/ov/review-pw"
+# a value (not a file) is not passed in: the store's is used
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW MY_REVIEW_PW=pw "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "a demo password value in docker: $(cat "$t/err")"
+grep -q "MY_REVIEW_PW is set, but docker builds take only MY_REVIEW_PW_FILE" "$t/err" && ! grep -q -- "-e MY_REVIEW_PW " "$t/dlog" || fail "a demo password value: $(cat "$t/err") $(cat "$t/dlog")"
+# a run that does not upload does not ask, and gives it to nobody
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW "$S" --config "$t/ov/app.yml" --to package >/dev/null 2>"$t/err" || fail "a run to package: $(cat "$t/err")"
+[[ ! -s "$t/xlog.named" ]] && ! grep -q MY_REVIEW_PW "$t/xlog" "$t/dlog" || fail "a run that never uploads got the demo password: $(cat "$t/xlog.named" "$t/xlog")"
+# the configuration cannot be read: a note, and the run goes on (xless reports what is wrong with it)
+reset
+"${docker[@]}" NAMED_EXIT=10 "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "named-by failing: $(cat "$t/err")"
+grep -q "secrets named-by could not tell which secret" "$t/err" || fail "no note when named-by fails: $(cat "$t/err")"
+# ... or answers something that is not names: none is used
+reset
+"${docker[@]}" NAMES='MY_REVIEW_PW,A=B' "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "an odd answer from named-by: $(cat "$t/err")"
+grep -q "secrets named-by could not tell which secret" "$t/err" && ! grep -q "MY_REVIEW_PW" "$t/xlog" "$t/dlog" || fail "an odd answer from named-by: $(cat "$t/err" "$t/xlog")"
+# the mac App-Store lane: the pkg ship uploads, so it gets it; the DMG ship does not
+reset
+"${docker[@]}" NAMES=MY_REVIEW_PW "$S" --config "$t/ov/app.yml" --platform macos --to upload >/dev/null 2>"$t/err" || fail "mac lane with a demo password: $(cat "$t/err")"
+[[ "$(cat "$t/xlog.named")" == "secrets named-by --config $t/ov/app.yml --platform macos" ]] || fail "mac named-by call: $(cat "$t/xlog.named")"
+grep -q "^secrets materialize --team ABCDE12345 sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DEVID_KEY appstore=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,XLESS_INSTALLER_KEY,?MY_REVIEW_PW | " "$t/xlog" \
+  || fail "mac lane sets: $(cat "$t/xlog")"
+dmg=$(grep "^run .*--to package" "$t/dlog"); pkg=$(grep "^run .*--distribution app-store" "$t/dlog")
+[[ "$dmg" != *MY_REVIEW_PW* && "$pkg" == *"-e MY_REVIEW_PW_FILE=/secrets/store/MY_REVIEW_PW "* ]] || fail "mac lane: the demo password goes to the pkg ship only: $dmg / $pkg"
+# natively the build step runs without it (a name of the user's own), and step 3 keeps it; nothing is written
+reset
+"${native[@]}" NAMES=MY_REVIEW_PW MY_REVIEW_PW_FILE="$t/pw/review" MY_REVIEW_PW=pw "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native with a demo password: $(cat "$t/err")"
+grep -q -- "--to finalize | NOSTORE=1$" "$t/xlog" || fail "native step 2 sees the demo password: $(cat "$t/xlog")"
+grep -q -- "--from sign --to upload | NOSTORE=unset PWF=$t/pw/review PW=set$" "$t/xlog" || fail "native step 3 lacks the demo password: $(cat "$t/xlog")"
+grep -q "MY_REVIEW_PW" <(grep materialize "$t/xlog") && fail "natively the store is checked for an optional secret: $(cat "$t/xlog")"
+[[ ! -e "$t/run/xless" ]] || fail "a native run wrote secrets"
 echo PASS

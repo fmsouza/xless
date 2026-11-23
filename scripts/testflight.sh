@@ -66,7 +66,10 @@
 #   file system, else ~/.cache/xless/secrets/), one directory per container: next (step 1), sign (step 3, or the
 #   project's container, or the DMG ship), appstore (the mac App-Store ship). Each is mounted read-only at
 #   /secrets/store into its container only and removed when it ends; cleanup removes the rest. The store prefers the
-#   entries of the project's or overlay's top-level teamID:.
+#   entries of the project's or overlay's top-level teamID:. The TestFlight demo account's password (testflight.external
+#   .review.demoAccount; its secret's name, passwordSecret, read by the host's xless: `xless secrets named-by`) goes to
+#   the container that uploads only (sign, or appstore on macos), when the store has it: it is sent only when the demo
+#   account is new, renamed or newly required, so a store without it stops nothing up front.
 # Variables (see docs/signing-and-testflight.md):
 #   ASC_KEY_ID               App Store Connect API key ID                      (required, unless the store has the key)
 #   ASC_ISSUER_ID_FILE       file holding the issuer ID   (or ASC_ISSUER_ID)   (required, unless the store has the key)
@@ -74,6 +77,8 @@
 #   XLESS_DIST_KEY_FILE      the Apple Distribution private key (PEM)          (required on ios; on macos when --to upload runs the App-Store lane: the app's signature)
 #   XLESS_DEVID_KEY_FILE     the Developer ID Application private key (PEM)    (required with --platform macos)
 #   XLESS_INSTALLER_KEY_FILE the Mac Installer Distribution private key (PEM)  (macos, only when --to upload runs the App-Store lane)
+#   XLESS_DEMO_PASSWORD_FILE the TestFlight demo account's password (<passwordSecret>_FILE for a name of your own)
+#                            (only for a run that uploads with testflight.external.review.demoAccount; else the store's)
 #     (the signing keys too: each *_FILE is needed unless the store has the key;
 #      "required" means: when a step that uses it runs. A project directory needs none of them for a run that stops
 #      before sign (--to prepare|build|assets|finalize); with --config, see the three steps above)
@@ -409,20 +414,61 @@ for v in ASC_KEY_P8 ${store_keys[@]+"${store_keys[@]}"}; do
   [[ $use_docker == 0 || -z "${!v:-}" ]] || [[ $v == ASC_KEY_P8 && $asc_store == 0 ]] \
     || echo "==> note: $v is set, but docker builds take only ${v}_FILE (a file to mount); using the secret store's $v" >&2
 done
+# The TestFlight demo account's password (xless.yml's or the overlay's testflight.external.review.demoAccount): only
+# the upload reads it, so only the container that uploads gets it (step 3, the project's container, or the mac
+# App-Store ship), never step 2. Its name may be the user's own (passwordSecret): the host's xless reads the
+# configuration (`xless secrets named-by`, nothing when the account never needs its password sent). From NAME_FILE when
+# set, else, in docker, from the store as an optional secret: Apple never gives the password back, so it is sent only
+# when the demo account is new, renamed or newly required, and a store without it stops nothing up front. Natively
+# xless reads it itself; the build step (2) runs without NAME and NAME_FILE.
+demo_names=(); demo_store=(); demo_files=()
+upload=0
+if [[ -n "$OVERLAY" ]]; then [[ $SIM == 1 || $ti -lt 6 ]] || upload=1; else [[ $pti -lt 6 ]] || upload=1; fi
+if [[ $upload == 1 ]]; then
+  if command -v "$xself" >/dev/null 2>&1; then
+    if [[ -n "$OVERLAY" ]]; then named=(--config "$OVERLAY" --platform "$PLATFORM"); else named=(--project "$PROJECT"); fi
+    # (an answer that is not names, as from an xless too old to know the command, counts as none)
+    if names_out="$("$xself" secrets named-by "${named[@]}" 2>/dev/null)" \
+       && [[ "$names_out" =~ ^([A-Za-z_][A-Za-z0-9_]*(@[A-Z0-9]{10})?($'\n'|$))*$ ]]; then
+      while IFS= read -r n; do [[ -z "$n" ]] || demo_names+=("$n"); done <<<"$names_out"
+    else
+      if [[ $use_docker == 1 ]]; then what="it is given to no container"; else what="xless reads it itself when it uploads"; fi
+      echo "==> note: \"$xself\" secrets named-by could not tell which secret holds the TestFlight demo account's password: $what (xless says what is wrong when it reads the configuration)" >&2
+    fi
+  elif [[ -n "${XLESS_DEMO_PASSWORD_FILE:-}" ]]; then
+    demo_names=(XLESS_DEMO_PASSWORD)   # no xless here to read the configuration: the default name, set as a file
+  fi
+fi
+# (NAME and NAME_FILE are read from the environment only for upper-case names other than ENV: never one of this
+# script's own variables, such as ENV_FILE, the env file)
+own() { [[ "$1" =~ ^[A-Z][A-Z0-9_]*$ && "$1" != ENV ]]; }
+for n in ${demo_names[@]+"${demo_names[@]}"}; do
+  f="${n}_FILE"
+  if own "$n" && [[ -n "${!f:-}" ]]; then
+    abs_file "$f"; demo_files+=("$n")
+  elif [[ $use_docker == 1 ]]; then
+    ! own "$n" || [[ -z "${!n:-}" ]] || echo "==> note: $n is set, but docker builds take only ${n}_FILE (a file to mount); using the secret store's $n" >&2
+    demo_store+=("?$n")
+  fi
+done
 # What the store gives, per container: `next` (step 1), `sign` (step 3, the project's one container, or the DMG ship)
 # and `appstore` (the mac App-Store ship). The store prefers the project's team (its top-level teamID:).
 has() { local n x="$1"; shift; for n in "$@"; do [[ "$n" != "$x" ]] || return 0; done; return 1; }   # WORD LIST…
 store_sets=()
-add_set() {   # NAME KEYS…: NAME=<the store's App Store Connect key and IDs, and those of KEYS from the store>
+add_set() {   # NAME KEYS…: NAME=<the store's App Store Connect key and IDs, those of KEYS from the store, and ?OPTIONAL ones>
   local name="$1" k list=(); shift
   [[ $asc_store == 0 ]] || list=(ASC_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID)
-  for k in "$@"; do ! has "$k" ${store_keys[@]+"${store_keys[@]}"} || list+=("$k"); done
+  for k in "$@"; do [[ "$k" != \?* ]] && ! has "$k" ${store_keys[@]+"${store_keys[@]}"} || list+=("$k"); done
   [[ ${#list[@]} -gt 0 ]] || return 0
   local IFS=,; store_sets+=("$name=${list[*]}")
 }
 [[ $step1 == 0 ]] || add_set next
-[[ $step3 == 0 ]] || add_set sign ${sign_keys[@]+"${sign_keys[@]}"}
-[[ $mac_lane == 0 ]] || add_set appstore "${lane_keys[@]}"
+if [[ "$PLATFORM" == macos ]]; then   # the demo password goes to the container that uploads
+  [[ $step3 == 0 ]] || add_set sign ${sign_keys[@]+"${sign_keys[@]}"}
+  [[ $mac_lane == 0 ]] || add_set appstore "${lane_keys[@]}" ${demo_store[@]+"${demo_store[@]}"}
+else
+  [[ $step3 == 0 ]] || add_set sign ${sign_keys[@]+"${sign_keys[@]}"} ${demo_store[@]+"${demo_store[@]}"}
+fi
 TEAM="$(yaml_top "$pin_file" teamID)"; [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || TEAM=""
 team_arg=(); [[ -z "$TEAM" ]] || team_arg=(--team "$TEAM")
 if [[ ${#store_sets[@]} -gt 0 ]]; then
@@ -448,6 +494,7 @@ inside() {   # FILE DIR: FILE (symlinks resolved) is somewhere below DIR, compar
 }
 broad_dir() { [[ "$1" -ef / || "$1" -ef "$HOME" ]] || inside "$HOME/." "$1"; }   # DIR: is / , the home directory or a directory above it
 secret_vars=(ENV_FILE ASC_KEY_P8_FILE XLESS_DIST_KEY_FILE XLESS_DEVID_KEY_FILE XLESS_INSTALLER_KEY_FILE ASC_ISSUER_ID_FILE)
+for n in ${demo_files[@]+"${demo_files[@]}"}; do secret_vars+=("${n}_FILE"); done
 input_names=(); input_paths=()   # cargo path inputs mounted at /inputs/<name> (step 2, docker)
 if [[ -n "$OVERLAY" && $use_docker == 1 ]]; then
   overlay_dir="$(cd -P "$(dirname "$OVERLAY")" && pwd -P)"
@@ -557,6 +604,10 @@ if [[ $use_docker == 1 ]]; then
   elif [[ $need_key == 1 ]]; then
     key_file XLESS_DIST_KEY_FILE /secrets/dist-key.pem; dist_secret=(${words[@]+"${words[@]}"}); words=()
   fi
+  # the demo password's file, into the container that uploads only
+  for n in ${demo_files[@]+"${demo_files[@]}"}; do key_file "${n}_FILE" "/secrets/passwords/$n"; done
+  if [[ "$PLATFORM" == macos ]]; then appstore_secret+=(${words[@]+"${words[@]}"}); else dist_secret+=(${words[@]+"${words[@]}"}); fi
+  words=()
 fi
 
 # Docker: the store's secrets, written once for the whole run (one passphrase) by the host's xless into a fresh
@@ -576,12 +627,22 @@ store_words() {   # SET: words=(the set's read-only mount, and NAME_FILE=/secret
     [[ "${s%%=*}" == "$1" ]] || continue
     words=(--mount "$(bind "$secrets_dir/$1" /secrets/store ro)")
     local IFS=,
-    for n in ${s#*=}; do words+=(-e "${n}_FILE=/secrets/store/$n"); done
+    for n in ${s#*=}; do
+      if [[ "$n" == \?* ]]; then   # optional: passed only when the store had it
+        n="${n#\?}"
+        if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 && ! -f "$secrets_dir/$1/$n" ]]; then
+          echo "==> note: the secret store has no $n: a run that must send the TestFlight demo account's password stops at upload (store it with: xless secrets import $n --file <file> --kind password, or set ${n}_FILE)" >&2
+          continue
+        fi
+      fi
+      words+=(-e "${n}_FILE=/secrets/store/$n")
+    done
   done
 }
 build_mounts=()   # the host folders the build container (step 2) mounts: no secret may be inside one
 materialise() {   # docker: write the store's sets (one passphrase), after every check that could still stop the run
   [[ $use_docker == 1 && ${#store_sets[@]} -gt 0 ]] || return 0
+  [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]] || prune_optional || return 0
   local mat=("$xself" secrets materialize ${team_arg[@]+"${team_arg[@]}"}) base d code=0
   [[ $ALLOW_DISK == 0 ]] || mat+=(--allow-disk)
   mat+=("${store_sets[@]}")
@@ -606,6 +667,36 @@ materialise() {   # docker: write the store's sets (one passphrase), after every
   store_words next; next_store=(${words[@]+"${words[@]}"})
   store_words sign; sign_store=(${words[@]+"${words[@]}"})
   store_words appstore; appstore_store=(${words[@]+"${words[@]}"})
+}
+# Docker: the optional secrets (?NAME, the demo password) the store does not have leave store_sets, asked by name first
+# (`materialize --check` prints those it has; no passphrase). A run whose other secrets are all files then opens the
+# store, and needs a tmpfs, only when the store has the password. False when no secret is left to write.
+prune_optional() {
+  [[ "${store_sets[*]}" == *\?* ]] || return 0
+  local s n out code=0 required=0 list names kept=()
+  for s in "${store_sets[@]}"; do
+    IFS=, read -r -a names <<<"${s#*=}"
+    for n in "${names[@]}"; do [[ "$n" == \?* ]] || required=1; done
+  done
+  out="$("$xself" secrets materialize --check ${team_arg[@]+"${team_arg[@]}"} "${store_sets[@]}")" || code=$?
+  if [[ $code -ne 0 ]]; then
+    [[ $required == 0 ]] || { echo "==> xless exited with code $code (the secret store)" >&2; exit "$code"; }
+    out=""   # only optional secrets: a store that cannot be read gives none of them
+  fi
+  for s in "${store_sets[@]}"; do
+    list=()
+    IFS=, read -r -a names <<<"${s#*=}"
+    for n in "${names[@]}"; do
+      if [[ "$n" == \?* ]] && ! grep -qxF -- "${n#\?}" <<<"$out"; then
+        echo "==> note: the secret store has no ${n#\?}: a run that must send the TestFlight demo account's password stops at upload (store it with: xless secrets import ${n#\?} --file <file> --kind password, or set ${n#\?}_FILE)" >&2
+        continue
+      fi
+      list+=("$n")
+    done
+    [[ ${#list[@]} -eq 0 ]] || kept+=("${s%%=*}=$(IFS=,; echo "${list[*]}")")
+  done
+  store_sets=(${kept[@]+"${kept[@]}"})
+  [[ ${#store_sets[@]} -gt 0 ]]
 }
 not_in_build_mounts() {   # DIR: neither DIR (or, while it does not exist, its nearest parent) nor a parent of it is mounted into the build
   local p="$1" d
@@ -712,6 +803,7 @@ else
   # step 2 runs without the secret variables (xless also scrubs them from its tools); the files stay on disk
   # (the list is xless's SecretEnvironment.entries; a test keeps them equal), and with the secret store closed to it
   scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY XLESS_INSTALLER_KEY XLESS_DEMO_PASSWORD; do scrub+=(-u "$v" -u "${v}_FILE"); done
+  for v in ${demo_names[@]+"${demo_names[@]}"}; do scrub+=(-u "$v" -u "${v}_FILE"); done   # a passwordSecret of the user's own
   scrub+=(XLESS_NO_SECRET_STORE=1)
 fi
 bn=(); [[ -z "${XLESS_BUILD_NUMBER:-}" ]] || bn=(-e XLESS_BUILD_NUMBER)

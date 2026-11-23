@@ -25,7 +25,7 @@ struct SecretsCommand: AsyncParsableCommand {
         """,
         subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self,
                       SecretsExportCommand.self, SecretsRmCommand.self, SecretsUnlockCommand.self, SecretsLockCommand.self,
-                      SecretsPasswdCommand.self, SecretsMaterializeCommand.self])
+                      SecretsPasswdCommand.self, SecretsMaterializeCommand.self, SecretsNamedByCommand.self])
 }
 
 /// What the `secrets` commands share.
@@ -383,11 +383,12 @@ struct SecretsMaterializeCommand: ParsableCommand {
         Each SET=NAME[,NAME…] becomes <run dir>/SET/NAME (directories 0700, files 0600) under $XDG_RUNTIME_DIR/xless/; \
         ASC_KEY_ID and ASC_ISSUER_ID are the ASC_KEY_P8 entry's IDs. The run directory is printed on stdout as soon as \
         it exists. With no XDG_RUNTIME_DIR, or one that is not a tmpfs, it refuses unless --allow-disk \
-        (then ~/.cache/xless/secrets/). --check only checks that the store holds every secret (no passphrase, nothing written).
+        (then ~/.cache/xless/secrets/). --check only checks that the store holds every secret (no passphrase, nothing written), \
+        and prints the optional ones (?NAME: written when the store has them) it holds.
         """,
         shouldDisplay: false)
 
-    @Argument(help: "SET=NAME[,NAME…], e.g. sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY.") var sets: [String]
+    @Argument(help: "SET=NAME[,NAME…] (?NAME: optional), e.g. sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,?XLESS_DEMO_PASSWORD.") var sets: [String]
     @Option(help: "Prefer this team's entries (default: the saved team, `xless team use`).") var team: String?
     /// (testflight.sh's --allow-disk-secrets; named so argv's secret lint has nothing to object to)
     @Flag(help: "Accept a directory on disk when there is no tmpfs (XDG_RUNTIME_DIR).") var allowDisk = false
@@ -401,11 +402,37 @@ struct SecretsMaterializeCommand: ParsableCommand {
                 throw XlessError(.config, "--team \(team) is not a 10-character Apple team ID", fix: "copy it from `xless team list`")
             }
             let materializer = VaultMaterializer(secrets: try SecretStoreCLI.store(), team: team)
-            if check { return try materializer.check(parsed) }
+            // --check prints the optional (?NAME) secrets the store has, one per line
+            if check { return try materializer.check(parsed).forEach { print($0) } }
             let base = try SecretRunBase.choose(allowDisk: allowDisk)
             // Unbuffered: the script reads this line even when the command is stopped half-way.
             _ = try materializer.write(parsed, base: base) { FileHandle.standardOutput.write(Data("\($0.path)\n".utf8)) }
         }
+    }
+}
+
+struct SecretsNamedByCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "named-by",
+        abstract: "Print the secrets a run's upload reads under names its configuration gives, one per line (used by xless run).",
+        discussion: """
+        The TestFlight demo account's password: testflight.external.review.demoAccount's passwordSecret \
+        (XLESS_DEMO_PASSWORD by default), when the demo account may need its password sent. Nothing when it never does. \
+        The configuration is only parsed: no tool runs, and the secret store is not opened.
+        """,
+        shouldDisplay: false)
+
+    @Option(help: "An overlay file (Tauri, cargo or React Native).") var config: String?
+    @Option(help: "A project directory (its xless.yml).") var project: String?
+    @Option(help: "The platform the run ships (ios or macos).") var platform: Platform = .ios
+
+    func validate() throws {
+        guard (config == nil) != (project == nil) else { throw ValidationError("give --config <overlay> or --project <dir>") }
+    }
+
+    func run() throws {
+        let file = { (p: String) in URL(fileURLWithPath: p).standardizedFileURL }
+        for name in try RunSecretNames.upload(config: config.map(file), project: project.map(file), platform: platform) { print(name) }
     }
 }
 
