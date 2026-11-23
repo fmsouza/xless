@@ -89,7 +89,7 @@ extension ProvisionInputs {
             let parsed = try ProjectConfig.load(from: file)
             inputs = ProvisionInputs(team: parsed.teamID, targets: [], version: parsed.version, testflight: parsed.testflight)
             for p in Platform.allCasesOrdered where parsed.platforms[p] != nil {
-                inputs.targets.append(try appTarget(parsed, platform: p, root: project))
+                inputs.targets += try targets(parsed, platform: p, root: project)
             }
             base = project
         }
@@ -103,14 +103,19 @@ extension ProvisionInputs {
         return inputs
     }
 
-    /// The app of `platform` as the config describes it; relative entitlement paths resolve against `root`.
-    static func appTarget(_ config: ProjectConfig, platform: Platform, root: URL, rewrites: EntitlementRewrites = .none) throws -> ProvisionTarget {
+    /// The app of `platform` as the config describes it, then the app extensions it declares (`platforms.ios.extensions`),
+    /// each signed for the app's lane with its own entitlements; relative entitlement paths resolve against `root`.
+    static func targets(_ config: ProjectConfig, platform: Platform, root: URL, rewrites: EntitlementRewrites = .none) throws -> [ProvisionTarget] {
         let pc = try config.platform(platform)
-        let raw = try pc.entitlements.map {
-            try Plist.read($0.hasPrefix("/") ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0), stage: .account)
-        } ?? [:]
-        return ProvisionTarget(platform: platform, distribution: config.distribution(for: platform), bundleID: config.bundleID(for: platform),
-                               entitlements: prepared(raw, team: config.teamID, rewrites: rewrites))
+        func entitlements(_ path: String?) throws -> [String: Any] {
+            let raw = try path.map { try Plist.read($0.hasPrefix("/") ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0), stage: .account) } ?? [:]
+            return prepared(raw, team: config.teamID, rewrites: rewrites)
+        }
+        let distribution = config.distribution(for: platform)
+        let app = ProvisionTarget(platform: platform, distribution: distribution, bundleID: config.bundleID(for: platform), entitlements: try entitlements(pc.entitlements))
+        return [app] + (try pc.extensions.map {
+            ProvisionTarget(platform: platform, distribution: distribution, bundleID: $0.bundleID, entitlements: try entitlements($0.entitlements), extensionPath: $0.path)
+        })
     }
 
     static func prepared(_ raw: [String: Any], team: String, rewrites: EntitlementRewrites) -> [String: Any] {
@@ -145,7 +150,7 @@ extension ProvisionInputs {
             for p in Platform.allCasesOrdered where (p == .ios ? overlay.ios : overlay.macos) != nil {
                 let config = try CargoProject.resolve(overlay: overlay, platform: p, source: sourceRoot).config
                 if inputs == nil { inputs = ProvisionInputs(team: config.teamID, targets: [], version: config.version, testflight: config.testflight) }
-                inputs?.targets.append(try appTarget(config, platform: p, root: sourceRoot))
+                inputs?.targets += try targets(config, platform: p, root: sourceRoot)
             }
             guard let inputs else {
                 throw XlessError(.config, "overlay \(overlay.name) has neither an ios: nor a macos: block", fix: "add the platform the app is built for")
@@ -158,7 +163,7 @@ extension ProvisionInputs {
             if loc.overlay.macos != nil { configs.append((.macos, try TauriProject.resolveMac(overlay: loc.overlay, source: loc.sourceRoot).config)) }
             let first = configs[0].1
             var inputs = ProvisionInputs(team: first.teamID, targets: [], version: first.version, testflight: first.testflight)
-            for (p, config) in configs { inputs.targets.append(try appTarget(config, platform: p, root: loc.sourceRoot)) }
+            for (p, config) in configs { inputs.targets += try targets(config, platform: p, root: loc.sourceRoot) }
             return inputs
         }
     }

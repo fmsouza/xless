@@ -34,7 +34,7 @@ public enum CargoProject {
             // Placeholder; Context chooses the real value when a run starts (macOS-only builds use minute resolution).
             build: dated ? "\(short).\(ios ? "2000010101" : "200001010000")" : overlay.build,
             platforms: [platform: PlatformConfig(minimumOS: block.minimumOS, product: block.product, entitlements: block.entitlements,
-                                                 distribution: ios ? .appStore : .developerID, bundleID: block.bundleID)],
+                                                 distribution: ios ? .appStore : .developerID, bundleID: block.bundleID, extensions: block.extensions)],
             assets: block.assets, privacyManifest: ios ? overlay.privacyManifest : nil, infoPlist: block.infoPlist,
             testflight: ios ? overlay.testflight : nil, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
             buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)

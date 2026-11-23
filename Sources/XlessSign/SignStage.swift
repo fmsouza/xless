@@ -39,11 +39,16 @@ public enum SignStage {
         // The bundles and their entitlements first: a bad app or a stale manifest is refused before App Store Connect is called.
         // xless.yml paths are project-relative; a Tauri overlay's `macos.entitlements` is already absolute. A manifest
         // (React Native) replaces them.
-        let user = manifest != nil ? [:] : try pc.entitlements.map {
-            try Plist.read($0.hasPrefix("/") ? URL(fileURLWithPath: $0) : project.appendingPathComponent($0), stage: .sign)
-        } ?? [:]
+        func read(_ path: String) throws -> [String: Any] {
+            try Plist.read(path.hasPrefix("/") ? URL(fileURLWithPath: path) : project.appendingPathComponent(path), stage: .sign)
+        }
+        let user = manifest != nil ? [:] : try pc.entitlements.map(read) ?? [:]
+        // Extensions the config declares (xless.yml / a Tauri or cargo overlay) are signed with their own entitlements.
+        let declared = manifest != nil ? [] : try pc.extensions.map {
+            DeclaredExtension(path: $0.path, bundleID: $0.bundleID, entitlements: try $0.entitlements.map(read) ?? [:])
+        }
         let targets = try SignTargets.plan(app: input, platform: platform, appBundleID: bundleID, appEntitlements: user,
-                                           manifest: manifest, teamID: config.teamID)
+                                           manifest: manifest, teamID: config.teamID, declared: declared)
         let certService = CertificateService(client: client)
         let profiles = ProfileService(client: client)
         let cert = try await certService.find(matching: key, kind: kind)

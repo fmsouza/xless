@@ -20,6 +20,13 @@ struct SignTarget {
     var entitlements: [String: Any]
 }
 
+/// An app extension the config declares, with its entitlements read (`ExtensionConfig`).
+struct DeclaredExtension {
+    var path: String
+    var bundleID: String
+    var entitlements: [String: Any]
+}
+
 public enum SignTargets {
     /// Where an iOS app keeps app extensions; each one is signed with its own profile.
     static let extensionDirs = ["PlugIns", "Extensions"]
@@ -27,10 +34,12 @@ public enum SignTargets {
     static let unsupportedDirs = ["Watch", "AppClips"]
 
     /// The bundles to provision and sign, app extensions first (sorted by path), the app last. Without a manifest the
-    /// app's entitlements are `appEntitlements` (xless.yml / a Tauri overlay) and an extension has none; with one, every
-    /// bundle's come from the manifest, which must describe exactly the bundles the app holds.
+    /// app's entitlements are `appEntitlements` (xless.yml / a Tauri or cargo overlay): with `declared` extensions
+    /// (`platforms.ios.extensions`) the app must hold exactly those, each signed with its declared entitlements; with
+    /// none declared an extension has none. With a manifest, every bundle's come from the manifest, which must describe
+    /// exactly the bundles the app holds.
     static func plan(app: URL, platform: Platform, appBundleID: String, appEntitlements: [String: Any],
-                     manifest: EntitlementsManifest?, teamID: String) throws -> [SignTarget] {
+                     manifest: EntitlementsManifest?, teamID: String, declared: [DeclaredExtension] = []) throws -> [SignTarget] {
         let rewrites = manifest?.rewrites ?? .none
         func prepared(_ ents: [String: Any]) -> [String: Any] {
             Entitlements.rewrite(Entitlements.expandSigningPrefixes(ents, teamID: teamID), with: rewrites)
@@ -42,25 +51,34 @@ public enum SignTargets {
             throw XlessError(.sign, "app extension \(e.path) has bundle ID \(e.bundleID), which does not start with the app's \(appBundleID).",
                              fix: "give the extension a bundle ID under the app's, e.g. \(appBundleID).\(((e.path as NSString).lastPathComponent as NSString).deletingPathExtension)")
         }
-        guard let manifest else {
+        let entries: [String: Entry]
+        let source: String, rerun: String
+        if let manifest {
+            entries = try read(manifest.file)
+            source = manifest.file.lastPathComponent
+            rerun = "run `xless build` again (the manifest and the app come from the same build)"
+        } else if !declared.isEmpty {
+            entries = Dictionary(uniqueKeysWithValues: declared.map { ($0.path, Entry(bundleID: $0.bundleID, entitlements: $0.entitlements)) })
+                .merging(["": Entry(bundleID: appBundleID, entitlements: appEntitlements)]) { a, _ in a }
+            source = "the config's extensions (platforms.ios.extensions)"
+            rerun = "declare exactly the app extensions the app embeds, each with its bundle ID, in platforms.ios.extensions (ios.extensions in an overlay)"
+        } else {
             return nested.map { SignTarget(path: $0.path, bundleID: $0.bundleID, entitlements: [:]) }
                 + [SignTarget(path: "", bundleID: appBundleID, entitlements: prepared(appEntitlements))]
         }
 
-        let entries = try read(manifest.file)
-        let rerun = "run `xless build` again (the manifest and the app come from the same build)"
         // A watch app or App Clip actually in the app was refused by `extensions(in:)`; an entry for a bundle the app
-        // does not hold, whatever its kind, means the manifest is stale.
+        // does not hold, whatever its kind, means the manifest is stale (or the declaration wrong).
         for path in entries.keys.sorted() where !path.isEmpty && !nested.contains(where: { $0.path == path }) {
-            throw XlessError(.sign, "\(manifest.file.lastPathComponent) names \(path), which is not in \(app.lastPathComponent)", fix: rerun)
+            throw XlessError(.sign, "\(source) names \(path), which is not in \(app.lastPathComponent)", fix: rerun)
         }
         func entry(_ path: String, bundleID: String) throws -> SignTarget {
             let label = path.isEmpty ? "the app" : path
             guard let e = entries[path] else {
-                throw XlessError(.sign, "\(manifest.file.lastPathComponent) has no entry for \(label)", fix: rerun)
+                throw XlessError(.sign, "\(source) has no entry for \(label)", fix: rerun)
             }
             guard e.bundleID == bundleID else {
-                throw XlessError(.sign, "\(manifest.file.lastPathComponent) records \(e.bundleID) for \(label), which is \(bundleID)", fix: rerun)
+                throw XlessError(.sign, "\(source) records \(e.bundleID) for \(label), which is \(bundleID)", fix: rerun)
             }
             return SignTarget(path: path, bundleID: bundleID, entitlements: prepared(e.entitlements))
         }

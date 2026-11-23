@@ -8,10 +8,60 @@ public struct PlatformConfig: Sendable, Equatable, Decodable {
     public var distribution: Distribution?
     /// Optional per-platform bundle identifier override.
     public var bundleID: String?
+    /// The app extensions the iOS app embeds, declared so that `xless provision` registers and provisions them before a
+    /// build, and `sign` signs each with its own entitlements (`platforms.ios.extensions`; empty: none declared).
+    public var extensions: [ExtensionConfig]
 
-    public init(minimumOS: String, product: String, entitlements: String? = nil, distribution: Distribution? = nil, bundleID: String? = nil) {
+    public init(minimumOS: String, product: String, entitlements: String? = nil, distribution: Distribution? = nil, bundleID: String? = nil,
+                extensions: [ExtensionConfig] = []) {
         self.minimumOS = minimumOS; self.product = product; self.entitlements = entitlements
-        self.distribution = distribution; self.bundleID = bundleID
+        self.distribution = distribution; self.bundleID = bundleID; self.extensions = extensions
+    }
+
+    enum CodingKeys: String, CodingKey { case minimumOS, product, entitlements, distribution, bundleID, extensions }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(minimumOS: try c.decode(String.self, forKey: .minimumOS), product: try c.decode(String.self, forKey: .product),
+                  entitlements: try c.decodeIfPresent(String.self, forKey: .entitlements),
+                  distribution: try c.decodeIfPresent(Distribution.self, forKey: .distribution),
+                  bundleID: try c.decodeIfPresent(String.self, forKey: .bundleID),
+                  extensions: try c.decodeIfPresent([ExtensionConfig].self, forKey: .extensions) ?? [])
+    }
+}
+
+/// An app extension the iOS app embeds: where it sits in the app, its bundle ID (under the app's) and its entitlements
+/// file (relative like the app's `entitlements`; none: no entitlements).
+public struct ExtensionConfig: Sendable, Equatable, Decodable {
+    /// `PlugIns/Widget.appex` or `Extensions/Widget.appex`.
+    public var path: String
+    public var bundleID: String
+    public var entitlements: String?
+
+    public init(path: String, bundleID: String, entitlements: String? = nil) {
+        self.path = path; self.bundleID = bundleID; self.entitlements = entitlements
+    }
+
+    /// Checks a platform's declared extensions against its app's bundle ID; `key` names them in errors
+    /// (`platforms.ios.extensions`, `ios.extensions`).
+    public static func validate(_ extensions: [ExtensionConfig], platform: Platform, appBundleID: String, key: String) throws {
+        guard !extensions.isEmpty else { return }
+        guard platform == .ios else {
+            throw XlessError(.config, "\(key): only an iOS app's extensions are signed and provisioned", fix: "remove \(key) (macOS app extensions are not supported)")
+        }
+        var paths = Set<String>(), ids = Set<String>()
+        for (i, e) in extensions.enumerated() {
+            let at = "\(key)[\(i)]"
+            if e.path.wholeMatch(of: /(PlugIns|Extensions)\/[^\/:@]+\.appex/) == nil || e.path.hasSuffix("/.appex") {
+                throw XlessError(.config, "\(at).path '\(e.path)' is not an app extension in the app",
+                                 fix: "use PlugIns/<Name>.appex or Extensions/<Name>.appex (no ':' or '@' in the name)")
+            }
+            if e.bundleID.wholeMatch(of: /[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/) == nil || !e.bundleID.hasPrefix(appBundleID + ".") {
+                throw XlessError(.config, "\(at).bundleID '\(e.bundleID)' is not under the app's \(appBundleID)",
+                                 fix: "give the extension a bundle ID under the app's, e.g. \(appBundleID).\(((e.path as NSString).lastPathComponent as NSString).deletingPathExtension)")
+            }
+            if !paths.insert(e.path).inserted { throw XlessError(.config, "\(key) lists \(e.path) twice", fix: "declare each extension once") }
+            if !ids.insert(e.bundleID).inserted { throw XlessError(.config, "\(key) gives \(e.bundleID) to two extensions", fix: "give each extension its own bundle ID") }
+        }
     }
 }
 
@@ -300,6 +350,7 @@ extension ProjectConfig {
             if DottedVersion(pc.minimumOS) == nil {
                 throw XlessError(.config, "platforms.\(p.rawValue).minimumOS '\(pc.minimumOS)' is invalid", fix: "use e.g. \"17.0\"")
             }
+            try ExtensionConfig.validate(pc.extensions, platform: p, appBundleID: bundleID(for: p), key: "platforms.\(p.rawValue).extensions")
         }
         if let sb = launchStoryboard, !sb.hasSuffix(".storyboard") || sb == ".storyboard" || sb.hasSuffix("/.storyboard") {
             throw XlessError(.config, "launchStoryboard '\(sb)' is not a .storyboard file", fix: "point launchStoryboard at the launch screen's .storyboard, e.g. Resources/LaunchScreen.storyboard")

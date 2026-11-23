@@ -762,3 +762,59 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(!plan.steps.contains { [.app, .listing, .privacy, .testflight].contains($0.area) })
     #expect(plan.notes.contains { $0.contains("there is no appstore/") })
 }
+
+// MARK: - App extensions an xless.yml / Tauri / cargo app declares (#143)
+
+@Test func declaredExtensionsArePlannedWithTheirOwnBundleIDCapabilitiesAndProfile() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-provision-ext-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try """
+    bundleID: com.example.app
+    teamID: \(team)
+    version: 1.0.0
+    build: 1
+    platforms:
+      ios:
+        minimumOS: "17.0"
+        product: App
+        entitlements: App.entitlements
+        extensions:
+          - { path: PlugIns/Widget.appex, bundleID: com.example.app.widget, entitlements: Widget.entitlements }
+          - { path: PlugIns/Plain.appex, bundleID: com.example.app.plain }
+    """.write(to: dir.appendingPathComponent("xless.yml"), atomically: true, encoding: .utf8)
+    try Plist.write(["com.apple.security.application-groups": ["group.com.example.app"]], to: dir.appendingPathComponent("App.entitlements"), format: .xml, stage: .account)
+    try Plist.write(["com.apple.security.application-groups": ["group.com.example.app"], "keychain-access-groups": ["$(AppIdentifierPrefix)com.example.app"]],
+                    to: dir.appendingPathComponent("Widget.entitlements"), format: .xml, stage: .account)
+    let loaded = try ProvisionInputs.load(project: dir, config: nil, source: nil, storeDir: nil)
+    #expect(loaded.targets.map(\.label) == ["the iOS app", "PlugIns/Widget.appex", "PlugIns/Plain.appex"])
+    #expect(loaded.targets[1].entitlements["keychain-access-groups"] as? [String] == ["\(team).com.example.app"], "signing prefixes expanded, as sign does")
+    #expect(loaded.targets.allSatisfy { $0.distribution == .appStore && $0.platform == .ios })
+    #expect(loaded.appStoreBundleID == "com.example.app" && loaded.appPlatforms(for: "com.example.app") == ["IOS"])
+
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.inputs = loaded
+    s.inputs.testflight = nil
+    let plan = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault, store: nil, now: now).plan()
+    #expect(subjects(plan) == [
+        "bundle-ids: create com.example.app",
+        "bundle-ids: create com.example.app.widget",
+        "bundle-ids: create com.example.app.plain",
+        "capabilities: enable APP_GROUPS (App Groups) on com.example.app",
+        "capabilities: enable APP_GROUPS (App Groups) on com.example.app.widget",
+        "app-groups: create group.com.example.app",
+        "certificates: create Apple Distribution",
+        "profiles: create xless com.example.app IOS_APP_STORE",
+        "profiles: create xless com.example.app.widget IOS_APP_STORE",
+        "profiles: create xless com.example.app.plain IOS_APP_STORE",
+    ], "\(plan.text)")
+    #expect(plan.steps.first { $0.area == .appGroups }?.details.contains("assigned to com.example.app, com.example.app.widget") == true)
+    #expect(plan.steps.first { $0.subject == "xless com.example.app.widget IOS_APP_STORE" }?.details.first?.contains("for PlugIns/Widget.appex") == true)
+
+    _ = try await ProvisionApplier(inputs: s.inputs, account: s.account, web: { s.web }, vault: v.vault, store: nil, now: now).apply(plan)
+    #expect(s.world.linked[.appGroup]?["com.example.app.widget"]?.isEmpty == false)
+    let again = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault, store: nil, now: now).plan()
+    #expect(again.steps.isEmpty && again.drift.isEmpty, "\(again.text)")
+}
