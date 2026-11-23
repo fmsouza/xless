@@ -310,7 +310,8 @@ private func liveOnly() -> [String: (Int, String)] {
 @Test func partsAreChosenWithOnly() async throws {
     #expect(try StorePushPart.parse(["review,text"]) == [.text, .review])
     #expect(try StorePushPart.parse(["declarations", " TEXT "]) == [.text, .declarations])
-    #expect(throws: XlessError.self) { try StorePushPart.parse(["media"]) }
+    #expect(try StorePushPart.parse(["media,text"]) == [.text, .media])
+    #expect(throws: XlessError.self) { try StorePushPart.parse(["screenshots"]) }
     let (root, dir) = try await pulled()
     defer { try? FileManager.default.removeItem(at: root) }
     try write("Does more\n", "en-US/subtitle.txt", in: dir)

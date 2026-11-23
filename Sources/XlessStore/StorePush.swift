@@ -173,6 +173,7 @@ public struct StorePush: Sendable {
             case .text: try await context.planText()
             case .review: try await context.planReview()
             case .declarations: try await context.planDeclarations()
+            case .media: try await context.planMedia()
             }
         }
         var plan = context.plan
@@ -191,8 +192,16 @@ public struct StorePush: Sendable {
         // A secret is read before the first write: a missing one stops the push with nothing sent.
         for name in Set(plan.changes.flatMap(\.requests).compactMap(\.secret)).sorted() { _ = try sender.value(of: name) }
         var result = Applied()
+        // What was uploaded stays recorded in media.lock, even when a later change fails.
+        defer { recordLock([plan] + (result.replanned.map { [$0] } ?? []), sender: sender, dir: dir) }
         func send(_ changes: [StoreChange], of total: Int) async throws {
             for change in changes {
+                defer {
+                    for note in sender.record.takeNotes() {
+                        say("note: \(note)")
+                        result.notes.append(note)
+                    }
+                }
                 do { try await sender.apply(change) } catch {
                     let n = result.sent.count
                     say("note: \(n) of \(total) change\(total == 1 ? "" : "s") \(n == 1 ? "was" : "were") sent before this failure; re-run `xless store push` to send the rest (it sends only what still differs)")
@@ -219,7 +228,7 @@ public struct StorePush: Sendable {
                              fix: "wait a minute and re-run `xless store push`")
         }
         result.replanned = next
-        result.notes = next.notes
+        result.notes += next.notes
         show(next)
         guard try confirm(next) else {
             say("cancelled; the \(created) was created, nothing else was sent")
@@ -227,6 +236,23 @@ public struct StorePush: Sendable {
         }
         try await send(next.changes, of: result.sent.count + next.changes.count)
         return result
+    }
+}
+
+extension StorePush {
+    /// Updates `dir`'s media.lock with what the plans matched and the sender uploaded and deleted; a lock that cannot
+    /// be written is only a note (it is a cache: the next push compares with App Store Connect anyway).
+    func recordLock(_ plans: [StorePlan], sender: StoreSender, dir: URL) {
+        var lock = MediaLock.read(dir)
+        let before = lock
+        let deleted = sender.record.deleted
+        for (path, entry) in lock.files.values where entry.id.map(deleted.contains) == true { lock.files[path] = nil }
+        for plan in plans { for (path, entry) in plan.lock { lock.files[path] = entry } }
+        for (path, entry) in sender.record.uploads { lock.files[path] = entry }
+        guard lock != before else { return }
+        do { try lock.write(to: dir) } catch {
+            say("note: \(dir.lastPathComponent)/\(MediaLock.fileName) could not be written (\(error.localizedDescription)); the next push still uploads nothing App Store Connect has")
+        }
     }
 }
 

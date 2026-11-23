@@ -114,6 +114,12 @@ public struct StorePull: Sendable {
         case .absent: a.review = nil
         case .forbidden: a.review = old?.review
         }
+        // App Store Connect gives no way to download App Review attachments: the files app.yml lists stay as they are.
+        if let attachments = old?.review?.attachments {
+            var review = a.review ?? AppYAML.Review()
+            review.attachments = attachments
+            a.review = review
+        }
 
         var files: [String: ManifestWriter.Content] = [:]
         var lock = MediaLock()
@@ -153,6 +159,7 @@ public struct StorePull: Sendable {
         case .absent: break
         case .forbidden: a.encryption = old?.encryption
         }
+        a.encryptionDocument = old?.encryptionDocument
         switch try await asc.accessibility(of: app.id) {
         case .value(let declarations): a.accessibility = Self.accessibility(declarations, live: isLive)
         case .absent: break
@@ -184,8 +191,15 @@ public struct StorePull: Sendable {
         case .forbidden: a.availability = old?.availability
         }
 
+        a.previewFrames = media.frames.isEmpty ? nil : SortedMap(media.frames)
         manifest.app = a
         report.locales = manifest.orderedLocales
+        // Attachments and the compliance document are not pulled: their lock entries stay.
+        let named = Set((old?.review?.attachments ?? []) + (old?.encryptionDocument.map { [$0] } ?? []))
+        for (path, entry) in oldLock.files.values
+        where named.contains(path) || path.split(separator: "/").first.map({ ManifestReader.reservedDirectories.contains(String($0)) }) == true {
+            lock.files[path] = entry
+        }
         // Local media App Store Connect does not have (never pushed) are not part of what was pulled: say so.
         let localMedia = (existing?.locales.values ?? [:].values).flatMap { ($0.screenshots + $0.previews).flatMap(\.files) }
         // (Only a file the lock ties to an upload can be kept.)
@@ -367,6 +381,8 @@ struct MediaFetch {
     let dir: URL
     let staging: URL
     let oldLock: MediaLock
+    /// Poster frames of the previews written: path → `previewFrameTimeCode`.
+    var frames: [String: String] = [:]
 
     mutating func fetch(_ set: StoreRemoteSet, kind: String, locale: String, files: inout [String: ManifestWriter.Content],
                         lock: inout MediaLock, report: inout StorePull.Report) async throws -> MediaSet {
@@ -381,6 +397,7 @@ struct MediaFetch {
                 lock.files[path] = MediaLock.Entry(md5: oldLock.files[local]?.md5, appleChecksum: checksum, id: item.id)
                 report.kept += 1
                 paths.append(path)
+                if kind == "previews", let frame = a.previewFrameTimeCode { frames[path] = frame }
                 continue
             }
             guard a.assetDeliveryState?.state == nil || a.assetDeliveryState?.state == "COMPLETE", let url = Self.deliveryURL(a, kind: kind, name: name) else {
@@ -401,6 +418,7 @@ struct MediaFetch {
             lock.files[path] = MediaLock.Entry(md5: MD5Hex.of(data), appleChecksum: a.sourceFileChecksum, id: item.id)
             report.downloaded += 1
             paths.append(path)
+            if kind == "previews", let frame = a.previewFrameTimeCode { frames[path] = frame }
         }
         return MediaSet(type: set.type, files: paths)
     }

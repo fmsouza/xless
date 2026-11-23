@@ -195,12 +195,18 @@ struct StorePushCommand: AsyncParsableCommand {
         Parts, in this order (--only text,review,… to choose): text (the version: created when App Store Connect has \
         none for app.yml's version, version string, copyright, release type and date, phased release; the primary \
         locale; categories; per locale name, subtitle, privacy URLs and text, description, keywords, what's new, \
-        promotional text, support and marketing URLs), review (App Review contact, notes and demo account), \
-        declarations (age rating, content rights, licence agreement, export compliance, accessibility).
+        promotional text, support and marketing URLs), review (App Review contact, notes, demo account and \
+        attachments), declarations (age rating, content rights, licence agreement, export compliance and its \
+        document, accessibility), media (per locale and display type, the screenshot and preview sets).
+
+        Files (screenshots, previews, attachments, the compliance document) are compared with App Store Connect's by \
+        MD5, so an unchanged file is never uploaded again; a changed one replaces its upload, sets are put in the \
+        directory's order, and media.lock records what each file is. Uploads go through App Store Connect's upload \
+        operations, read from disk part by part.
 
         app.yml keys that are absent are left as App Store Connect has them; in a locale directory, a missing text file \
-        clears the field. Locales App Store Connect has and the directory does not are reported; --prune deletes them. \
-        Deleting anything asks first (or needs --yes).
+        clears the field. Locales, sets and files App Store Connect has and the directory does not are reported; \
+        --prune deletes them. Deleting anything asks first (or needs --yes).
 
         The demo account's password comes from the secret app.yml's review.demoAccount.passwordSecret names (secret \
         store, NAME or NAME_FILE). App Store Connect never gives it back, so it is sent only when the review details \
@@ -210,9 +216,10 @@ struct StorePushCommand: AsyncParsableCommand {
 
     @OptionGroup var directory: StoreDirOption
     @Flag(help: "Print the plan and stop: nothing is sent.") var dryRun = false
-    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations (comma-separated, or repeated).", valueName: "parts"))
+    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, media (comma-separated, or repeated).", valueName: "parts"))
     var only: [String] = []
-    @Flag(help: "Delete the localizations App Store Connect has and the directory does not (never the primary locale).") var prune = false
+    @Flag(help: "Delete the localizations, media sets and files App Store Connect has and the directory does not (never the primary locale).")
+    var prune = false
     @Flag(help: "Send the demo account's name and password even if they look unchanged (after changing the password).")
     var resendDemoAccount = false
     @OptionGroup var team: TeamOption

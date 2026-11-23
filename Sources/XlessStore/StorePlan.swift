@@ -9,7 +9,7 @@ import XlessCore
 /// One HTTP request of a change: a JSON:API document for App Store Connect's documented API.
 public struct StoreRequest: Sendable, Equatable {
     public var method: String
-    /// The path; `{id}` stands for the ID of the resource the change's previous request created.
+    /// The path; `{id}` stands for the ID of the resource the change's first creating request created.
     public var path: String
     public var body: JSONValue?
     /// The secret whose value goes into `data.attributes.demoAccountPassword` when the request is sent.
@@ -88,9 +88,13 @@ public struct StoreChange: Sendable, Equatable {
     public var requests: [StoreRequest]
     /// The rest of the plan depends on IDs this change makes (a new version): it is planned again once it is applied.
     public var replans: Bool
+    /// Files to upload (and the set's order and deletions), done after `requests`.
+    public var media: StoreMediaWork?
 
-    public init(_ action: Action, _ part: StorePushPart, _ subject: String, fields: [StoreFieldChange] = [], requests: [StoreRequest], replans: Bool = false) {
+    public init(_ action: Action, _ part: StorePushPart, _ subject: String, fields: [StoreFieldChange] = [], requests: [StoreRequest], replans: Bool = false,
+                media: StoreMediaWork? = nil) {
         self.action = action; self.part = part; self.subject = subject; self.fields = fields; self.requests = requests; self.replans = replans
+        self.media = media
     }
 
     public var text: String {
@@ -101,14 +105,16 @@ public struct StoreChange: Sendable, Equatable {
     }
 }
 
-/// The parts of the listing `store push` sends, in the order it sends them (#95–#97 add media, pricing and privacy).
+/// The parts of the listing `store push` sends, in the order it sends them (#96–#97 add pricing and privacy).
 public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
     /// Text and the version: primary locale, categories, the app information and version localizations, the version.
     case text
     /// App Review details, with the demo account.
     case review
-    /// Age rating, content rights, licence agreement, export compliance, accessibility.
+    /// Age rating, content rights, licence agreement, export compliance (and its document), accessibility.
     case declarations
+    /// Screenshots and app previews, per locale and display type.
+    case media
 
     /// `text,review` (also repeated) → parts, in push order.
     public static func parse(_ arguments: [String]) throws -> [StorePushPart] {
@@ -128,6 +134,9 @@ public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
 public struct StorePlan: Sendable, Equatable {
     public var changes: [StoreChange] = []
     public var notes: [String] = []
+    /// media.lock entries planning found (a local file that is an upload App Store Connect has), recorded once the
+    /// plan is applied.
+    public var lock: [String: MediaLock.Entry] = [:]
 
     public init(changes: [StoreChange] = [], notes: [String] = []) { self.changes = changes; self.notes = notes }
 
@@ -151,3 +160,118 @@ public struct StorePlan: Sendable, Equatable {
 }
 
 extension StoreChange.Action: CaseIterable {}
+
+// MARK: - Media
+
+/// What kind of file a media change uploads, and where App Store Connect keeps it.
+public enum StoreMediaKind: String, Sendable, Equatable {
+    case screenshots, previews, reviewAttachments, encryptionDocument
+
+    /// The resource type of one file (also its path: /v1/<itemType>).
+    public var itemType: String {
+        switch self {
+        case .screenshots: "appScreenshots"
+        case .previews: "appPreviews"
+        case .reviewAttachments: "appStoreReviewAttachments"
+        case .encryptionDocument: "appEncryptionDeclarationDocuments"
+        }
+    }
+
+    /// The set the files belong to (ordered), for screenshots and previews.
+    public var setType: String? {
+        switch self {
+        case .screenshots: "appScreenshotSets"
+        case .previews: "appPreviewSets"
+        case .reviewAttachments, .encryptionDocument: nil
+        }
+    }
+
+    /// The set's type attribute (`screenshotDisplayType`, `previewType`).
+    public var setAttribute: String? {
+        switch self {
+        case .screenshots: "screenshotDisplayType"
+        case .previews: "previewType"
+        case .reviewAttachments, .encryptionDocument: nil
+        }
+    }
+
+    /// A file's to-one relationship to what holds it, and that resource's type.
+    public var parent: (relationship: String, type: String) {
+        switch self {
+        case .screenshots: ("appScreenshotSet", "appScreenshotSets")
+        case .previews: ("appPreviewSet", "appPreviewSets")
+        case .reviewAttachments: ("appStoreReviewDetail", "appStoreReviewDetails")
+        case .encryptionDocument: ("appEncryptionDeclaration", "appEncryptionDeclarations")
+        }
+    }
+
+    static let allItemTypes: Set<String> = Set([StoreMediaKind.screenshots, .previews, .reviewAttachments, .encryptionDocument].map(\.itemType))
+
+    /// How many files Apple takes in one set.
+    public var maxItems: Int? {
+        switch self {
+        case .screenshots: ScreenshotDisplayType.maxPerSet
+        case .previews: PreviewType.maxPerSet
+        case .reviewAttachments: nil
+        case .encryptionDocument: 1
+        }
+    }
+}
+
+/// A local file to upload.
+public struct StoreUpload: Sendable, Equatable {
+    /// Relative to the manifest directory: how the plan names it, and its media.lock key.
+    public var path: String
+    public var file: URL
+    public var fileName: String
+    public var fileSize: Int
+    public var md5: String
+    /// Attributes sent with the commit (`previewFrameTimeCode`).
+    public var commit: [String: JSONValue]
+
+    public init(path: String, file: URL, fileName: String, fileSize: Int, md5: String, commit: [String: JSONValue] = [:]) {
+        self.path = path; self.file = file; self.fileName = fileName; self.fileSize = fileSize; self.md5 = md5; self.commit = commit
+    }
+}
+
+/// One set's files as App Store Connect should end up with them: `StoreSender` creates the set if needed, uploads,
+/// deletes, then puts the set in order.
+public struct StoreMediaWork: Sendable, Equatable {
+    /// The version localization a new set belongs to: known, or (a locale this push creates) looked up when sent.
+    public enum Localization: Sendable, Equatable {
+        case id(String)
+        case locale(String, versionID: String)
+    }
+
+    public enum Container: Sendable, Equatable {
+        /// An existing set.
+        case set(String)
+        /// A set to create, of this display or preview type.
+        case newSet(type: String, localization: Localization)
+        /// The resource the files hang from (review details, encryption declaration); `{id}`: the one the change created.
+        case parent(String)
+    }
+
+    /// A position of the set once sent: a file App Store Connect has, or one to upload.
+    public enum Slot: Sendable, Equatable {
+        case keep(String)
+        case upload(StoreUpload)
+    }
+
+    public var kind: StoreMediaKind
+    public var container: Container
+    /// The files in display order.
+    public var slots: [Slot]
+    /// Files App Store Connect has that go (replaced, failed, or pruned).
+    public var deletes: [String]
+    /// Delete before uploading (the set would otherwise hold more than Apple allows).
+    public var deleteFirst: Bool
+    /// Send the order (PATCH of the set's files relationship) once uploads and deletions are done.
+    public var reorder: Bool
+
+    public init(kind: StoreMediaKind, container: Container, slots: [Slot], deletes: [String] = [], deleteFirst: Bool = false, reorder: Bool = false) {
+        self.kind = kind; self.container = container; self.slots = slots; self.deletes = deletes; self.deleteFirst = deleteFirst; self.reorder = reorder
+    }
+
+    public var uploads: [StoreUpload] { slots.compactMap { if case .upload(let u) = $0 { return u }; return nil } }
+}

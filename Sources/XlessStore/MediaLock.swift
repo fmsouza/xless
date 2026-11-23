@@ -1,13 +1,14 @@
 import Crypto
 import Foundation
+import XlessASC
 import Yams
 
-/// `appstore/media.lock`: which App Store Connect asset each local screenshot or preview is.
+/// `appstore/media.lock`: which App Store Connect asset each local screenshot, preview or attachment is.
 ///
 /// App Store Connect serves a re-encoded copy of an uploaded image, never the file itself, so a local file cannot be
 /// compared with Apple's by content. The lock records, per file, the MD5 of the local file and the `sourceFileChecksum`
 /// Apple keeps for the upload it came from. While the local MD5 is unchanged, the file *is* that upload: `pull` keeps
-/// the local original instead of downloading Apple's copy, and `store push` (#95) uploads nothing. `pull` and `push`
+/// the local original instead of downloading Apple's copy, and `store push` uploads nothing. `pull` and `push`
 /// write it; people do not edit it.
 public struct MediaLock: Codable, Sendable, Equatable {
     public static let fileName = "media.lock"
@@ -47,6 +48,11 @@ public struct MediaLock: Codable, Sendable, Equatable {
             + (try encoder.encode(self))
     }
 
+    /// Writes `dir`'s media.lock (atomically: a crash leaves the old one).
+    public func write(to dir: URL) throws {
+        try Data(try render().utf8).write(to: dir.appendingPathComponent(Self.fileName), options: .atomic)
+    }
+
     /// The entry whose upload has Apple's checksum `appleChecksum` and whose local file still has its recorded MD5.
     public func unchangedFile(for appleChecksum: String, in dir: URL) -> String? {
         for (path, entry) in files.values.sorted(by: { $0.key < $1.key }) where entry.appleChecksum == appleChecksum {
@@ -60,14 +66,5 @@ public enum MD5Hex {
     public static func of(_ data: Data) -> String { Insecure.MD5.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
     /// The MD5 of a file, read in 1 MB pieces; nil when it cannot be read.
-    public static func file(_ url: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        var md5 = Insecure.MD5()
-        do {
-            // At the end Foundation answers empty data, or nil on Linux.
-            while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty { md5.update(data: chunk) }
-        } catch { return nil }
-        return md5.finalize().map { String(format: "%02x", $0) }.joined()
-    }
+    public static func file(_ url: URL) -> String? { try? AssetFile.md5(url) }
 }
