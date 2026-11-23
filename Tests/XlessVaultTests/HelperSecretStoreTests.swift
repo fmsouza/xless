@@ -241,3 +241,19 @@ private let pem = "-----BEGIN PRIVATE KEY-----\nMIG\"quote\\back/slash\té\n----
     try Data("secrets:\n  backend: helper\n  helper: nope\n".utf8).write(to: file)
     #expect(throws: VaultError.self) { try ConfiguredSecretStore.load(env: env, cache: nil, prompter: { nil }) }
 }
+
+@Test func theHelperInheritsNoOpenFileOfXless() throws {
+    #if os(Linux)
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let marker = dir.root.appendingPathComponent("open-in-xless")
+    try Data("x".utf8).write(to: marker)
+    let fd = open(marker.path, O_RDONLY) // no O_CLOEXEC: a child would inherit it
+    #expect(fd >= 3)
+    defer { close(fd) }
+    try dir.script("fds", #"for f in /proc/$$/fd/*; do readlink "$f"; done > "$HOME/fds"; printf '{}'"#)
+    _ = try dir.store("fds").catalog()
+    let fds = try dir.read("fds")
+    #expect(!fds.contains("open-in-xless"), "\(fds)")
+    #endif
+}

@@ -49,7 +49,8 @@ int xless_is_memory_fs(const char *path);
 
 /// Starts `path` with `argv` and `envp` (NULL-terminated) in a process group of its own (its pid), with every signal at
 /// its default disposition and none blocked. Its stdin and stdout are pipes whose other ends come back in `*in_fd` and
-/// `*out_fd` (close-on-exec, non-blocking); its stderr is this process's. Returns 0, or an errno value (nothing started).
+/// `*out_fd` (close-on-exec, non-blocking); its stderr is this process's; every other descriptor is closed in it.
+/// Returns 0, or an errno value (nothing left running: execve's own error, e.g. ETXTBSY, comes back).
 int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int *pid, int *in_fd, int *out_fd);
 
 /// write(2) that never raises SIGPIPE in this process: a reader that went away gives -1 with errno EPIPE.

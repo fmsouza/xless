@@ -110,7 +110,13 @@ public struct CredentialHelper: Sendable {
         let argv = [executable, verb.rawValue]
         let envp = environment.map { "\($0.key)=\($0.value)" }.sorted()
         var pid: Int32 = 0, inFD: Int32 = -1, outFD: Int32 = -1
-        let started = withCStrings(argv) { a in withCStrings(envp) { e in xless_spawn_piped(executable, a, e, &pid, &inFD, &outFD) } }
+        var started: Int32 = 0
+        // ETXTBSY: another thread's fork still held the helper open for writing (a helper written just now); it passes.
+        for attempt in 0..<20 {
+            started = withCStrings(argv) { a in withCStrings(envp) { e in xless_spawn_piped(executable, a, e, &pid, &inFD, &outFD) } }
+            guard started == ETXTBSY, attempt < 19 else { break }
+            usleep(50_000)
+        }
         guard started == 0 else {
             throw VaultError(.helper, "cannot start \(executable): \(String(cString: strerror(started)))", fix: "check that it is an executable script or program")
         }

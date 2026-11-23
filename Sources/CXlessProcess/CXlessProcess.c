@@ -9,7 +9,6 @@
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <spawn.h>
 #include <pthread.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -135,31 +134,55 @@ static int cloexec_pipe(int fds[2]) {
 }
 
 int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int *pid, int *in_fd, int *out_fd) {
-    int in[2], out[2], e;
+    int in[2], out[2], status[2], e;
     if ((e = cloexec_pipe(in)) != 0) return e;
     if ((e = cloexec_pipe(out)) != 0) { close(in[0]); close(in[1]); return e; }
-    posix_spawn_file_actions_t actions;
-    posix_spawnattr_t attr;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawnattr_init(&attr);
-    posix_spawn_file_actions_adddup2(&actions, in[0], 0);
-    posix_spawn_file_actions_adddup2(&actions, out[1], 1);
-    sigset_t all, none;
-    sigfillset(&all);
-    sigdelset(&all, SIGKILL);
-    sigdelset(&all, SIGSTOP);
-    sigemptyset(&none);
-    posix_spawnattr_setsigdefault(&attr, &all);
-    posix_spawnattr_setsigmask(&attr, &none);
-    posix_spawnattr_setpgroup(&attr, 0);
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
-    pid_t child = 0;
-    e = posix_spawn(&child, path, &actions, &attr, argv, envp);
-    posix_spawn_file_actions_destroy(&actions);
-    posix_spawnattr_destroy(&attr);
+    if ((e = cloexec_pipe(status)) != 0) { close(in[0]); close(in[1]); close(out[0]); close(out[1]); return e; }
+    long max_fd = sysconf(_SC_OPEN_MAX);
+    if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
+    pid_t child = fork();
+    if (child < 0) {
+        e = errno;
+        close(in[0]); close(in[1]); close(out[0]); close(out[1]); close(status[0]); close(status[1]);
+        return e;
+    }
+    if (child == 0) {
+        // Only async-signal-safe calls from here to execve.
+        setpgid(0, 0);
+        for (int sig = 1; sig < NSIG; sig++) {
+            if (sig == SIGKILL || sig == SIGSTOP) continue;
+            signal(sig, SIG_DFL);
+        }
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        if (dup2(in[0], 0) < 0 || dup2(out[1], 1) < 0) { e = errno; goto failed; }
+        // Nothing else of xless's reaches the helper: no store file, lock or socket left open without close-on-exec.
+        {
+            int report = status[1];
+            for (long fd = 3; fd < max_fd; fd++) if (fd != report) close((int)fd);
+        }
+        execve(path, argv, envp);
+        e = errno;
+    failed:
+        while (write(status[1], &e, sizeof e) < 0 && errno == EINTR) {}
+        _exit(127);
+    }
+    setpgid(child, child); // also in the parent, so the group exists before any kill
     close(in[0]);
     close(out[1]);
-    if (e != 0) { close(in[1]); close(out[0]); return e; }
+    close(status[1]);
+    int child_errno = 0;
+    ssize_t n;
+    do { n = read(status[0], &child_errno, sizeof child_errno); } while (n < 0 && errno == EINTR);
+    close(status[0]);
+    if (n > 0) {
+        int ignored;
+        xless_reap(child, 0, &ignored);
+        close(in[1]);
+        close(out[0]);
+        return child_errno ? child_errno : EIO;
+    }
     fcntl(in[1], F_SETFL, fcntl(in[1], F_GETFL) | O_NONBLOCK);
     fcntl(out[0], F_SETFL, fcntl(out[0], F_GETFL) | O_NONBLOCK);
     *pid = child;

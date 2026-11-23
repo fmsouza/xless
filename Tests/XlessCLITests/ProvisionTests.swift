@@ -208,7 +208,7 @@ private struct TestVault {
         let (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"), kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
         if create { try store.create(file) }
         self.key = key
-        vault = ProvisionVault(store: store, env: env, unlock: { _, _ in key })
+        vault = ProvisionVault(store: store.secretStore, env: env)
     }
 
     func add(_ name: String, kind: VaultEntry.Kind = .signingKey, secret: String, metadata: VaultEntry.Metadata) throws {
