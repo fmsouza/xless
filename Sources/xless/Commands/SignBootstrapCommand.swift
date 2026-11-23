@@ -79,8 +79,11 @@ struct SignBootstrapCommand: AsyncParsableCommand {
             let team = AccountSession.savedTeam()
             let file = try APIKeyWebCLI.existingStore()
             let entry = CertificateKeyStore.entryName(base: type.secretName, team: team)
-            try CertificateKeyStore.precheck(file, name: entry, base: type.secretName, team: team, stage: .sign)
-            let client = ASCClient(credentials: try ASCCredentials.fromSecrets(Secrets(), stage: .sign))
+            try CertificateKeyStore.precheck(file, name: entry, base: type.secretName, team: team, stage: .sign,
+                                             keepBoth: "create the new certificate with `xless certs create --type \(type.certificateType.argument) --name <another entry name>`")
+            // The API key of the same team the entry is named after.
+            let secrets = Secrets(fallback: AccountSession.storeFallback(team))
+            let client = ASCClient(credentials: try ASCCredentials.fromSecrets(secrets, stage: .sign))
             let creation = CertificateCreation(api: ASCCertificates(resources: ASCResources(client: client)), stage: .sign, refuseIfAny: !allowNew,
                                                say: AppleWebCLI.say)
             let created = try await creation.run(type: type.certificateType, relatedID: nil, entry: entry, team: team, keys: {

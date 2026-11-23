@@ -289,14 +289,16 @@ Account Holder. `--type` takes the 18 `CertificateType` values of App Store Conn
 `MAC_INSTALLER_DISTRIBUTION`, `DEVELOPER_ID_APPLICATION(_G2)`, `DEVELOPER_ID_KEXT(_G2)`, `APPLE_PAY`,
 `APPLE_PAY_MERCHANT_IDENTITY`, `APPLE_PAY_PSP_IDENTITY`, `APPLE_PAY_RSA`, `PASS_TYPE_ID(_WITH_NFC)`, `IDENTITY_ACCESS`)
 in any case, with dashes or underscores; `developer-id` and `installer` stand for `DEVELOPER_ID_APPLICATION_G2` and
-`MAC_INSTALLER_DISTRIBUTION`. Developer ID Installer certificates are not in the API: create them on
+`MAC_INSTALLER_DISTRIBUTION` (`list --type developer-id` shows both Developer ID Application generations). Developer
+ID Installer certificates are not in the API: create them on
 [developer.apple.com](https://developer.apple.com/account/resources/certificates).
 
 `create` without `--csr` generates an RSA-2048 key, keeps it in memory only, and seals it into the
 [secret store](secrets.md) **before** the create request: a store that cannot keep it (no store, a wrong passphrase, a
 taken name) means nothing is sent. The entry is `XLESS_DIST_KEY`, `XLESS_DEVID_KEY` or `XLESS_INSTALLER_KEY` for the
 three certificates `sign` uses, `XLESS_<TYPE>_KEY` otherwise, with `@<TEAM_ID>` when a team is selected; `--name`
-chooses another. xless refuses up front when the store already has a key the `sign` stage would read for that team. The
+chooses another. xless refuses up front when the store already has a key the `sign` stage would read for that team
+(also for a `--name` such as `XLESS_DIST_KEY@<TEAM_ID>`). The
 create request is sent once, never retried. A definite refusal (a 4xx other than 429) removes the key again; any other
 failure may have created the certificate, so the key is kept and the error says to check `xless certs list`. Once the
 certificate exists, its ID, type and expiry (and the team, read from the certificate when none was selected) are

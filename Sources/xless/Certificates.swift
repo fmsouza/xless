@@ -19,12 +19,21 @@ extension ASCCertificates: CertificateAPI {}
 
 /// The store side: which entry a certificate's private key goes to, and keeping it there.
 struct CertificateKeyStore {
+    /// The secret the `sign` stage reads that `name` stands for (`XLESS_DIST_KEY@ABCDE12345` → `XLESS_DIST_KEY`), if any:
+    /// a key stored under such a name, even one chosen with `--name`, must not make the stage's choice ambiguous.
+    static func signBase(of name: String) -> String? {
+        let base = String(name.split(separator: "@", maxSplits: 1).first ?? "")
+        return CertificateKind.allCases.map(\.secretName).contains(base) ? base : nil
+    }
+
     /// `<base>@<TEAM_ID>`, or `<base>` without a team.
     static func entryName(base: String, team: String?) -> String { team.map { "\(base)@\($0)" } ?? base }
 
     /// Refuses, before a key is generated, when `name` is taken, or (for a default name, `base` given) when the store
     /// already holds a `base` key the `sign` stage would pick for the team: a second one would make its choice ambiguous.
-    static func precheck(_ file: VaultFile, name: String, base: String?, team: String?, stage: Stage) throws {
+    /// - Parameter keepBoth: how to keep the existing key and add the new one (`certs create` has `--name`; bootstrap has not).
+    static func precheck(_ file: VaultFile, name: String, base: String?, team: String?, stage: Stage,
+                         keepBoth: String = "pass --name <another entry name>") throws {
         var clashing = file.entry(named: name).map { [$0.name] } ?? []
         if let base {
             clashing += file.entries.filter { e in
@@ -35,7 +44,7 @@ struct CertificateKeyStore {
         }
         guard !clashing.isEmpty else { return }
         throw XlessError(stage, "the secret store already has \(clashing.joined(separator: ", ")), where this certificate's private key would go",
-                         fix: "if its certificate is gone, remove it (`xless secrets rm \(clashing[0])`); to keep both, pass --name <another entry name>\(base.map { " (the sign stage reads \($0))" } ?? "")")
+                         fix: "if its certificate is gone, remove it (`xless secrets rm \(clashing[0])`); to keep both, \(keepBoth)\(base.map { " (the sign stage reads \($0))" } ?? "")")
     }
 
     let store: VaultStore
@@ -56,14 +65,15 @@ struct CertificateKeyStore {
         }
     }
 
-    /// Re-seals `name` with the certificate's ID and expiry (and its team, when the entry had none).
+    /// Re-seals `name` with the certificate's ID and expiry, and `team` (the certificate's own, when known) over the
+    /// entry's.
     func record(name: String, secret: SecretBytes, certificateID: String, expires: Date?, team: String?) throws {
         try store.update { file in
             guard file.id == fileID, let index = file.entries.firstIndex(where: { $0.name == name }) else {
                 throw VaultError(.noEntry, "the entry \(name) is no longer in the secret store", fix: "re-import the key with `xless secrets import`")
             }
             var metadata = file.entries[index].metadata
-            metadata.teamID = metadata.teamID ?? team
+            metadata.teamID = team ?? metadata.teamID
             metadata.certificateID = certificateID
             metadata.expires = expires.map { Date(timeIntervalSince1970: $0.timeIntervalSince1970.rounded(.down)) }
             var next = file
@@ -126,7 +136,7 @@ struct CertificateCreation {
         let existing = try await api.list(types: group, withContent: false)
         if let cap = type.cap, existing.count >= cap {
             throw XlessError(stage, "the team already has \(existing.count) \(type.displayName) certificates (Apple allows \(cap))",
-                             fix: "revoke one you no longer use (`xless certs list --type \(type.argument)`, `xless certs revoke <id>`), then re-run")
+                             fix: "revoke one you no longer use (`xless certs list \(type.listArguments)`, `xless certs revoke <id>`), then re-run")
         }
         if refuseIfAny, !existing.isEmpty {
             throw XlessError(stage, "the team already has \(existing.count) \(type.displayName) certificate(s); their private keys cannot be downloaded",
@@ -164,13 +174,16 @@ struct CertificateCreation {
             throw refused(type, error, removedEntry: removed ? entry : nil, keptEntry: removed ? nil : entry)
         }
         let facts = certificate.der.flatMap { CertificateFacts(der: $0) }
+        if let selected = team, let actual = facts?.teamID, actual != selected {
+            say("warning: certificate \(certificate.id) belongs to team \(actual) (the API key's), not \(selected); its key is recorded as team \(actual)'s in \(entry)")
+        }
         do {
             try store.record(name: entry, secret: secret, certificateID: certificate.id, expires: facts?.expires ?? certificate.expires,
-                             team: team ?? facts?.teamID)
+                             team: facts?.teamID ?? team)
         } catch {
             say("warning: certificate \(certificate.id) was created and its key is in the store as \(entry), but its ID could not be recorded with it (\(XlessError.wrapping(error, stage: stage).cause)); the sign stage still finds it by its public key")
         }
-        return CertificateCreated(certificate: certificate, entry: entry, team: team ?? facts?.teamID)
+        return CertificateCreated(certificate: certificate, entry: entry, team: facts?.teamID ?? team)
     }
 
     /// A certificate for a key xless never sees: the CSR is sent as given, once.
@@ -192,7 +205,7 @@ struct CertificateCreation {
 
     func ambiguous(_ type: CertificateType, _ error: Error, kept entry: String?) -> XlessError {
         XlessError(stage, "\(CertificateService.ambiguousMarker): the request to create the \(type.displayName) certificate failed (\(XlessError.wrapping(error, stage: stage).cause)) and may or may not have succeeded",
-                   fix: "check `xless certs list --type \(type.argument)` before retrying"
+                   fix: "check `xless certs list \(type.listArguments)` before retrying"
                        + (entry.map { "; the private key is kept in the secret store as \($0) in case the certificate exists (if none matches it, remove it with `xless secrets rm \($0)`)" } ?? ""))
     }
 
@@ -208,10 +221,17 @@ struct CertificateCreation {
                     ? "Developer ID certificates need the Account Holder (developer.apple.com/help/account/certificates/create-developer-id-certificates/): have them create it, or make a CSR with `xless sign bootstrap --type developer-id --csr-only --out <key file>` and have them run `xless certs create --type \(type.argument) --csr <key file>.csr`"
                     : "creating certificates needs an API key with the Admin role (distribution certificates: the Account Holder or an Admin)"
             case 409:
-                fix = "App Store Connect refuses another one when the team has as many \(type.displayName) certificates as Apple allows: revoke one you no longer use (`xless certs list --type \(type.argument)`, `xless certs revoke <id>`); otherwise check the type and the merchant or pass type ID"
+                fix = "App Store Connect refuses another one when the team has as many \(type.displayName) certificates as Apple allows: revoke one you no longer use (`xless certs list \(type.listArguments)`, `xless certs revoke <id>`); otherwise check the type and the merchant or pass type ID"
             default: break
             }
         }
-        return XlessError(stage, "App Store Connect refused to create the \(type.displayName) certificate (\(wrapped.cause))\(what)", fix: fix)
+        let failed = error is ASCError ? "App Store Connect refused to create" : "xless could not ask App Store Connect for"
+        return XlessError(stage, "\(failed) the \(type.displayName) certificate (\(wrapped.cause))\(what)", fix: fix)
     }
+}
+
+extension CertificateType {
+    /// The `xless certs list` options showing every certificate counted with this one (both Developer ID Application
+    /// generations share Apple's limit).
+    var listArguments: String { (capGroup.isEmpty ? [self] : capGroup).map { "--type \($0.argument)" }.joined(separator: " ") }
 }

@@ -28,6 +28,12 @@ struct CertsCommand: AsyncParsableCommand {
 enum CertificateTypeArgument {
     static let names = CertificateType.allCases.map(\.argument).joined(separator: ", ")
 
+    /// For `list`: `developer-id` shows both Developer ID Application generations (they share Apple's limit).
+    static func parseForList(_ text: String) throws -> [CertificateType] {
+        let type = try parse(text)
+        return text.lowercased() == "developer-id" ? type.capGroup : [type]
+    }
+
     static func parse(_ text: String) throws -> CertificateType {
         guard let type = CertificateType(argument: text) else {
             throw ValidationError("--type \(text) is not a certificate type: use one of \(names) (or developer-id, installer)")
@@ -73,7 +79,8 @@ struct CertsListCommand: AsyncParsableCommand {
     }
 
     func run() async throws {
-        let types = try types.map(CertificateTypeArgument.parse)
+        var types: [CertificateType] = []
+        for type in try self.types.flatMap(CertificateTypeArgument.parseForList) where !types.contains(type) { types.append(type) }
         try await runCerts(team.team, verbose: trace.verbose) { try await $0.with(json: output.json).list(types: types, expiringWithin: expiring) }
     }
 }
@@ -144,7 +151,10 @@ struct CertsCreateCommand: AsyncParsableCommand {
             let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
             let certificates = ASCCertificates(resources: session.resources)
             let entry = name ?? CertificateKeyStore.entryName(base: type.defaultEntryBase, team: session.team)
-            if let file { try CertificateKeyStore.precheck(file, name: entry, base: name == nil ? type.defaultEntryBase : nil, team: session.team, stage: .account) }
+            if let file {
+                try CertificateKeyStore.precheck(file, name: entry, base: CertificateKeyStore.signBase(of: entry) ?? (name == nil ? type.defaultEntryBase : nil),
+                                                 team: session.team, stage: .account)
+            }
             let related: String?
             switch type.relationship {
             case .merchantID?: related = try await ASCMerchantIDs(resources: session.resources).resolve(merchantId ?? "").id

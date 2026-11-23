@@ -18,6 +18,10 @@ public enum CertificateKind: String, Sendable, CaseIterable {
     /// Apple's documented per-team limit (`CertificateType.cap`: five Developer ID Application certificates); nil where
     /// Apple documents none, and App Store Connect refuses a certificate too many itself.
     public var cap: Int? { certificateType.cap }
+    /// The `xless certs list` options showing this kind's certificates (`ascTypes`).
+    public var listArguments: String {
+        ascTypes.map { "--type \($0.lowercased().replacingOccurrences(of: "_", with: "-"))" }.joined(separator: " ")
+    }
     /// The API type `bootstrap` creates.
     public var certificateType: CertificateType {
         switch self {
@@ -73,7 +77,7 @@ public struct CertificateService: Sendable {
         let existing = try await list(kind)
         if let cap = kind.cap, existing.count >= cap {
             throw XlessError(.sign, "team already has \(existing.count) \(kind.rawValue) certificates (Apple limit \(cap))",
-                             fix: "revoke an unused one (`xless certs list --type \(kind.certificateType.argument)`, `xless certs revoke <id>`)")
+                             fix: "revoke an unused one (`xless certs list \(kind.listArguments)`, `xless certs revoke <id>`)")
         }
         if !existing.isEmpty, !allowNew {
             throw XlessError(.sign, "team already has \(existing.count) \(kind.rawValue) certificate(s); their private keys cannot be downloaded",
@@ -91,7 +95,7 @@ public struct CertificateService: Sendable {
         } catch where Self.isAmbiguous(error) {
             let now = (try? await list(kind).count).map(String.init) ?? "unknown"
             throw XlessError(.sign, "\(Self.ambiguousMarker): the create request failed (\(error)) and may or may not have succeeded; team now has \(now) \(kind.rawValue) certificate(s) (was \(existing.count))",
-                             fix: "check `xless certs list --type \(kind.certificateType.argument)` before retrying with --allow-new; the key was kept in case the certificate exists")
+                             fix: "check `xless certs list \(kind.listArguments)` before retrying with --allow-new; the key was kept in case the certificate exists")
         }
     }
 

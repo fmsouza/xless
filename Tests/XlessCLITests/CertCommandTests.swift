@@ -376,3 +376,61 @@ private func listing(_ items: [String]) -> String { #"{"data":[\#(items.joined(s
     let json = try await cli(FakeTransport([(200, cert), (200, profiles), (204, "")]), json: true, store: try vault.read()).revoke("C1", yes: true)
     #expect(json.contains(#""revoked" : "C1""#) && json.contains(#""storeEntries" : ["#))
 }
+
+// MARK: - Review follow-ups
+
+@Test func theCertificatesTeamWinsOverTheSelectedOne() async throws {
+    let vault = try CertVault()
+    defer { vault.cleanup() }
+    let said = Said()
+    var creation = CertificateCreation(api: FakeCertificates(journal: Journal(), create: { _, csr in resource("C3", der: try issue(csr)) }))
+    creation.say = { said.lines.append($0) }
+    // The API key is team ABCDE12345's, but ZZZZZ99999 was selected.
+    let created = try await creation.run(type: .distribution, relatedID: nil, entry: "XLESS_DIST_KEY@ZZZZZ99999", team: "ZZZZZ99999", keys: { vault.keys })
+    #expect(created.team == team)
+    #expect(try vault.read().entry(named: "XLESS_DIST_KEY@ZZZZZ99999")?.metadata.teamID == team)
+    #expect(said.lines.contains { $0.hasPrefix("warning: certificate C3 belongs to team \(team)") })
+}
+
+@Test func limitMessagesListBothDeveloperIDGenerations() async throws {
+    #expect(CertificateType.developerIDApplicationG2.listArguments == "--type developer-id-application --type developer-id-application-g2")
+    #expect(CertificateType.distribution.listArguments == "--type distribution")
+    #expect(CertificateKind.developerID.listArguments == "--type developer-id-application-g2 --type developer-id-application")
+    #expect(try CertificateTypeArgument.parseForList("developer-id") == [.developerIDApplication, .developerIDApplicationG2])
+    #expect(try CertificateTypeArgument.parseForList("developer-id-application-g2") == [.developerIDApplicationG2])
+    let ambiguous = await accountError {
+        _ = try await CertificateCreation(api: FakeCertificates(journal: Journal(), create: { _, _ in throw URLError(.timedOut) }))
+            .run(type: .developerIDApplicationG2, relatedID: nil, csrPEM: "csr")
+    }
+    #expect(ambiguous?.fix.contains("xless certs list --type developer-id-application --type developer-id-application-g2") == true)
+}
+
+@Test func aChosenNameThatSignReadsIsCheckedLikeTheDefault() throws {
+    #expect(CertificateKeyStore.signBase(of: "XLESS_DIST_KEY@\(team)") == "XLESS_DIST_KEY")
+    #expect(CertificateKeyStore.signBase(of: "XLESS_INSTALLER_KEY") == "XLESS_INSTALLER_KEY")
+    #expect(CertificateKeyStore.signBase(of: "MY_KEY") == nil && CertificateKeyStore.signBase(of: "XLESS_DEVELOPMENT_KEY") == nil)
+    let vault = try CertVault(entries: [("XLESS_DIST_KEY", .init())])
+    defer { vault.cleanup() }
+    #expect(throws: XlessError.self) {
+        try CertificateKeyStore.precheck(try vault.read(), name: "XLESS_DIST_KEY@\(team)", base: CertificateKeyStore.signBase(of: "XLESS_DIST_KEY@\(team)"), team: team, stage: .account)
+    }
+    // sign bootstrap has no --name: its fix says how to keep both another way.
+    do {
+        try CertificateKeyStore.precheck(try vault.read(), name: "XLESS_DIST_KEY", base: "XLESS_DIST_KEY", team: nil, stage: .sign,
+                                         keepBoth: "create the new certificate with `xless certs create --type distribution --name <another entry name>`")
+        Issue.record("no clash")
+    } catch let e as XlessError {
+        #expect(e.stage == .sign && e.fix.contains("xless certs create --type distribution --name") && !e.fix.contains("pass --name"))
+    }
+}
+
+@Test func aFailureBeforeSendingIsNotCalledARefusal() async throws {
+    let vault = try CertVault()
+    defer { vault.cleanup() }
+    let e = await accountError {
+        _ = try await CertificateCreation(api: FakeCertificates(journal: Journal(), create: { _, _ in throw XlessError(.account, "cannot build the token", fix: "check ASC_KEY_P8") }))
+            .run(type: .development, relatedID: nil, entry: "XLESS_DEVELOPMENT_KEY", team: nil, keys: { vault.keys })
+    }
+    #expect(e?.cause.hasPrefix("xless could not ask App Store Connect for the Apple Development certificate (cannot build the token)") == true)
+    #expect(try vault.read().entries.isEmpty)
+}

@@ -37,7 +37,8 @@ xless sign bootstrap --type distribution
 ```
 
 The key goes straight into the store as `XLESS_DIST_KEY` (`XLESS_DIST_KEY@<TEAM_ID>` with the team saved by
-`xless team use`), where `sign` finds it. For CI, export it once (`xless secrets export XLESS_DIST_KEY --out <file>`)
+`xless team use`), where `sign` finds it. For CI, export it once (`xless secrets export <entry> --out <file>`, with the
+entry name the command printed)
 and store its contents as the CI secret `XLESS_DIST_KEY`. To get a file instead of a store entry, as before, pass
 `--out dist-key.pem`; store its contents as `XLESS_DIST_KEY`, then delete the file.
 
