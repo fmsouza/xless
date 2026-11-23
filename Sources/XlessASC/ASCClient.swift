@@ -123,14 +123,9 @@ public struct ASCClient: Sendable {
     }
 
     func exchange(_ method: String, _ path: String, query: [(String, String)], body: Data?, maxAttempts: Int) async throws -> (Data, HTTPURLResponse) {
-        var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        if !query.isEmpty {
-            comps.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) }
-            // URLComponents leaves a literal "+" alone, which servers read as a space; paging cursors can contain one.
-            comps.percentEncodedQuery = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
-        }
+        let url = url(path, query: query)
         return try await withRetry(maxAttempts: maxAttempts, method: method, path: path) {
-            var req = URLRequest(url: comps.url!)
+            var req = URLRequest(url: url)
             req.httpMethod = method
             req.setValue("Bearer \(try JWT.appStoreConnect(credentials))", forHTTPHeaderField: "Authorization")
             if let body {
@@ -139,6 +134,33 @@ public struct ASCClient: Sendable {
             }
             return try await transport.send(req)
         }
+    }
+
+    /// GETs `path` and hands its body to a sink piece by piece as it arrives, never holding it whole (a report). Retried
+    /// like any GET (429, 5xx, a dropped connection); each attempt writes into a fresh sink from `open`, so a retry never
+    /// appends to what a failed attempt wrote. A non-2xx answer throws `ASCError`.
+    public func download(_ path: String, query: [(String, String)] = [], accept: String,
+                         open: () throws -> @Sendable (Data) throws -> Void) async throws {
+        let url = url(path, query: query)
+        _ = try await withRetry(maxAttempts: Self.maxAttempts, method: "GET", path: path) {
+            var req = URLRequest(url: url)
+            req.httpMethod = "GET"
+            req.setValue("Bearer \(try JWT.appStoreConnect(credentials))", forHTTPHeaderField: "Authorization")
+            req.setValue(accept, forHTTPHeaderField: "Accept")
+            let sink = try open()
+            let (response, errorBody) = try await transport.stream(req, chunk: sink)
+            return (errorBody, response)
+        }
+    }
+
+    func url(_ path: String, query: [(String, String)]) -> URL {
+        var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        if !query.isEmpty {
+            comps.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) }
+            // URLComponents leaves a literal "+" alone, which servers read as a space; paging cursors can contain one.
+            comps.percentEncodedQuery = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        }
+        return comps.url!
     }
 
     func withRetry(maxAttempts: Int = ASCClient.maxAttempts, method: String? = nil, path: String? = nil,
