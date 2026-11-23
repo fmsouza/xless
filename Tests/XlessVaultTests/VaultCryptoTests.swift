@@ -148,3 +148,27 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
     dropped.role = nil
     #expect(throws: VaultError.self) { try VaultCrypto.open(VaultEntry(name: entry.name, kind: entry.kind, metadata: dropped, sealed: entry.sealed), dataKey: key) }
 }
+
+// MARK: certificate type (#88)
+
+@Test func theCertificateTypeIsRecordedAndAuthenticated() throws {
+    let key = SymmetricKey(size: .bits256)
+    let meta = VaultEntry.Metadata(teamID: "TEAM123456", certificateID: "CERT1", certificateType: " DISTRIBUTION ")
+    #expect(meta.certificateType == "DISTRIBUTION")
+    #expect(VaultEntry.Metadata(certificateType: "").certificateType == nil)
+    // Without a type, the associated data is the one older releases wrote.
+    let plain = VaultEntry(name: "X", kind: .signingKey, metadata: .init(teamID: "TEAM123456", certificateID: "CERT1"), sealed: Data())
+    let typed = VaultEntry(name: "X", kind: .signingKey, metadata: meta, sealed: Data())
+    #expect(typed.associatedData.starts(with: plain.associatedData) && typed.associatedData != plain.associatedData)
+    let entry = try VaultCrypto.seal(name: "XLESS_DIST_KEY", kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: "pem"), dataKey: key)
+    #expect(try VaultCrypto.open(entry, dataKey: key).utf8String() == "pem")
+    for change in [{ (m: inout VaultEntry.Metadata) in m.certificateType = "DEVELOPMENT" }, { $0.certificateType = nil }] {
+        var altered = meta
+        change(&altered)
+        #expect(throws: VaultError.self) { try VaultCrypto.open(VaultEntry(name: entry.name, kind: entry.kind, metadata: altered, sealed: entry.sealed), dataKey: key) }
+    }
+    // A role and a type never read as each other.
+    let role = VaultEntry(name: "X", kind: .signingKey, metadata: .init(role: "DISTRIBUTION"), sealed: Data())
+    let type = VaultEntry(name: "X", kind: .signingKey, metadata: .init(certificateType: "DISTRIBUTION"), sealed: Data())
+    #expect(role.associatedData != type.associatedData)
+}

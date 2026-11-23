@@ -31,11 +31,22 @@ func certJSON(id: String, der: [UInt8], type: String = "DISTRIBUTION") -> String
     await #expect(throws: XlessError.self) { _ = try await svc.bootstrap(kind: .distribution, allowNew: false) }
 }
 
-@Test func bootstrapRefusesAtCapEvenWhenAllowed() async throws {
-    let certs = try (1...CertificateKind.distribution.cap).map { certJSON(id: "\($0)", der: try selfSigned(try SigningKey.generate())) }
+@Test func bootstrapRefusesAtTheDocumentedCapEvenWhenAllowed() async throws {
+    // Five Developer ID Application certificates (Apple's documented limit); no POST is sent.
+    let cap = try #require(CertificateKind.developerID.cap)
+    #expect(cap == 5)
+    let certs = try (1...cap).map { certJSON(id: "\($0)", der: try selfSigned(try SigningKey.generate()), type: "DEVELOPER_ID_APPLICATION_G2") }
     let t = MockTransport([(200, #"{"data":[\#(certs.joined(separator: ","))]}"#)])
     let svc = CertificateService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
-    await #expect(throws: XlessError.self) { _ = try await svc.bootstrap(kind: .distribution, allowNew: true) }
+    await #expect(throws: XlessError.self) { _ = try await svc.bootstrap(kind: .developerID, allowNew: true) }
+    #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
+}
+
+@Test func onlyDeveloperIDHasADocumentedCap() {
+    // Apple documents no number for Apple Distribution or Mac Installer Distribution: App Store Connect decides.
+    #expect(CertificateKind.distribution.cap == nil && CertificateKind.installer.cap == nil)
+    #expect(CertificateKind.developerID.certificateType == .developerIDApplicationG2)
+    #expect(CertificateKind.allCases.allSatisfy { $0.certificateType.rawValue == $0.createType })
 }
 
 @Test func bootstrapCreatesWhenNoneExist() async throws {
@@ -55,7 +66,7 @@ func certJSON(id: String, der: [UInt8], type: String = "DISTRIBUTION") -> String
     catch let e as XlessError {
         #expect(e.stage == .sign)
         #expect(e.cause.contains("ambiguous"))
-        #expect(e.fix.contains("developer.apple.com") && e.fix.contains("--allow-new"))
+        #expect(e.fix.contains("xless certs list --type distribution") && e.fix.contains("--allow-new"))
         #expect(e.isAmbiguousCertificateCreation)
     }
     #expect(t.requests.filter { $0.httpMethod == "POST" }.count == 1)

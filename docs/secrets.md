@@ -28,7 +28,7 @@ xless ship --platform ios                            # asks the passphrase once,
 | `passwd` | Changes the passphrase. |
 
 Kinds: `asc-api-key` (an App Store Connect API key: `.p8`, key ID and issuer ID required), `signing-key` (an RSA
-private key PEM from `xless sign bootstrap`), `auth-key` (an APNs, Sign in with Apple, DeviceCheck or MusicKit `.p8`),
+private key PEM from `xless sign bootstrap` or `xless certs create`), `auth-key` (an APNs, Sign in with Apple, DeviceCheck or MusicKit `.p8`),
 `password` and `generic`. Keys are checked when imported: a `.p8` must be a P-256 private key, a signing key an RSA one.
 A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID.
 
@@ -36,6 +36,11 @@ A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID.
 the store (as `ASC_KEY_P8@<TEAM_ID>`, with its key ID, issuer ID, team and role), and `xless auth api-key import`
 checks a `.p8` against App Store Connect before storing it. The role is part of what the seal authenticates when it is
 recorded; an xless older than the one that added it reads such an entry as altered.
+
+[`xless certs create`](apple-account.md#xless-certs) and `xless sign bootstrap` generate a certificate's private key
+and seal it into the store before the certificate is requested (as `XLESS_DIST_KEY`, `XLESS_DEVID_KEY`,
+`XLESS_INSTALLER_KEY` or `XLESS_<TYPE>_KEY`, with `@<TEAM_ID>` when a team is selected), then record the certificate's
+ID, type and expiry with it. The type is authenticated the same way as an API key's role.
 
 ## How the pipeline finds a secret
 

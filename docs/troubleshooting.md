@@ -170,8 +170,9 @@ Other things worth knowing:
   the resulting `CFBundleIcons` may be malformed (not verified against App Store Connect). Use a plain single 1024px
   icon.
 - Whether App Store Connect accepts the build despite these gaps has not been confirmed (needs a real upload).
-- The Apple limits that `sign bootstrap` enforces (3 Distribution, 5 Developer ID certificates per team) are
-  unconfirmed against Apple documentation.
+- Apple documents a per-team limit only for Developer ID Application certificates (five), which `sign bootstrap` and
+  `xless certs create` check; for other types App Store Connect refuses one too many itself
+  ([bootstrap.md](bootstrap.md#how-sign-bootstrap-behaves)).
 - App Store Connect upload API notes: [research/asc-build-uploads.md](research/asc-build-uploads.md).
 - The amd64 images have run under Rosetta on an Apple-silicon Mac, not yet on a native x86_64 host
   ([acceptance-m4.md](acceptance-m4.md)).

@@ -24,9 +24,12 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         /// with commas): App Store Connect never tells a key its own role. Authenticated only when set, so entries
         /// written before it existed keep their associated data (an older xless reads an entry with a role as altered).
         public var role: String?
+        /// The App Store Connect `certificateType` of the certificate a signing key belongs to (`DISTRIBUTION`).
+        /// Authenticated only when set, like `role`.
+        public var certificateType: String?
 
         public init(teamID: String? = nil, keyID: String? = nil, issuerID: String? = nil, certificateID: String? = nil,
-                    created: Date? = nil, expires: Date? = nil, role: String? = nil) {
+                    created: Date? = nil, expires: Date? = nil, role: String? = nil, certificateType: String? = nil) {
             func clean(_ s: String?) -> String? {
                 guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
                 return t
@@ -38,6 +41,7 @@ public struct VaultEntry: Codable, Sendable, Equatable {
             self.created = created.map(Self.wholeSeconds)
             self.expires = expires.map(Self.wholeSeconds)
             self.role = clean(role)
+            self.certificateType = clean(certificateType)
         }
 
         static func wholeSeconds(_ d: Date) -> Date { Date(timeIntervalSince1970: d.timeIntervalSince1970.rounded(.down)) }
@@ -85,6 +89,10 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         if let role = metadata.role {
             field("role")
             field(role)
+        }
+        if let certificateType = metadata.certificateType {
+            field("certificateType")
+            field(certificateType)
         }
         return out
     }
