@@ -155,7 +155,7 @@ extension PushContext {
         if !match.extras.isEmpty {
             note("\(subject): App Store Connect has \(match.extras.map { shown($0.id) }.joined(separator: ", ")), which app.yml does not list: kept (--prune deletes \(match.extras.count == 1 ? "it" : "them"))")
         }
-        let pruned = match.pruned.map { StoreChange(.delete, kind == .reviewAttachments ? .review : .declarations, "\(subject) \(shown($0.id))", requests: [.delete(kind.itemType, id: $0.id)]) }
+        let pruned = match.pruned.map { StoreChange(.delete, kind.part, "\(subject) \(shown($0.id))", requests: [.delete(kind.itemType, id: $0.id)]) }
         var fields = match.uploads.map { StoreFieldChange(($0 as NSString).lastPathComponent, from: match.replaced.contains($0) ? "old upload" : nil, to: "upload") }
         fields += match.failed.map { StoreFieldChange(shown($0.id), from: Self.junk($0), to: nil) }
         guard !match.uploads.isEmpty || !match.deletes.isEmpty else { return (nil, fields, pruned) }

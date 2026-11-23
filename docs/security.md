@@ -193,7 +193,7 @@ Every request is HTTPS. xless sends no telemetry.
 
 | Host | What xless sends | Credential | Used by |
 |---|---|---|---|
-| `api.appstoreconnect.apple.com` | The documented App Store Connect API (`/v1`, `/v2`, `/v3`) | API key (a fresh JWT; the `.p8` itself never leaves the machine) | every account command that has an API, `xless api`, `sign`, `upload`, TestFlight delivery, `next-build`, `store pull`/`push`, `release`, `provision` |
+| `api.appstoreconnect.apple.com` | The documented App Store Connect API (`/v1`, `/v2`, `/v3`) | API key (a fresh JWT; the `.p8` itself never leaves the machine) | every account command that has an API, `xless api`, `sign`, `upload`, TestFlight delivery, `next-build`, `store pull`/`push`, `release`, `iap`, `subscriptions`, `sandbox-testers`, `provision` |
 | The upload and download addresses App Store Connect hands out | The bytes of builds, screenshots, previews and documents (`PUT` to the presigned addresses an upload reservation returns); `store pull` downloads media from the addresses Apple lists | none: the address carries Apple's own authorization; xless adds no header | `upload`, `store push`, `store pull` |
 | Apple's notary service, through rcodesign | The app or disk image to notarize | API key (a JWT rcodesign makes from the key file) | macOS `package` |
 | `idmsa.apple.com` | The Apple ID sign-in: SRP-6a (the password itself is never sent, only proofs derived from it), the two-factor code | the Apple ID | `xless auth login` and every web-session command, `xless xcode download` |

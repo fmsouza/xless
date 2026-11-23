@@ -29,11 +29,18 @@ public struct StorePull: Sendable {
         public var kept: Int
         /// Media left out (still processing at Apple, or only streamable), by path.
         public var skipped: [String]
+        /// In-app purchase files written (`iap/`).
+        public var inAppPurchases = 0
+        /// Subscription files written (`subscriptions/`), groups not counted.
+        public var subscriptions = 0
 
         public var text: String {
             var out = "Pulled \(bundleID) (\(platform) \(version), \(versionState)) into \(directory)/: \(locales.count) locale\(locales.count == 1 ? "" : "s") (\(locales.joined(separator: ", "))), "
             out += "\(screenshots) screenshot\(screenshots == 1 ? "" : "s"), \(previews) preview\(previews == 1 ? "" : "s")"
             out += " (\(downloaded) downloaded, \(kept) unchanged)\n"
+            if inAppPurchases + subscriptions > 0 {
+                out += "  \(inAppPurchases) in-app purchase\(inAppPurchases == 1 ? "" : "s"), \(subscriptions) subscription\(subscriptions == 1 ? "" : "s")\n"
+            }
             for path in skipped { out += "  not downloaded: \(path)\n" }
             return out
         }
@@ -195,6 +202,12 @@ public struct StorePull: Sendable {
 
         a.previewFrames = media.frames.isEmpty ? nil : SortedMap(media.frames)
         manifest.app = a
+        let pulled = try await pullProducts(app: app, old: existing?.products, dir: dir, staging: staging, oldLock: oldLock, today: today)
+        manifest.products = pulled.products
+        files.merge(pulled.files) { _, new in new }
+        report.skipped += pulled.skipped
+        report.inAppPurchases = pulled.products.iaps.count
+        report.subscriptions = pulled.products.groups.values.reduce(0) { $0 + $1.subscriptions.count }
         report.locales = manifest.orderedLocales
         // Attachments and the compliance document are not pulled: their lock entries stay.
         let named = Set((old?.review?.attachments ?? []) + (old?.encryptionDocument.map { [$0] } ?? []))
@@ -208,6 +221,7 @@ public struct StorePull: Sendable {
         for path in localMedia.sorted() where oldLock.files[path]?.appleChecksum == nil {
             say("note: \(path) is not on App Store Connect (never uploaded), so the pulled listing does not have it")
         }
+        for (path, entry) in pulled.lock { lock.files[path] = entry }
         try ManifestWriter.write(manifest, files: files, lock: lock, to: dir)
         return report
     }

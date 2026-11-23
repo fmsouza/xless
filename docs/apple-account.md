@@ -593,7 +593,7 @@ xless store privacy push                  # send them and publish (web session)
 ```
 
 The App Store listing (text per locale, screenshots, previews, categories, age rating, App Review contact, licence
-agreement, price and availability, App Privacy) lives in an `appstore/` directory reviewed like code: its format,
+agreement, price and availability, App Privacy, in-app purchases and subscriptions) lives in an `appstore/` directory reviewed like code: its format,
 `pull`, `validate` and `push` are in [appstore-manifest.md](appstore-manifest.md). `pull` and `push` use the API key,
 except App Privacy, which has no API: `store privacy pull|push`, and `push` when `app.yml` has `privacy:`, use the
 Apple ID web session ([App Privacy](appstore-manifest.md#app-privacy-xless-store-privacy)). `pull` never reads the
@@ -797,13 +797,15 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   | pricing, availability | a price schedule, and at least one territory |
   | build, encryption | the build valid, not expired, of the version's string and platform; its export compliance answered |
   | review contact | the App Review contact's name, phone and email; a demo account name when one is required |
+  | products | when the manifest lists in-app purchases or subscriptions (and no `--no-products`): each one on App Store Connect, none missing metadata |
 
   `--release manual|auto|<date>` and `--phased` are what the submission sets: app.yml's `release` values are not
   compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (`--build`;
   default: the one attached), the release type (`manual`: [`publish`](#xless-release) releases it; `auto`: on
   approval; a date `2026-12-01` (midnight UTC) or a time on the hour `2026-12-01T09:00:00Z`: not before then), the
   phased release (`--phased` adds one, `--no-phased` removes one that has not started), then the review submission:
-  created, the version added, submitted. A run that stopped half-way (a draft submission with or without the version,
+  created, the version added, the in-app purchases and subscriptions the manifest lists added
+  ([how](appstore-manifest.md#in-app-purchases-and-subscriptions); `--no-products` leaves them out), submitted. A run that stopped half-way (a draft submission with or without the version,
   a build attached) is **resumed** by running it again; a version rejected by App Review is submitted again in its
   submission. `--dry-run` runs the pre-flight and lists the steps.
 
@@ -830,6 +832,45 @@ With `--json`, `create` prints `{"result": "created" | "renamed" | "existing", "
 "phasedRelease", "submissions": [{"id", "state", "submittedDate", "items"}]}`, `cancel` `{"result": "canceled" |
 "unchanged" | "none", "submissionID", "state"}`, `publish` `{"result": "released" | "unchanged", "versionID", "state"}`
 and `phased` `{"result", "data": phased release}`.
+
+## `xless iap` and `xless subscriptions`
+
+```sh
+xless iap list --app com.example.app
+xless iap show com.example.coins100 --app com.example.app
+xless iap price-points com.example.coins100 --app com.example.app --territory JPN
+xless subscriptions list --app com.example.app
+xless subscriptions show com.example.monthly --app com.example.app
+xless subscriptions price-points com.example.monthly --app com.example.app --price 4.99
+xless sandbox-testers list
+xless sandbox-testers clear-history tester@example.com     # asks first; --all for every tester
+```
+
+With the App Store Connect API key (`/v2/inAppPurchases`, `/v1/subscriptionGroups`, `/v1/subscriptions`,
+`/v2/sandboxTesters`). The products themselves are files of the `appstore/` manifest, created and updated by `xless
+store push` and sent to App Review by `xless release submit` ([in-app purchases and
+subscriptions](appstore-manifest.md#in-app-purchases-and-subscriptions)); these commands read what App Store Connect
+has.
+
+- **`iap list` / `subscriptions list`**: every product of the app (`--app`, app ID or bundle ID): product ID, type or
+  period and level, reference name, state, ID. A product is named by its product ID or its ID.
+- **`show`**: one product's state, family sharing, review note, current price (the base territory's, and how many
+  other territories have one), availability, App Review screenshot, metadata versions (what a review submission
+  submits) and text per locale.
+- **`price-points`**: the price points of a territory (`--territory`, default USA), or with `--price` the point with
+  that customer price and its equalizations (what it becomes in every other territory). The `pricing` of a product
+  file names prices, and `push` resolves each to the point with exactly that price; a price that is no point is an
+  error naming the nearest ones and this command.
+- **`sandbox-testers list`** lists the team's sandbox testers (account, name, territory, whether purchases are
+  interrupted, the subscription renewal rate). **`clear-history`** forgets the purchases of the testers named
+  (account or ID) or `--all`, after asking (or `--yes`), in one request: non-consumables, subscriptions and
+  introductory offers can be bought again. Apple's API does not create sandbox testers; App Store Connect does (Users
+  and Access, Sandbox).
+
+`--json` prints App Store Connect's resources as they are: `{"data": [...]}` for `list` (`subscriptions list`: `{"data":
+[{"group", "subscriptions"}]}`), `{"inAppPurchase", "localizations", "prices", "baseTerritory", "availability",
+"reviewScreenshot", "versions"}` / `{"group", "subscription", "localizations", "prices", "availability",
+"reviewScreenshot", "versions"}` for `show`, and `{"cleared": [...]}` for `clear-history`.
 
 ## `xless provision`
 

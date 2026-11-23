@@ -123,6 +123,11 @@ public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
     case pricing
     /// The App Privacy answers (app-level, through the Apple ID web session), published once sent.
     case privacy
+    /// In-app purchases (`iap/`): the products, their text, App Review screenshot, prices and availability.
+    case iap
+    /// Auto-renewable subscriptions (`subscriptions/`): the groups, their subscriptions, text, screenshots, prices
+    /// and availability.
+    case subscriptions
     /// Screenshots and app previews, per locale and display type.
     case media
 
@@ -179,7 +184,7 @@ extension StoreChange.Action: CaseIterable {}
 
 /// What kind of file a media change uploads, and where App Store Connect keeps it.
 public enum StoreMediaKind: String, Sendable, Equatable {
-    case screenshots, previews, reviewAttachments, encryptionDocument
+    case screenshots, previews, reviewAttachments, encryptionDocument, iapReviewScreenshot, subscriptionReviewScreenshot
 
     /// The resource type of one file (also its path: /v1/<itemType>).
     public var itemType: String {
@@ -188,6 +193,19 @@ public enum StoreMediaKind: String, Sendable, Equatable {
         case .previews: "appPreviews"
         case .reviewAttachments: "appStoreReviewAttachments"
         case .encryptionDocument: "appEncryptionDeclarationDocuments"
+        case .iapReviewScreenshot: "inAppPurchaseAppStoreReviewScreenshots"
+        case .subscriptionReviewScreenshot: "subscriptionAppStoreReviewScreenshots"
+        }
+    }
+
+    /// The part of the push its files belong to.
+    public var part: StorePushPart {
+        switch self {
+        case .screenshots, .previews: .media
+        case .reviewAttachments: .review
+        case .encryptionDocument: .declarations
+        case .iapReviewScreenshot: .iap
+        case .subscriptionReviewScreenshot: .subscriptions
         }
     }
 
@@ -196,7 +214,7 @@ public enum StoreMediaKind: String, Sendable, Equatable {
         switch self {
         case .screenshots: "appScreenshotSets"
         case .previews: "appPreviewSets"
-        case .reviewAttachments, .encryptionDocument: nil
+        default: nil
         }
     }
 
@@ -205,7 +223,7 @@ public enum StoreMediaKind: String, Sendable, Equatable {
         switch self {
         case .screenshots: "screenshotDisplayType"
         case .previews: "previewType"
-        case .reviewAttachments, .encryptionDocument: nil
+        default: nil
         }
     }
 
@@ -216,10 +234,13 @@ public enum StoreMediaKind: String, Sendable, Equatable {
         case .previews: ("appPreviewSet", "appPreviewSets")
         case .reviewAttachments: ("appStoreReviewDetail", "appStoreReviewDetails")
         case .encryptionDocument: ("appEncryptionDeclaration", "appEncryptionDeclarations")
+        case .iapReviewScreenshot: ("inAppPurchaseV2", "inAppPurchases")
+        case .subscriptionReviewScreenshot: ("subscription", "subscriptions")
         }
     }
 
-    static let allItemTypes: Set<String> = Set([StoreMediaKind.screenshots, .previews, .reviewAttachments, .encryptionDocument].map(\.itemType))
+    static let allItemTypes: Set<String> = Set([StoreMediaKind.screenshots, .previews, .reviewAttachments, .encryptionDocument,
+                                                .iapReviewScreenshot, .subscriptionReviewScreenshot].map(\.itemType))
 
     /// How many files Apple takes in one set.
     public var maxItems: Int? {
@@ -227,7 +248,7 @@ public enum StoreMediaKind: String, Sendable, Equatable {
         case .screenshots: ScreenshotDisplayType.maxPerSet
         case .previews: PreviewType.maxPerSet
         case .reviewAttachments: nil
-        case .encryptionDocument: 1
+        case .encryptionDocument, .iapReviewScreenshot, .subscriptionReviewScreenshot: 1
         }
     }
 }

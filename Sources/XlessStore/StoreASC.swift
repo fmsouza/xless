@@ -370,28 +370,43 @@ public struct StoreASC: Sendable {
     /// The app's price schedule: its base territory and every manual price (past ones included).
     public func priceSchedule(of appID: String) async throws -> StorePart<StorePriceSchedule> {
         try await optional("price schedule") {
-            guard let schedule = try await one("/v1/apps/\(appID)/appPriceSchedule", query: ASCQuery(include: ["baseTerritory"])).data else { return nil }
-            let base = schedule.relationships?["baseTerritory"]?["data"]?["id"]?.string
-            guard let base else { return StorePriceSchedule(id: schedule.id, baseTerritory: nil, prices: []) }
-            let listing = try await resources.list("/v1/appPriceSchedules/\(schedule.id)/manualPrices",
-                                                   query: ASCQuery(include: ["appPricePoint", "territory"]), as: ASCAnyResource.self)
-            var prices: [StorePrice] = []
-            var unread = 0
-            for item in listing.items {
-                guard let point = item.relationships?["appPricePoint"]?["data"]?["id"]?.string,
-                      let included = listing.included.first(where: { $0.type == "appPricePoints" && $0.id == point }),
-                      let customer = included.attributes?["customerPrice"]?.string else { unread += 1; continue }
-                let territory = item.relationships?["territory"]?["data"]?["id"]?.string
-                    ?? included.relationships?["territory"]?["data"]?["id"]?.string
-                    ?? StorePriceSchedule.territory(ofPoint: point) ?? base
-                prices.append(StorePrice(territory: territory, start: item.attributes?["startDate"]?.string, end: item.attributes?["endDate"]?.string,
-                                         customerPrice: customer, pointID: point))
-            }
-            if unread > 0 {
-                say("note: \(unread) price\(unread == 1 ? "" : "s") of the price schedule came without \(unread == 1 ? "its" : "their") price point; they are left out")
-            }
-            return StorePriceSchedule(id: schedule.id, baseTerritory: base, prices: prices, incomplete: unread > 0)
+            try await schedule("/v1/apps/\(appID)/appPriceSchedule", manualPrices: { "/v1/appPriceSchedules/\($0)/manualPrices" },
+                               point: "appPricePoint", pointType: "appPricePoints")
         }
+    }
+
+    /// An in-app purchase's price schedule, read like the app's.
+    public func iapPriceSchedule(of iapID: String) async throws -> StorePart<StorePriceSchedule> {
+        try await optional("in-app purchase price schedule") {
+            try await schedule("/v2/inAppPurchases/\(iapID)/iapPriceSchedule", manualPrices: { "/v1/inAppPurchasePriceSchedules/\($0)/manualPrices" },
+                               point: "inAppPurchasePricePoint", pointType: "inAppPurchasePricePoints")
+        }
+    }
+
+    /// The schedule at `path`: its base territory and every manual price (`point`: the price's relationship to its
+    /// price point, of type `pointType`).
+    func schedule(_ path: String, manualPrices: (String) -> String, point pointRelationship: String, pointType: String) async throws -> StorePriceSchedule? {
+        guard let schedule = try await one(path, query: ASCQuery(include: ["baseTerritory"])).data else { return nil }
+        let base = schedule.relationships?["baseTerritory"]?["data"]?["id"]?.string
+        guard let base else { return StorePriceSchedule(id: schedule.id, baseTerritory: nil, prices: []) }
+        let listing = try await resources.list(manualPrices(schedule.id),
+                                               query: ASCQuery(include: [pointRelationship, "territory"]), as: ASCAnyResource.self)
+        var prices: [StorePrice] = []
+        var unread = 0
+        for item in listing.items {
+            guard let point = item.relationships?[pointRelationship]?["data"]?["id"]?.string,
+                  let included = listing.included.first(where: { $0.type == pointType && $0.id == point }),
+                  let customer = included.attributes?["customerPrice"]?.string else { unread += 1; continue }
+            let territory = item.relationships?["territory"]?["data"]?["id"]?.string
+                ?? included.relationships?["territory"]?["data"]?["id"]?.string
+                ?? StorePriceSchedule.territory(ofPoint: point) ?? base
+            prices.append(StorePrice(territory: territory, start: item.attributes?["startDate"]?.string, end: item.attributes?["endDate"]?.string,
+                                     customerPrice: customer, pointID: point))
+        }
+        if unread > 0 {
+            say("note: \(unread) price\(unread == 1 ? "" : "s") of the price schedule came without \(unread == 1 ? "its" : "their") price point; they are left out")
+        }
+        return StorePriceSchedule(id: schedule.id, baseTerritory: base, prices: prices, incomplete: unread > 0)
     }
 
     /// The price schedule as app.yml writes it: base territory, its current price, the other territories' current

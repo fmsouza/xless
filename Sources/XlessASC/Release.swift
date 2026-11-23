@@ -257,9 +257,11 @@ public struct ASCRelease: Sendable {
             .sorted { ($0.attributes.submittedDate ?? "~", $0.id) > ($1.attributes.submittedDate ?? "~", $1.id) }
     }
 
-    /// A submission's items, with the version each submits.
+    /// A submission's items, with the version (or product version) each submits: App Store Connect gives a
+    /// relationship's linkage only when it is included.
     public func items(of submissionID: String) async throws -> [ASCReviewSubmissionItem] {
-        try await resources.list("/v1/reviewSubmissions/\(submissionID)/items", query: ASCQuery(include: ["appStoreVersion"]),
+        try await resources.list("/v1/reviewSubmissions/\(submissionID)/items",
+                                 query: ASCQuery(include: ["appStoreVersion", "inAppPurchaseVersion", "subscriptionVersion", "subscriptionGroupVersion"]),
                                  as: ASCReviewSubmissionItem.self).items
     }
 
@@ -278,6 +280,28 @@ public struct ASCRelease: Sendable {
         ]
         return try await resources.create("/v1/reviewSubmissionItems", type: "reviewSubmissionItems", attributes: [String: JSONValue](),
                                           relationships: relationships).data
+    }
+
+    /// Adds another kind of item to a draft submission (`relationship`: inAppPurchaseVersion, subscriptionVersion,
+    /// subscriptionGroupVersion…, to the resource `type`/`id`), POST once.
+    public func addItem(_ relationship: String, type: String, id: String, to submissionID: String) async throws -> ASCReviewSubmissionItem {
+        let relationships: [String: JSONValue] = [
+            "reviewSubmission": Self.link("reviewSubmissions", submissionID),
+            relationship: Self.link(type, id),
+        ]
+        return try await resources.create("/v1/reviewSubmissionItems", type: "reviewSubmissionItems", attributes: [String: JSONValue](),
+                                          relationships: relationships).data
+    }
+
+    /// Submits an in-app purchase or a subscription with the app's next version, the way App Store Connect did
+    /// before review submission items took products (POST /v1/inAppPurchaseSubmissions, /v1/subscriptionSubmissions),
+    /// POST once.
+    public func submitProduct(_ path: String, relationship: String, type: String, id: String) async throws {
+        let body: JSONValue = .object(["data": .object([
+            "type": .string(String(path.split(separator: "/").last ?? "")),
+            "relationships": .object([relationship: Self.link(type, id)]),
+        ])])
+        _ = try await resources.client.request("POST", path, body: try JSONEncoder().encode(body), maxAttempts: 1)
     }
 
     /// Sends the submission to App Review (`submitted: true`).

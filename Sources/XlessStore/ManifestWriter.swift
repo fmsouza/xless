@@ -2,7 +2,7 @@ import Foundation
 import Yams
 
 /// Writes a manifest directory all at once: the new tree is built next to it and swapped in by renames, so an
-/// interrupted `pull` leaves the old directory as it was. Files the format does not own (a README, notes, `iap/`) are
+/// interrupted `pull` leaves the old directory as it was. Files the format does not own (a README, notes) are
 /// carried over from the old directory.
 public enum ManifestWriter {
     /// A file of the new tree besides app.yml and the text files: bytes, or a file to copy (a kept original).
@@ -34,6 +34,9 @@ public enum ManifestWriter {
         let c = relative.split(separator: "/").map(String.init)
         guard let first = c.first else { return false }
         if c.count == 1 { return [ManifestReader.appFile, MediaLock.fileName, "eula.txt"].contains(first) }
+        // Product files: `iap/<productId>.yml`, `subscriptions/<group>/<file>.yml`.
+        if first == StoreProducts.iapDirectory { return c.count == 2 && c[1].hasSuffix(".yml") }
+        if first == StoreProducts.subscriptionsDirectory { return c.count == 3 && c[2].hasSuffix(".yml") }
         if ManifestReader.reservedDirectories.contains(first) { return false }
         if c.count == 2 { return LocaleListing.textFields.contains { $0.file == c[1] } }
         return c[1] == "screenshots" || c[1] == "previews"
@@ -86,6 +89,7 @@ public enum ManifestWriter {
                 if let value = listing[keyPath: field] { try put(Data(ManifestText.render(value).utf8), "\(locale)/\(file)") }
             }
         }
+        for (relative, text) in try manifest.products.files().sorted(by: { $0.key < $1.key }) { try put(Data(text.utf8), relative) }
         for (relative, content) in files.sorted(by: { $0.key < $1.key }) {
             switch content {
             case .data(let data): try put(data, relative)

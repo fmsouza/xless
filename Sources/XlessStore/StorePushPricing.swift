@@ -30,7 +30,41 @@ extension PushContext {
 
     mutating func planPriceSchedule() async throws {
         guard let wanted = app.pricing else { return }
-        let read = try await asc.priceSchedule(of: target.app.id)
+        let appID = target.app.id
+        let points = ASCPricePoints(resources: asc.resources)
+        try await planSchedule(wanted, read: try await asc.priceSchedule(of: appID), ScheduleTarget(
+            part: .pricing, subject: "price schedule", owner: "the app", prefix: "",
+            lister: "xless apps price-points \(target.app.bundleID)", inspect: "xless api GET /v1/apps/\(appID)/appPriceSchedule --include manualPrices",
+            path: "/v1/appPriceSchedules", scheduleType: "appPriceSchedules", priceType: "appPrices", pointRelationship: "appPricePoint",
+            pointType: "appPricePoints", holder: ("app", "apps", appID), points: { try await points.list(app: appID, territory: $0) }))
+    }
+
+    /// A price schedule (the app's, an in-app purchase's): POST `path` replaces it whole.
+    struct ScheduleTarget {
+        var part: StorePushPart
+        var subject: String
+        /// `the app`, `in-app purchase com.example.coins`: what has no schedule yet.
+        var owner: String
+        /// Before `pricing…` in notes: "" for app.yml, `iap/com.example.coins.yml: ` for a product.
+        var prefix: String
+        /// The command listing the price points (`--territory` appended).
+        var lister: String
+        /// The command showing the schedule.
+        var inspect: String
+        var path: String
+        var scheduleType: String
+        var priceType: String
+        var pointRelationship: String
+        var pointType: String
+        /// The schedule's relationship to what it prices: name, type, ID.
+        var holder: (name: String, type: String, id: String)
+        /// The price points of a territory.
+        var points: (String) async throws -> [ASCPricePoint]
+        /// Each price's own relationship to what it prices, when the API has one (`inAppPurchaseV2`).
+        var priceHolder: (name: String, type: String, id: String)? = nil
+    }
+
+    mutating func planSchedule(_ wanted: AppYAML.Pricing, read: StorePart<StorePriceSchedule>, _ t: ScheduleTarget) async throws {
         if case .forbidden = read { return }
         let schedule = read.value
         let day = StoreASC.day(options.today)
@@ -51,7 +85,7 @@ extension PushContext {
                 let territory = change.territory ?? base
                 if change.date <= day {
                     inEffect[territory] = change
-                    note("pricing.changes: the change of \(change.date) (\(territory) \(CustomerPrice.display(change.price))) is in effect; `xless store pull` rewrites pricing")
+                    note("\(t.prefix)pricing.changes: the change of \(change.date) (\(territory) \(CustomerPrice.display(change.price))) is in effect; `xless store pull` rewrites pricing")
                 } else {
                     future?.append(PlannedPrice(territory: territory, start: change.date, price: change.price))
                 }
@@ -67,11 +101,11 @@ extension PushContext {
         } else if base == appleBase {
             want += have.filter { $0.territory == base && $0.start == nil }
         } else if schedule == nil {
-            note("pricing has no price: App Store Connect has no price schedule for the app yet, and none is created")
+            note("\(t.prefix)pricing has no price: App Store Connect has no price schedule for \(t.owner) yet, and none is created")
             return
         } else {
-            throw XlessError(.account, "pricing.baseTerritory changes to \(base), but pricing has no price there",
-                             fix: "add `price:` in \(base)'s currency (`xless apps price-points \(target.app.bundleID) --territory \(base)`)")
+            throw XlessError(.account, "\(t.prefix)pricing.baseTerritory changes to \(base), but pricing has no price there",
+                             fix: "add `price:` in \(base)'s currency (`\(t.lister) --territory \(base)`)")
         }
         // App Store Connect's prices that are carried over must not pin the old base territory's prices: once the base
         // changes, the old base follows the new one unless app.yml gives it a manual price.
@@ -90,7 +124,7 @@ extension PushContext {
         want += (future ?? have.filter { $0.start != nil && $0.territory != oldBase }).sorted { ($0.start ?? "", $0.territory) < ($1.start ?? "", $1.territory) }
         var keys: Set<String> = []
         for p in want where !keys.insert(p.key).inserted {
-            throw XlessError(.account, "pricing has two prices for \(p.territory) \(p.start.map { "from \($0)" } ?? "now")",
+            throw XlessError(.account, "\(t.prefix)pricing has two prices for \(p.territory) \(p.start.map { "from \($0)" } ?? "now")",
                              fix: "keep one (a change without territory is for the base territory, \(base))")
         }
 
@@ -110,8 +144,8 @@ extension PushContext {
         }
         guard !fields.isEmpty else { return }
         if schedule?.incomplete == true {
-            throw XlessError(.account, "App Store Connect's price schedule has prices xless could not read, and sending a schedule replaces all of them",
-                             fix: "re-run `xless store push`; if it persists, check the schedule with `xless api GET /v1/apps/\(target.app.id)/appPriceSchedule --include manualPrices`")
+            throw XlessError(.account, "App Store Connect's \(t.subject) has prices xless could not read, and sending a schedule replaces all of them",
+                             fix: "re-run `xless store push`; if it persists, check the schedule with `\(t.inspect)`")
         }
 
         // Price points: App Store Connect's own for a price it already has, else resolved (one listing per territory).
@@ -119,29 +153,30 @@ extension PushContext {
             if let same = haveByKey[want[i].key], same.value == want[i].value { want[i].point = same.point }
         }
         var listings: [String: [ASCPricePoint]] = [:]
-        let points = ASCPricePoints(resources: asc.resources)
         for i in want.indices where want[i].point == nil {
             let territory = want[i].territory
-            if listings[territory] == nil { listings[territory] = try await points.list(app: target.app.id, territory: territory) }
-            want[i].point = try ASCPricePoints.resolve(want[i].price, in: listings[territory]!, territory: territory, app: target.app.bundleID).id
+            if listings[territory] == nil { listings[territory] = try await t.points(territory) }
+            want[i].point = try ASCPricePoints.resolve(want[i].price, in: listings[territory]!, territory: territory, app: target.app.bundleID, command: t.lister).id
         }
 
         let ids = want.indices.map { "${price-\($0 + 1)}" }
         let included: [JSONValue] = want.indices.map { i in
-            .object(["type": .string("appPrices"), "id": .string(ids[i]),
-                     "attributes": .object(["startDate": want[i].start.map { .string($0) } ?? .null]),
-                     "relationships": .object(["appPricePoint": StoreRequest.link("appPricePoints", want[i].point)])])
+            var relationships: [String: JSONValue] = [t.pointRelationship: StoreRequest.link(t.pointType, want[i].point)]
+            if let price = t.priceHolder { relationships[price.name] = StoreRequest.link(price.type, price.id) }
+            return .object(["type": .string(t.priceType), "id": .string(ids[i]),
+                            "attributes": .object(["startDate": want[i].start.map { .string($0) } ?? .null]),
+                            "relationships": .object(relationships)])
         }
         let data: JSONValue = .object([
-            "type": .string("appPriceSchedules"),
+            "type": .string(t.scheduleType),
             "relationships": .object([
-                "app": StoreRequest.link("apps", target.app.id),
+                t.holder.name: StoreRequest.link(t.holder.type, t.holder.id),
                 "baseTerritory": StoreRequest.link("territories", base),
-                "manualPrices": .object(["data": .array(ids.map { .object(["type": .string("appPrices"), "id": .string($0)]) })]),
+                "manualPrices": .object(["data": .array(ids.map { .object(["type": .string(t.priceType), "id": .string($0)]) })]),
             ]),
         ])
-        add(StoreChange(schedule == nil ? .create : .update, .pricing, "price schedule", fields: fields,
-                        requests: [StoreRequest(method: "POST", path: "/v1/appPriceSchedules", body: .object(["data": data, "included": .array(included)]))]))
+        add(StoreChange(schedule == nil ? .create : .update, t.part, t.subject, fields: fields,
+                        requests: [StoreRequest(method: "POST", path: t.path, body: .object(["data": data, "included": .array(included)]))]))
     }
 
     // MARK: - Availability

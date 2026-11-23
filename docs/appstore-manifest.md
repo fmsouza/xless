@@ -1,7 +1,8 @@
 # The App Store listing: `appstore/`
 
 An app's App Store listing (its text in every language, screenshots, previews, categories, age rating, App Review
-contact, licence agreement, price and availability, App Privacy) lives in an `appstore/` directory next to the
+contact, licence agreement, price and availability, App Privacy, in-app purchases and subscriptions) lives in an
+`appstore/` directory next to the
 project, reviewed like code, the way fastlane's `deliver` keeps it. [`xless store pull`](#xless-store-pull) writes it
 from an app that already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple;
 [`xless store push`](#xless-store-push) sends what differs, screenshots, previews, price and availability included.
@@ -15,6 +16,8 @@ appstore/
   media.lock                       written by xless: which App Store Connect upload each screenshot, preview or attachment is
   review/                          files for App Review, when app.yml's review.attachments lists them
   compliance/                      the export compliance document, when app.yml's encryptionDocument names it
+  iap/                             in-app purchases: <productId>.yml each, and its App Review screenshot
+  subscriptions/<group>/           a subscription group: group.yml, and <productId>.yml per subscription
   en-US/                           one directory per locale, spelled as App Store Connect spells it
     name.txt                       the app's name (2 to 30 characters)
     subtitle.txt                   30 characters
@@ -45,8 +48,8 @@ the same thing: the field is not set. `name`, `subtitle` and the privacy URLs an
 
 Locale directories use App Store Connect's codes exactly: `en-US`, `de-DE`, `fr-FR`, `ja`, `zh-Hans`, `pt-BR`…
 (`de-de` is reported, with the right spelling). Every directory of `appstore/` is a locale, except `review/` and
-`compliance/` (files `app.yml` names) and `iap/` and `subscriptions/`, kept for in-app purchases; other files (a
-README) may sit at the top.
+`compliance/` (files `app.yml` names) and `iap/` and `subscriptions/` ([in-app purchases and
+subscriptions](#in-app-purchases-and-subscriptions)); other files (a README) may sit at the top.
 
 ## Screenshots and previews
 
@@ -164,7 +167,7 @@ release type and date, phased release, App Review contact, demo account name and
 description, keywords, what's new, promotional text, support and marketing URLs, screenshots and previews); the custom
 licence agreement; the latest encryption declaration; accessibility declarations; the price schedule (the base
 territory's current price, manual prices in other territories, changes to come; past prices are history and left
-out); and availability. A part the app does not have is left out (or written as its default: `eula: standard`, `phased: false`);
+out); availability; and the in-app purchases and subscriptions ([below](#in-app-purchases-and-subscriptions)). A part the app does not have is left out (or written as its default: `eula: standard`, `phased: false`);
 a part the key's role may not read keeps the value `app.yml` already had, with a note.
 
 - **The version** is the one being prepared if there is one, else the one on the App Store, else the newest;
@@ -180,7 +183,7 @@ a part the key's role may not read keeps the value `app.yml` already had, with a
   `media.lock`, except files the lock shows are the local original of the same upload, which are kept. Media still
   processing, and previews App Store Connect only streams, are listed as not downloaded.
 - **All at once**: the new directory is built beside the old one and swapped in when everything is read, so a failure
-  leaves `appstore/` as it was. Files the format does not own (a README, `iap/`), `app.yml` keys xless does not
+  leaves `appstore/` as it was. Files the format does not own (a README, notes in `iap/`), `app.yml` keys xless does not
   know and the App Privacy answers (`privacy`, read only by [`store privacy pull`](#app-privacy-xless-store-privacy))
   are carried over. It is a pull: the listing's text and media become App Store Connect's, and a
   local screenshot never uploaded is not kept (a note names it).
@@ -239,6 +242,7 @@ xless store push --only text,review        # some parts only
 xless store push --only media              # screenshots and previews only
 xless store push --only pricing            # price schedule and availability only
 xless store push --only privacy            # App Privacy only (Apple ID web session)
+xless store push --only iap,subscriptions  # in-app purchases and subscriptions only
 xless store push --prune                   # also delete locales, media sets and files the directory does not have
 ```
 
@@ -301,6 +305,8 @@ The parts, in the order they are sent (`--only` chooses):
     Connect does not list for the app stops the push.
 - **`privacy`**: the App Privacy answers, through the Apple ID web session, then published; see
   [App Privacy](#app-privacy-xless-store-privacy). Like pricing, it needs no version.
+- **`iap`** and **`subscriptions`**: the in-app purchases and subscriptions; see [below](#in-app-purchases-and-subscriptions).
+  Like pricing, they need no version.
 - **`media`**: per locale and display (or preview) type, the screenshot and preview sets: created when App Store
   Connect has none (in a locale the `text` part creates, too), new and changed files uploaded, the set put in the
   directory's order, and poster frames (`previewFrames`) set.
@@ -383,3 +389,104 @@ some); `push` checks every ID against App Store Connect's own lists before sendi
 
 `--json` prints `{"appID", "app", "published", "privacy", "notes"}` for `pull` and `{"appID", "app", "dryRun",
 "applied", "changes", "notes"}` for `push`.
+
+## In-app purchases and subscriptions
+
+Paid features are part of the listing: one file per product, pulled and pushed with the rest, and sent to App Review
+with the version by [`xless release submit`](apple-account.md#xless-release). Everything goes through the documented
+API with the API key (App Manager is enough).
+
+```text
+appstore/
+  iap/
+    com.example.coins100.yml       a consumable, non-consumable or non-renewing subscription, named after its product ID
+    com.example.coins100.png       its App Review screenshot, when the file names it
+  subscriptions/
+    premium/                       one directory per subscription group (any name; pull uses the group's)
+      group.yml                    the group
+      com.example.monthly.yml      one auto-renewable subscription of the group
+      com.example.monthly.png
+```
+
+```yaml
+# iap/com.example.coins100.yml
+type: CONSUMABLE                   # CONSUMABLE, NON_CONSUMABLE or NON_RENEWING_SUBSCRIPTION; fixed once created
+referenceName: 100 Coins           # the name only App Store Connect shows
+familySharable: false
+reviewNote: Buy it from the Store tab.
+reviewScreenshot: iap/com.example.coins100.png
+pricing:                           # as app.yml's pricing: base territory, price, manual prices, scheduled changes
+  baseTerritory: USA
+  price: "0.99"
+availability:
+  territories: all                 # or a list: [USA, CAN]
+  newTerritories: true
+localizations:                     # what customers see, per locale
+  en-US:
+    name: 100 Coins                # 35 characters
+    description: A pile of coins.  # 55 characters
+```
+
+```yaml
+# subscriptions/premium/group.yml
+referenceName: Premium             # how push finds the group at App Store Connect
+localizations:
+  en-US:
+    name: Premium                  # 75 characters
+    customAppName: Example         # optional, 30 characters
+
+# subscriptions/premium/com.example.monthly.yml
+referenceName: Premium Monthly
+period: ONE_MONTH                  # ONE_WEEK, ONE_MONTH, TWO_MONTHS, THREE_MONTHS, SIX_MONTHS or ONE_YEAR
+groupLevel: 1                      # 1 is the highest level of service in the group
+familySharable: false
+reviewNote: …
+reviewScreenshot: subscriptions/premium/com.example.monthly.png
+pricing:
+  baseTerritory: USA
+  price: "4.99"
+  territories:                     # prices of their own; every other territory gets Apple's equivalent of 4.99
+    GBR: "3.99"
+  preserveCurrentPrice: true       # existing subscribers keep what they pay when a price changes (the default)
+availability:
+  territories: all
+localizations:
+  en-US:
+    name: Premium Monthly
+    description: Everything, every month.
+```
+
+As in `app.yml`, a key that is absent is not managed: `push` keeps what App Store Connect has for it. `store validate`
+checks the files offline: product IDs (letters, digits, `.`, `-`, `_`; the file name is the product ID, and a product ID
+belongs to one file), types and periods, prices and territory codes, locale codes and Apple's text limits, group levels
+(one per subscription), and that the screenshot is a PNG or JPEG inside `appstore/`. Without `--draft` it also needs
+what App Review needs: a type, a reference name and localized names.
+
+- **`store pull`** writes every product of the app: its text, its current prices (an in-app purchase's schedule as
+  `app.yml` writes the app's; a subscription's base territory price, USA when it has one, and the territories whose
+  price is not Apple's equivalent of it), its availability, and its App Review screenshot (downloaded, recorded in
+  `media.lock`). A subscription group keeps the directory name the manifest already has for it. A product file App
+  Store Connect has no product for (never pushed) is not kept: a note names it.
+- **`store push`** (parts `iap`, `subscriptions`): a product or group App Store Connect does not have is created
+  (`POST /v2/inAppPurchases`, `/v1/subscriptionGroups`, `/v1/subscriptions`) alone, and `push` plans again once it
+  exists (its text, screenshot, prices and availability need its ID): `--dry-run` shows the creation and says the rest
+  follows. One it has is updated where it differs: the reference name, review note and family sharing (a subscription's
+  period and level too); the text per locale (a locale App Store Connect has and the file does not is reported, and
+  deleted with `--prune`); the screenshot, uploaded when it differs, the old one deleted first (one per product); an
+  in-app purchase's price schedule, sent whole as the app's is (`POST /v1/inAppPurchasePriceSchedules`); a
+  subscription's price in each territory it is sold in, one `POST /v1/subscriptionPrices` per territory whose price
+  differs, in effect at once (with `preserveCurrentPrice` where it already had a price); and the availability, sent
+  whole whenever it differs (the API has no update: `POST /v1/inAppPurchaseAvailabilities`,
+  `/v1/subscriptionAvailabilities`). An in-app purchase's type cannot change: a different `type` stops the push. A
+  group is found by its `referenceName`; a new name whose subscriptions App Store Connect has in one other group renames
+  that group. A subscription cannot move between groups: a file in another group's directory stops the push before
+  anything is sent.
+- **Never deleted**: a product or group App Store Connect has and `appstore/` does not is reported, never removed.
+- **`release submit`** adds each product the manifest lists to the review submission: its version being prepared
+  (`inAppPurchaseVersion`, `subscriptionGroupVersion`, `subscriptionVersion` items); a product ready to submit without
+  such a version is submitted with the app's version (`POST /v1/inAppPurchaseSubmissions`, `/v1/subscriptionSubmissions`).
+  A submission App Review sent back takes them too when it is submitted again. The pre-flight fails when a listed
+  product is not on App Store Connect or is missing metadata. `--no-products` leaves them out, check included.
+
+[`xless iap`](apple-account.md#xless-iap-and-xless-subscriptions) and `xless subscriptions` show what App Store Connect
+has, and list the price points a file may name.

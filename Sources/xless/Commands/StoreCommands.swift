@@ -203,8 +203,10 @@ struct StorePushCommand: AsyncParsableCommand {
         attachments), declarations (age rating, content rights, licence agreement, export compliance and its \
         document, accessibility), pricing (the price schedule: base territory and price, manual prices in other \
         territories, scheduled changes; and the territories the app is available in; it needs no version), privacy \
-        (the App Privacy answers, then published; it needs no version), media (per locale and display type, the \
-        screenshot and preview sets).
+        (the App Privacy answers, then published; it needs no version), iap and subscriptions (iap/ and \
+        subscriptions/: products and groups created, then their text, App Review screenshot, prices and availability; \
+        nothing is ever deleted; they need no version), media (per locale and display type, the screenshot and \
+        preview sets).
 
         App Privacy has no App Store Connect API: when app.yml has privacy:, push uses the Apple ID web session for it \
         (a session kept by `xless auth login --keep`, else a sign-in on the terminal). Without either, the privacy part \
@@ -233,7 +235,7 @@ struct StorePushCommand: AsyncParsableCommand {
 
     @OptionGroup var directory: StoreDirOption
     @Flag(help: "Print the plan and stop: nothing is sent.") var dryRun = false
-    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, pricing, privacy, media (comma-separated, or repeated).", valueName: "parts"))
+    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, pricing, privacy, iap, subscriptions, media (comma-separated, or repeated).", valueName: "parts"))
     var only: [String] = []
     @Flag(help: "Delete the localizations, media sets and files App Store Connect has and the directory does not (never the primary locale).")
     var prune = false
