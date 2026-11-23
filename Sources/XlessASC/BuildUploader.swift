@@ -1,4 +1,3 @@
-import Crypto
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -70,35 +69,25 @@ public struct BuildUploader: Sendable {
                 relationships: .init(app: .init(.init(type: "apps", id: app.id)))))
         }
 
-        let bytes = try Data(contentsOf: ipa, options: .alwaysMapped)
+        let size = try AssetFile.size(ipa)
         struct FileRels: Codable, Sendable { var buildUpload: ASCToOne }
         let file: ASCDocument<ASCResource<BuildUploadFileAttributes>> = try await step("registering the .ipa", fix: "re-run `xless upload`") {
             try await client.post(
             "/v1/buildUploadFiles", body: ASCCreate<BuildUploadFileAttributes, FileRels>(
                 type: "buildUploadFiles",
-                attributes: .init(assetType: "ASSET", fileName: ipa.lastPathComponent, fileSize: bytes.count,
+                attributes: .init(assetType: "ASSET", fileName: ipa.lastPathComponent, fileSize: size,
                                   uti: platform == .ios ? "com.apple.ipa" : "com.apple.pkg", uploadOperations: nil),
                 relationships: .init(buildUpload: .init(.init(type: "buildUploads", id: upload.data.id)))))
         }
 
-        for op in file.data.attributes.uploadOperations ?? [] {
-            guard let url = URL(string: op.url), op.offset >= 0, op.length >= 0, op.offset + op.length <= bytes.count else {
-                throw XlessError(.upload, "App Store Connect returned an invalid upload operation", fix: "re-run the upload stage")
-            }
-            var req = URLRequest(url: url)
-            req.httpMethod = op.method
-            for h in op.requestHeaders ?? [] { req.setValue(h.value, forHTTPHeaderField: h.name) }
-            req.httpBody = bytes.subdata(in: op.offset..<(op.offset + op.length))
-            _ = try await step("uploading bytes \(op.offset)..<\(op.offset + op.length)",
-                               fix: "upload URLs expire, so re-run `xless upload` to start a fresh upload") {
-                try await client.raw(req)
-            }
-        }
+        try await AssetUploader(client: client, stage: .upload, rerun: "re-run `xless upload`")
+            .putParts(file.data.attributes.uploadOperations ?? [], file: ipa, size: size, invalidFix: "re-run the upload stage",
+                      fix: "upload URLs expire, so re-run `xless upload` to start a fresh upload")
 
         struct Checksum: Codable, Sendable { var hash: String; var algorithm: String }
         struct Checksums: Codable, Sendable { var file: Checksum }
         struct Commit: Codable, Sendable { var uploaded: Bool; var sourceFileChecksums: Checksums }
-        let md5 = Insecure.MD5.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        let md5 = try AssetFile.md5(ipa)
         let _: ASCDocument<ASCResource<BuildUploadFileAttributes>> = try await step("committing the upload", fix: "re-run `xless upload`") {
             try await client.patch(
                 "/v1/buildUploadFiles/\(file.data.id)",
