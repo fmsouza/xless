@@ -104,7 +104,8 @@ private func opens(_ entry: VaultEntry?, _ key: SymmetricKey) -> String? {
     defer { t.cleanup() }
     let key = try makeLegacy(t, entries: [("ASC_KEY_P8", .ascAPIKey, .init(teamID: "TEAM123456", keyID: "K1", role: "ADMIN"), "p8")])
     let o = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: t.location.file)) as? [String: Any])
-    #expect(o["version"] as? Int == 1 && o["minimumReaderVersion"] == nil && (try entries(o)[0]["version"]) == nil)
+    let first = try entries(o)[0]
+    #expect(o["version"] as? Int == 1 && o["minimumReaderVersion"] == nil && first["version"] == nil)
     let file = try #require(try t.store.read())
     #expect(file.version == 1 && file.minimumReaderVersion == 1 && file.isWritable && file.needsUpgrade)
     #expect(opens(file.entries[0], key) == "p8")
