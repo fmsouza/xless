@@ -16,8 +16,9 @@ creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with
 keeps the App Store listing in an `appstore/` directory, [`xless builds`](#xless-builds), which lists uploaded builds,
 waits for their processing, answers their export compliance and expires them, [`xless users`](#xless-users), which
 invites, updates and removes the team's App Store Connect users, [`xless testflight`](#xless-testflight), which
-manages TestFlight groups and testers, delivers builds and runs external testing, and [`xless api`](#xless-api), which
-calls any documented App Store Connect endpoint. More commands (releases) follow the conventions on this page.
+manages TestFlight groups and testers, delivers builds and runs external testing, [`xless release`](#xless-release),
+which submits a version for review and releases it, and [`xless api`](#xless-api), which calls any documented App Store
+Connect endpoint.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -719,6 +720,78 @@ resource}`, `testers add` `{"results": [{"email", "result": "created" | "added" 
 `beta-info show` and `set` `{"localizations": [...], "reviewDetail": ..., "licenseAgreement": ...}`, `beta-review status`
 `{"build", "submission", "externalBuildState"}`, and the other commands the resource they changed.
 
+## `xless release`
+
+```sh
+xless release create 1.2 --app com.example.app            # the App Store version to submit
+xless release attach 1.2+42                                # its build (or submit --build)
+xless release submit --build 1.2+42 --release manual --phased --dry-run
+xless release submit --build 1.2+42 --release manual --phased
+xless release status
+xless release cancel                                       # asks first
+xless release publish                                      # a manual release, once approved
+xless release phased pause | resume | complete
+```
+
+The last step to the App Store, with the App Store Connect API key (`/v1/appStoreVersions`, `/v1/reviewSubmissions`,
+`/v1/reviewSubmissionItems`, `/v1/appStoreVersionReleaseRequests`, `/v1/appStoreVersionPhasedReleases`).
+
+- **Which version.** `--app`, `--platform` and `--app-version` name it. Without them, the [`appstore/`
+  manifest](appstore-manifest.md) gives the defaults (app.yml's `bundleID`, `platform` and `version`; `--dir` points at
+  another directory), else xless.yml's bundle ID, the app's only platform and its newest version (`publish`: the version
+  waiting for its release; `phased`: the newest released one). The option is `--app-version` because `--version` is
+  xless's own.
+- **`create <version>`.** App Store Connect keeps one version in preparation per platform: when there is one, it takes
+  the new version string; when the version exists, nothing is sent; a version string already released or in review is
+  refused. [`xless store push`](appstore-manifest.md) creates the version from app.yml too.
+- **`attach <build>`.** The build (its ID or `<version>+<build number>`, as in [`xless builds`](#xless-builds)) must be
+  the app's, of the same platform and version string, and not expired. A build still processing is attached with a
+  note.
+- **`submit`.** First the **pre-flight**, which only reads and lists every problem at once:
+
+  | Check | What it needs |
+  |---|---|
+  | manifest | `appstore/` valid as `xless store validate` (without `--draft`) checks it, of this app, platform and version; skipped without a manifest |
+  | metadata | `xless store push` would send nothing: the listing on App Store Connect is the manifest's |
+  | listing | per locale a name, description, keywords and support URL; a privacy policy URL; a primary category; the content rights declaration |
+  | screenshots | in the primary locale, a screenshot for the required display types (iPhone 6.7" or 6.5" for iOS; iPad 13" only warns); none failed |
+  | privacy | the App Privacy answers published: checked through an Apple ID web session kept by `xless auth login --keep`, else a warning (it has no API) |
+  | pricing, availability | a price schedule, and at least one territory |
+  | build, encryption | the build valid, not expired, of the version's string and platform; its export compliance answered |
+  | review contact | the App Review contact's name, phone and email; a demo account name when one is required |
+
+  `--release manual|auto|<date>` and `--phased` are what the submission sets: app.yml's `release` values are not
+  compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (`--build`;
+  default: the one attached), the release type (`manual`: [`publish`](#xless-release) releases it; `auto`: on
+  approval; a date `2026-12-01` (midnight UTC) or a time on the hour `2026-12-01T09:00:00Z`: not before then), the
+  phased release (`--phased` adds one, `--no-phased` removes one that has not started), then the review submission:
+  created, the version added, submitted. A run that stopped half-way (a draft submission with or without the version,
+  a build attached) is **resumed** by running it again; a version rejected by App Review is submitted again in its
+  submission. `--dry-run` runs the pre-flight and lists the steps.
+
+  Exit codes: **0** submitted (or a dry run that passed), **21** the pre-flight failed (nothing was sent), **22** the
+  version is already in review (nothing was sent), **20** any other error. With `--json`, one document:
+  `{"outcome": "submitted" | "dryRun" | "preflightFailed" | "alreadyInReview", "appID", "bundleID", "platform",
+  "version", "versionID", "versionState", "build", "buildID", "submissionID", "submissionState", "steps", "notes",
+  "preflight": {"passed", "checks": [{"name", "status": "ok" | "failed" | "warning" | "skipped", "message", "fix"}]}}`.
+- **`status`** shows the version's state, its release type, its build, its phased release (state, day of 7) and the
+  review submissions that hold it, with their items' states. App Review's reasons for a rejection are not in the App
+  Store Connect API: status says the version was rejected, and Apple emails the reasons to the account holder and the
+  admins.
+- **`cancel`** withdraws the version from App Review (asks first, or `--yes`): its review submission is canceled, and
+  the version can be changed and submitted again.
+- **`publish`** releases a version that App Review approved and that waits for a manual release (`pending developer
+  release`); a version already released is reported and nothing is sent. With a phased release, the phases start.
+- **`phased pause | resume | complete`**: a phased release gives the update to more users each day over 7 days.
+  `pause` holds it (at most 30 days in all), `resume` goes on, `complete` gives it to everyone now. A phased release
+  already in that state sends nothing; one that has not started (the version is not released) cannot be moved.
+
+With `--json`, `create` prints `{"result": "created" | "renamed" | "existing", "data": version}`, `attach`
+`{"result": "attached" | "unchanged", "versionID", "buildID"}`, `status` `{"appID", "bundleID", "version", "build",
+"phasedRelease", "submissions": [{"id", "state", "submittedDate", "items"}]}`, `cancel` `{"result": "canceled" |
+"unchanged" | "none", "submissionID", "state"}`, `publish` `{"result": "released" | "unchanged", "versionID", "state"}`
+and `phased` `{"result", "data": phased release}`.
+
 ## JSON output
 
 `--json` output is meant for scripts and stays stable: one JSON document on standard output, keys sorted, indented by
@@ -755,7 +828,8 @@ and says how many minutes to wait.
 
 ## Errors
 
-An account command that fails prints `[account] cause — fix` on standard error and exits with code **20**. The cause
+An account command that fails prints `[account] cause — fix` on standard error and exits with code **20** (`xless
+release submit` also exits with 21 and 22: [above](#xless-release)). The cause
 names the request (`GET /v1/apps/123`) and Apple's error code, detail and the field it points at. A failure of the
 Apple ID web session names the interface (App Store Connect's or the developer portal's), says it is undocumented and
 gives the page to use meanwhile; a refused session (HTTP 401) asks to sign in again (`xless auth logout` first when a
