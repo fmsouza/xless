@@ -137,7 +137,7 @@ ln -s ~/.local/share/xless/credential-helpers/xless-credential-pass ~/.local/bin
 
 | Helper | Where each secret goes |
 |---|---|
-| `secret-tool` | One keyring item labelled `xless <NAME>`, with the attributes `application=xless`, `xless-name=<NAME>` and `xless-username=<its kind and IDs>`. A locked keyring asks to be unlocked in its own window. |
+| `secret-tool` | One keyring item per secret, with the attributes `application=xless` and `xless-name=<NAME>`, labelled `xless <NAME> <its kind and IDs>`. A locked keyring asks to be unlocked in its own window. secret-tool takes values of less than 8 KiB (keys and passwords are far smaller); the helper refuses longer ones. |
 | `pass` | `xless/<NAME>/secret` (the value) and `xless/<NAME>/username` (its kind and IDs), both encrypted to your pass key. GnuPG asks your key's passphrase through its agent; `export GPG_TTY=$(tty)` for a terminal prompt. `xless secrets list` reads every entry's `username`. |
 
 Every `xless secrets` command works the same with a helper, and so does everything that reads or writes secrets
@@ -148,14 +148,17 @@ their own tools). Moving from the vault to a helper is done entry by entry: `xle
 with `backend: vault`, then `xless secrets import <name> --file <file> …` with `backend: helper`, then delete the file.
 
 What xless does to keep the helper honest: it runs only `xless-credential-<name>` from an absolute directory on PATH,
-and refuses it when the file, the directory it is in, or the PATH directory it was found in can be written by anyone
-but you (or root), or belongs to another user: whoever can change the helper can read every secret. The helper gets
+and refuses it when the file, the directory it is in, or the PATH directory it was found in can be written by the group
+or others, or belongs to someone other than you or root: whoever can change the helper can read every secret. (With a
+umask of 002, as on distributions that give each user a group of their own, `~/.local/bin` is group-writable:
+`chmod g-w ~/.local/bin`, or link the helper from a directory that is not. Keep the directories above it yours too.) The helper gets
 only its verb as argument; its environment is cut down to what a keyring needs (`HOME`, `PATH`, the locale, `XDG_*`,
 `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`, `GNUPGHOME`, `GPG_TTY`, `PASSWORD_STORE_*`,
 `TMPDIR`, `TERM`, `TZ`, `USER`, `LOGNAME`), never a secret variable, and it inherits no open file of xless's. Secrets
 go only through its stdin and stdout pipes; xless reads at most 4 MiB of answer into memory it zeroes afterwards, and
 stops the helper (and anything it started) after 120 seconds. Its stderr is xless's, so the keyring's or GnuPG's own
-messages reach you; xless never quotes what a failed `get` printed. With a helper, the integrity of the names and IDs
+messages reach you; xless never quotes what a failed `get` or `store` printed. While it runs, the helper has the
+terminal (when xless has it): it may prompt on `/dev/tty`, and Ctrl-C stops it. With a helper, the integrity of the names and IDs
 is the keyring's, and there is no lock between two xless commands writing at the same time.
 
 ### Writing a credential helper
@@ -175,12 +178,14 @@ non-zero.
 - `<NAME>` is the entry's name (`ASC_KEY_P8@ABCDE12345`): letters, digits and `. _ @ -`, starting with a letter or a
   digit. ServerURLs that do not start with `xless:` are not xless's: xless ignores them in `list`.
 - The description (Username) is xless's, not secret, and must come back unchanged: compact JSON of the entry's kind
-  and IDs, such as `{"keyID":"2X9R4HXF34","kind":"asc-api-key","teamID":"ABCDE12345"}`. `list` must return it without
-  reading any secret, so that `xless secrets list` and lookups by team need no unlock.
+  and IDs, such as `{"keyID":"2X9R4HXF34","kind":"asc-api-key","teamID":"ABCDE12345"}`. `list` returns it for every
+  credential without giving any value; keep it cheap, since xless lists once per command (the shipped pass helper
+  decrypts each description, so GnuPG may ask for its key once).
 - The value is text (UTF-8 without NUL bytes) and must come back byte for byte, trailing newlines included. xless writes
   the request on one line and escapes only `"`, `\` and control characters (as `\n`, `\t`, `\r`, `\b`, `\f`,
   `\u00XX`); other characters come as UTF-8. It reads any valid JSON answer.
-- Keep the secret out of argv, the environment and files in clear: give it to your keyring through a pipe.
+- Keep the secret out of argv, the environment and files in clear: give it to your keyring through a pipe. Errors go
+  to stderr; never print the request back.
 
 `share/xless/credential-helpers/` has the two shipped helpers, in POSIX sh and awk, as examples.
 

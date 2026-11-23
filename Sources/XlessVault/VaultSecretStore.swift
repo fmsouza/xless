@@ -35,6 +35,10 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
         try VaultCrypto.open(entry, dataKey: try key(for: try file(of: catalog), remember: nil, reason: reason))
     }
 
+    public func authenticate(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws {
+        try secret(entry, in: catalog, reason: reason).wipe()
+    }
+
     public func update(reason: String, _ body: (SecretCatalog) throws -> [SecretChange]) throws {
         try vault.update { file in
             var next = file

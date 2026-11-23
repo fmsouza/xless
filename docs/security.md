@@ -101,7 +101,7 @@ this file, and their protection at rest is the keyring's
 `xless-credential-<name>`, sees every secret xless stores or reads, so xless runs it only from an absolute PATH
 directory, and refuses it when the file, its directory or that PATH directory can be written by the group or others or
 belongs to someone other than you or root. It gets its verb as its only argument, a cut-down environment with no secret
-variable, no open file of xless's, the secret on a pipe only; its answer is read into at most 4 MiB of memory that is
+variable, no open file of xless's, the terminal while it runs, the secret on a pipe only; its answer is read into at most 4 MiB of memory that is
 zeroed afterwards, and it is killed with its process group after 120 seconds. The entries' names, kinds and IDs are kept
 by the keyring too (unsealed: their integrity is the keyring's), and two xless commands writing at once are not
 serialised.

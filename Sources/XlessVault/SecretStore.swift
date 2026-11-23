@@ -60,6 +60,10 @@ public protocol SecretStore: AnyObject, Sendable {
     func unlock(_ catalog: SecretCatalog, remember: Int?, reason: String) throws
     /// The value of `entry` (one of `catalog`'s), unlocking first when needed.
     func secret(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws -> SecretBytes
+    /// Makes sure `entry`'s metadata is what was stored before it is used on its own (the API key's IDs). The vault
+    /// authenticates it with the secret, so it opens the entry (asking the passphrase); a helper's keyring keeps both, so
+    /// it does nothing.
+    func authenticate(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws
     /// Read–modify–write: `body` gets the store as it is now and returns the changes to make. The vault does it under
     /// its writers' lock and replaces its file atomically; a helper lists, then stores and erases one by one.
     func update(reason: String, _ body: (SecretCatalog) throws -> [SecretChange]) throws

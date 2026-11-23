@@ -50,8 +50,13 @@ int xless_is_memory_fs(const char *path);
 /// Starts `path` with `argv` and `envp` (NULL-terminated) in a process group of its own (its pid), with every signal at
 /// its default disposition and none blocked. Its stdin and stdout are pipes whose other ends come back in `*in_fd` and
 /// `*out_fd` (close-on-exec, non-blocking); its stderr is this process's; every other descriptor is closed in it.
+/// `tty`: the controlling terminal, when this process is its foreground, else -1: the child's group becomes the
+/// terminal's foreground (so it can prompt on /dev/tty, and Ctrl-C reaches it) until `xless_terminal_restore`.
 /// Returns 0, or an errno value (nothing left running: execve's own error, e.g. ETXTBSY, comes back).
-int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int *pid, int *in_fd, int *out_fd);
+int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int tty, int *pid, int *in_fd, int *out_fd);
+
+/// Makes this process's group the foreground of `tty` again (nothing for -1).
+void xless_terminal_restore(int tty);
 
 /// write(2) that never raises SIGPIPE in this process: a reader that went away gives -1 with errno EPIPE.
 long xless_write_nosigpipe(int fd, const void *bytes, size_t length);

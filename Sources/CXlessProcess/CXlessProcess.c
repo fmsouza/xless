@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 #ifdef __linux__
@@ -121,6 +122,10 @@ int xless_is_memory_fs(const char *path) {
 }
 
 static int cloexec_pipe(int fds[2]) {
+#ifdef __linux__
+    // In one step: a fork on another thread never inherits these.
+    return pipe2(fds, O_CLOEXEC) == 0 ? 0 : errno;
+#else
     if (pipe(fds) != 0) return errno;
     for (int i = 0; i < 2; i++) {
         if (fcntl(fds[i], F_SETFD, FD_CLOEXEC) != 0) {
@@ -131,9 +136,24 @@ static int cloexec_pipe(int fds[2]) {
         }
     }
     return 0;
+#endif
 }
 
-int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int *pid, int *in_fd, int *out_fd) {
+/// tcsetpgrp without being stopped by SIGTTOU when this process is not (or no longer) in the foreground.
+static void set_foreground(int tty, pid_t group) {
+    sigset_t ttou, old;
+    sigemptyset(&ttou);
+    sigaddset(&ttou, SIGTTOU);
+    pthread_sigmask(SIG_BLOCK, &ttou, &old);
+    tcsetpgrp(tty, group);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+}
+
+void xless_terminal_restore(int tty) {
+    if (tty >= 0) set_foreground(tty, getpgrp());
+}
+
+int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int tty, int *pid, int *in_fd, int *out_fd) {
     int in[2], out[2], status[2], e;
     if ((e = cloexec_pipe(in)) != 0) return e;
     if ((e = cloexec_pipe(out)) != 0) { close(in[0]); close(in[1]); return e; }
@@ -149,6 +169,11 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
     if (child == 0) {
         // Only async-signal-safe calls from here to execve.
         setpgid(0, 0);
+        if (tty >= 0) {
+            // The terminal's foreground before exec, so a helper that prompts on /dev/tty is not stopped (SIGTTIN).
+            signal(SIGTTOU, SIG_IGN);
+            tcsetpgrp(tty, getpid());
+        }
         for (int sig = 1; sig < NSIG; sig++) {
             if (sig == SIGKILL || sig == SIGSTOP) continue;
             signal(sig, SIG_DFL);
@@ -156,7 +181,12 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
         sigset_t none;
         sigemptyset(&none);
         sigprocmask(SIG_SETMASK, &none, NULL);
-        if (dup2(in[0], 0) < 0 || dup2(out[1], 1) < 0) { e = errno; goto failed; }
+        int child_out = out[1];
+        if (child_out == 0 && (child_out = fcntl(out[1], F_DUPFD, 3)) < 0) { e = errno; goto failed; } // stdin's slot
+        if (dup2(in[0], 0) < 0 || dup2(child_out, 1) < 0) { e = errno; goto failed; }
+        // dup2 onto itself (xless started with fd 0 or 1 closed) keeps close-on-exec: clear it.
+        fcntl(0, F_SETFD, 0);
+        fcntl(1, F_SETFD, 0);
         // Nothing else of xless's reaches the helper: no store file, lock or socket left open without close-on-exec.
         {
             int report = status[1];
@@ -169,6 +199,7 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
         _exit(127);
     }
     setpgid(child, child); // also in the parent, so the group exists before any kill
+    if (tty >= 0) set_foreground(tty, child);
     close(in[0]);
     close(out[1]);
     close(status[1]);
@@ -179,6 +210,7 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
     if (n > 0) {
         int ignored;
         xless_reap(child, 0, &ignored);
+        xless_terminal_restore(tty);
         close(in[1]);
         close(out[0]);
         return child_errno ? child_errno : EIO;

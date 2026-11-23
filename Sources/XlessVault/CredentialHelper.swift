@@ -110,10 +110,19 @@ public struct CredentialHelper: Sendable {
         let argv = [executable, verb.rawValue]
         let envp = environment.map { "\($0.key)=\($0.value)" }.sorted()
         var pid: Int32 = 0, inFD: Int32 = -1, outFD: Int32 = -1
+        // When xless is the terminal's foreground, the helper is for as long as it runs: it can prompt on /dev/tty
+        // (a password manager's own prompt) without being stopped, and Ctrl-C reaches it.
+        let tty = Self.foregroundTerminal()
+        defer {
+            if tty >= 0 {
+                xless_terminal_restore(tty)
+                close(tty)
+            }
+        }
         var started: Int32 = 0
         // ETXTBSY: another thread's fork still held the helper open for writing (a helper written just now); it passes.
         for attempt in 0..<20 {
-            started = withCStrings(argv) { a in withCStrings(envp) { e in xless_spawn_piped(executable, a, e, &pid, &inFD, &outFD) } }
+            started = withCStrings(argv) { a in withCStrings(envp) { e in xless_spawn_piped(executable, a, e, tty, &pid, &inFD, &outFD) } }
             guard started == ETXTBSY, attempt < 19 else { break }
             usleep(50_000)
         }
@@ -182,6 +191,16 @@ public struct CredentialHelper: Sendable {
         }
         defer { output.wipe() }
         return Answer(status: code, output: output.prefix(outCount))
+    }
+}
+
+extension CredentialHelper {
+    /// The controlling terminal, open, when this process's group is its foreground; else -1.
+    static func foregroundTerminal() -> Int32 {
+        let fd = open("/dev/tty", O_RDWR | O_NOCTTY | O_CLOEXEC)
+        guard fd >= 0 else { return -1 }
+        guard tcgetpgrp(fd) == getpgrp() else { close(fd); return -1 }
+        return fd
     }
 }
 

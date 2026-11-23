@@ -45,8 +45,7 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
             guard let catalog = try store.catalog() else { return nil }
             if let field = Self.metadataField(name) {
                 guard let entry = try pick("ASC_KEY_P8", catalog) else { return nil }
-                // Open it first: in the vault, the metadata is only authenticated with the secret.
-                try store.secret(entry, in: catalog, reason: "the secret \(name)").wipe()
+                try store.authenticate(entry, in: catalog, reason: "the secret \(name)")
                 return field(entry.metadata)
             }
             guard let entry = try pick(name, catalog) else { return nil }

@@ -31,7 +31,9 @@ case "$1" in
   *) exit 9 ;;
 esac
 P
-# secret-tool: items are $SECRETS/<n>/{label,attrs,secret}; attrs are "key<TAB>value" lines.
+# secret-tool, as libsecret's behaves: items are $SECRETS/<n>/{label,attrs,secret} ("key<TAB>value" lines); store
+# replaces the item with exactly the same attributes, and keeps only the first 8191 bytes of a longer value ("password
+# is too long" on stderr, exit 0); search prints paths, labels and values on stdout but the attributes on stderr.
 cat > "$t/bin/secret-tool" <<'S'
 #!/bin/sh
 set -eu
@@ -43,10 +45,15 @@ label=
 if [ "$verb" = store ]; then label=${1#--label=}; shift; fi
 want=$(while [ $# -gt 0 ]; do printf '%s\t%s\n' "$1" "$2"; shift 2; done)
 matches() { printf '%s\n' "$want" | while IFS= read -r line; do grep -Fxq -- "$line" "$1/attrs" || exit 1; done; }
+same() { [ "$(sort "$1/attrs")" = "$(printf '%s\n' "$want" | sort)" ]; }
 case "$verb" in
   store)
-    n=$(cat "$d/.next" 2>/dev/null || echo 0); echo $((n + 1)) > "$d/.next"; i="$d/item$n"; mkdir "$i"
-    printf '%s' "$label" > "$i/label"; printf '%s\n' "$want" > "$i/attrs"; cat > "$i/secret" ;;
+    i=
+    for j in "$d"/item*; do [ -d "$j" ] && same "$j" && i=$j; done
+    if [ -z "$i" ]; then n=$(cat "$d/.next" 2>/dev/null || echo 0); echo $((n + 1)) > "$d/.next"; i="$d/item$n"; mkdir "$i"; fi
+    printf '%s' "$label" > "$i/label"; printf '%s\n' "$want" > "$i/attrs"
+    head -c 8191 > "$i/secret"
+    if [ -n "$(head -c 1)" ]; then echo "secret-tool: password is too long" >&2; fi ;;
   lookup)
     for i in "$d"/item*; do [ -d "$i" ] && matches "$i" && { cat "$i/secret"; exit 0; }; done; exit 1 ;;
   search)
@@ -54,7 +61,7 @@ case "$verb" in
       [ -d "$i" ] && matches "$i" || continue
       printf '[/org/freedesktop/secrets/collection/login/%s]\nlabel = %s\nsecret = ' "${i##*item}" "$(cat "$i/label")"
       cat "$i/secret"; printf '\ncreated = 2026-11-23 10:00:00\nmodified = 2026-11-23 10:00:00\nschema = org.freedesktop.Secret.Generic\n'
-      sed 's/^\([^\t]*\)\t/attribute.\1 = /' "$i/attrs"
+      sed 's/^\([^\t]*\)\t/attribute.\1 = /' "$i/attrs" >&2
     done ;;
   clear)
     for i in "$d"/item*; do [ -d "$i" ] && matches "$i" && rm -rf "$i"; done; exit 0 ;;
@@ -135,6 +142,18 @@ assert json.loads(json.loads(open(sys.argv[1]).read())["xless:ASC_KEY_P8@ABCDE12
   [[ $code != 0 ]] || fail "$helper: a \\u escape past ASCII was stored"
   grep -q 'UTF-8' "$t/err" || fail "$helper: a \\u escape past ASCII: $(cat "$t/err")"
   run frobnicate < /dev/null; [[ $code == 2 ]] || fail "$helper: unknown verb: $code"
+
+  # 9000 bytes: pass keeps them all; secret-tool would cut them, so its helper refuses.
+  head -c 9000 /dev/zero | tr '\0' 'k' > "$t/long"
+  request generic LONG "$t/long" > "$t/req"
+  run store < "$t/req"
+  if [[ $helper == pass ]]; then
+    [[ $code == 0 ]] || fail "pass: a 9000-byte value: $(cat "$t/err")"
+    printf 'xless:LONG' > "$t/url"; run get < "$t/url"; check_get "$t/out" LONG "$t/long" generic || fail "pass: the long value came back different"
+  else
+    [[ $code != 0 ]] || fail "secret-tool: a 9000-byte value was stored (and cut)"
+    grep -q "less than 8 KiB" "$t/err" || fail "secret-tool: $(cat "$t/err")"
+  fi
 done
 
 # A keyring that cannot be searched is an error, never an empty list.

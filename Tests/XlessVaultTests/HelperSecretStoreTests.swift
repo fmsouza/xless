@@ -301,3 +301,18 @@ esac
     try store.update(reason: "test") { _ in [.remove(name: "XLESS_DEMO_PASSWORD")] }
     #expect(try store.existingCatalog().entries.map(\.name) == ["XLESS_DIST_KEY@ABCDE12345"])
 }
+
+@Test func aFailedStoreIsNeverQuotedAndLookupsListOnce() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    // Echoes its request back, then fails: the value must not reach the error.
+    try dir.script("echo", #"if [ "$1" = list ]; then echo list >> "$HOME/runs"; printf '%s' '{"xless:A":"{\"kind\":\"generic\"}"}'; exit 0; fi; cat; exit 1"#)
+    let store = try dir.store("echo")
+    let e = #expect(throws: VaultError.self) { try store.store(name: "A", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "TOP-SECRET")) }
+    #expect(e?.cause.contains("store failed (exit 1)") == true)
+    #expect(e?.description.contains("TOP-SECRET") == false)
+    // One `list` for any number of lookups (the vault's metadata check is not needed here either).
+    let resolver = VaultResolver(secrets: store)
+    for _ in 0..<3 { _ = try? resolver.lookup("B", stage: .config) }
+    #expect(try dir.read("runs") == "list\n")
+}

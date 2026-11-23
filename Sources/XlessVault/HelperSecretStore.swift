@@ -10,6 +10,10 @@ import XlessCore
 /// integrity is the keyring's, as the secrets' are.
 public final class HelperSecretStore: SecretStore, @unchecked Sendable {
     public let helper: CredentialHelper
+    private let lock = NSLock()
+    /// The last `list`, for the rest of the process: each lookup would otherwise run the helper again (with pass, a
+    /// decryption per entry). `update` lists afresh and drops it.
+    private var listed: SecretCatalog?
 
     public init(helper: CredentialHelper) { self.helper = helper }
 
@@ -24,11 +28,19 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
 
     // MARK: SecretStore
 
-    public func catalog() throws -> SecretCatalog? { try list() }
+    public func catalog() throws -> SecretCatalog? { try existingCatalog() }
 
-    public func existingCatalog() throws -> SecretCatalog { try list() }
+    public func existingCatalog() throws -> SecretCatalog {
+        if let listed = lock.withLock({ listed }) { return listed }
+        let fresh = try list()
+        lock.withLock { listed = fresh }
+        return fresh
+    }
 
+    /// Nothing to unlock: the keyring asks for itself. (Callers read the catalog first, so the helper has answered.)
     public func unlock(_ catalog: SecretCatalog, remember: Int?, reason: String) throws {}
+
+    public func authenticate(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws {}
 
     public func secret(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws -> SecretBytes {
         SecretScope.enter() // before the value is in memory
@@ -39,6 +51,8 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
     }
 
     public func update(reason: String, _ body: (SecretCatalog) throws -> [SecretChange]) throws {
+        lock.withLock { listed = nil }
+        defer { lock.withLock { listed = nil } }
         let current = try list()
         for change in try body(current) {
             switch change {
@@ -114,11 +128,11 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
         try check(try helper.run(.erase, input: SecretBytes(utf8: Self.serverURL(name))), .erase)
     }
 
-    /// A non-zero exit is an error, quoting the first line the helper printed (`list`, `store`, `erase` never print
-    /// a secret; `get` is checked on its own).
+    /// A non-zero exit is an error, quoting the first line the helper printed for `list` and `erase` (whose requests
+    /// hold no secret); never for `store`, whose request a helper might echo back, nor `get` (checked on its own).
     private func check(_ answer: CredentialHelper.Answer, _ verb: CredentialHelper.Verb) throws {
         guard answer.status != 0 else { return }
-        let line = answer.output.withUnsafeBytes { bytes in
+        let line = verb == .store ? "" : answer.output.withUnsafeBytes { bytes in
             String(decoding: bytes.prefix(400).prefix { $0 != 0x0a }, as: UTF8.self)
         }
         let shown = String(line.unicodeScalars.map { $0.isASCII && $0.value >= 0x20 && $0.value < 0x7f ? Character($0) : "?" }.prefix(200))
