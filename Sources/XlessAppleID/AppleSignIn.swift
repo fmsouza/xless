@@ -5,9 +5,11 @@ import Foundation
 import FoundationNetworking
 #endif
 import XlessCore
+import XlessFIDO
 
 /// Signs an Apple ID in to Apple's web services, the way fastlane and xcodes do it: SRP-6a (the password itself is never
-/// sent), then the two-factor code from a trusted device or a text message. The session's cookies stay in `client`'s
+/// sent), then the second factor: a code from a trusted device or a text message, or a security key's assertion
+/// (`AppleSecurityKey`). The session's cookies stay in `client`'s
 /// in-memory jar. Nothing is stored, logged or printed beyond the prompts.
 public struct AppleSignIn {
     static let maxCodeAttempts = 3
@@ -17,14 +19,18 @@ public struct AppleSignIn {
     let srpPrivateKey: BigUInt?
     /// The stage its errors report: `.sdk` for `xless xcode download`, `.account` for the Apple account commands.
     let stage: Stage
+    /// Where a security key's assertion comes from: the USB keys plugged in (Linux), or a fake in tests.
+    let securityKeys: any SecurityKeySource
 
-    public init(client: AppleWebClient, prompter: SignInPrompter, stage: Stage = .sdk) {
-        self.init(client: client, prompter: prompter, now: { Date() }, srpPrivateKey: nil, stage: stage)
+    public init(client: AppleWebClient, prompter: SignInPrompter, stage: Stage = .sdk,
+                securityKeys: any SecurityKeySource = USBSecurityKeys()) {
+        self.init(client: client, prompter: prompter, now: { Date() }, srpPrivateKey: nil, stage: stage, securityKeys: securityKeys)
     }
 
     init(client: AppleWebClient, prompter: SignInPrompter, now: @escaping @Sendable () -> Date, srpPrivateKey: BigUInt?,
-         stage: Stage = .sdk) {
+         stage: Stage = .sdk, securityKeys: any SecurityKeySource = USBSecurityKeys()) {
         self.client = client; self.prompter = prompter; self.now = now; self.srpPrivateKey = srpPrivateKey; self.stage = stage
+        self.securityKeys = securityKeys
     }
 
     private func fail(_ cause: String, fix: String) -> XlessError { XlessError(stage, cause, fix: fix) }
@@ -67,7 +73,8 @@ public struct AppleSignIn {
                   let scnt = response.value(forHTTPHeaderField: "scnt") else {
                 throw fail("Apple asked for a second factor without a session to verify it in", fix: Self.changedFix)
             }
-            var twoFactor = TwoFactor(client: client, prompter: prompter, widgetKey: widgetKey, sessionID: session, scnt: scnt, stage: stage)
+            var twoFactor = TwoFactor(client: client, prompter: prompter, widgetKey: widgetKey, sessionID: session, scnt: scnt, stage: stage,
+                                      securityKeys: securityKeys)
             try await twoFactor.run()
         case 401:
             throw fail("Apple refused the Apple ID or password", fix: "check them and re-run (a few failed attempts can lock the Apple ID)")
@@ -143,7 +150,8 @@ public struct AppleSignIn {
     }
 }
 
-/// The second factor: a code pushed to the account's trusted devices, or sent by text message to a trusted number.
+/// The second factor: a code pushed to the account's trusted devices, or sent by text message to a trusted number, or a
+/// security key.
 struct TwoFactor {
     let client: AppleWebClient
     let prompter: SignInPrompter
@@ -151,10 +159,12 @@ struct TwoFactor {
     let sessionID: String
     var scnt: String
     let stage: Stage
+    let securityKeys: any SecurityKeySource
 
-    init(client: AppleWebClient, prompter: SignInPrompter, widgetKey: String, sessionID: String, scnt: String, stage: Stage = .sdk) {
+    init(client: AppleWebClient, prompter: SignInPrompter, widgetKey: String, sessionID: String, scnt: String, stage: Stage = .sdk,
+         securityKeys: any SecurityKeySource = USBSecurityKeys()) {
         self.client = client; self.prompter = prompter; self.widgetKey = widgetKey; self.sessionID = sessionID; self.scnt = scnt
-        self.stage = stage
+        self.stage = stage; self.securityKeys = securityKeys
     }
 
     private func fail(_ cause: String, fix: String) -> XlessError { XlessError(stage, cause, fix: fix) }
@@ -168,20 +178,21 @@ struct TwoFactor {
             throw fail("this Apple ID uses Apple's old two-step verification, which xless does not support",
                        fix: "turn on two-factor authentication for the Apple ID (https://support.apple.com/HT204915), then re-run")
         }
-        guard let phones = options.trustedPhoneNumbers else {
-            if options.fsaChallenge != nil { throw securityKey() }
-            throw fail("Apple asked for a second factor xless does not know", fix: AppleSignIn.changedFix)
-        }
-        let length = options.securityCode?.length ?? 6
-        prompter.say("Two-factor authentication is on for this Apple ID.")
-        if options.noTrustedDevices == true {
-            let phone = phones.count == 1 ? phones[0] : try await choosePhone(phones)
-            if phones.count != 1 { try await requestSMS(phone) }
-            try await enterCodes(length: length, phone: phone)
-        } else if options.fsaChallenge != nil {
-            throw securityKey()
+        // A security key, unless Apple offers only text messages (noTrustedDevices), as the asc CLI routes it.
+        if let fsa = options.fsaChallenge, !(options.noTrustedDevices == true && options.trustedPhoneNumbers != nil) {
+            try await securityKey(fsa)
+        } else if let phones = options.trustedPhoneNumbers {
+            let length = options.securityCode?.length ?? 6
+            prompter.say("Two-factor authentication is on for this Apple ID.")
+            if options.noTrustedDevices == true {
+                let phone = phones.count == 1 ? phones[0] : try await choosePhone(phones)
+                if phones.count != 1 { try await requestSMS(phone) }
+                try await enterCodes(length: length, phone: phone)
+            } else {
+                try await enterCodes(length: length, phone: nil, phones: phones)
+            }
         } else {
-            try await enterCodes(length: length, phone: nil, phones: phones)
+            throw fail("Apple asked for a second factor xless does not know", fix: AppleSignIn.changedFix)
         }
         let (_, trust) = try await send(URLRequest(url: AppleEndpoints.trust))
         guard (200..<300).contains(trust.statusCode) else {
@@ -266,9 +277,41 @@ struct TwoFactor {
         return (data, response)
     }
 
-    private func securityKey() -> XlessError {
-        fail("this Apple ID signs in with a hardware security key, which xless does not support",
-             fix: stage == .sdk ? "use an Apple ID without security keys to download Xcode" : "use an Apple ID without security keys")
+    /// Signs Apple's challenge with a security key registered with the Apple ID and sends the assertion, once: an
+    /// assertion is never sent twice, so a failure means signing in again.
+    private mutating func securityKey(_ fsa: FSAChallenge) async throws {
+        prompter.say("This Apple ID signs in with a security key.")
+        let prepared: AppleSecurityKey.Prepared
+        do {
+            prepared = try AppleSecurityKey.prepare(fsa)
+        } catch .noCredentials {
+            throw fail("Apple asked for a security key but named none registered with this Apple ID",
+                       fix: "check the Apple ID's security keys on an Apple device (Settings > Apple Account > Sign-In & Security), then re-run")
+        } catch {
+            throw fail("Apple asked for a security key in a form xless cannot read", fix: AppleSignIn.changedFix)
+        }
+        let assertion: Assertion
+        do {
+            assertion = try await securityKeys.assertion(for: prepared.request, ui: PrompterKeyUI(prompter: prompter))
+        } catch let e as SecurityKeyError {
+            throw fail(e.cause, fix: e.fix)
+        }
+        var r = URLRequest(url: AppleEndpoints.verifySecurityKey)
+        r.httpMethod = "POST"
+        r.httpBody = AppleSecurityKey.body(prepared, assertion)
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await send(r)
+        switch response.statusCode {
+        case 200..<300:
+            return
+        case 400, 401:
+            throw fail("Apple did not accept the security key's answer\(serviceMessage(data))",
+                       fix: "re-run and sign in again with a key registered with this Apple ID")
+        case 412:
+            throw fail(AppleSignIn.termsCause, fix: AppleSignIn.termsFix)
+        default:
+            throw fail("Apple answered HTTP \(response.statusCode) to the security key\(serviceMessage(data))", fix: AppleSignIn.changedFix)
+        }
     }
 }
 

@@ -5,6 +5,7 @@ import Crypto
 import FoundationNetworking
 #endif
 import XlessCore
+import XlessFIDO
 @testable import XlessAppleID
 
 /// Scripted terminal: answers `ask` from a queue, `askSecret` with the password; records everything said.
@@ -50,6 +51,10 @@ final class FakeApple: @unchecked Sendable {
     var authOptions: [String: Any] = ["trustedPhoneNumbers": [["id": 1, "numberWithDialCode": "+1 (•••) •••-••12"]],
                                       "securityCode": ["length": 6]]
     var codeStatuses: [Int] = [204]
+    var securityKeyStatus = 200
+    /// The security key's public key: the posted assertion is checked against it, as Apple would.
+    var securityKeyPublicKey: P256.Signing.PublicKey?
+    private(set) var securityKeyBodies: [[String: String]] = []
     private var A = BigUInt(0)
     private let lock = NSLock()
 
@@ -91,6 +96,20 @@ final class FakeApple: @unchecked Sendable {
             XCTAssertEqual(r.header("scnt"), "s2")
             let status = codeStatuses.isEmpty ? 204 : codeStatuses.removeFirst()
             return .init(status: status)
+        case ("POST", "idmsa.apple.com", "/appleauth/auth/verify/security/key"):
+            XCTAssertEqual(r.header("scnt"), "s2")
+            XCTAssertEqual(r.header("X-Apple-ID-Session-Id"), "sess")
+            XCTAssertEqual(r.header("X-Apple-Widget-Key"), "WK123")
+            XCTAssertEqual(r.header("Content-Type"), "application/json")
+            let body = try JSONSerialization.jsonObject(with: r.httpBody!) as! [String: String]
+            securityKeyBodies.append(body)
+            if let key = securityKeyPublicKey {
+                let clientData = Data(base64Encoded: body["clientData"]!)!
+                let authData = Data(base64Encoded: body["authenticatorData"]!)!
+                let signature = try P256.Signing.ECDSASignature(derRepresentation: Data(base64Encoded: body["signatureData"]!)!)
+                XCTAssertTrue(key.isValidSignature(signature, for: authData + Data(SHA256.hash(data: clientData))), "signature")
+            }
+            return .json(securityKeyStatus, securityKeyStatus == 200 ? [:] : ["serviceErrors": [["code": "-21669", "message": "Verification failed."]]])
         case ("GET", "idmsa.apple.com", "/appleauth/auth/2sv/trust"):
             XCTAssertEqual(r.header("X-Apple-ID-Session-Id"), "sess")
             return .init(status: 204, headers: ["Set-Cookie": "myacinfo=trusted; Domain=.apple.com; Path=/; Secure"])
@@ -219,10 +238,14 @@ final class AppleSignInTests: XCTestCase {
         await assertSDKError({ _ = try await self.signIn(apple, answers: ["me@example.com"]) }, contains: "developer.apple.com")
     }
 
-    func testSecurityKeyRefused() async {
+    func testAnUnreadableSecurityKeyChallengeIsReported() async {
         let apple = FakeApple()
         apple.authOptions = ["fsaChallenge": ["challenge": "x", "keyHandles": [], "allowedCredentials": ""]]
-        await assertSDKError({ _ = try await self.signIn(apple, answers: ["me@example.com"]) }, contains: "security key")
+        await assertSDKError({ _ = try await self.signIn(apple, answers: ["me@example.com"]) }, contains: "security key in a form xless cannot read")
+        apple.authOptions = ["fsaChallenge": "not an object"]
+        await assertSDKError({ _ = try await self.signIn(apple, answers: ["me@example.com"]) }, contains: "security key in a form xless cannot read")
+        apple.authOptions = ["fsaChallenge": ["challenge": "AAAA", "keyHandles": [], "allowedCredentials": ""]]
+        await assertSDKError({ _ = try await self.signIn(apple, answers: ["me@example.com"]) }, contains: "named none registered")
     }
 
     func testTwoStepRefused() async {
@@ -290,5 +313,154 @@ final class AppleSignInTests: XCTestCase {
             XCTAssertTrue(e.fix.contains("appstoreconnect.apple.com/agreements"), e.fix)
             XCTAssertTrue(e.cause.contains("never accepts"), e.cause)
         }
+    }
+}
+
+/// A security key in a test: signs with a real P-256 key, as a key would, and records what it was asked.
+final class FakeSecurityKeys: SecurityKeySource, @unchecked Sendable {
+    let credentialID: [UInt8] = Array(repeating: 0x42, count: 48)
+    let key = P256.Signing.PrivateKey()
+    var userHandle: [UInt8]? = Array("abc123".utf8)
+    var failure: SecurityKeyError?
+    var askPIN = false
+    private(set) var requests: [AssertionRequest] = []
+    private(set) var pins: [String] = []
+
+    func assertion(for request: AssertionRequest, ui: any SecurityKeyUI) async throws -> Assertion {
+        requests.append(request)
+        if let failure { throw failure }
+        ui.say("Touch your security key (Fake) to sign in.")
+        if askPIN { let pin = try await ui.askPIN("Security key PIN: "); pins.append(pin.utf8String()) }
+        let authData = Array(SHA256.hash(data: Array("apple.com".utf8))) + [0x01, 0, 0, 0, 9]
+        let signature = try key.signature(for: authData + request.clientDataHash)
+        return Assertion(credentialID: credentialID, authenticatorData: authData, signature: Array(signature.derRepresentation),
+                         userHandle: userHandle)
+    }
+}
+
+final class AppleSecurityKeySignInTests: XCTestCase {
+    let challenge: [UInt8] = Array(0..<32).map { UInt8($0 * 7 % 256) }
+    let other: [UInt8] = Array(repeating: 0x17, count: 48)
+
+    func fsa(_ keys: FakeSecurityKeys, keyHandlesOnly: Bool = false) -> [String: Any] {
+        var challenge: [String: Any] = ["challenge": AppleSecurityKey.base64URL(self.challenge),
+                                        "keyHandles": [Data(keys.credentialID).base64EncodedString()]]
+        challenge["allowedCredentials"] = keyHandlesOnly ? "" :
+            [other, keys.credentialID].map { AppleSecurityKey.base64URL($0) }.joined(separator: ",")
+        return ["fsaChallenge": challenge, "trustedPhoneNumbers": [["id": 1, "numberWithDialCode": "••12"]], "securityCode": ["length": 6]]
+    }
+
+    func signIn(_ apple: FakeApple, _ keys: FakeSecurityKeys, answers: [String] = ["me@example.com"],
+                stage: Stage = .sdk) async throws -> (MockTransport, ScriptedPrompter) {
+        let mock = MockTransport { try apple.handle($0) }
+        let prompter = ScriptedPrompter(answers: answers, secret: FakeApple.password)
+        try await AppleSignIn(client: AppleWebClient(transport: mock), prompter: prompter, stage: stage, securityKeys: keys).run()
+        return (mock, prompter)
+    }
+
+    func testSignsInWithASecurityKey() async throws {
+        let apple = FakeApple(), keys = FakeSecurityKeys()
+        apple.authOptions = fsa(keys)
+        apple.securityKeyPublicKey = keys.key.publicKey
+        let (mock, prompter) = try await signIn(apple, keys)
+        XCTAssertEqual(mock.requests.map { "\($0.httpMethod ?? "GET") \($0.url!.path)" }.suffix(4), [
+            "GET /appleauth/auth", "POST /appleauth/auth/verify/security/key", "GET /appleauth/auth/2sv/trust", "GET /olympus/v1/session",
+        ])
+        XCTAssertTrue(prompter.said.contains("This Apple ID signs in with a security key."))
+        XCTAssertTrue(prompter.said.contains("Touch your security key (Fake) to sign in."))
+        XCTAssertFalse(prompter.prompts.contains { $0.contains("code") })
+
+        let request = try XCTUnwrap(keys.requests.first)
+        XCTAssertEqual(request.rpID, "apple.com")
+        XCTAssertEqual(request.credentials, [other, keys.credentialID])
+        let clientData = #"{"type":"webauthn.get","challenge":"\#(AppleSecurityKey.base64URL(challenge))","origin":"https://idmsa.apple.com","crossOrigin":true}"#
+        XCTAssertEqual(request.clientDataHash, Array(SHA256.hash(data: Array(clientData.utf8))))
+
+        let body = try XCTUnwrap(apple.securityKeyBodies.first)
+        XCTAssertEqual(Set(body.keys), ["challenge", "clientData", "signatureData", "authenticatorData", "userHandle", "credentialID", "rpId"])
+        XCTAssertEqual(body["challenge"], Data(challenge).base64EncodedString())
+        XCTAssertEqual(body["clientData"], Data(clientData.utf8).base64EncodedString())
+        XCTAssertEqual(body["credentialID"], Data(keys.credentialID).base64EncodedString())
+        XCTAssertEqual(body["userHandle"], "abc123")
+        XCTAssertEqual(body["rpId"], "apple.com")
+        XCTAssertEqual(Data(base64Encoded: body["authenticatorData"]!)!.count, 37)
+    }
+
+    func testKeyHandlesAreUsedWhenAllowedCredentialsIsEmpty() async throws {
+        let apple = FakeApple(), keys = FakeSecurityKeys()
+        apple.authOptions = fsa(keys, keyHandlesOnly: true)
+        keys.userHandle = [0xFF, 0xFE]
+        _ = try await signIn(apple, keys)
+        XCTAssertEqual(keys.requests.first?.credentials, [keys.credentialID])
+        XCTAssertEqual(apple.securityKeyBodies.first?["userHandle"], "", "a user handle that is not UTF-8 is sent empty")
+    }
+
+    func testTextMessagesWinWhenAppleOffersNothingElse() async throws {
+        let apple = FakeApple(), keys = FakeSecurityKeys()
+        apple.authOptions = fsa(keys)
+        apple.authOptions["noTrustedDevices"] = true
+        let (mock, _) = try await signIn(apple, keys, answers: ["me@example.com", "123456"])
+        XCTAssertTrue(keys.requests.isEmpty)
+        XCTAssertTrue(mock.requests.contains { $0.url!.path == "/appleauth/auth/verify/phone/securitycode" })
+    }
+
+    func testAppleRefusingTheAssertionIsNotRetried() async throws {
+        let apple = FakeApple(), keys = FakeSecurityKeys()
+        apple.authOptions = fsa(keys)
+        apple.securityKeyStatus = 400
+        do {
+            _ = try await signIn(apple, keys, stage: .account)
+            XCTFail("expected an error")
+        } catch let e as XlessError {
+            XCTAssertEqual(e.stage, .account)
+            XCTAssertTrue(e.cause.contains("Apple did not accept the security key's answer: Verification failed."), e.cause)
+        }
+        XCTAssertEqual(apple.securityKeyBodies.count, 1)
+        XCTAssertEqual(keys.requests.count, 1)
+
+        apple.securityKeyStatus = 412
+        do { _ = try await signIn(apple, keys); XCTFail("expected an error") } catch let e as XlessError {
+            XCTAssertTrue(e.cause.contains("never accepts"), e.cause)
+        }
+    }
+
+    func testTheKeysOwnFailuresReachThePerson() async throws {
+        let apple = FakeApple(), keys = FakeSecurityKeys()
+        apple.authOptions = fsa(keys)
+        keys.failure = SecurityKeyError("no security key is connected", fix: "plug one in")
+        do {
+            _ = try await signIn(apple, keys, stage: .account)
+            XCTFail("expected an error")
+        } catch let e as XlessError {
+            XCTAssertEqual(e.stage, .account)
+            XCTAssertEqual(e.cause, "no security key is connected")
+            XCTAssertEqual(e.fix, "plug one in")
+        }
+        XCTAssertTrue(apple.securityKeyBodies.isEmpty)
+    }
+
+    func testThePINIsReadLikeThePasswordAndNeverSent() async throws {
+        let apple = FakeApple(), keys = FakeSecurityKeys()
+        apple.authOptions = fsa(keys)
+        keys.askPIN = true
+        let (mock, prompter) = try await signIn(apple, keys)
+        XCTAssertEqual(keys.pins, [FakeApple.password], "askSecret answers the PIN prompt")
+        XCTAssertTrue(prompter.prompts.contains("Security key PIN: "))
+        for r in mock.requests where r.url!.path.hasSuffix("security/key") {
+            XCTAssertFalse(r.bodyString.contains(FakeApple.password))
+        }
+    }
+
+    func testBase64InEveryFormAppleMightUse() {
+        let bytes: [UInt8] = [0xFB, 0xFF, 0x01]
+        XCTAssertEqual(AppleSecurityKey.base64("-_8B"), bytes)
+        XCTAssertEqual(AppleSecurityKey.base64("+/8B"), bytes)
+        XCTAssertEqual(AppleSecurityKey.base64("AQ"), [1])
+        XCTAssertEqual(AppleSecurityKey.base64("AQ=="), [1])
+        XCTAssertNil(AppleSecurityKey.base64("A"))
+        XCTAssertNil(AppleSecurityKey.base64("A=Q"))
+        XCTAssertNil(AppleSecurityKey.base64("!!!!"))
+        XCTAssertEqual(AppleSecurityKey.base64URL(bytes), "-_8B")
+        XCTAssertEqual(AppleSecurityKey.base64URL([1]), "AQ")
     }
 }
