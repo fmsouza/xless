@@ -1,7 +1,8 @@
 # The secret store (`xless secrets`)
 
-On your own machine, xless keeps Apple keys in an encrypted file rather than in plain `.p8` and `.pem` files. When a
-command needs a secret that the environment does not provide, it reads it from this store. CI keeps using environment
+On your own machine, xless keeps Apple keys in an encrypted file rather than in plain `.p8` and `.pem` files, or in
+your desktop keyring or pass through a [credential helper](#keeping-the-secrets-in-your-keyring-or-pass-credential-helpers).
+When a command needs a secret that the environment does not provide, it reads it from this store. CI keeps using environment
 variables and `_FILE` variables ([signing-and-testflight.md](signing-and-testflight.md#secrets)), and never opens the
 store.
 
@@ -112,6 +113,76 @@ By default each command that needs the store asks the passphrase, and forgets th
 keyring instead: later commands in the same login session (the same terminal and its children) read the store without
 asking, until the time runs out or `xless secrets lock`. Other users, and other login sessions of yours, cannot read the
 cached key. macOS has no kernel keyring, and containers often block it; there `--remember` is refused.
+
+## Keeping the secrets in your keyring or pass (credential helpers)
+
+If you already keep secrets in a desktop keyring (GNOME Keyring, KWallet or KeePassXC, through the Secret Service) or
+in [pass](https://www.passwordstore.org/), xless can keep its secrets there instead of in its own encrypted file. xless
+is a static binary and does not link libsecret or GnuPG: it runs a small helper program, `xless-credential-<name>`,
+which talks to your keyring. Choose it in `~/.config/xless/config.yml` (`$XDG_CONFIG_HOME/xless/config.yml`):
+
+```yaml
+secrets:
+  backend: helper        # or vault, the default: the encrypted file described below
+  helper: secret-tool    # runs xless-credential-secret-tool, found on PATH
+```
+
+xless ships two helpers in `share/xless/credential-helpers/` (`~/.local/share/xless/credential-helpers/` with the
+default install prefix). Put the one you want on PATH:
+
+```sh
+ln -s ~/.local/share/xless/credential-helpers/xless-credential-secret-tool ~/.local/bin/   # needs secret-tool (libsecret-tools)
+ln -s ~/.local/share/xless/credential-helpers/xless-credential-pass ~/.local/bin/          # needs pass
+```
+
+| Helper | Where each secret goes |
+|---|---|
+| `secret-tool` | One keyring item labelled `xless <NAME>`, with the attributes `application=xless`, `xless-name=<NAME>` and `xless-username=<its kind and IDs>`. A locked keyring asks to be unlocked in its own window. |
+| `pass` | `xless/<NAME>/secret` (the value) and `xless/<NAME>/username` (its kind and IDs), both encrypted to your pass key. GnuPG asks your key's passphrase through its agent; `export GPG_TTY=$(tty)` for a terminal prompt. `xless secrets list` reads every entry's `username`. |
+
+Every `xless secrets` command works the same with a helper, and so does everything that reads or writes secrets
+(`xless ship`, `xless run`, `xless auth api-key create`, `xless certs create`, `xless keys create`, `xless provision`,
+`sign bootstrap`). A few have nothing to do: `init` checks that the helper answers, `unlock` and `lock` leave locking
+to the keyring, `--remember` is ignored, and `passwd` is refused (change the keyring's or the GnuPG key's password with
+their own tools). Moving from the vault to a helper is done entry by entry: `xless secrets export <name> --out <file>`
+with `backend: vault`, then `xless secrets import <name> --file <file> …` with `backend: helper`, then delete the file.
+
+What xless does to keep the helper honest: it runs only `xless-credential-<name>` from an absolute directory on PATH,
+and refuses it when the file, the directory it is in, or the PATH directory it was found in can be written by anyone
+but you (or root), or belongs to another user: whoever can change the helper can read every secret. The helper gets
+only its verb as argument; its environment is cut down to what a keyring needs (`HOME`, `PATH`, the locale, `XDG_*`,
+`DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`, `WAYLAND_DISPLAY`, `XAUTHORITY`, `GNUPGHOME`, `GPG_TTY`, `PASSWORD_STORE_*`,
+`TMPDIR`, `TERM`, `TZ`, `USER`, `LOGNAME`), never a secret variable, and it inherits no open file of xless's. Secrets
+go only through its stdin and stdout pipes; xless reads at most 4 MiB of answer into memory it zeroes afterwards, and
+stops the helper (and anything it started) after 120 seconds. Its stderr is xless's, so the keyring's or GnuPG's own
+messages reach you; xless never quotes what a failed `get` printed. With a helper, the integrity of the names and IDs
+is the keyring's, and there is no lock between two xless commands writing at the same time.
+
+### Writing a credential helper
+
+A helper is any executable named `xless-credential-<name>` (`<name>`: lower-case letters, digits, `.`, `_`, `-`). It
+speaks the shape of Docker's credential helpers: xless runs `xless-credential-<name> <verb>`, writes the request on its
+stdin and closes it, and reads the answer on its stdout. Exit 0 on success. On a failure, say why on stderr and exit
+non-zero.
+
+| Verb | stdin | stdout |
+|---|---|---|
+| `store` | `{"ServerURL":"xless:<NAME>","Username":"<description>","Secret":"<value>"}` | nothing; replaces what it had for that ServerURL |
+| `get` | `xless:<NAME>` | `{"ServerURL":"xless:<NAME>","Username":"<description>","Secret":"<value>"}`; if it has none: `credentials not found in native keychain` and exit 1 |
+| `erase` | `xless:<NAME>` | nothing |
+| `list` | nothing | `{"xless:<NAME>":"<description>",…}` for every credential it holds (`{}` for none) |
+
+- `<NAME>` is the entry's name (`ASC_KEY_P8@ABCDE12345`): letters, digits and `. _ @ -`, starting with a letter or a
+  digit. ServerURLs that do not start with `xless:` are not xless's: xless ignores them in `list`.
+- The description (Username) is xless's, not secret, and must come back unchanged: compact JSON of the entry's kind
+  and IDs, such as `{"keyID":"2X9R4HXF34","kind":"asc-api-key","teamID":"ABCDE12345"}`. `list` must return it without
+  reading any secret, so that `xless secrets list` and lookups by team need no unlock.
+- The value is text (UTF-8 without NUL bytes) and must come back byte for byte, trailing newlines included. xless writes
+  the request on one line and escapes only `"`, `\` and control characters (as `\n`, `\t`, `\r`, `\b`, `\f`,
+  `\u00XX`); other characters come as UTF-8. It reads any valid JSON answer.
+- Keep the secret out of argv, the environment and files in clear: give it to your keyring through a pipe.
+
+`share/xless/credential-helpers/` has the two shipped helpers, in POSIX sh and awk, as examples.
 
 ## The file
 

@@ -131,7 +131,8 @@ xless team use --clear
 ```
 
 The default team is saved as `team:` in `$XDG_CONFIG_HOME/xless/config.yml` (`~/.config/xless/config.yml` when
-`XDG_CONFIG_HOME` is unset), a plain preference, not a secret. `--team` overrides it.
+`XDG_CONFIG_HOME` is unset), a plain preference, not a secret. `--team` overrides it. The same file's `secrets:` says
+where the secrets live ([secrets.md](secrets.md#keeping-the-secrets-in-your-keyring-or-pass-credential-helpers)).
 
 ## `xless devices`
 
