@@ -131,7 +131,34 @@ private let created = #"{"data":{"type":"profiles","id":"P2","attributes":{"name
 
 @Test func profileTypeFollowsPlatformAndDistribution() {
     #expect(ProfileType.for(platform: .ios, distribution: .appStore) == .iosAppStore)
-    #expect(ProfileType.for(platform: .macos, distribution: .developerID) == .macDirect)
+    #expect(ProfileType.for(platform: .macos, distribution: .developerID) == .macAppDirect)
     #expect(ProfileType.for(platform: .macos, distribution: .appStore) == .macAppStore)
     #expect(ProfileType.macAppStore.rawValue == "MAC_APP_STORE")
+}
+
+@Test func theGeneralCreatePathTakesAnyTypeAndDevices() async throws {
+    let t = MockTransport([(201, #"{"data":{"type":"profiles","id":"P3","attributes":{"name":"dev","profileType":"TVOS_APP_DEVELOPMENT"}}}"#)])
+    let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    let p = try await svc.create(name: "dev", type: .tvosAppDevelopment, bundleIDResourceID: "B1", certificateIDs: ["C1"], deviceIDs: ["D1", "D2"])
+    #expect(p.id == "P3" && p.profileType == "TVOS_APP_DEVELOPMENT")
+    let body = String(decoding: t.requests[0].httpBody!, as: UTF8.self)
+    #expect(body.contains("\"TVOS_APP_DEVELOPMENT\"") && body.contains("\"D2\"") && body.contains("\"devices\""))
+}
+
+@Test func ensureProfileStillRetriesItsCreate() async throws {
+    // `sign` keeps its behaviour: a 5xx on the create is retried (the commands send theirs once).
+    let t = MockTransport([(200, #"{"data":[]}"#), (500, #"{"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}"#), (201, created)])
+    let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    let data = try await svc.ensureProfile(bundleIDResourceID: "B1", certificateID: "C1", type: .macAppDirect, bundleIdentifier: "a.b")
+    #expect(data == Data("NEW".utf8))
+    #expect(t.requests.map { $0.httpMethod ?? "" } == ["GET", "POST", "POST"])
+    #expect(String(decoding: t.requests[2].httpBody!, as: UTF8.self).contains("\"xless a.b MAC_APP_DIRECT\""))
+}
+
+@Test func theGeneralCreatePathSendsOnce() async throws {
+    let t = MockTransport([(500, #"{"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}"#)])
+    let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    await #expect(throws: ASCError.self) { _ = try await svc.create(name: "n", type: .iosAppStore, bundleIDResourceID: "B1", certificateIDs: ["C1"]) }
+    #expect(t.requests.count == 1)
+    #expect(ProfileService.defaultName(bundleIdentifier: "a.b", type: .iosAppAdHoc) == "xless a.b IOS_APP_ADHOC")
 }

@@ -8,8 +8,9 @@ Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows 
 [`xless bundle-ids`](#xless-bundle-ids), which registers bundle IDs and enables their capabilities,
 [`xless merchant-ids`](#xless-merchant-ids), which registers Apple Pay merchant IDs,
 [`xless certs`](#xless-certs), which creates, downloads and revokes certificates of every type with their private keys
-in the secret store, and [`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More
-commands (profiles, apps, TestFlight, releases) follow the conventions on this page.
+in the secret store, [`xless profiles`](#xless-profiles), which creates, downloads, renews and deletes provisioning
+profiles of every type, and [`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More
+commands (apps, TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -325,6 +326,64 @@ check ([bootstrap.md](bootstrap.md#how-sign-bootstrap-behaves)); `--out <file>` 
 With `--json`, `list` prints `{"data": [certificates]}`, `show` the certificate, `create`
 `{"certificate": certificate, "entry": store entry or absent, "team": team ID or absent}` and `revoke`
 `{"revoked", "certificateType", "profiles", "storeEntries"}`.
+
+## `xless profiles`
+
+```sh
+xless profiles list [--type ios-app-adhoc]… [--bundle-id com.example.app] [--expiring 30]   # ID, name, type, bundle ID, state, expiry
+xless profiles create --type ios-app-development --bundle-id com.example.app             # every fitting certificate, every enabled iPhone/iPad/…
+xless profiles create --type ios-app-adhoc --bundle-id com.example.app --cert-type distribution \
+                      --devices 00008030-001A35E80C42802E,8U3T4X5YZB --name "Example Ad Hoc"
+xless profiles create --type mac-app-direct --bundle-id com.example.mac --cert 8U3T4X5YZA
+xless profiles download 8U3T4X5YZA --out Example.mobileprovision                         # checked first; mode 0644, never overwrites
+xless profiles renew 8U3T4X5YZA                                                          # asks first: delete, then create again
+xless profiles delete 8U3T4X5YZA                                                         # asks first
+```
+
+They use the API key (`/v1/profiles`); creating, renewing and deleting need the Admin role. `--type` takes the 14
+`ProfileType` values of App Store Connect API 4.6.1 in any case, with dashes or underscores: `IOS_APP_DEVELOPMENT`,
+`IOS_APP_STORE`, `IOS_APP_ADHOC`, `IOS_APP_INHOUSE`, `MAC_APP_DEVELOPMENT`, `MAC_APP_STORE`, `MAC_APP_DIRECT`
+(Developer ID), `TVOS_APP_DEVELOPMENT`, `TVOS_APP_STORE`, `TVOS_APP_ADHOC`, `TVOS_APP_INHOUSE`,
+`MAC_CATALYST_APP_DEVELOPMENT`, `MAC_CATALYST_APP_STORE` and `MAC_CATALYST_APP_DIRECT`. In-house profiles exist only
+in the Apple Developer Enterprise Program. `--bundle-id` takes an identifier or an ID
+([`xless bundle-ids`](#xless-bundle-ids)); a macOS profile needs a macOS or universal bundle ID, the others an iOS or
+universal one.
+
+`create` checks everything before it sends its single request:
+
+- **Certificates:** `--cert <id>` (repeatable) names them; `--cert-type <type>` (repeatable) takes every unexpired
+  certificate of that type. Without either, every unexpired certificate of the types that fit: Apple Development plus
+  iOS App Development (or Mac Development) for development profiles, Apple Distribution plus iOS Distribution (or Mac
+  App Distribution) for App Store, ad hoc and in-house ones, Developer ID Application for `MAC_APP_DIRECT` and
+  `MAC_CATALYST_APP_DIRECT`. A certificate of another type, or an expired one, is refused.
+- **Devices** (development and ad hoc profiles only; `--devices` on another type is refused): `--devices all`, the
+  default, takes every enabled device of the profile's kind: Apple TVs for tvOS, the other iOS-platform devices for iOS,
+  Macs for macOS and Mac Catalyst. `--devices <udid,…>` takes UDIDs or device IDs, each registered
+  ([`xless devices`](#xless-devices)), enabled and of that kind.
+- **Name:** `xless <identifier> <TYPE>` unless `--name` says otherwise, which is the name `xless sign` gives the profiles
+  it makes. A profile of that name must not exist yet (names stay unique, so `sign` and `renew` find the right one):
+  renew it instead.
+
+`download` reads the profile, checks that it is a CMS envelope around a property list, that its `TeamIdentifier` is
+the team (`--team` or the default team, else the bundle ID's App ID prefix, which is the team ID on all but some
+older teams), that its `application-identifier` is
+`<App ID prefix>.<identifier>` and that its UUID is the one App Store Connect lists, and only then writes it, with
+mode 0644, to a file that must not exist yet. The signature is not checked: the file comes from App Store Connect over
+TLS, and devices check it.
+
+A profile cannot be edited. `renew` reads its name, type, bundle ID, certificates and (development, ad hoc) devices,
+asks, deletes it and creates it again with them, so it gets a new expiry and every capability now enabled on the
+bundle ID. Before anything is deleted, it leaves out (and names, on standard error) the certificates that expired or
+were revoked and the devices that were disabled; when no certificate (or, for development and ad hoc profiles, no
+device) is left, nothing is sent and the error says to `create` a new profile. If the create fails after the delete,
+the error gives the exact `xless profiles create` command that makes it again. `delete` asks first; Apple has no undo.
+
+`xless sign` keeps making and replacing its own `xless <identifier> <TYPE>` profiles (`IOS_APP_STORE`,
+`MAC_APP_STORE`, `MAC_APP_DIRECT`) through the same create path.
+
+With `--json`, `list` prints `{"data": [profiles]}` (without `profileContent`; each profile's `relationships.bundleId`
+names its bundle ID), `create` and `renew` `{"profile": profile, "bundleId": identifier, "certificates": [IDs],
+"devices": [IDs]}` (plus `"replaced": old ID` for `renew`), and `delete` `{"deleted", "name", "profileType"}`.
 
 ## JSON output
 
