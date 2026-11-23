@@ -65,8 +65,10 @@ public enum AssetUploadResult: Sendable, Equatable {
 
 /// App Store Connect's upload protocol: reserve (POST with the file's name and size) → PUT each upload operation's
 /// part to Apple's storage (its headers, no credentials, each part retried on its own) → commit (`uploaded: true` and
-/// the MD5 as `sourceFileChecksum`) → poll the delivery state until COMPLETE or FAILED. `BuildUploader` uses its part
-/// upload for builds.
+/// the MD5 as `sourceFileChecksum`) → poll the delivery state until COMPLETE or FAILED. `transfer` is the first three,
+/// `wait` the last, so a caller can bound the transfers and wait for many files at once. Polling backs off (×1.5 per
+/// poll, up to `maxPollInterval`) so that many waits at once stay well inside App Store Connect's hourly request
+/// limit. `BuildUploader` uses its part upload for builds.
 public struct AssetUploader: Sendable {
     let client: ASCClient
     let stage: Stage
@@ -75,11 +77,16 @@ public struct AssetUploader: Sendable {
     let sleep: @Sendable (Duration) async throws -> Void
     let pollInterval: Duration
     let timeout: Duration
+    let maxPollInterval: Duration
 
     public init(client: ASCClient, stage: Stage, rerun: String, sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-                pollInterval: Duration = .seconds(3), timeout: Duration = .seconds(600)) {
+                pollInterval: Duration = .seconds(3), timeout: Duration = .seconds(600), maxPollInterval: Duration = .seconds(30)) {
         self.client = client; self.stage = stage; self.rerun = rerun; self.sleep = sleep; self.pollInterval = pollInterval; self.timeout = timeout
+        self.maxPollInterval = maxPollInterval
     }
+
+    /// The wait after `interval`: half as long again, at most `cap`.
+    static func nextInterval(after interval: Duration, cap: Duration) -> Duration { min(interval * 1.5, cap) }
 
     /// Sends each operation's part of `file` (`size` bytes), read from disk just before it is sent.
     func putParts(_ operations: [UploadOperation], file: URL, size: Int, context: String = "", invalidFix: String, fix: String) async throws {
@@ -130,6 +137,11 @@ public struct AssetUploader: Sendable {
     /// Reserves, uploads, commits and waits for `asset`. A failure before the commit removes the reservation; a file
     /// App Store Connect could not process is removed too, and its messages are the error.
     public func upload(_ asset: AssetUpload) async throws -> AssetUploadResult {
+        try await wait(id: try await transfer(asset), asset: asset)
+    }
+
+    /// Reserves, uploads and commits `asset`; its ID. A failure removes the reservation.
+    public func transfer(_ asset: AssetUpload) async throws -> String {
         let path = "/v1/\(asset.type)"
         var attributes = asset.attributes
         attributes["fileName"] = .string(asset.fileName)
@@ -155,8 +167,15 @@ public struct AssetUploader: Sendable {
             try? await client.delete("\(path)/\(id)")
             throw error
         }
+        return id
+    }
 
+    /// Waits until App Store Connect has processed the committed upload `id` of `asset`: complete, or still pending when
+    /// the timeout ends. A file it could not process is removed, and its messages are the error.
+    public func wait(id: String, asset: AssetUpload) async throws -> AssetUploadResult {
+        let path = "/v1/\(asset.type)"
         let deadline = ContinuousClock.now + timeout
+        var interval = pollInterval
         while true {
             let polled: Polled = try await uploadStep("checking the upload of \(asset.display)", stage: stage,
                                                       fix: "it was uploaded; \(rerun) (it is not uploaded again)") {
@@ -176,7 +195,8 @@ public struct AssetUploader: Sendable {
                                  fix: "fix the file, then \(rerun) (the failed upload was removed)")
             default:
                 if ContinuousClock.now > deadline { return .pending(id, state: state?.state ?? "UNKNOWN") }
-                try await sleep(pollInterval)
+                try await sleep(interval)
+                interval = Self.nextInterval(after: interval, cap: maxPollInterval)
             }
         }
     }
