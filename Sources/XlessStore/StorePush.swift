@@ -173,6 +173,7 @@ public struct StorePush: Sendable {
             case .text: try await context.planText()
             case .review: try await context.planReview()
             case .declarations: try await context.planDeclarations()
+            case .media: try await context.planMedia()
             }
         }
         var plan = context.plan
