@@ -133,3 +133,46 @@ private final class Terminal: @unchecked Sendable {
     #expect(throws: VaultError.self) { try VaultUnlocker.newPassphrase(ScriptedPrompter(["long enough", "long enougH"])) }
     #expect(throws: VaultError.self) { try VaultUnlocker.newPassphrase(ScriptedPrompter(["short", "short"])) }
 }
+
+// A project's run prefers its team's secrets (`Secrets.preferring(team:)`, used by `ship` with the project's teamID).
+private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] = [
+    ("ASC_KEY_P8@TEAMA12345", .ascAPIKey, .init(teamID: "TEAMA12345", keyID: "KEYA", issuerID: "ISSUER-A"), "P8-A"),
+    ("ASC_KEY_P8@TEAMB12345", .ascAPIKey, .init(teamID: "TEAMB12345", keyID: "KEYB", issuerID: "ISSUER-B"), "P8-B"),
+    ("XLESS_DIST_KEY@TEAMB12345", .signingKey, .init(teamID: "TEAMB12345"), "DIST-B"),
+    ("XLESS_DIST_KEY", .signingKey, .init(), "DIST-ANY"),
+    ("XLESS_DEVID_KEY@TEAMA12345", .signingKey, .init(), "DEVID-A"),
+]
+
+@Test func twoTeamsInTheStorePickTheProjectsTeam() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make(entries: twoTeams)
+    let term = Terminal(["correct horse battery"])
+    let base = Secrets(env: [:], fallback: VaultResolver(store: t.store, cache: nil, prompter: term.get))
+    let a = base.preferring(team: "TEAMA12345"), b = base.preferring(team: "TEAMB12345")
+    #expect(try a.required("ASC_KEY_P8", stage: .upload) == "P8-A")
+    #expect(try a.identifier("ASC_KEY_ID", stage: .upload) == "KEYA")
+    #expect(try b.identifier("ASC_ISSUER_ID", stage: .upload) == "ISSUER-B")
+    #expect(try b.required("XLESS_DIST_KEY", stage: .sign) == "DIST-B")
+    // Without the team, the same store is ambiguous.
+    #expect(throws: XlessError.self) { try base.required("ASC_KEY_P8", stage: .upload) }
+    // Both views share one unlock.
+    #expect(term.prompter?.asked == 1)
+}
+
+@Test func anEntryOfNoTeamServesAnyTeamAndAnotherTeamsIsSkipped() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make(entries: twoTeams)
+    let secrets = Secrets(env: [:], fallback: VaultResolver(store: t.store, cache: nil, prompter: { ScriptedPrompter(["correct horse battery"]) }))
+    #expect(try secrets.preferring(team: "TEAMA12345").required("XLESS_DIST_KEY", stage: .sign) == "DIST-ANY")
+    #expect(try secrets.preferring(team: "TEAMC12345").optional("ASC_KEY_P8", stage: .upload) == nil)
+    #expect(try secrets.preferring(team: "TEAMB12345").optional("XLESS_DEVID_KEY", stage: .package) == nil)
+    #expect(try secrets.preferring(team: "TEAMA12345").required("XLESS_DEVID_KEY", stage: .package) == "DEVID-A")
+}
+
+@Test func anEmptyTeamOrAMissingFallbackChangesNothing() throws {
+    let secrets = Secrets(env: ["XLESS_DIST_KEY": "ENV"], fallback: nil)
+    #expect(try secrets.preferring(team: "TEAMA12345").required("XLESS_DIST_KEY", stage: .sign) == "ENV")
+    #expect(try Secrets(env: [:], fallback: nil).preferring(team: "").optional("XLESS_DIST_KEY") == nil)
+}

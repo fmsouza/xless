@@ -65,11 +65,41 @@ store is only opened when it has such an entry, so a command that needs no key n
 
 With several teams, name the entries `NAME@<TEAM_ID>` (for example `XLESS_DIST_KEY@ABCDE12345`) and record the team
 with `--team-id`. While only one entry stands for a name, it is used whatever its suffix; with several, xless stops and
-names them.
+names them. A project's run (`xless ship`, the stage commands, `next-build`, `xless run`) prefers the entries of the
+project's `teamID`: that team's (`NAME@<TEAM_ID>`, or recorded with `--team-id`), else one recorded for no team;
+another team's entry is never used for it. (Account commands given `--team`, such as `sign bootstrap`, are stricter: they take
+only entries recorded for that team.)
 
 The commands that run the pipeline in this process read the store: `xless ship` and the stage commands (`sign`,
-`package`, `upload`, …), `sign bootstrap` and `next-build`. `xless run` (and `--docker` builds) do not yet: they still
-need the `_FILE` variables of [signing-and-testflight.md](signing-and-testflight.md#secrets).
+`package`, `upload`, …), `sign bootstrap` and `next-build`, each asking the passphrase at most once.
+
+### `xless run` and Docker builds
+
+`xless run` ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)) needs no `testflight.env` once the
+keys are in the store. A secret whose `NAME_FILE` is set (in the environment or `testflight.env`, which still wins)
+comes from that file; every other one the run needs comes from the store. The App Store Connect key and its two IDs
+come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_FILE` is refused).
+
+- **Natively**, xless reads the store itself. The script first checks, from the names alone (no passphrase), that
+  the store holds every secret the run needs, so a missing key stops the run before the build. A project directory is
+  one process: one passphrase. With `--config`, steps 1 and 3 are two processes on either side of the build, and each
+  asks it: nothing unlocked stays in a process while the build code runs. The build step runs with
+  `XLESS_NO_SECRET_STORE=1`: its xless never opens the store, and it leaves the session keyring, so the build code it
+  runs cannot reach a remembered unlock. This keeps xless itself from handing out a secret there; it is no sandbox:
+  code that runs on your machine as you can read your files, which is why the overlays build in Docker.
+- **With `--docker`**, the store is not in any container. Before the first step, the xless on your machine (asking the
+  passphrase once) writes the secrets each container needs into a fresh `$XDG_RUNTIME_DIR/xless/<random>/` (a tmpfs on
+  systemd hosts: never on disk), one directory per container (step 1 gets the App Store Connect key; step 3, or the
+  project's one container, that key and the signing keys; the macOS App-Store ship its own two keys), directories 0700
+  and files 0600. Each directory is mounted read-only into its container only (`/secrets/store`, with
+  `NAME_FILE=/secrets/store/NAME`) and removed when that container ends; the rest goes when the run ends, on an error
+  and when it is stopped (Ctrl-C, SIGTERM, SIGHUP). The build container (step 2) never sees them, and the run refuses
+  to start if they would be inside a folder mounted into it. Without a tmpfs (no `XDG_RUNTIME_DIR`, as on macOS, or
+  one on a disk) the run refuses, unless you pass `--allow-disk-secrets`: then they go to
+  `~/.cache/xless/secrets/<random>/` (under your home directory, which Colima and Docker Desktop share with their VM)
+  for the length of the run. The script runs this as `xless secrets materialize` (not listed in `--help`).
+
+CI keeps using the environment and `_FILE` variables, and never opens the store.
 
 The passphrase is read from the terminal (`/dev/tty`) only, never from a pipe, a file, an argument or the
 environment. A command that needs the store when it is locked and has no terminal (a script, `nohup`) stops with an

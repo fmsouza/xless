@@ -58,14 +58,24 @@
 #
 # Configuration comes from the environment, and from a local file that is sourced first when it exists:
 #   $XLESS_TESTFLIGHT_ENV, default ~/.config/xless/testflight.env   (keep it out of git; it holds paths and IDs only)
+# The secret store (`xless secrets`, docs/secrets.md#xless-run-and-docker-builds): a secret whose *_FILE is not set
+#   comes from it (the API key and its IDs together: set ASC_KEY_P8_FILE, ASC_KEY_ID and the issuer, or none of them).
+#   Natively xless reads it (the script checks first, by name, that it holds them all; step 2 gets
+#   XLESS_NO_SECRET_STORE=1). In docker the host's xless (`xless secrets materialize`, $XLESS_SELF else PATH) writes
+#   them once, before step 1, to a fresh $XDG_RUNTIME_DIR/xless/<random>/ (a tmpfs; with --allow-disk-secrets, any
+#   file system, else ~/.cache/xless/secrets/), one directory per container: next (step 1), sign (step 3, or the
+#   project's container, or the DMG ship), appstore (the mac App-Store ship). Each is mounted read-only at
+#   /secrets/store into its container only and removed when it ends; cleanup removes the rest. The store prefers the
+#   entries of the project's or overlay's top-level teamID:.
 # Variables (see docs/signing-and-testflight.md):
-#   ASC_KEY_ID               App Store Connect API key ID                      (required)
-#   ASC_ISSUER_ID_FILE       file holding the issuer ID   (or ASC_ISSUER_ID)   (required)
-#   ASC_KEY_P8_FILE          the API key .p8 file                              (required)
+#   ASC_KEY_ID               App Store Connect API key ID                      (required, unless the store has the key)
+#   ASC_ISSUER_ID_FILE       file holding the issuer ID   (or ASC_ISSUER_ID)   (required, unless the store has the key)
+#   ASC_KEY_P8_FILE          the API key .p8 file                              (required, unless the store has it)
 #   XLESS_DIST_KEY_FILE      the Apple Distribution private key (PEM)          (required on ios; on macos when --to upload runs the App-Store lane: the app's signature)
 #   XLESS_DEVID_KEY_FILE     the Developer ID Application private key (PEM)    (required with --platform macos)
 #   XLESS_INSTALLER_KEY_FILE the Mac Installer Distribution private key (PEM)  (macos, only when --to upload runs the App-Store lane)
-#     ("required" means: when a step that uses it runs. A project directory needs none of them for a run that stops
+#     (the signing keys too: each *_FILE is needed unless the store has the key;
+#      "required" means: when a step that uses it runs. A project directory needs none of them for a run that stops
 #      before sign (--to prepare|build|assets|finalize); with --config, see the three steps above)
 #   XLESS_IMAGE              docker image; default xless:local-<arch> (with --config: see above)
 #   XLESS_SIGN_IMAGE         React Native only: the image of steps 1 and 3; default xless-base:local-<arch>
@@ -99,7 +109,7 @@ die() { echo "testflight: $*" >&2; exit 2; }
 
 # On exit, and when stopped (INT, TERM, HUP), remove this run's containers (labelled with $run_label; `--rm` acts only
 # once a container exits on its own), release its work copy ($wc_lock, below) and remove its temporary files.
-run_label=""; tmpfiles=(); job=""; wc_lock=""; wc_takeover=""; in_job=""
+run_label=""; tmpfiles=(); job=""; wc_lock=""; wc_takeover=""; in_job=""; secrets_dir=""; secrets_out=""
 # PID: TERM PID and every process under it, deepest first. A job of a non-interactive bash ignores INT (and xless sets
 # no handler), so Ctrl-C alone would leave a native build running after the script exits.
 stop_tree() {
@@ -122,7 +132,17 @@ cleanup() {
   fi
   if [[ -n "$wc_lock" ]] && grep -qx "pid=$$" "$wc_lock" 2>/dev/null; then rm -f "$wc_lock"; fi
   [[ -z "$wc_takeover" ]] || rmdir "$wc_takeover" 2>/dev/null || true
+  drop_secrets
   rm -f ${tmpfiles[@]+"${tmpfiles[@]}"}
+}
+# The secrets `xless secrets materialize` wrote for this run (below): its run directory, which it prints first, even
+# when it was stopped half-way. Only a path of the shape it creates is removed.
+is_secrets_dir() { [[ "$1" =~ ^/([^/]+/)*xless(/secrets)?/[0-9a-f]{32}$ && "$1" != */../* && "$1" != */./* ]]; }
+drop_secrets() {   # [SET]: that set's directory, or the whole run directory
+  local d="$secrets_dir"
+  [[ -n "$d" || -z "$secrets_out" ]] || d="$(head -1 "$secrets_out" 2>/dev/null || true)"
+  is_secrets_dir "$d" || return 0
+  if [[ -n "${1:-}" ]]; then rm -rf -- "${d:?}/$1"; else rm -rf -- "$d"; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
@@ -179,6 +199,15 @@ hold_work_copy() {   # KEY: take the lock of the work copy KEY names (a path, or
       for _ in $(seq 50); do is_proc "${step%% *}" "${step#* }" || break; sleep 0.1; done
       ! is_proc "${step%% *}" "${step#* }" || die "the step of the run that held the work copy $key (pid ${step%% *}) does not stop; stop it: kill -9 ${step%% *}"
     fi
+    # the secrets it wrote from the store: their run directory is the first line of the file it recorded
+    old_out="$(lock_field secrets_out "$old")"
+    if [[ -n "$old_out" && -f "$old_out" ]]; then
+      old_dir="$(head -1 "$old_out" 2>/dev/null || true)"
+      if is_secrets_dir "$old_dir" && [[ -d "$old_dir" ]]; then
+        echo "==> removing the secrets it left in $old_dir" >&2
+        rm -rf -- "$old_dir"
+      fi
+    fi
   fi
   wc_lock="$lock"
   if [[ $use_docker == 1 ]]; then
@@ -198,10 +227,11 @@ note_job() {   # records the running step ($job) in the lock, for the run that t
   { printf '%s\njob=%s %s\n' "$wc_owner" "$job" "$(started_of "$job")" > "$wc_lock.$$" && mv -f "$wc_lock.$$" "$wc_lock"; } 2>/dev/null || true
 }
 
-usage="usage: $0 <project-dir> [extra xless ship args...]   or   $0 --config <overlay.yml> [--platform ios|macos] [--destination device|simulator] [--dry-run] [extra args...]"
+usage="usage: $0 <project-dir> [extra xless ship args...]   or   $0 --config <overlay.yml> [--platform ios|macos] [--destination device|simulator] [--dry-run] [--allow-disk-secrets] [extra args...]"
 [[ $# -ge 1 ]] || die "$usage"
 PLATFORM=ios
 DESTINATION=device
+ALLOW_DISK=0
 args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -210,6 +240,7 @@ while [[ $# -gt 0 ]]; do
     --destination) [[ $# -ge 2 ]] || die "--destination needs device or simulator"; DESTINATION="$2"; shift 2 ;;
     --destination=*) DESTINATION="${1#--destination=}"; shift ;;
     --dry-run) XLESS_TESTFLIGHT_DRY_RUN=1; shift ;;
+    --allow-disk-secrets) ALLOW_DISK=1; shift ;;
     *) args+=("$1"); shift ;;
   esac
 done
@@ -321,39 +352,6 @@ else
   [[ $pti -ge 4 ]] || step3=0
 fi
 
-# The secrets of the steps that run (for a project directory: all of them, or none before sign).
-need_asc=0; need_key=0
-[[ $step1 == 0 && $step3 == 0 ]] || need_asc=1
-[[ $step3 == 0 ]] || need_key=1
-if [[ $need_asc == 1 ]]; then
-  [[ -n "${ASC_KEY_ID:-}" ]] || die "set ASC_KEY_ID in the environment or $ENV_FILE"
-  [[ -n "${ASC_ISSUER_ID_FILE:-}${ASC_ISSUER_ID:-}" ]] || die "set ASC_ISSUER_ID_FILE (or ASC_ISSUER_ID) in the environment or $ENV_FILE"
-fi
-# Secret file paths are made absolute (docker -v needs absolute host paths) and must be readable.
-abs_file() {   # NAME: resolve $NAME to an absolute path in place
-  local v="$1" p="${!1}"
-  [[ -r "$p" ]] || die "$v points to a file that does not exist or is unreadable"
-  [[ "$p" == /* ]] || p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
-  printf -v "$v" '%s' "$p"
-}
-secret_files=()
-[[ $need_asc == 0 ]] || secret_files+=(ASC_KEY_P8_FILE)
-if [[ $need_key == 1 ]]; then
-  if [[ "$PLATFORM" == macos ]]; then secret_files+=(XLESS_DEVID_KEY_FILE); else secret_files+=(XLESS_DIST_KEY_FILE); fi
-fi
-# The mac App-Store lane (--to upload): the app is signed with the Apple Distribution key and the flat pkg with the Mac
-# Installer Distribution key (the Developer ID one stays for the DMG). Only an upload-reaching run needs them in reach.
-mac_lane=0
-if [[ $need_key == 1 && "$PLATFORM" == macos && $(index "$to") -ge 6 ]]; then
-  mac_lane=1
-  secret_files+=(XLESS_DIST_KEY_FILE XLESS_INSTALLER_KEY_FILE)
-fi
-for v in ${secret_files[@]+"${secret_files[@]}"}; do
-  [[ -n "${!v:-}" ]] || die "set $v in the environment or $ENV_FILE"
-  abs_file "$v"
-done
-if [[ $need_asc == 1 && -n "${ASC_ISSUER_ID_FILE:-}" ]]; then abs_file ASC_ISSUER_ID_FILE; fi
-
 use_docker=0
 # Natively, the xless that started this script (`xless run` sets XLESS_SELF), else the one on PATH.
 xself="${XLESS_SELF:-xless}"
@@ -364,6 +362,73 @@ case "${XLESS_USE_DOCKER:-auto}" in
   auto) if [[ ! -e "${XLESS_TOOLCHAIN_META:-${XDG_CONFIG_HOME:-$HOME/.config}/xless/toolchain-meta.json}" ]] || ! command -v "$xself" >/dev/null 2>&1; then use_docker=1; fi ;;
   *) die "XLESS_USE_DOCKER must be 0, 1 or unset" ;;
 esac
+
+# The secrets of the steps that run (for a project directory: all of them, or none before sign).
+need_asc=0; need_key=0
+[[ $step1 == 0 && $step3 == 0 ]] || need_asc=1
+[[ $step3 == 0 ]] || need_key=1
+# The signing keys: the first ship's (Apple Distribution on iOS, Developer ID for the DMG), and those of the mac
+# App-Store lane (--to upload): the app is signed with the Apple Distribution key and the flat pkg with the Mac
+# Installer Distribution key (the Developer ID one stays for the DMG). Only an upload-reaching run needs them in reach.
+sign_keys=(); lane_keys=(); mac_lane=0
+if [[ $need_key == 1 ]]; then
+  if [[ "$PLATFORM" == macos ]]; then sign_keys=(XLESS_DEVID_KEY); else sign_keys=(XLESS_DIST_KEY); fi
+  if [[ "$PLATFORM" == macos && $(index "$to") -ge 6 ]]; then mac_lane=1; lane_keys=(XLESS_DIST_KEY XLESS_INSTALLER_KEY); fi
+fi
+# Secret file paths are made absolute (docker -v needs absolute host paths) and must be readable.
+abs_file() {   # NAME: resolve $NAME to an absolute path in place
+  local v="$1" p="${!1}"
+  [[ -r "$p" ]] || die "$v points to a file that does not exist or is unreadable"
+  [[ "$p" == /* ]] || p="$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+  printf -v "$v" '%s' "$p"
+}
+# Where each secret comes from: NAME_FILE (set in the environment or the env file) wins, as does NAME itself natively;
+# else the encrypted secret store (`xless secrets`): natively xless reads it itself, and in docker the host's xless
+# writes what each container needs to a tmpfs first (below). The App Store Connect key and its IDs come from one place.
+asc_store=0
+if [[ $need_asc == 1 ]]; then
+  if [[ -n "${ASC_KEY_P8_FILE:-}" || ( $use_docker == 0 && -n "${ASC_KEY_P8:-}" ) ]]; then
+    [[ -n "${ASC_KEY_ID:-}" ]] || die "set ASC_KEY_ID in the environment or $ENV_FILE"
+    [[ -n "${ASC_ISSUER_ID_FILE:-}${ASC_ISSUER_ID:-}" ]] || die "set ASC_ISSUER_ID_FILE (or ASC_ISSUER_ID) in the environment or $ENV_FILE"
+    [[ -z "${ASC_KEY_P8_FILE:-}" ]] || abs_file ASC_KEY_P8_FILE
+    [[ -z "${ASC_ISSUER_ID_FILE:-}" ]] || abs_file ASC_ISSUER_ID_FILE
+  elif [[ -n "${ASC_KEY_ID:-}${ASC_ISSUER_ID:-}${ASC_ISSUER_ID_FILE:-}" ]]; then
+    die "ASC_KEY_ID or ASC_ISSUER_ID is set, but not ASC_KEY_P8_FILE: set ASC_KEY_P8_FILE in the environment or $ENV_FILE, or unset the IDs to use the App Store Connect key of the secret store (xless secrets), which carries its IDs"
+  else
+    asc_store=1
+  fi
+fi
+store_keys=()
+for v in ${sign_keys[@]+"${sign_keys[@]}"} ${lane_keys[@]+"${lane_keys[@]}"}; do
+  f="${v}_FILE"
+  if [[ -n "${!f:-}" ]]; then abs_file "$f"
+  elif [[ $use_docker == 1 || -z "${!v:-}" ]]; then store_keys+=("$v"); fi
+done
+# In docker a secret's value itself (NAME, not NAME_FILE) is never passed into a container: the store's is used.
+for v in ASC_KEY_P8 ${store_keys[@]+"${store_keys[@]}"}; do
+  [[ $use_docker == 0 || -z "${!v:-}" ]] || [[ $v == ASC_KEY_P8 && $asc_store == 0 ]] \
+    || echo "==> note: $v is set, but docker builds take only ${v}_FILE (a file to mount); using the secret store's $v" >&2
+done
+# What the store gives, per container: `next` (step 1), `sign` (step 3, the project's one container, or the DMG ship)
+# and `appstore` (the mac App-Store ship). The store prefers the project's team (its top-level teamID:).
+has() { local n x="$1"; shift; for n in "$@"; do [[ "$n" != "$x" ]] || return 0; done; return 1; }   # WORD LIST…
+store_sets=()
+add_set() {   # NAME KEYS…: NAME=<the store's App Store Connect key and IDs, and those of KEYS from the store>
+  local name="$1" k list=(); shift
+  [[ $asc_store == 0 ]] || list=(ASC_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID)
+  for k in "$@"; do ! has "$k" ${store_keys[@]+"${store_keys[@]}"} || list+=("$k"); done
+  [[ ${#list[@]} -gt 0 ]] || return 0
+  local IFS=,; store_sets+=("$name=${list[*]}")
+}
+[[ $step1 == 0 ]] || add_set next
+[[ $step3 == 0 ]] || add_set sign ${sign_keys[@]+"${sign_keys[@]}"}
+[[ $mac_lane == 0 ]] || add_set appstore "${lane_keys[@]}"
+TEAM="$(yaml_top "$pin_file" teamID)"; [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || TEAM=""
+team_arg=(); [[ -z "$TEAM" ]] || team_arg=(--team "$TEAM")
+if [[ ${#store_sets[@]} -gt 0 ]]; then
+  command -v "$xself" >/dev/null 2>&1 || [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]] \
+    || die "the secrets not set in the environment or $ENV_FILE come from the secret store, which xless on this host reads, and \"$xself\" is not on PATH: install xless (or set XLESS_SELF), or set the *_FILE variables (${store_sets[*]})"
+fi
 
 # With docker, the overlay's directory and the source are mounted into the container that runs the app's build code:
 # no secret may live below them. (Natively nothing is mounted: the build runs on the host, without the secret variables.)
@@ -469,7 +534,7 @@ if [[ $use_docker == 1 ]]; then
   run_label="xless.run=$$.$(date +%s)"
   docker_run+=(--init --label "$run_label")
   # Secrets by path or by name: values never appear on a command line.
-  if [[ $need_asc == 1 ]]; then
+  if [[ $need_asc == 1 && $asc_store == 0 ]]; then
     asc_secrets=(--mount "$(bind "$ASC_KEY_P8_FILE" /secrets/asc.p8 ro)" -e ASC_KEY_ID -e ASC_KEY_P8_FILE=/secrets/asc.p8)
     if [[ -n "${ASC_ISSUER_ID_FILE:-}" ]]; then
       asc_secrets+=(--mount "$(bind "$ASC_ISSUER_ID_FILE" /secrets/asc-issuer-id ro)" -e ASC_ISSUER_ID_FILE=/secrets/asc-issuer-id)
@@ -477,18 +542,81 @@ if [[ $use_docker == 1 ]]; then
       asc_secrets+=(-e ASC_ISSUER_ID)   # by name: the value never appears in the process list
     fi
   fi
+  key_file() {   # VAR DST: add to words the mount of the file $VAR names at DST, when it is set (else the store gives it)
+    [[ -z "${!1:-}" ]] || words+=(--mount "$(bind "${!1}" "$2" ro)" -e "$1=$2")
+  }
+  words=()
   if [[ $need_key == 1 && "$PLATFORM" == macos ]]; then
-    dist_secret=(--mount "$(bind "$XLESS_DEVID_KEY_FILE" /secrets/devid-key.pem ro)" -e XLESS_DEVID_KEY_FILE=/secrets/devid-key.pem)
+    key_file XLESS_DEVID_KEY_FILE /secrets/devid-key.pem; dist_secret=(${words[@]+"${words[@]}"}); words=()
     # The App-Store lane's keys, in the same shape: their own mounts, only the second ship takes them (and only a run that
     # reaches it has them: the variables may be unset otherwise).
     if [[ $mac_lane == 1 ]]; then
-      appstore_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem
-                       --mount "$(bind "$XLESS_INSTALLER_KEY_FILE" /secrets/installer-key.pem ro)" -e XLESS_INSTALLER_KEY_FILE=/secrets/installer-key.pem)
+      key_file XLESS_DIST_KEY_FILE /secrets/dist-key.pem; key_file XLESS_INSTALLER_KEY_FILE /secrets/installer-key.pem
+      appstore_secret=(${words[@]+"${words[@]}"}); words=()
     fi
   elif [[ $need_key == 1 ]]; then
-    dist_secret=(--mount "$(bind "$XLESS_DIST_KEY_FILE" /secrets/dist-key.pem ro)" -e XLESS_DIST_KEY_FILE=/secrets/dist-key.pem)
+    key_file XLESS_DIST_KEY_FILE /secrets/dist-key.pem; dist_secret=(${words[@]+"${words[@]}"}); words=()
   fi
 fi
+
+# Docker: the store's secrets, written once for the whole run (one passphrase) by the host's xless into a fresh
+# $XDG_RUNTIME_DIR/xless/<random>/ (a tmpfs; anywhere else only with --allow-disk-secrets), one directory per container
+# (next, sign, appstore: see store_sets), each mounted read-only at /secrets/store into its container only and removed
+# when that container ends; whatever is left goes when the run ends, on an error and when it is stopped (cleanup).
+if [[ ${#store_sets[@]} -gt 0 && $use_docker == 0 ]]; then
+  # Natively each step's xless reads the store itself (the run's one process asks the passphrase once; with --config,
+  # steps 1 and 3 are two). Check now, without the passphrase, that it holds them all, not after the build.
+  run "$xself" secrets materialize --check ${team_arg[@]+"${team_arg[@]}"} "${store_sets[@]}" || exit $?
+fi
+next_store=(); sign_store=(); appstore_store=()
+store_words() {   # SET: words=(the set's read-only mount, and NAME_FILE=/secrets/store/NAME for each of its secrets)
+  local s n
+  words=()
+  for s in ${store_sets[@]+"${store_sets[@]}"}; do
+    [[ "${s%%=*}" == "$1" ]] || continue
+    words=(--mount "$(bind "$secrets_dir/$1" /secrets/store ro)")
+    local IFS=,
+    for n in ${s#*=}; do words+=(-e "${n}_FILE=/secrets/store/$n"); done
+  done
+}
+build_mounts=()   # the host folders the build container (step 2) mounts: no secret may be inside one
+materialise() {   # docker: write the store's sets (one passphrase), after every check that could still stop the run
+  [[ $use_docker == 1 && ${#store_sets[@]} -gt 0 ]] || return 0
+  local mat=("$xself" secrets materialize ${team_arg[@]+"${team_arg[@]}"}) base d code=0
+  [[ $ALLOW_DISK == 0 ]] || mat+=(--allow-disk)
+  mat+=("${store_sets[@]}")
+  if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
+    run "${mat[@]}"; secrets_dir="\$XDG_RUNTIME_DIR/xless/<run>"
+  else
+    # where xless will put them (SecretRunBase): refused before anything is written when a build mount holds it
+    if [[ "${XDG_RUNTIME_DIR:-}" == /* && -d "$XDG_RUNTIME_DIR" ]]; then base="$XDG_RUNTIME_DIR/xless"
+    elif [[ "${XDG_CACHE_HOME:-}" == /* ]]; then base="$XDG_CACHE_HOME/xless/secrets"
+    else base="$HOME/.cache/xless/secrets"; fi
+    not_in_build_mounts "$base"
+    echo "==> secrets from the secret store: ${store_sets[*]}" >&2
+    secrets_out="$(mktemp)"; tmpfiles+=("$secrets_out")
+    # recorded in the work copy's lock first: a run that takes the lock over after a SIGKILL removes what this wrote
+    [[ -z "$wc_lock" ]] || { wc_owner+=$'\n'"secrets_out=$secrets_out"; note_job; }
+    waited "${mat[@]}" >"$secrets_out" || code=$?
+    secrets_dir="$(head -1 "$secrets_out")"
+    [[ $code -eq 0 ]] || { echo "==> xless exited with code $code (the secret store)" >&2; exit "$code"; }
+    is_secrets_dir "$secrets_dir" && [[ -d "$secrets_dir" ]] || die "\"$xself\" secrets materialize printed '$secrets_dir', not a run directory"
+    not_in_build_mounts "$secrets_dir"
+  fi
+  store_words next; next_store=(${words[@]+"${words[@]}"})
+  store_words sign; sign_store=(${words[@]+"${words[@]}"})
+  store_words appstore; appstore_store=(${words[@]+"${words[@]}"})
+}
+not_in_build_mounts() {   # DIR: neither DIR (or, while it does not exist, its nearest parent) nor a parent of it is mounted into the build
+  local p="$1" d
+  while [[ ! -e "$p" && "$p" != / ]]; do p="$(dirname "$p")"; done
+  for d in ${build_mounts[@]+"${build_mounts[@]}"}; do
+    [[ -e "$d" ]] || continue
+    if inside "$p/." "$d"; then
+      die "the secret store's files ($1) would be inside $d, which is mounted into the build container; point XDG_RUNTIME_DIR elsewhere"
+    fi
+  done
+}
 
 # xcode: pin (docker only; XLESS_IMAGE / XLESS_SIGN_IMAGE win): IMAGE-xcode<pin>, made by `xless setup --docker --xcode <Xcode.xip>`. The plain
 # default images are versions.env's Xcode's, so they serve that pin when no suffixed image exists.
@@ -528,7 +656,9 @@ if [[ -z "$OVERLAY" ]]; then
     [[ -n "${XLESS_IMAGE:-}" ]] || apply_pin image
     check_pin "$image"
     need_images "$image"
-    run "${docker_run[@]}" --mount "$(bind "$PROJECT" /work)" -w /work ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} -e XLESS_BUILD_NUMBER \
+    materialise
+    run "${docker_run[@]}" --mount "$(bind "$PROJECT" /work)" -w /work ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} \
+      ${sign_store[@]+"${sign_store[@]}"} -e XLESS_BUILD_NUMBER \
       "$image" xless ship --platform ios "$@"
   else
     cd "$PROJECT"
@@ -580,7 +710,9 @@ else
   # native: --source only when XLESS_SOURCE overrides the overlay's own `source:`
   xl=(--config "$OVERLAY"); [[ -z "${XLESS_SOURCE:-}" ]] || xl+=(--source "$SOURCE")
   # step 2 runs without the secret variables (xless also scrubs them from its tools); the files stay on disk
-  scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY XLESS_INSTALLER_KEY; do scrub+=(-u "$v" -u "${v}_FILE"); done
+  # (the list is xless's SecretEnvironment.entries; a test keeps them equal), and with the secret store closed to it
+  scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY XLESS_INSTALLER_KEY XLESS_DEMO_PASSWORD; do scrub+=(-u "$v" -u "${v}_FILE"); done
+  scrub+=(XLESS_NO_SECRET_STORE=1)
 fi
 bn=(); [[ -z "${XLESS_BUILD_NUMBER:-}" ]] || bn=(-e XLESS_BUILD_NUMBER)
 if [[ $use_docker == 1 ]]; then
@@ -616,10 +748,17 @@ if [[ $use_docker == 1 && $RN == 1 && $SIM == 0 && "${XLESS_TESTFLIGHT_DRY_RUN:-
   [[ "$d2" == "$d13" ]] || die "$image and $key_image hold different xless builds (${d2:0:12} vs ${d13:0:12}); rebuild both from the same commit (xless setup --docker --xcode <Xcode.xip>), or set XLESS_IMAGE / XLESS_SIGN_IMAGE to matching images"
 fi
 
+# The store's secrets for steps 1 and 3, now that nothing else can stop the run before step 1 (docker only).
+if [[ $use_docker == 1 ]]; then
+  build_mounts=("$overlay_dir" "$source_dir" ${input_paths[@]+"${input_paths[@]}"})
+  [[ $RN == 1 ]] || build_mounts+=("$cache/work" "$cache/downloads" "$cache/inputs")
+fi
+materialise
+
 # Step 1: the build number, only for a run that starts (later stages read the one recorded in the work copy).
 if [[ $step1 == 1 ]]; then
   echo "==> TestFlight: step 1/3, next build number (App Store Connect, read-only)" >&2
-  if [[ $use_docker == 1 ]]; then cmd=("${docker_run[@]}" "${app[@]}" "${asc_secrets[@]}" "$key_image" "${next_build[@]}" "${xl[@]}")
+  if [[ $use_docker == 1 ]]; then cmd=("${docker_run[@]}" "${app[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${next_store[@]+"${next_store[@]}"} "$key_image" "${next_build[@]}" "${xl[@]}")
   else cmd=("$xself" "${next_build[@]:1}" "${xl[@]}"); fi
   if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
     run "${cmd[@]}"; XLESS_BUILD_NUMBER="<next-build>"
@@ -627,6 +766,7 @@ if [[ $step1 == 1 ]]; then
     # waited, not "$(…)": a command substitution would hold a stop until the step ends, as a foreground command does
     outf="$(mktemp)"; tmpfiles+=("$outf")
     set +e; waited "${cmd[@]}" >"$outf"; code=$?; set -e
+    drop_secrets next   # step 1's copy of the key: done with
     out="$(cat "$outf")"
     [[ $code -eq 0 ]] || finish $code
     XLESS_BUILD_NUMBER="$(printf '%s\n' "$out" | tail -1)"
@@ -686,10 +826,10 @@ if [[ $step3 == 1 ]]; then
     mac_tf_to="package"; [[ "$(index "$to")" -ge 6 ]] || mac_tf_to="$to"
     if [[ $use_docker == 1 ]]; then
       if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
-        run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
+        run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} ${sign_store[@]+"${sign_store[@]}"} ${bn[@]+"${bn[@]}"} \
           "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
         if [[ "$(index "$to")" -ge 6 ]]; then
-          run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" ${appstore_secret[@]+"${appstore_secret[@]}"} ${bn[@]+"${bn[@]}"} \
+          run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${appstore_secret[@]+"${appstore_secret[@]}"} ${appstore_store[@]+"${appstore_store[@]}"} ${bn[@]+"${bn[@]}"} \
             "$key_image" xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
         fi
         echo "==> TestFlight: stopped after $to (--to), nothing delivered" >&2
@@ -697,15 +837,16 @@ if [[ $step3 == 1 ]]; then
       fi
       log="$(mktemp)"; tmpfiles+=("$log")
       set +e
-      waited_tee "$log" "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
+      waited_tee "$log" "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} ${sign_store[@]+"${sign_store[@]}"} ${bn[@]+"${bn[@]}"} \
         "$key_image" xless ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
       code=$?
       [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code" >&2; exit "$code"; }
+      drop_secrets sign
       dmg="$(grep '\.dmg$' "$log" | tail -1 || true)"
       [[ $use_docker == 0 ]] || dmg="${dmg/#\/cache\/work/$cache/work}"
       echo "==> DMG: $dmg" >&2
       if [[ "$(index "$to")" -ge 6 ]]; then
-        waited_tee "$log" "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" ${appstore_secret[@]+"${appstore_secret[@]}"} ${bn[@]+"${bn[@]}"} \
+        waited_tee "$log" "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${appstore_secret[@]+"${appstore_secret[@]}"} ${appstore_store[@]+"${appstore_store[@]}"} ${bn[@]+"${bn[@]}"} \
           "$key_image" xless ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
         code=$?
         [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
@@ -739,7 +880,7 @@ if [[ $step3 == 1 ]]; then
   fi
   set +e
   if [[ $use_docker == 1 ]]; then
-    run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" "${asc_secrets[@]}" "${dist_secret[@]}" ${bn[@]+"${bn[@]}"} \
+    run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} ${sign_store[@]+"${sign_store[@]}"} ${bn[@]+"${bn[@]}"} \
       "$key_image" xless ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
   else
     run "$xself" ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}

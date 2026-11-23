@@ -114,6 +114,7 @@ struct TauriNextBuildCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Tauri overlay file (type: tauri).") var config: String
     @Option(name: .long, help: "Use this directory as the app source instead of the overlay's `source:`.") var source: String?
     func run() async throws {
-        print(try await NextBuild.tauri(at: URL(fileURLWithPath: config).standardizedFileURL, sourceOverride: source, compute: NextBuild.datedLookup))
+        let url = URL(fileURLWithPath: config).standardizedFileURL
+        print(try await NextBuild.tauri(at: url, sourceOverride: source, compute: NextBuild.datedLookup(overlay: url)))
     }
 }

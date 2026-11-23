@@ -18,14 +18,20 @@ struct NextBuildCommand: AsyncParsableCommand {
 
     func run() async throws {
         let url = URL(fileURLWithPath: config).standardizedFileURL
-        print(try await NextBuild.forOverlay(at: url, sourceOverride: source, compute: NextBuild.datedLookup))
+        print(try await NextBuild.forOverlay(at: url, sourceOverride: source, compute: NextBuild.datedLookup(overlay: url)))
     }
 }
 
 extension NextBuild {
-    /// `DatedBuildNumber.compute` with the process's credentials, as the `config` stage (`[config] …`, exit 10).
-    static let datedLookup: Compute = { version, bundleID in
-        SecretScope.enter() // reads the App Store Connect key (both next-build commands come here)
-        return try await withStage(.config) { try await DatedBuildNumber.compute(version: version, bundleID: bundleID, secrets: Secrets()) }
+    /// `DatedBuildNumber.compute` with the process's credentials (the secret store's preferring the overlay's `teamID:`),
+    /// as the `config` stage (`[config] …`, exit 10).
+    static func datedLookup(overlay url: URL) -> Compute {
+        let team = (try? OverlayPaths.read(url)).flatMap(OverlayPaths.team(of:)) ?? ""
+        return { version, bundleID in
+            SecretScope.enter() // reads the App Store Connect key (both next-build commands come here)
+            return try await withStage(.config) {
+                try await DatedBuildNumber.compute(version: version, bundleID: bundleID, secrets: Secrets().preferring(team: team))
+            }
+        }
     }
 }

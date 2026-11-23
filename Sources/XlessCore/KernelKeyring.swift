@@ -34,6 +34,11 @@ public enum KernelKeyring {
     /// Whether the kernel keyring can be used by this process (a session keyring is there or can be joined).
     public static var isAvailable: Bool { xless_key_keyring_id(sessionKeyring) >= 0 }
 
+    /// Leaves the session keyring for a new, empty one, for this process and its children: a remembered unlock or a
+    /// kept Apple ID session (possessor-only keys) is out of their reach. False where there is no keyring.
+    @discardableResult
+    public static func leaveSession() -> Bool { xless_key_join_new_session() >= 0 }
+
     /// Stores `secret` as the `user` key `name` in the session keyring (replacing a key of that name), possessor-only,
     /// expiring after `timeout` seconds (1…3600). If the permissions or the timeout cannot be set, the key is revoked
     /// and the call fails: a key never outlives its bound or is readable more widely than asked.

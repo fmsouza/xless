@@ -35,20 +35,42 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
     }
 
     public func lookup(_ name: String, stage: Stage) throws -> String? {
+        try lookup(name, stage: stage) { try Self.candidate(for: $0, in: $1, team: team) }
+    }
+
+    /// This resolver preferring `team` (`preferredCandidate`), sharing its unlock: one passphrase for both.
+    public func preferring(team: String) -> any SecretFallback { TeamPreferring(base: self, team: team) }
+
+    /// The value of `name` (or the ID it stands for) from the entry `pick` chooses; nil when there is none.
+    func lookup(_ name: String, stage: Stage, pick: (String, VaultFile) throws -> VaultEntry?) throws -> String? {
         do {
             guard let file = try store.read() else { return nil }
             if let field = Self.metadataField(name) {
-                guard let entry = try Self.candidate(for: "ASC_KEY_P8", in: file, team: team) else { return nil }
+                guard let entry = try pick("ASC_KEY_P8", file) else { return nil }
                 // Open it first: the metadata is only authenticated with the secret.
                 _ = try VaultCrypto.open(entry, dataKey: try key(for: file, reason: "the secret \(name)"))
                 return field(entry.metadata)
             }
-            guard let entry = try Self.candidate(for: name, in: file, team: team) else { return nil }
+            guard let entry = try pick(name, file) else { return nil }
             let secret = try VaultCrypto.open(entry, dataKey: try key(for: file, reason: "the secret \(name)"))
             return secret.utf8String()
         } catch let e as VaultError {
             throw e.stageError(stage)
         }
+    }
+
+    /// The entry standing for `name` for a run of `team`'s project: `team`'s own (`NAME@team`, or recorded with that
+    /// team ID), else one recorded for no team (no `@`, no team ID). Another team's entries are never chosen; several
+    /// left is an error.
+    public static func preferredCandidate(for name: String, in file: VaultFile, team: String) throws -> VaultEntry? {
+        let all = file.entries.filter { $0.name == name || $0.name.hasPrefix(name + "@") }
+        let own = all.filter { $0.metadata.teamID == team || $0.name == "\(name)@\(team)" }
+        let found = own.isEmpty ? all.filter { $0.metadata.teamID == nil && !$0.name.contains("@") } : own
+        guard found.count <= 1 else {
+            throw VaultError(.ambiguous, "the secret store has several entries for \(name) of team \(team): \(found.map(\.name).joined(separator: ", "))",
+                             fix: "keep one (`xless secrets rm <name>`)")
+        }
+        return found.first
     }
 
     /// The entry standing for `name`: `name` itself or `name@…`, of `team` when one is selected; nil when none; an error
@@ -72,4 +94,16 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
             return key
         }
     }
+}
+
+/// `VaultResolver.preferring(team:)`: lookups through the same resolver (and its unlocked key), by `preferredCandidate`.
+struct TeamPreferring: SecretFallback {
+    let base: VaultResolver
+    let team: String
+
+    func lookup(_ name: String, stage: Stage) throws -> String? {
+        try base.lookup(name, stage: stage) { try VaultResolver.preferredCandidate(for: $0, in: $1, team: team) }
+    }
+
+    func preferring(team: String) -> any SecretFallback { base.preferring(team: team) }
 }

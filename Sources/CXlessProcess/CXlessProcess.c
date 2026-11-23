@@ -10,6 +10,7 @@
 #include <sys/resource.h>
 #ifdef __linux__
 #include <sys/prctl.h>
+#include <sys/vfs.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
@@ -83,6 +84,10 @@ long xless_key_describe(int32_t key, char *buffer, size_t length) {
 long xless_key_keyring_id(int32_t keyring) {
     return syscall(SYS_keyctl, XLESS_KEYCTL_GET_KEYRING_ID, keyring, 0);
 }
+
+long xless_key_join_new_session(void) {
+    return syscall(SYS_keyctl, 1 /* KEYCTL_JOIN_SESSION_KEYRING */, (const char *)0);
+}
 #else
 static long xless_no_keyring(void) { errno = ENOSYS; return -1; }
 long xless_key_add(const char *d, const void *p, size_t l, int32_t k) { (void)d; (void)p; (void)l; (void)k; return xless_no_keyring(); }
@@ -93,4 +98,18 @@ long xless_key_set_timeout(int32_t k, unsigned int s) { (void)k; (void)s; return
 long xless_key_setperm(int32_t k, uint32_t p) { (void)k; (void)p; return xless_no_keyring(); }
 long xless_key_describe(int32_t k, char *b, size_t l) { (void)k; (void)b; (void)l; return xless_no_keyring(); }
 long xless_key_keyring_id(int32_t k) { (void)k; return xless_no_keyring(); }
+long xless_key_join_new_session(void) { return xless_no_keyring(); }
 #endif
+
+int xless_is_memory_fs(const char *path) {
+#ifdef __linux__
+    struct statfs st;
+    if (statfs(path, &st) != 0) return -1;
+    unsigned long type = (unsigned long)st.f_type;
+    return (type == 0x01021994UL /* TMPFS_MAGIC */ || type == 0x858458f6UL /* RAMFS_MAGIC */) ? 1 : 0;
+#else
+    (void)path;
+    errno = ENOSYS;
+    return -1;
+#endif
+}
