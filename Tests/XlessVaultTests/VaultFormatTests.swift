@@ -286,6 +286,54 @@ private func opens(_ entry: VaultEntry?, _ key: SymmetricKey) -> String? {
     let nested = try #require(o["future"] as? [String: Any])
     #expect(nested["nested"] as? [String: String] == ["a": "b"])
     #expect((nested["list"] as? [Any])?.count == 5)
+    #expect(after.unknown["future"] == .object(["list": .array([.integer(1), .number(2.5), .bool(true), .null, .string("x")]),
+                                                 "nested": .object(["a": .string("b")])]))
+}
+
+@Test func aNewerStoreThisXlessCannotDecodeIsNeverCalledCorrupt() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make(entries: [("N", .generic, .init(), "v")])
+    try editJSON(t) { o in
+        o["version"] = 3
+        var list = try entries(o)
+        list[0]["kind"] = "future-kind"
+        o["entries"] = list
+    }
+    do { _ = try t.store.read(); Issue.record("read a store it cannot decode") } catch let e as VaultError {
+        #expect(e.kind == .newerFormat && e.fix.contains("upgrade xless") && !e.fix.contains("secrets init"))
+    }
+    // The same damage in a store of a format this xless knows is an integrity error.
+    try editJSON(t) { o in o["version"] = 2 }
+    do { _ = try t.store.read(); Issue.record("read a malformed store") } catch let e as VaultError { #expect(e.kind == .tampered) }
+}
+
+@Test func theKeyAndKeyCheckOfAVersionOneStoreAuthenticateWhatOlderReleasesWrote() throws {
+    var (file, _) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "pass phrase"), kdf: testKDF())
+    // The previous release's layout, which put the file's version (always 1 there) into both.
+    var header = Data("xless-vault-header/1\u{0}xless-vault\u{0}\(file.id)\u{0}scrypt\u{0}".utf8)
+    header.append(file.kdf.salt)
+    header.append(Data("\u{0}1024\u{0}8\u{0}1".utf8))
+    let check = Data("xless-vault-key-check/1\u{0}\(file.id)".utf8)
+    for version in [1, 2, 3] {
+        file.version = version
+        #expect(file.headerAssociatedData == header && file.keyCheckAssociatedData == check)
+    }
+}
+
+@Test func anEntryMarkerTheStoreVersionMakesInvalidIsWrittenBackAsItWasRead() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (_, key) = try t.make(entries: [("A", .generic, .init(), "a"), ("B", .generic, .init(), "b")])
+    try editJSON(t) { o in o["version"] = 1 } // set back: every entry now carries a marker a version-1 store does not have
+    let read = try #require(try t.store.read())
+    #expect(read.entries.map(\.format) == [0, 0])
+    try secretStore(t, prompter: ScriptedPrompter([])).update(reason: "removing A") { _ in [.remove(name: "A")] }
+    try editJSON(t) { o in
+        o["version"] = 2
+        o["minimumReaderVersion"] = 2
+    }
+    #expect(opens(try t.store.read()?.entry(named: "B"), key) == "b")
 }
 
 @Test func listShowsTypeRoleAndServices() throws {

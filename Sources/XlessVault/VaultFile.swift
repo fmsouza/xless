@@ -95,7 +95,7 @@ public struct VaultFile: Codable, Sendable, Equatable {
 
     /// Whether some entries still have the first format (a store of version 1): the next write with the data key at
     /// hand seals them again with every field (`VaultCrypto.upgrade`).
-    public var needsUpgrade: Bool { version < VaultEntry.currentFormat }
+    public var needsUpgrade: Bool { version < Self.currentVersion }
 
     var headerAssociatedData: Data {
         var out = Data("xless-vault-header/\(Self.keyLayout)\u{0}\(format)\u{0}\(id)\u{0}\(kdf.algorithm)\u{0}".utf8)
@@ -166,6 +166,12 @@ public struct VaultFile: Codable, Sendable, Equatable {
         guard version >= 1 else { throw VaultError.tampered("store version \(version)") }
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
-        do { return try d.decode(VaultFile.self, from: data) } catch { throw VaultError.tampered("malformed file") }
+        do { return try d.decode(VaultFile.self, from: data) } catch {
+            // A newer xless may have changed what this one expects (a kind it added): never call that store corrupt.
+            guard version > currentVersion else { throw VaultError.tampered("malformed file") }
+            throw VaultError(.newerFormat,
+                             "the secret store was written by a newer xless (store format \(version)) in a way this xless (format \(currentVersion) and older) cannot read",
+                             fix: "upgrade xless (run the install line again: README.md#install); the store is unchanged, do not re-create it")
+        }
     }
 }

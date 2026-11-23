@@ -65,7 +65,8 @@ grep -q "version 3 (written by a newer xless" "$t/out" || fail "status: $(cat "$
 
 run import NOTE --file "$t/note"; refused import
 [[ -f "$t/note" ]] || fail "import deleted the file it did not import"
-run rm XLESS_DIST_KEY@ABCDE12345 --yes; refused rm
+run rm XLESS_DIST_KEY@ABCDE12345; refused "rm (before its question)"
+run rm XLESS_DIST_KEY@ABCDE12345 --yes; refused "rm --yes"
 run passwd; refused passwd
 unchanged "the commands"
 echo "secrets-format: ok"

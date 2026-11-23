@@ -50,8 +50,10 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
                                                              dataKey: try key(for: file, remember: nil, reason: reason)))
                 case .replace(let name, let kind, let metadata, let secret):
                     guard let index = next.entries.firstIndex(where: { $0.name == name }) else { throw Self.missing(name) }
-                    next.entries[index] = try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
-                                                               dataKey: try key(for: file, remember: nil, reason: reason))
+                    var sealed = try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
+                                                      dataKey: try key(for: file, remember: nil, reason: reason))
+                    sealed.unknown = next.entries[index].unknown // the entry's fields a newer xless added stay
+                    next.entries[index] = sealed
                 case .remove(let name):
                     next.entries.removeAll { $0.name == name }
                 }

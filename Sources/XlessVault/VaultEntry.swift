@@ -102,6 +102,9 @@ public struct VaultEntry: Codable, Sendable, Equatable {
     var format: Int
     /// Entry fields this xless does not know, as read.
     var unknown: [String: VaultJSON] = [:]
+    /// The `version` the file gave the entry (nil: none), written back as it was read when the entry is not sealed
+    /// again, even when the store's version makes it invalid (`format` 0).
+    var declaredVersion: Int?
 
     init(name: String, kind: Kind, metadata: Metadata, sealed: Data, format: Int = VaultEntry.currentFormat) {
         self.name = name
@@ -109,6 +112,7 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         self.metadata = metadata
         self.sealed = sealed
         self.format = format
+        declaredVersion = format >= 2 ? format : nil
     }
 
     enum CodingKeys: String, CodingKey, CaseIterable { case name, kind, metadata, sealed, version }
@@ -121,7 +125,8 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         kind = try c.decode(Kind.self, forKey: .kind)
         metadata = try c.decode(Metadata.self, forKey: .metadata)
         sealed = try c.decode(Data.self, forKey: .sealed)
-        format = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        declaredVersion = try c.decodeIfPresent(Int.self, forKey: .version)
+        format = declaredVersion ?? 1
         unknown = try VaultJSON.unknownMembers(of: decoder, known: Self.knownKeys)
     }
 
@@ -131,7 +136,7 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         try c.encode(kind, forKey: .kind)
         try c.encode(metadata, forKey: .metadata)
         try c.encode(sealed, forKey: .sealed)
-        if format >= 2 { try c.encode(format, forKey: .version) }
+        try c.encodeIfPresent(declaredVersion, forKey: .version)
         try VaultJSON.encode(unknown, to: encoder, known: Self.knownKeys)
     }
 

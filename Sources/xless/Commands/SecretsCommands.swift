@@ -294,7 +294,9 @@ struct SecretsRmCommand: ParsableCommand {
     func run() throws {
         try SecretStoreCLI.run {
             let store = try SecretStoreCLI.store()
-            _ = try SecretStoreCLI.entry(name, in: try store.existingCatalog())
+            let catalog = try store.existingCatalog()
+            _ = try SecretStoreCLI.entry(name, in: catalog)
+            try catalog.requireWritable()
             guard try AccountConfirm.confirm("Remove \(name) from the secret store? It cannot be recovered.", action: "removing \(name)",
                                              yes: confirmation.yes, stage: .config, terminal: { try? TerminalPrompter.forSecretStore() }) else {
                 print("kept \(name)")
