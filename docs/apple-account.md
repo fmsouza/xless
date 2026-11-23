@@ -12,9 +12,9 @@ in the secret store, [`xless profiles`](#xless-profiles), which creates, downloa
 profiles of every type, [`xless app-groups` and `xless icloud-containers`](#xless-app-groups-and-xless-icloud-containers),
 which register app groups and iCloud containers and assign them to bundle IDs, [`xless keys`](#xless-keys), which
 creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with their `.p8` in the secret store,
-[`xless apps`](#xless-apps), which lists, shows, updates and creates app records, and [`xless api`](#xless-api), which
-calls any documented App Store Connect endpoint. More commands (the listing, TestFlight, releases) follow the
-conventions on this page.
+[`xless apps`](#xless-apps), which lists, shows, updates and creates app records, [`xless store`](#xless-store), which
+keeps the App Store listing in an `appstore/` directory, and [`xless api`](#xless-api), which calls any documented App
+Store Connect endpoint. More commands (TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -526,6 +526,18 @@ After that, everything else about the app goes through the API key: `xless apps 
 With `--json`, `list` prints `{"data": [apps]}`, `show` `{"data": app, "appInfos": [...], "appStoreVersions": [...]}`
 (App Store Connect's resources), `update` the app, and `create` `{"created": [app], "existing": [app]}`, each app as
 `{"id", "name", "bundleId", "sku", "primaryLocale"}` (a field App Store Connect did not send is left out).
+
+## `xless store`
+
+```sh
+xless store pull --app com.example.app    # the app's listing into ./appstore
+xless store validate                      # offline checks of ./appstore
+```
+
+The App Store listing (text per locale, screenshots, previews, categories, age rating, App Review contact, licence
+agreement, price and availability) lives in an `appstore/` directory reviewed like code: its format, `pull` and
+`validate` are in [appstore-manifest.md](appstore-manifest.md). `pull` uses the API key only, and never reads the demo
+account's password.
 
 ## JSON output
 
