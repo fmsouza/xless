@@ -39,6 +39,13 @@ public enum KernelKeyring {
     @discardableResult
     public static func leaveSession() -> Bool { xless_key_join_new_session() >= 0 }
 
+    /// `leaveSession`, throwing the kernel's reason when it fails. Linux credentials belong to a thread: the calling
+    /// thread, and the threads and processes it starts from then on, get the new keyring; the process's other threads
+    /// keep theirs (`ChildProcess.start` relies on this).
+    public static func joinNewSession() throws {
+        if xless_key_join_new_session() < 0 { throw failure("join_session_keyring") }
+    }
+
     /// Stores `secret` as the `user` key `name` in the session keyring (replacing a key of that name), possessor-only,
     /// expiring after `timeout` seconds (1…3600). If the permissions or the timeout cannot be set, the key is revoked
     /// and the call fails: a key never outlives its bound or is readable more widely than asked.

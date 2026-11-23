@@ -69,7 +69,14 @@ struct Context {
 
     /// `--distribution` (ship): replaces the platform's configured distribution for this run; the config file is
     /// untouched. Applied after validation, so sign/package/upload all see it.
+    /// The secret names the configuration gives of its own join `SecretEnvironment.scrub` before any tool runs.
     static func load(_ opts: ProjectOptions, distribution: Distribution? = nil, env: [String: String] = ProcessInfo.processInfo.environment, fresh: Bool = false) async throws -> Context {
+        let context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh)
+        for name in context.config.secretNames { SecretEnvironment.scrub(name) }
+        return context
+    }
+
+    private static func loadConfiguration(_ opts: ProjectOptions, distribution: Distribution?, env: [String: String], fresh: Bool) async throws -> Context {
         let override = opts.buildNumber ?? env["XLESS_BUILD_NUMBER"].flatMap { $0.isEmpty ? nil : $0 }
         let kind = try opts.configURL.map(OverlayKind.of)
         if let configURL = opts.configURL, kind == .reactNative {
