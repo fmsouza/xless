@@ -24,6 +24,8 @@ final class SimulatedKey: HIDConnection, @unchecked Sendable {
     var consecutiveWrongPINs = 0
     var alwaysUV = false
     var builtInUV: Bool?
+    /// The fingerprint reader fails every time (CTAP2_ERR_UV_INVALID).
+    var uvFails = false
     var pinProtocols = [2, 1]
     var tokenPermissions = true
     var maxCredentialCountInList: Int?
@@ -157,6 +159,7 @@ final class SimulatedKey: HIDConnection, @unchecked Sendable {
             verified = true
         } else if uv {
             guard builtInUV == true else { return (0x2C, nil) }
+            if uvFails { return (0x3F, nil) }
             verified = true
         } else if alwaysUV {
             return (0x36, nil)
@@ -286,6 +289,7 @@ final class ScriptedUI: SecurityKeyUI, @unchecked Sendable {
     private(set) var prompts: [String] = []
     private(set) var keyWaits = 0
     var onWaitForKey: () -> Void = {}
+    var pinError: Error?
 
     init(pins: [String] = []) { self.pins = pins }
 
@@ -293,6 +297,7 @@ final class ScriptedUI: SecurityKeyUI, @unchecked Sendable {
     func askPIN(_ prompt: String) async throws -> SecretBytes {
         try lock.withLock {
             prompts.append(prompt)
+            if let pinError { throw pinError }
             guard !pins.isEmpty else { throw SecurityKeyError("no scripted PIN", fix: "") }
             return SecretBytes(utf8: pins.removeFirst())
         }

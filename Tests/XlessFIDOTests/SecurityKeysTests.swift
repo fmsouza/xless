@@ -129,7 +129,8 @@ final class SecurityKeysTests: XCTestCase {
             let assertion = try await keys([device(strict)]).assertion(for: request([registered.id]), ui: asked)
             try assertVerifies(assertion, with: registered)
             XCTAssertEqual(assertion.authenticatorData[32] & 0x04, 0x04, "user verified")
-            XCTAssertEqual(asked.prompts, ["Security key PIN: "])
+            XCTAssertEqual(asked.prompts, ["Security key PIN (8 tries left): "])
+            XCTAssertEqual(asked.said.last, "Touch your security key (Test Key 0) to sign in.", "asked again once the PIN is in")
             XCTAssertTrue(strict.log.contains(permissions ? "clientPIN 9" : "clientPIN 5"), "\(strict.log)")
         }
     }
@@ -139,7 +140,7 @@ final class SecurityKeysTests: XCTestCase {
         strict.pin = "1234"; strict.alwaysUV = true
         let ui = ScriptedUI(pins: ["0000", "1234"])
         _ = try await keys([device(strict)]).assertion(for: request([registered.id]), ui: ui)
-        XCTAssertEqual(ui.prompts, ["Security key PIN: ", "Security key PIN (7 tries left): "])
+        XCTAssertEqual(ui.prompts, ["Security key PIN (8 tries left): ", "Security key PIN (7 tries left): "])
         XCTAssertTrue(ui.said.contains("The security key did not accept that PIN."))
     }
 
@@ -158,6 +159,51 @@ final class SecurityKeysTests: XCTestCase {
         _ = try await keys([device(strict)]).assertion(for: request([registered.id]), ui: ui)
         XCTAssertTrue(ui.said.contains("A security key PIN has 4 to 63 characters."))
         XCTAssertEqual(strict.pinRetries, 8)
+
+        let again = SimulatedKey(credentials: [registered])
+        again.pin = "1234"; again.alwaysUV = true
+        await assertFails(keys([device(again)]), request([registered.id]), ui: ScriptedUI(pins: ["1", "22", "333"]),
+                          cause: "no PIN of 4 to 63 characters")
+        XCTAssertEqual(again.pinRetries, 8)
+    }
+
+    func testAKeyCloseToLockingSaysSoBeforeThePIN() async throws {
+        let strict = SimulatedKey(credentials: [registered])
+        strict.pin = "1234"; strict.alwaysUV = true; strict.pinRetries = 2
+        let ui = ScriptedUI(pins: ["1234"])
+        _ = try await keys([device(strict)]).assertion(for: request([registered.id]), ui: ui)
+        XCTAssertTrue(ui.said.contains { $0.hasPrefix("Careful: 2 wrong PINs and the key locks itself") }, "\(ui.said)")
+        XCTAssertEqual(ui.prompts, ["Security key PIN (2 tries left): "])
+    }
+
+    func testTheTerminalGoingAwayIsNotBlamedOnTheKey() async {
+        struct TerminalGone: Error {}
+        let strict = SimulatedKey(credentials: [registered])
+        strict.pin = "1234"; strict.alwaysUV = true
+        let ui = ScriptedUI()
+        ui.pinError = TerminalGone()
+        do {
+            _ = try await keys([device(strict)]).assertion(for: request([registered.id]), ui: ui)
+            XCTFail("expected an error")
+        } catch {
+            XCTAssertTrue(error is TerminalGone, "\(error)")
+        }
+    }
+
+    func testAFailedFingerprintFallsBackToThePIN() async throws {
+        let key = SimulatedKey(credentials: [registered])
+        key.alwaysUV = true; key.builtInUV = true; key.uvFails = true; key.pin = "1234"
+        let ui = ScriptedUI(pins: ["1234"])
+        let assertion = try await keys([device(key)]).assertion(for: request([registered.id]), ui: ui)
+        try assertVerifies(assertion, with: registered)
+        XCTAssertEqual(ui.prompts.count, 1)
+    }
+
+    func testKeysThatCannotSayAreTriedInTurn() async throws {
+        let first = SimulatedKey(credentials: [other]), second = SimulatedKey(credentials: [registered])
+        for k in [first, second] { k.alwaysUV = true; k.builtInUV = true }
+        let assertion = try await keys([device(first, 0), device(second, 1)]).assertion(for: request([registered.id]), ui: ScriptedUI())
+        try assertVerifies(assertion, with: registered)
     }
 
     func testBlockedAndMissingPINs() async {

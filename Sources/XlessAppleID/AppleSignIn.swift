@@ -196,7 +196,7 @@ struct TwoFactor {
         }
         let (_, trust) = try await send(URLRequest(url: AppleEndpoints.trust))
         guard (200..<300).contains(trust.statusCode) else {
-            throw fail("Apple did not finish the sign-in after the code (HTTP \(trust.statusCode))", fix: AppleSignIn.changedFix)
+            throw fail("Apple did not finish the sign-in after the second factor (HTTP \(trust.statusCode))", fix: AppleSignIn.changedFix)
         }
     }
 

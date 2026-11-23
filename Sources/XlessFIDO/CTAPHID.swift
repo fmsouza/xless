@@ -33,7 +33,8 @@ public final class CTAPHIDChannel {
         public static let userPresenceNeeded: UInt8 = 2
     }
     static let broadcast: UInt32 = 0xFFFF_FFFF
-    static let maxPayload = 7609
+    /// The largest message: one initialization packet and 128 continuation packets (7609 bytes in 64-byte reports).
+    static func maxPayload(reportSize: Int) -> Int { (reportSize - 7) + 128 * (reportSize - 5) }
 
     public let connection: HIDConnection
     public let channel: UInt32
@@ -83,8 +84,9 @@ public final class CTAPHIDChannel {
     public func cancel() { try? Self.send(connection, channel: channel, command: Command.cancel, payload: []) }
 
     static func send(_ connection: HIDConnection, channel: UInt32, command: UInt8, payload: [UInt8]) throws {
-        guard payload.count <= maxPayload else { throw FIDOError.malformed("a request of \(payload.count) bytes") }
         let size = connection.reportSize
+        guard size >= 8 else { throw FIDOError.malformed("\(size)-byte reports") }
+        guard payload.count <= maxPayload(reportSize: size) else { throw FIDOError.malformed("a request of \(payload.count) bytes") }
         let cid: [UInt8] = [UInt8(channel >> 24), UInt8(channel >> 16 & 0xFF), UInt8(channel >> 8 & 0xFF), UInt8(channel & 0xFF)]
         var packet = cid + [command, UInt8(payload.count >> 8), UInt8(payload.count & 0xFF)]
         var offset = min(payload.count, size - 7)
@@ -115,12 +117,13 @@ public final class CTAPHIDChannel {
         while first[4] & 0x80 == 0 { first = try next() } // a stray continuation packet: not the start of a message
         let command = first[4]
         let length = Int(first[5]) << 8 | Int(first[6])
-        guard length <= maxPayload else { throw FIDOError.malformed("an answer of \(length) bytes") }
+        guard length <= maxPayload(reportSize: connection.reportSize) else { throw FIDOError.malformed("an answer of \(length) bytes") }
         var data = Array(first[7..<min(first.count, 7 + length)])
         var sequence: UInt8 = 0
         while data.count < length {
             let packet = try next()
             guard packet[4] & 0x80 == 0 else { throw FIDOError.malformed("a new message before the last one ended") }
+            guard sequence < 0x80 else { throw FIDOError.malformed("more than 128 continuation packets") }
             guard packet[4] == sequence else { throw FIDOError.malformed("packet \(packet[4]) where \(sequence) was due") }
             data += packet[5..<min(packet.count, 5 + length - data.count)]
             sequence += 1

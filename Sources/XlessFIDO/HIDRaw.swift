@@ -9,6 +9,7 @@ import Musl
 /// authenticator (usage page 0xF1D0, usage 0x01), and its input and output report sizes in bytes.
 public struct HIDDescriptor: Equatable, Sendable {
     public static let fidoUsagePage: UInt32 = 0xF1D0
+    public static let usableReportSizes = 8...64
     public let isFIDO: Bool
     public let inputSize: Int
     public let outputSize: Int
@@ -16,7 +17,7 @@ public struct HIDDescriptor: Equatable, Sendable {
     /// Parses the short items of a report descriptor (HID 1.11, section 6.2.2). Long items are skipped.
     public static func parse(_ bytes: [UInt8]) -> HIDDescriptor {
         var usagePage: UInt32?, firstUsage: UInt32?, firstUsagePage: UInt32?
-        var reportSize: UInt32 = 0, reportCount: UInt32 = 0
+        var reportSize = 0, reportCount = 0
         var input = 0, output = 0
         var i = 0
         while i < bytes.count {
@@ -33,12 +34,12 @@ public struct HIDDescriptor: Equatable, Sendable {
             let type = (prefix >> 2) & 0x03, tag = prefix >> 4
             switch (type, tag) {
             case (1, 0x0): usagePage = value
-            case (1, 0x7): reportSize = value
-            case (1, 0x9): reportCount = value
+            case (1, 0x7): reportSize = Int(min(value, 0xFFFF))
+            case (1, 0x9): reportCount = Int(min(value, 0xFFFF))
             case (2, 0x0):
                 if firstUsage == nil { firstUsage = value; firstUsagePage = usagePage }
-            case (0, 0x8): input += Int(reportSize * reportCount)
-            case (0, 0x9): output += Int(reportSize * reportCount)
+            case (0, 0x8): input += reportSize * reportCount
+            case (0, 0x9): output += reportSize * reportCount
             default: break
             }
             i += 1 + size
@@ -68,13 +69,15 @@ public struct HIDRawDevices {
         #if os(Linux)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: sysfs)) ?? []
         var found: [Device] = []
-        for entry in names.sorted() where entry.hasPrefix("hidraw") {
+        let numbered = names.filter { $0.hasPrefix("hidraw") }.sorted { (Int($0.dropFirst(6)) ?? .max, $0) < (Int($1.dropFirst(6)) ?? .max, $1) }
+        for entry in numbered {
             let base = "\(sysfs)/\(entry)/device"
             guard let descriptor = FileManager.default.contents(atPath: "\(base)/report_descriptor") else { continue }
             let parsed = HIDDescriptor.parse(Array(descriptor))
-            guard parsed.isFIDO else { continue }
-            let size = parsed.inputSize > 0 ? parsed.inputSize : 64
-            found.append(Device(name: name(uevent: "\(base)/uevent") ?? entry, path: "\(dev)/\(entry)", reportSize: size))
+            // CTAPHID reports are 64 bytes; libfido2 takes 8 to 64. Anything else is no FIDO key xless can talk to.
+            guard parsed.isFIDO, HIDDescriptor.usableReportSizes.contains(parsed.inputSize),
+                  parsed.outputSize == parsed.inputSize else { continue }
+            found.append(Device(name: name(uevent: "\(base)/uevent") ?? entry, path: "\(dev)/\(entry)", reportSize: parsed.inputSize))
         }
         return found
         #else

@@ -37,9 +37,13 @@ final class HIDRawTests: XCTestCase {
         try add("hidraw0", Self.keyboard, uevent: "HID_NAME=Some Keyboard\n")
         try add("hidraw3", Self.fido, uevent: "DRIVER=hid-generic\nHID_ID=0003:00001050:00000407\nHID_NAME=Yubico YubiKey OTP+FIDO+CCID\n")
         try add("hidraw7", Self.fido, uevent: nil)
+        try add("hidraw12", Self.fido, uevent: "HID_NAME=Later Key\n")
+        var tiny = Self.fido
+        tiny[17] = 0x04; tiny[30] = 0x04 // four-byte reports: no CTAPHID device
+        try add("hidraw9", tiny, uevent: nil)
         let devices = try HIDRawDevices.list(sysfs: root.path, dev: "/dev")
-        XCTAssertEqual(devices.map(\.path), ["/dev/hidraw3", "/dev/hidraw7"])
-        XCTAssertEqual(devices.map(\.name), ["Yubico YubiKey OTP+FIDO+CCID", "hidraw7"])
+        XCTAssertEqual(devices.map(\.path), ["/dev/hidraw3", "/dev/hidraw7", "/dev/hidraw12"])
+        XCTAssertEqual(devices.map(\.name), ["Yubico YubiKey OTP+FIDO+CCID", "hidraw7", "Later Key"])
         XCTAssertTrue(try HIDRawDevices.list(sysfs: root.appendingPathComponent("missing").path).isEmpty)
     }
 

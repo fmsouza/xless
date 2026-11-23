@@ -78,6 +78,24 @@ final class CTAPHIDTests: XCTestCase {
         XCTAssertEqual(statuses, [2, 1])
     }
 
+    /// U2F_AUTHENTICATE as FIDO's raw-message format lays it out: CLA 0, INS 2, P1, P2 0, extended Lc, challenge
+    /// parameter, application parameter, key handle length and handle, Le 0x0000.
+    func testU2FAuthenticateBytes() throws {
+        let hid = ScriptedHID()
+        hid.replies = [ScriptedHID.packet(0xFFFF_FFFF, [0x86, 0, 17] + nonce + [0, 0, 0, 7, 2, 1, 0, 0, 0x01])]
+        let authenticator = Authenticator(channel: try CTAPHIDChannel(hid, nonce: nonce))
+        hid.written = []
+        hid.replies = [ScriptedHID.packet(7, [0x83, 0, 2, 0x69, 0x85])]
+        let challenge = [UInt8](repeating: 0xCC, count: 32), app = [UInt8](repeating: 0xAA, count: 32)
+        XCTAssertThrowsError(try authenticator.u2fAuthenticate(appParameter: app, challenge: challenge, keyHandle: [1, 2, 3], checkOnly: true)) {
+            XCTAssertEqual($0 as? FIDOError, .u2f(0x6985))
+        }
+        let apdu: [UInt8] = [0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 68] + challenge + app + [3, 1, 2, 3] + [0x00, 0x00]
+        let sent = Array(hid.written[0][7..<64]) + Array(hid.written[1][5..<5 + apdu.count - 57])
+        XCTAssertEqual(Array(hid.written[0][4..<7]), [0x83, 0, UInt8(apdu.count)])
+        XCTAssertEqual(sent, apdu)
+    }
+
     func testErrorsAndBrokenSequencesThrow() throws {
         let hid = ScriptedHID()
         hid.replies = [ScriptedHID.packet(0xFFFF_FFFF, [0x86, 0, 17] + nonce + [0, 0, 0, 7, 2, 1, 0, 0, 0x04])]

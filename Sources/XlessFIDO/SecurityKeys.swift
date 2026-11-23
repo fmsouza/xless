@@ -59,13 +59,19 @@ public struct USBSecurityKeys: SecurityKeySource {
     static let maxKeyPrompts = 3
     static let maxPINAttempts = 3
 
+    /// The device I/O blocks (poll(2), up to `touchTimeout` while the key waits for a touch) on the calling task's
+    /// thread: one sign-in at a time in a command-line process, so no thread pool is starved that matters.
     public func assertion(for request: AssertionRequest, ui: any SecurityKeyUI) async throws -> Assertion {
         guard !request.credentials.isEmpty else { throw SecurityKeyError.notRegistered }
         do {
             return try await run(request, ui: ui)
-        } catch {
+        } catch let error as SecurityKeyError {
+            throw error
+        } catch let error as FIDOError {
             throw Self.describe(error)
-        }
+        } catch let error as HIDOpenError {
+            throw Self.describe(error)
+        } // anything else (the terminal closing at a prompt, a cancelled task) is not the key's doing: it goes up as it is
     }
 
     private func run(_ request: AssertionRequest, ui: any SecurityKeyUI) async throws -> Assertion {
@@ -95,21 +101,32 @@ public struct USBSecurityKeys: SecurityKeySource {
             throw failure ?? SecurityKeyError.noKey
         }
 
-        // Ask each key, without a touch, whether it holds one of the credentials; use the first that does.
-        var chosen: (OpenedKey, Match)?
+        // Ask each key, without a touch, whether it holds one of the credentials: the first that does signs. Keys that
+        // cannot say (some refuse even the silent check) are tried after, in turn, until one holds a credential.
+        var unknown: [OpenedKey] = []
+        var holding: (OpenedKey, [[UInt8]])?
         for key in opened {
             switch key.probe(request) {
-            case .some(.holds(let list)): chosen = (key, .holds(list))
-            case .some(.unknown): if chosen == nil { chosen = (key, .unknown) }
+            case .some(.holds(let list)): holding = (key, list)
+            case .some(.unknown): unknown.append(key)
             case nil: continue
             }
-            if case .holds = chosen?.1 { break }
+            if holding != nil { break }
         }
-        guard let (key, match) = chosen else { throw SecurityKeyError.notRegistered }
-
-        ui.say("Touch your security key (\(key.device.name)) to sign in.")
-        if key.info == nil { return try await u2fSign(key, request, match: match) }
-        return try await ctap2Sign(key, request, match: match, ui: ui)
+        let candidates: [(OpenedKey, Match)] = holding.map { [($0.0, .holds($0.1))] } ?? unknown.map { ($0, .unknown) }
+        guard !candidates.isEmpty else { throw SecurityKeyError.notRegistered }
+        for (index, (key, match)) in candidates.enumerated() {
+            ui.say("Touch your security key (\(key.device.name)) to sign in.")
+            do {
+                if key.info == nil { return try await u2fSign(key, request, match: match) }
+                return try await ctap2Sign(key, request, match: match, ui: ui)
+            } catch let error as SecurityKeyError where error == .notRegistered && index < candidates.count - 1 {
+                continue
+            } catch FIDOError.ctap(CTAP2Status.noCredentials) where index < candidates.count - 1 {
+                continue
+            }
+        }
+        throw SecurityKeyError.notRegistered
     }
 
     // MARK: CTAP2
@@ -132,7 +149,7 @@ public struct USBSecurityKeys: SecurityKeySource {
                         rpID: request.rpID, clientDataHash: request.clientDataHash, allowList: list, userPresence: true,
                         userVerification: builtIn, pinAuth: pinAuth, timeout: touchTimeout)
                     return try Self.checked(assertion, request, list: list)
-                } catch FIDOError.ctap(CTAP2Status.noCredentials) where lists.count > 1 {
+                } catch FIDOError.ctap(CTAP2Status.noCredentials) {
                     break
                 } catch FIDOError.ctap(CTAP2Status.pinRequired) where !builtIn && pinAuth == nil {
                     // The key wants the person verified: by its own fingerprint reader when it has one, else by its PIN.
@@ -140,11 +157,13 @@ public struct USBSecurityKeys: SecurityKeySource {
                     guard info.options["clientPin"] == true else { throw SecurityKeyError.pinNotSet }
                     let (param, version) = try await pinAuthParameter(key, request, ui: ui)
                     verification = .pin(param, version)
+                    ui.say("Touch your security key (\(key.device.name)) to sign in.")
                 } catch let FIDOError.ctap(status) where builtIn && info.options["clientPin"] == true
                             && [CTAP2Status.uvInvalid, CTAP2Status.uvBlocked, CTAP2Status.invalidOption,
                                 CTAP2Status.unsupportedOption, CTAP2Status.pinRequired].contains(status) {
                     let (param, version) = try await pinAuthParameter(key, request, ui: ui)
                     verification = .pin(param, version)
+                    ui.say("Touch your security key (\(key.device.name)) to sign in.")
                 } catch FIDOError.timeout {
                     key.authenticator.channel.cancel()
                     throw SecurityKeyError.notTouched
@@ -160,11 +179,15 @@ public struct USBSecurityKeys: SecurityKeySource {
         var left = key.authenticator.pinRetries(info.pinProtocol)
         if left == 0 { throw SecurityKeyError.pinBlocked }
         ui.say("The security key asks for its PIN.")
-        for attempt in 1...Self.maxPINAttempts {
-            let prompt = attempt == 1 ? "Security key PIN: " : "Security key PIN\(left.map { " (\($0) tries left)" } ?? ""): "
-            let pin = try await ui.askPIN(prompt)
+        if let left, left <= 3 {
+            ui.say("Careful: \(left) wrong PIN\(left == 1 ? "" : "s") and the key locks itself (it must then be reset, which removes it from every account).")
+        }
+        var refusedByKey = false
+        for _ in 1...Self.maxPINAttempts {
+            let pin = try await ui.askPIN("Security key PIN\(left.map { " (\($0) tries left)" } ?? ""): ")
             defer { pin.wipe() }
-            let characters = pin.withUnsafeBytes { $0.filter { $0 & 0xC0 != 0x80 }.count }
+            // Code points, counted in place (no copy of the PIN's bytes is made).
+            let characters = pin.withUnsafeBytes { $0.reduce(0) { $1 & 0xC0 != 0x80 ? $0 + 1 : $0 } }
             guard characters >= 4, pin.count <= 63 else {
                 ui.say("A security key PIN has 4 to 63 characters.")
                 continue
@@ -173,10 +196,14 @@ public struct USBSecurityKeys: SecurityKeySource {
                 let (proto, token) = try key.authenticator.pinToken(pin: pin, rpID: request.rpID, info: info)
                 return (proto.authenticate(key: token, request.clientDataHash), proto.version)
             } catch FIDOError.ctap(CTAP2Status.pinInvalid) {
+                refusedByKey = true
                 left = key.authenticator.pinRetries(info.pinProtocol)
                 if left == 0 { throw SecurityKeyError.pinBlocked }
-                if attempt < Self.maxPINAttempts { ui.say("The security key did not accept that PIN.") }
+                ui.say("The security key did not accept that PIN.")
             }
+        }
+        guard refusedByKey else {
+            throw SecurityKeyError("no PIN of 4 to 63 characters was typed", fix: "re-run and type the security key's PIN")
         }
         throw SecurityKeyError.wrongPIN(retries: left)
     }
@@ -245,7 +272,10 @@ public struct USBSecurityKeys: SecurityKeySource {
             }
         case FIDOError.hid(0x06): return busy
         case FIDOError.u2f(Authenticator.U2FStatus.wrongData): return .notRegistered
+        case FIDOError.io(let why): return SecurityKeyError("lost the security key (\(why))", fix: SecurityKeyError.replug)
         case HIDOpenError.permissionDenied(let path): return .permission([path])
+        case HIDOpenError.failed(let path, let why):
+            return SecurityKeyError("cannot open the security key (\(path): \(why))", fix: SecurityKeyError.replug)
         default: return .protocolError(error)
         }
     }
@@ -270,7 +300,12 @@ final class OpenedKey {
     init(device: any SecurityKeyDevice) throws {
         self.device = device
         connection = try device.open()
-        let channel = try CTAPHIDChannel(connection)
+        let channel: CTAPHIDChannel
+        do {
+            channel = try CTAPHIDChannel(connection)
+        } catch FIDOError.timeout {
+            throw SecurityKeyError("the security key \(device.name) did not answer", fix: SecurityKeyError.replug)
+        }
         authenticator = Authenticator(channel: channel)
         if channel.supportsCBOR, let info = try? authenticator.info() {
             self.info = info

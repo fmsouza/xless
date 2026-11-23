@@ -87,6 +87,7 @@ public struct PINProtocol: Sendable {
     public func pinHashEnc(_ agreement: Agreement, pin: SecretBytes) throws -> [UInt8] {
         var digest = pin.withUnsafeBytes { Array(SHA256.hash(data: $0)) }
         defer { for i in digest.indices { digest[i] = 0 } }
-        return try encrypt(agreement, Array(digest[0..<16]))
+        digest.removeLast(16) // in place: LEFT(…, 16) without another copy
+        return try encrypt(agreement, digest)
     }
 }

@@ -73,8 +73,8 @@ Touch your security key (Yubico YubiKey OTP+FIDO+CCID) to sign in.
 ```
 
 - **PIN:** Apple does not ask for the key's PIN, so most keys sign without one. A key configured to always check it
-  asks for it (read with echo off, like the password); xless stops after three wrong PINs, before the key locks
-  itself. The PIN goes to the key only, encrypted as FIDO2 specifies; never to Apple, never to disk.
+  asks for it (read with echo off, like the password), and the prompt shows how many tries the key has left; xless
+  stops after three wrong PINs, before the key locks itself. The PIN goes to the key only, encrypted as FIDO2 specifies; never to Apple, never to disk.
 - **No key plugged in:** xless asks you to plug one in and press Enter. NFC and Bluetooth keys are not supported, and on
   macOS xless does not read security keys.
 - **Permission:** on desktop Linux the person at the screen may open their security keys (systemd 244 or later marks
@@ -85,7 +85,8 @@ Touch your security key (Yubico YubiKey OTP+FIDO+CCID) to sign in.
   echo 'KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}=="1", GROUP="plugdev", MODE="0660", TAG+="uaccess"' \
     | sudo tee /etc/udev/rules.d/70-xless-fido.rules
   sudo udevadm control --reload-rules && sudo udevadm trigger
-  sudo usermod -aG plugdev "$USER"   # then log in again
+  getent group plugdev >/dev/null || sudo groupadd plugdev   # Fedora and Arch have no plugdev group
+  sudo usermod -aG plugdev "$USER"                           # then log in again
   ```
 
   Without systemd's `fido_id` (which sets `ID_FIDO_TOKEN`), install the rules libfido2 ships instead (`libu2f-udev`
