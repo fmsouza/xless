@@ -272,7 +272,8 @@ public enum ManifestValidator {
                     if CustomerPrice.parse(change.price) == nil {
                         error(appPath, "pricing.changes: \(change.price) (\(change.date)) is not a price", "write `free` or the customer price, quoted, e.g. \"0.99\"")
                     }
-                    if !seen.insert("\(change.territory ?? p.baseTerritory ?? "") \(change.date)").inserted {
+                    // Without baseTerritory, a change naming no territory is for USA (push's default base territory).
+                    if !seen.insert("\(change.territory ?? p.baseTerritory ?? "USA") \(change.date)").inserted {
                         error(appPath, "pricing.changes has two changes for \(territory) on \(change.date)", "keep one")
                     }
                 }

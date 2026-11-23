@@ -51,6 +51,8 @@ private let ladder = [("P0", "0.0"), ("P1", "0.99"), ("P2", "1.29"), ("P3", "1.9
     #expect(failure("5")?.cause == "5 is not a price point in USA; the nearest is 1.99")
     #expect(failure("1.5")?.cause == "1.5 is not a price point in USA; the nearest are 1.29 and 1.99")
     #expect(failure("0.99", [])?.cause == "App Store Connect lists no price point in USA for this app")
+    let unreadable = [ASCPricePoint(id: "X", territory: "USA", currency: nil, customerPrice: "n/a", proceeds: nil)]
+    #expect(failure("free", unreadable)?.cause == "free is not a price point in USA")
     #expect(failure("cheap")?.cause == "cheap is not a price: write `free` or the customer price, e.g. 0.99")
 }
 

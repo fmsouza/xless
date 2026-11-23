@@ -138,8 +138,8 @@ A key xless does not know is reported by `validate` (a typo guard) and kept as i
 `"150"`), quoted. Each must be one of the app's price points in its territory: `xless apps price-points
 com.example.app --territory USA` lists them, and `--price 0.99` shows what that price becomes in every other territory
 ([apple-account.md](apple-account.md#xless-apps)). Territories without a manual price follow the base price (App Store
-Connect's equalization). A change takes effect on its `date`; once that day has come, `push` treats it as the current
-price and `pull` writes it as `price`.
+Connect's equalization). A change takes effect on its `date` (a day in UTC); once that day has come, `push` treats it
+as the current price and `pull` writes it as `price`.
 
 ## `xless store pull`
 
@@ -281,10 +281,13 @@ The parts, in the order they are sent (`--only` chooses):
     exactly that customer price; a price that is no price point stops the push before anything is sent, naming the
     nearest points. Absent keys are carried over from App Store Connect: no `territories` keeps its manual prices
     outside the base territory, no `changes` keeps its scheduled changes, no `price` keeps the base price (changing
-    `baseTerritory` needs a `price`, in that territory's currency); `territories: {}` and `changes: []` remove them.
+    `baseTerritory` needs a `price`, in that territory's currency; the old base territory's prices are not carried
+    over, so it follows the new base unless `territories` gives it one); `territories: {}` and `changes: []` remove
+    them. If App Store Connect's schedule has a price xless cannot read, `push` refuses to replace it.
   - **Availability**: an app with none gets one (`territories` and `newTerritories`, which defaults to `true` for
     `territories: all`, else `false`), listing every territory App Store Connect knows as available or not. Afterwards,
-    each territory whose availability differs is changed on its own. App Store Connect's API sets `newTerritories`
+    each territory whose availability differs is changed on its own; taking the app off sale in a territory is shown
+    as a deletion (`- availability in CAN`) and asked first (or `--yes`). App Store Connect's API sets `newTerritories`
     only when the availability is created: a different value later is a note, not a change. A territory App Store
     Connect does not list for the app stops the push.
 - **`media`**: per locale and display (or preview) type, the screenshot and preview sets: created when App Store

@@ -73,17 +73,26 @@ extension PushContext {
             throw XlessError(.account, "pricing.baseTerritory changes to \(base), but pricing has no price there",
                              fix: "add `price:` in \(base)'s currency (`xless apps price-points \(target.app.bundleID) --territory \(base)`)")
         }
+        // App Store Connect's prices that are carried over must not pin the old base territory's prices: once the base
+        // changes, the old base follows the new one unless app.yml gives it a manual price.
+        let oldBase = appleBase.flatMap { $0 == base ? nil : $0 }
+        let carried = have.filter { $0.territory != base && $0.territory != oldBase }
         // Manual prices in other territories.
         var others: [String: PlannedPrice] = [:]
         if let territories = wanted.territories {
             for (territory, price) in territories.values where territory != base { others[territory] = PlannedPrice(territory: territory, price: price) }
         } else {
-            for price in have where price.start == nil && price.territory != base { others[price.territory] = price }
+            for price in carried where price.start == nil { others[price.territory] = price }
         }
         for (territory, change) in inEffect where territory != base { others[territory] = PlannedPrice(territory: territory, price: change.price) }
         want += others.keys.sorted().map { others[$0]! }
         // Changes to come.
-        want += (future ?? have.filter { $0.start != nil }).sorted { ($0.start ?? "", $0.territory) < ($1.start ?? "", $1.territory) }
+        want += (future ?? have.filter { $0.start != nil && $0.territory != oldBase }).sorted { ($0.start ?? "", $0.territory) < ($1.start ?? "", $1.territory) }
+        var keys: Set<String> = []
+        for p in want where !keys.insert(p.key).inserted {
+            throw XlessError(.account, "pricing has two prices for \(p.territory) \(p.start.map { "from \($0)" } ?? "now")",
+                             fix: "keep one (a change without territory is for the base territory, \(base))")
+        }
 
         // Compare: same base territory and the same prices (as numbers) on the same days.
         var fields: [StoreFieldChange] = []
@@ -100,6 +109,10 @@ extension PushContext {
             fields.append(StoreFieldChange(label(p), from: CustomerPrice.display(p.price), to: nil))
         }
         guard !fields.isEmpty else { return }
+        if schedule?.incomplete == true {
+            throw XlessError(.account, "App Store Connect's price schedule has prices xless could not read, and sending a schedule replaces all of them",
+                             fix: "re-run `xless store push`; if it persists, check the schedule with `xless api GET /v1/apps/\(target.app.id)/appPriceSchedule --include manualPrices`")
+        }
 
         // Price points: App Store Connect's own for a price it already has, else resolved (one listing per territory).
         for i in want.indices where want[i].point == nil {
@@ -177,13 +190,15 @@ extension PushContext {
             guard let territories = wanted.territories else { return }
             let known = Set(availability.entries.map(\.territory))
             let chosen = try chosenTerritories(territories, known: known)
-            let requests = availability.entries.filter { chosen.contains($0.territory) != $0.available }.map {
-                StoreRequest.update("territoryAvailabilities", id: $0.id, attributes: ["available": .bool(chosen.contains($0.territory))])
+            // Making the app available is an update; taking it off sale somewhere is a deletion, which push asks about.
+            let added = availability.entries.filter { chosen.contains($0.territory) && !$0.available }
+            let removed = availability.entries.filter { !chosen.contains($0.territory) && $0.available }
+            for (entries, available) in [(added, true), (removed, false)] where !entries.isEmpty {
+                let codes = Self.describe(Set(entries.map(\.territory)), of: known)
+                add(StoreChange(available ? .update : .delete, .pricing, available ? "availability" : "availability in \(codes)",
+                                fields: available ? [StoreFieldChange("now available in", from: nil, to: codes)] : [],
+                                requests: entries.map { StoreRequest.update("territoryAvailabilities", id: $0.id, attributes: ["available": .bool(available)]) }))
             }
-            guard !requests.isEmpty else { return }
-            add(StoreChange(.update, .pricing, "availability",
-                            fields: [StoreFieldChange("territories", from: Self.describe(Set(availability.available), of: known), to: Self.describe(chosen, of: known))],
-                            requests: requests))
         }
     }
 

@@ -140,6 +140,12 @@ public struct StorePriceSchedule: Sendable, Equatable {
     public var id: String
     public var baseTerritory: String?
     public var prices: [StorePrice]
+    /// Some prices could not be read (no price point in App Store Connect's answer): replacing the schedule would drop them.
+    public var incomplete = false
+
+    public init(id: String, baseTerritory: String?, prices: [StorePrice], incomplete: Bool = false) {
+        self.id = id; self.baseTerritory = baseTerritory; self.prices = prices; self.incomplete = incomplete
+    }
 
     /// The prices in effect on `day` and those to come (from a later day), each territory's current one first.
     public func live(on day: String) -> [StorePrice] {
@@ -370,17 +376,21 @@ public struct StoreASC: Sendable {
             let listing = try await resources.list("/v1/appPriceSchedules/\(schedule.id)/manualPrices",
                                                    query: ASCQuery(include: ["appPricePoint", "territory"]), as: ASCAnyResource.self)
             var prices: [StorePrice] = []
+            var unread = 0
             for item in listing.items {
                 guard let point = item.relationships?["appPricePoint"]?["data"]?["id"]?.string,
                       let included = listing.included.first(where: { $0.type == "appPricePoints" && $0.id == point }),
-                      let customer = included.attributes?["customerPrice"]?.string else { continue }
+                      let customer = included.attributes?["customerPrice"]?.string else { unread += 1; continue }
                 let territory = item.relationships?["territory"]?["data"]?["id"]?.string
                     ?? included.relationships?["territory"]?["data"]?["id"]?.string
                     ?? StorePriceSchedule.territory(ofPoint: point) ?? base
                 prices.append(StorePrice(territory: territory, start: item.attributes?["startDate"]?.string, end: item.attributes?["endDate"]?.string,
                                          customerPrice: customer, pointID: point))
             }
-            return StorePriceSchedule(id: schedule.id, baseTerritory: base, prices: prices)
+            if unread > 0 {
+                say("note: \(unread) price\(unread == 1 ? "" : "s") of the price schedule came without \(unread == 1 ? "its" : "their") price point; they are left out")
+            }
+            return StorePriceSchedule(id: schedule.id, baseTerritory: base, prices: prices, incomplete: unread > 0)
         }
     }
 

@@ -34,6 +34,7 @@ private func withPricePoints(_ routes: [String: (Int, String)]) -> RoutedTranspo
     let points: [String: [(String, String)]] = [
         "USA": [("P0", "0.0"), ("P1", "0.99"), ("P2", "1.29"), ("PP2", "1.99"), ("PP3", "2.99")],
         "JPN": [("J0", "0.0"), ("PJ1", "300"), ("J2", "400")],
+        "GBR": [("G0", "0.0"), ("G1", "0.99")],
     ]
     let t = RoutedTransport(routes)
     t.onRequest = { request, t in
@@ -201,7 +202,8 @@ private func prices(_ body: [String: Any]) -> [String] {
     let t = RoutedTransport(fakeApp())
     let push = pusher(t)
     let (plan, _) = try await push.plan(app: fakeASCApp, manifest: m, dir: dir, options: pricingOnly)
-    #expect(plan.changes.map(\.text) == [#"~ availability: territories: "CAN, USA" → "all""#])
+    #expect(plan.changes.map(\.text) == [#"~ availability: now available in: "GBR""#])
+    #expect(plan.deletes.isEmpty, "making the app available asks nothing")
     #expect(plan.notes == ["availability.newTerritories is true, App Store Connect has false: its API sets it only when the availability is created, so it is not sent"])
     try await push.apply(plan, app: fakeASCApp, manifest: m, dir: dir, options: pricingOnly, sender: sender(t))
     #expect(writes(t) == ["PATCH /v1/territoryAvailabilities/T2"])
@@ -237,4 +239,61 @@ private func prices(_ body: [String: Any]) -> [String] {
 @Test func pricingIsAPartOfPush() throws {
     #expect(try StorePushPart.parse(["pricing,text"]) == [.text, .pricing])
     #expect(StorePushPart.allCases == [.text, .review, .declarations, .pricing, .media])
+}
+
+@Test func takingTheAppOffSaleSomewhereIsADeletionThatAsks() async throws {
+    let (root, dir) = try await pulled(fakeApp())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = ManifestReader.read(dir).manifest
+    m.app.availability = AppYAML.Availability(territories: .only(["USA", "GBR"]))
+    let (plan, _) = try await pusher(RoutedTransport(fakeApp())).plan(app: fakeASCApp, manifest: m, dir: dir, options: pricingOnly)
+    #expect(plan.changes.map(\.text) == [#"~ availability: now available in: "GBR""#, "- availability in CAN"])
+    #expect(plan.deletes.map(\.subject) == ["availability in CAN"])
+    #expect(plan.deletes[0].requests == [.update("territoryAvailabilities", id: "T3", attributes: ["available": .bool(false)])])
+}
+
+@Test func aNewBaseTerritoryLetsTheOldOneFollowIt() async throws {
+    let (root, dir) = try await pulled(scheduledPricing())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = ManifestReader.read(dir).manifest
+    m.app.pricing = AppYAML.Pricing(baseTerritory: "GBR", price: "0.99")
+    let t = withPricePoints(scheduledPricing())
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir, options: pricingOnly)
+    #expect(plan.changes.map(\.text) == ["""
+        ~ price schedule
+            baseTerritory: "USA" → "GBR"
+            price: "0.99"
+            price USA: "1.99" → (none)
+            price USA from 2027-01-01: "2.99" → (none)
+        """])
+    let body = try #require(plan.changes[0].requests[0].body)
+    #expect(prices(try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(body)) as? [String: Any])) == ["now G1", "now PJ1", "2026-12-24 \(Data(#"{"s":"123","t":"GBR","p":"10001"}"#.utf8).base64EncodedString())"],
+            "JPN's manual price and GBR's change stay; the old base's prices go, it follows GBR")
+}
+
+@Test func twoPricesForOneDayStopThePush() async throws {
+    let (root, dir) = try await pulled(fakeApp())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = ManifestReader.read(dir).manifest
+    m.app.pricing?.changes = [.init(date: "2027-01-01", price: "1.99"), .init(date: "2027-01-01", territory: "USA", price: "2.99")]
+    await #expect(throws: XlessError(.account, "pricing has two prices for USA from 2027-01-01", fix: "keep one (a change without territory is for the base territory, USA)")) {
+        _ = try await pusher(withPricePoints(fakeApp())).plan(app: fakeASCApp, manifest: m, dir: dir, options: pricingOnly)
+    }
+}
+
+@Test func aScheduleWithPricesXlessCannotReadIsNeverReplaced() async throws {
+    var routes = fakeApp()
+    routes["/v1/appPriceSchedules/PR1/manualPrices"] = (200, list([
+        #"{"type":"appPrices","id":"AP2","attributes":{"startDate":"2026-01-01","endDate":null},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"PP2"}}}}"#,
+        #"{"type":"appPrices","id":"AP9","attributes":{"startDate":null,"endDate":null},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"MISSING"}}}}"#,
+    ], included: [#"{"type":"appPricePoints","id":"PP2","attributes":{"customerPrice":"1.99"}}"#]))
+    let (root, dir) = try await pulled(routes)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = ManifestReader.read(dir).manifest
+    #expect(m.app.pricing?.price == "1.99")
+    m.app.pricing?.price = "0.99"
+    let notes = Notes()
+    let push = StorePush(resources: ASCResources(client: client(withPricePoints(routes))), say: { notes.say($0) })
+    await #expect(throws: XlessError.self) { _ = try await push.plan(app: fakeASCApp, manifest: m, dir: dir, options: pricingOnly) }
+    #expect(notes.lines == ["note: 1 price of the price schedule came without its price point; they are left out"])
 }

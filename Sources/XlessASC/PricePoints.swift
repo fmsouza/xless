@@ -34,12 +34,6 @@ public enum CustomerPrice {
 
     /// `free` for a zero price, else the price as written.
     public static func display(_ text: String) -> String { parse(text) == 0 ? "free" : text }
-
-    /// The same price ("0.99" and "0.990", "free" and "0.0").
-    public static func same(_ a: String, _ b: String) -> Bool {
-        guard let x = parse(a), let y = parse(b) else { return a == b }
-        return x == y
-    }
 }
 
 /// Reads of an app's price points.
@@ -88,6 +82,10 @@ public struct ASCPricePoints: Sendable {
         let sorted = points.sorted { ($0.price ?? 0) < ($1.price ?? 0) }
         let below = sorted.last { ($0.price ?? 0) < wanted }, above = sorted.first { ($0.price ?? 0) > wanted }
         let nearest = [below, above].compactMap { $0?.customerPrice }
+        guard !nearest.isEmpty else {
+            throw XlessError(.account, "\(price) is not a price point in \(territory)",
+                             fix: "`xless apps price-points \(app) --territory \(territory)` lists every price point")
+        }
         let named = nearest.count == 2 ? "the nearest are \(nearest[0]) and \(nearest[1])" : "the nearest is \(nearest[0])"
         throw XlessError(.account, "\(price) is not a price point in \(territory); \(named)",
                          fix: "use \(nearest.count == 2 ? "one of them" : "it") (`xless apps price-points \(app) --territory \(territory)` lists every price point)")
