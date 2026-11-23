@@ -31,6 +31,8 @@ private final class World: @unchecked Sendable {
     var authKeys: [PortalAuthKey] = []
     var listingPushed = false
     var privacySent = false
+    /// App Store Connect declares a category app.yml no longer has.
+    var privacyExtra = false
     /// Write operations, in order.
     var writes: [String] = []
     /// Operations that fail once.
@@ -143,7 +145,7 @@ private struct FakeAuthKeys: AuthKeyWeb {
     func get(id: String) async throws -> PortalAuthKey { world.authKeys.first { $0.id == id }! }
     func create(name: String, services: [AuthKeyService], bundleIDs: [String], musicIDs: [String]) async throws -> PortalAuthKey {
         try world.write("createAuthKey", name)
-        let key = PortalAuthKey(id: "KEY\(world.authKeys.count + 1)", name: name, services: services.map { .init(id: $0.rawValue) })
+        let key = PortalAuthKey(id: "KEY\(world.authKeys.count + 1)", name: name, services: services.map { .init(id: $0.id) })
         world.authKeys.append(key)
         return key
     }
@@ -169,7 +171,10 @@ private struct FakeApps: AppCreationWeb, Sendable {
 private struct FakePrivacy: ProvisionPrivacy {
     let world: World
     func plan(_ want: AppYAML.Privacy, app: String, appName: String) async throws -> [StoreChange] {
-        world.privacySent ? [] : [StoreChange(.create, .privacy, "App Privacy EMAIL_ADDRESS", requests: [])]
+        var changes = world.privacySent ? [] : [StoreChange(.create, .privacy, "App Privacy EMAIL_ADDRESS", requests: [])]
+        if world.privacyExtra { changes.append(StoreChange(.delete, .privacy, "App Privacy PRECISE_LOCATION", requests: [], privacy: [.delete("U9", nil)])) }
+        if !changes.isEmpty { changes.append(StoreChange(.update, .privacy, "publish the App Privacy answers of \(appName)", requests: [], privacy: [.publish])) }
+        return changes
     }
     func apply(_ change: StoreChange, app: String) async throws {
         try world.write("privacy", change.subject)
@@ -344,7 +349,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     let done = try await s.apply(try await s.plan(), lines: lines)
     #expect(done.count == 16)
     #expect(lines.all.filter { $0 == "sign-in" }.count == 1, "one sign-in for every web step")
-    #expect(s.world.writes.count == 18, "\(s.world.writes)")
+    #expect(s.world.writes.count == 19, "\(s.world.writes)")
     #expect(s.world.writes.contains("createApp Example IOS"))
     let dist = try #require(try v.entry("XLESS_DIST_KEY@\(team)"))
     #expect(dist.metadata.certificateID != nil && dist.metadata.teamID == team)
@@ -384,7 +389,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     ], "\(rest.text)")
     let before = s.world.writes.count
     _ = try await s.apply(rest)
-    #expect(s.world.writes.count == before + 7)
+    #expect(s.world.writes.count == before + 8)
     #expect(s.world.writes.filter { $0.hasPrefix("createCertificate") }.count == 2, "certificates are not made twice")
     #expect(try await s.plan().steps.isEmpty)
 }
@@ -396,7 +401,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     s.hasWeb = false
     let plan = try await s.plan()
     let unchecked = plan.steps.filter { !$0.checked }
-    #expect(unchecked.map(\.area) == [.appGroups, .iCloudContainers, .privacy])
+    #expect(unchecked.map(\.area) == [.appGroups, .iCloudContainers, .keys, .privacy])
     #expect(unchecked.allSatisfy { $0.web })
     #expect(plan.steps.first { $0.area == .appGroups }?.details.last?.contains("xless auth login --keep") == true)
     #expect(plan.text.contains("[web] (checked when applied)"))
@@ -495,9 +500,10 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     s.world.apps = [AppSummary(id: "APP1", name: "Example", bundleId: bundle, sku: "EX1", primaryLocale: "en-US")]
     s.inputs.testflight = TestFlightConfig(groups: [], external: ExternalTestFlight(groups: ["Beta"], submit: false))
     let plan = try await s.plan()
-    #expect(plan.blockers.map(\.area) == [.certificates, .certificates, .keys, .testflight], "\(plan.text)")
+    #expect(plan.blockers.map(\.area) == [.certificates, .certificates, .testflight], "\(plan.text)")
     #expect(plan.blockers[0].fix.contains("xless secrets init"))
-    #expect(plan.blockers[3].message == "the TestFlight group Beta exists as an internal group")
+    #expect(plan.blockers[2].message == "the TestFlight group Beta exists as an internal group")
+    #expect(!plan.steps.contains { $0.area == .keys } && plan.notes.contains { $0.contains("no APNs key is on this machine") })
     await #expect(throws: XlessError.self) { _ = try await s.apply(plan) }
     #expect(s.world.writes.isEmpty)
 }
@@ -552,4 +558,81 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(throws: (any Error).self) { try ProvisionPlanCommand.parse(["--config", "x.yml", "--project", "p"]) }
     #expect(throws: (any Error).self) { try ProvisionPlanCommand.parse(["--source", "s"]) }
     _ = try ProvisionApplyCommand.parse(["--yes", "--json", "--company-name", "Example Ltd"])
+}
+
+@Test func privacyRemovalsAreDriftAndTheRestIsSent() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    _ = try await s.apply(try await s.plan())
+    s.world.privacyExtra = true
+    let plan = try await s.plan()
+    #expect(plan.steps.isEmpty, "a removal alone is not sent, nor published: \(plan.text)")
+    #expect(plan.drift.map(\.subject) == ["App Privacy PRECISE_LOCATION"])
+    #expect(plan.drift[0].fix.contains("xless store privacy push"))
+    s.world.privacySent = false
+    let both = try await s.plan()
+    #expect(both.steps.first { $0.area == .privacy }?.details == ["+ App Privacy EMAIL_ADDRESS", "~ publish the App Privacy answers of com.example.app"])
+    _ = try await s.apply(both)
+    #expect(!s.world.writes.contains { $0.contains("PRECISE_LOCATION") })
+}
+
+@Test func aBundleWhoseEntitlementsAreUnknownHasNoCapabilityDrift() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    _ = try await s.apply(try await s.plan())
+    s.inputs.targets[0].entitlements = [:]
+    s.inputs.targets[0].entitlementsKnown = false
+    let plan = try await s.plan()
+    #expect(plan.drift.isEmpty, "\(plan.text)")
+}
+
+@Test func anAPNsKeyOnThisMachineOrAtAppleIsNotMadeAgain() async throws {
+    // Imported by hand (kind generic, no services): it counts.
+    let v = try TestVault()
+    defer { v.cleanup() }
+    try v.add("XLESS_APNS_KEY@\(team)", kind: .generic, secret: "p8", metadata: .init())
+    let s = Setup(vault: v)
+    #expect(!(try await s.plan()).steps.contains { $0.area == .keys })
+
+    // In the environment, with no store at all (CI): no step and no blocker for it.
+    let ci = try TestVault(env: ["XLESS_APNS_KEY": "p8"], create: false)
+    defer { ci.cleanup() }
+    let c = Setup(vault: ci)
+    let plan = try await c.plan()
+    #expect(!plan.steps.contains { $0.area == .keys } && !plan.blockers.contains { $0.area == .keys })
+
+    // The team has one at Apple that is not here: a note, never a second key.
+    let other = try TestVault()
+    defer { other.cleanup() }
+    let o = Setup(vault: other)
+    o.world.authKeys = [PortalAuthKey(id: "AK1", name: "Push", services: [.init(id: AuthKeyService.apns.id)])]
+    let noted = try await o.plan()
+    #expect(!noted.steps.contains { $0.area == .keys })
+    #expect(noted.notes.contains { $0.contains("the team already has APNs key AK1") }, "\(noted.text)")
+}
+
+@Test func aStoredKeyWhoseRecordedCertificateIsGoneButHasAnotherIsMatched() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let key = try SigningKey.generate()
+    try v.add("XLESS_DIST_KEY@\(team)", secret: key.pem, metadata: .init(teamID: team, certificateID: "OLD"))
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true)
+    s.inputs.targets.removeLast()
+    s.world.certificates = [certificate("NEW", type: "DISTRIBUTION", der: try issue(try key.csrPEM(commonName: "x")))]
+    let plan = try await s.plan()
+    #expect(!plan.steps.contains { $0.area == .certificates }, "a certificate made by an earlier apply is found, not made twice")
+    #expect(plan.known.certificates[.distribution] == "NEW")
+}
+
+@Test func withoutAppstoreTheAppRecordListingAndTestFlightAreLeftOut() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    let plan = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault, store: nil, now: now).plan()
+    #expect(plan.blockers.isEmpty, "\(plan.text)")
+    #expect(!plan.steps.contains { [.app, .listing, .privacy, .testflight].contains($0.area) })
+    #expect(plan.notes.contains { $0.contains("there is no appstore/") })
 }

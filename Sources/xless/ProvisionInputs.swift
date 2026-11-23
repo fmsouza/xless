@@ -18,6 +18,9 @@ struct ProvisionTarget: @unchecked Sendable {
     var entitlements: [String: Any]
     /// An app extension's path in the app (`PlugIns/Widget.appex`); nil for the app.
     var extensionPath: String? = nil
+    /// false when the entitlements could not be read (a React Native app before its first build): nothing is reported
+    /// as drift against them.
+    var entitlementsKnown = true
 
     var isApp: Bool { extensionPath == nil }
     /// `the iOS app`, `PlugIns/Widget.appex`.
@@ -125,7 +128,7 @@ extension ProvisionInputs {
             var inputs = ProvisionInputs(team: config.teamID, targets: [], version: config.version, testflight: config.testflight)
             let record = StagePaths(project: workRoot, platform: .ios).root.appendingPathComponent("entitlements.json")
             guard FileManager.default.fileExists(atPath: record.path) else {
-                inputs.targets = [ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: config.bundleID(for: .ios), entitlements: [:])]
+                inputs.targets = [ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: config.bundleID(for: .ios), entitlements: [:], entitlementsKnown: false)]
                 inputs.notes.append("the React Native app's entitlements are read from its last build (\(record.path)), and there is none yet: capabilities, app groups, iCloud containers and app extensions are not planned (run `xless build --config \(url.path) --platform ios` first, then plan again)")
                 return inputs
             }

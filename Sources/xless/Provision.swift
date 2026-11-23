@@ -200,7 +200,7 @@ struct ProvisionPlanner {
         try await planCapabilities(&plan)
         for kind in PortalLinkedKind.allCases { try await planLinked(kind, &plan) }
         try await planCertificates(&plan)
-        try planAPNsKey(&plan)
+        try await planAPNsKey(&plan)
         try await planProfiles(&plan)
         try await planApp(&plan)
         try await planListing(&plan)
@@ -248,6 +248,8 @@ struct ProvisionPlanner {
                              settings.map { "\($0) (now \(have.settings.values.sorted().joined(separator: ", ")))" }, .capability(id, r))
                 }
             }
+            // A bundle whose entitlements are not known (a React Native app before its first build) has no drift to report.
+            guard inputs.targets.allSatisfy({ $0.bundleID != id || $0.entitlementsKnown }) else { continue }
             let gated = Set(inputs.targets.filter { $0.bundleID == id }.flatMap { Capabilities.map(for: $0.platform).values })
             for c in existing {
                 guard let type = CapabilityType(rawValue: c.type), gated.contains(type), !Self.enabledByApple.contains(type),
@@ -310,7 +312,7 @@ struct ProvisionPlanner {
             guard !details.isEmpty else { continue }
             plan.add(area, item == nil ? .create : .assign, use.identifier, details, web: true, .linked(kind, use.identifier, bundles: use.bundles))
         }
-        for (b, (_, state)) in states.sorted(by: { $0.key < $1.key }) {
+        for (b, (_, state)) in states.sorted(by: { $0.key < $1.key }) where inputs.targets.allSatisfy({ $0.bundleID != b || $0.entitlementsKnown }) {
             let wanted = Set(uses.filter { $0.bundles.contains(b) }.map(\.identifier))
             for id in state.ids {
                 let identifier = all.first { $0.id == id }?.identifier ?? id
@@ -351,9 +353,11 @@ struct ProvisionPlanner {
             }
             if let entry, let file {
                 if let id = entry.metadata.certificateID, let cert = valid.first(where: { $0.id == id }) { found(cert, from: entry.name); continue }
-                if entry.metadata.certificateID == nil, let cert = matching(try vault.open(entry, in: file, reason: "matching \(entry.name) with its certificate").utf8String()) {
-                    found(cert, from: entry.name); continue
-                }
+                // No recorded certificate, or one that is gone: a certificate made for the key since (an earlier apply that
+                // could not record it) is found by its public key, and never made twice.
+                let secret = try vault.open(entry, in: file, reason: "matching \(entry.name) with its certificate")
+                defer { secret.wipe() }
+                if let cert = matching(secret.utf8String()) { found(cert, from: entry.name); continue }
                 plan.add(.certificates, .create, name, ["for the private key stored as \(entry.name), whose certificate is gone (revoked or expired); recorded with it"],
                          .certificate(kind, .stored(entry: entry.name)))
                 continue
@@ -372,20 +376,43 @@ struct ProvisionPlanner {
 
     static let apsKeys = ["aps-environment", "com.apple.developer.aps-environment"]
 
-    func planAPNsKey(_ plan: inout ProvisionPlan) throws {
+    /// Whether this machine has an APNs key of the team: in the environment (`XLESS_APNS_KEY`, `_FILE`), or in the store
+    /// (an auth key recording the apns service, or any entry named `XLESS_APNS_KEY…` of the team, however it was imported).
+    func hasAPNsKey(_ file: VaultFile?) throws -> Bool {
+        let base = AuthKeyStore.base(for: [.apns])
+        if try vault.environmentKey(base) != nil { return true }
+        return (file?.entries ?? []).contains { e in
+            let teams = e.metadata.teamID == team || e.name.hasSuffix("@\(team)") || (e.metadata.teamID == nil && !e.name.contains("@"))
+            return teams && ((e.kind == .authKey && AuthKeyStore.services(of: e).contains(.apns)) || e.name.hasPrefix(base))
+        }
+    }
+
+    /// The team's APNs keys at Apple (the web session), or nil when they cannot be read without signing in.
+    static func apnsKeysAtApple(_ web: ProvisionWebSide?) async throws -> [PortalAuthKey]? {
+        guard let web else { return nil }
+        return try await web.authKeys.list().filter { $0.serviceKinds.contains(.apns) }
+    }
+
+    func planAPNsKey(_ plan: inout ProvisionPlan) async throws {
         guard inputs.targets.contains(where: { t in Self.apsKeys.contains { t.entitlements[$0] != nil } }) else { return }
-        guard let file = try vault.file() else {
-            plan.blockers.append(ProvisionBlocker(area: .keys, message: "the app uses push notifications, and the secret store that would keep its APNs key is not set up",
-                                                  fix: "`xless secrets init`, then plan again"))
+        let file = try vault.file()
+        guard try !hasAPNsKey(file) else { return }
+        // One APNs key serves every app of the team, and Apple allows two: one the team has elsewhere is not made again.
+        if let existing = try await Self.apnsKeysAtApple(web), let key = existing.first {
+            plan.notes.append(Self.apnsElsewhere(key))
             return
         }
-        let stored = file.entries.contains { e in
-            e.kind == .authKey && (e.metadata.teamID == team || e.name.hasSuffix("@\(team)")) && AuthKeyStore.services(of: e).contains(.apns)
+        guard file != nil else {
+            plan.notes.append("the app uses push notifications and no APNs key is on this machine; the secret store that would keep a new one is not set up (`xless secrets init`, then plan again), or give your push server's key to it with `xless secrets import`")
+            return
         }
-        guard !stored else { return }
-        plan.add(.keys, .create, "APNs key", ["the app's entitlements use push notifications (aps-environment) and the secret store has no APNs key of team \(team)",
-                                              "stored as \(AuthKeyStore.base(for: [.apns]))@\(team); Apple offers its private key once"],
-                 web: true, .apnsKey)
+        plan.add(.keys, .create, "APNs key", ["the app's entitlements use push notifications (aps-environment), and neither the secret store nor the environment has an APNs key of team \(team)",
+                                              "unless the team has one already (checked when applied); stored as \(AuthKeyStore.base(for: [.apns]))…@\(team): Apple offers its private key once"],
+                 web: true, checked: web != nil, .apnsKey)
+    }
+
+    static func apnsElsewhere(_ key: PortalAuthKey) -> String {
+        "the team already has APNs key \(key.id) (\"\(key.name)\"), which is not on this machine: xless does not make another (one serves every app of the team); if you have its .p8, `xless secrets import XLESS_APNS_KEY --file AuthKey_\(key.id).p8 --kind auth-key`"
     }
 
     func planProfiles(_ plan: inout ProvisionPlan) async throws {
@@ -393,7 +420,7 @@ struct ProvisionPlanner {
             let type = t.profileType
             let name = ProfileService.defaultName(bundleIdentifier: t.bundleID, type: type)
             let cert = plan.known.certificates[t.signingKind]
-            let details = ["\(type.displayName) for \(t.label), with the \(t.signingKind.certificateType.displayName) certificate\(cert.map { " \($0)" } ?? " created above")"]
+            let details = ["\(type.displayName) for \(t.label), with the \(t.signingKind.certificateType.displayName) certificate\(cert.map { " \($0)" } ?? (plan.steps.contains { $0.area == .certificates && $0.subject == t.signingKind.certificateType.displayName } ? " created above" : ""))"]
             guard let bundle = plan.known.bundles[t.bundleID] else { plan.add(.profiles, .create, name, details, .profile(t)); continue }
             let profiles = try await account.profiles(named: name, type: type)
             guard !profiles.isEmpty else { plan.add(.profiles, .create, name, details, .profile(t)); continue }
@@ -415,7 +442,7 @@ struct ProvisionPlanner {
         } else if certificate == nil {
             out.append("it does not hold the certificate this plan creates")
         }
-        if let content = p.content, let granted = try? Entitlements.extract(fromProfile: content) {
+        if t.entitlementsKnown, let content = p.content, let granted = try? Entitlements.extract(fromProfile: content) {
             let lacking = Entitlements.profileLacks(user: t.entitlements, profile: granted, platform: t.platform)
             if !lacking.isEmpty { out.append("it lacks \(lacking.joined(separator: ", "))") }
         }
@@ -423,16 +450,19 @@ struct ProvisionPlanner {
     }
 
     func planApp(_ plan: inout ProvisionPlan) async throws {
-        guard let bundle = inputs.appStoreBundleID else { return }
+        guard let bundle = inputs.appStoreBundleID, storeBlocker == nil else { return }
         if let manifestBundle = store?.manifest.app.bundleID, manifestBundle != bundle {
             plan.blockers.append(ProvisionBlocker(area: .app, message: "appstore/app.yml is for \(manifestBundle), and the project's App Store app is \(bundle)",
                                                   fix: "set app.yml's bundleID to \(bundle), or point --dir at that app's manifest"))
             return
         }
         if let app = try await account.findApp(bundleID: bundle) { plan.known.appID = app.id; return }
-        let manifest = store?.manifest
-        let locale = manifest?.app.primaryLocale
-        guard let manifest, let locale, let rawName = manifest.locales[locale]?.name else {
+        guard let manifest = store?.manifest else {
+            plan.notes.append("\(bundle) has no app record, and there is no appstore/ to take its name and primary locale from: the app record, the listing, App Privacy and TestFlight are left out (`xless store validate` checks a new appstore/; `xless apps create` makes the record by hand)")
+            return
+        }
+        let locale = manifest.app.primaryLocale
+        guard let locale, let rawName = manifest.locales[locale]?.name else {
             plan.blockers.append(ProvisionBlocker(area: .app, message: "\(bundle) has no app record, and xless takes its name and primary locale from appstore/",
                                                   fix: "add appstore/app.yml (primaryLocale) and appstore/<locale>/name.txt, or create it with `xless apps create --bundle-id \(bundle) …`"))
             return
@@ -459,7 +489,12 @@ struct ProvisionPlanner {
             plan.add(.listing, .push, "appstore/", ["planned once the app record exists: text, review details, declarations, price and availability, screenshots and previews"], .listing)
             return
         }
-        let listing = try await store.listing.plan(appID: appID)
+        let listing: ProvisionListingPlan
+        do { listing = try await store.listing.plan(appID: appID) } catch {
+            let e = XlessError.wrapping(error, stage: .account)
+            plan.blockers.append(ProvisionBlocker(area: .listing, message: e.cause, fix: e.fix))
+            return
+        }
         plan.notes += listing.notes
         for subject in listing.held {
             plan.drift.append(ProvisionDrift(area: .listing, subject: subject, message: "the manifest would delete or replace it",
@@ -474,12 +509,30 @@ struct ProvisionPlanner {
             plan.add(.privacy, .push, "app.yml privacy", [web == nil ? Self.noWebSession : "sent once the app record exists"], web: true, checked: web != nil, .privacy(want))
             return
         }
-        let changes = try await web.privacy.plan(want, app: appID, appName: bundle)
-        if !changes.isEmpty { plan.add(.privacy, .push, "app.yml privacy", changes.map(\.text), web: true, .privacy(want)) }
+        let split: (send: [StoreChange], held: [StoreChange])
+        do { split = Self.privacyChanges(try await web.privacy.plan(want, app: appID, appName: bundle)) } catch {
+            let e = XlessError.wrapping(error, stage: .account)
+            plan.blockers.append(ProvisionBlocker(area: .privacy, message: e.cause, fix: e.fix))
+            return
+        }
+        for change in split.held {
+            plan.drift.append(ProvisionDrift(area: .privacy, subject: change.subject, message: "app.yml no longer declares it, and removing it would delete answers",
+                                             fix: "`xless store privacy push` (it shows what it removes)"))
+        }
+        if !split.send.isEmpty { plan.add(.privacy, .push, "app.yml privacy", split.send.map(\.text), web: true, .privacy(want)) }
+    }
+
+    /// App Privacy changes that only add or change answers, and those that remove a whole declaration (held: provision
+    /// never deletes). Publishing goes with what is sent, never alone after held removals.
+    static func privacyChanges(_ changes: [StoreChange]) -> (send: [StoreChange], held: [StoreChange]) {
+        let held = changes.filter { $0.action == .delete }
+        var send = changes.filter { $0.action != .delete }
+        if !held.isEmpty, send.allSatisfy({ $0.privacy == [.publish] }) { send = [] }
+        return (send, held)
     }
 
     func planTestFlight(_ plan: inout ProvisionPlan) async throws {
-        guard inputs.appStoreBundleID != nil, let tf = inputs.testflight else { return }
+        guard inputs.appStoreBundleID != nil, let tf = inputs.testflight, plan.known.appID != nil || store != nil else { return }
         let wanted = tf.groups.map { ($0, false) } + (tf.external?.groups ?? []).map { ($0, true) }
         var existing: [ProvisionGroup] = []
         if let appID = plan.known.appID { existing = try await account.betaGroups(app: appID) }
@@ -605,6 +658,7 @@ struct ProvisionApplier {
 
         case .apnsKey:
             guard let web else { throw XlessError(.account, "the Apple ID web session is not open", fix: "this is a bug in xless; please report it") }
+            if let key = try await ProvisionPlanner.apnsKeysAtApple(web)?.first { say("note: " + ProvisionPlanner.apnsElsewhere(key)); return "APNs key \(key.id) exists" }
             let file = try storeFile()
             let keys = AuthKeyStore(store: vault.store, fileID: file.id, dataKey: try vault.dataKey(file, reason: "storing the new APNs key"))
             let created = try await AuthKeyCreation(web: web.authKeys, vault: keys, say: say).run(name: nil, services: [.apns], bundleIDs: [], team: team, now: now)
@@ -639,7 +693,7 @@ struct ProvisionApplier {
         case .privacy(let want):
             guard let web else { throw XlessError(.account, "the Apple ID web session is not open", fix: "this is a bug in xless; please report it") }
             let appID = try await app(&state)
-            let changes = try await web.privacy.plan(want, app: appID, appName: inputs.appStoreBundleID ?? appID)
+            let changes = ProvisionPlanner.privacyChanges(try await web.privacy.plan(want, app: appID, appName: inputs.appStoreBundleID ?? appID)).send
             for change in changes { try await web.privacy.apply(change, app: appID) }
             return changes.isEmpty ? "App Privacy answers were in place already" : "sent the App Privacy answers (\(changes.count) change\(changes.count == 1 ? "" : "s"))"
 
@@ -674,7 +728,11 @@ struct ProvisionApplier {
             let cert = try await create(type, key: try SigningKey(pem: secret.utf8String()))
             let keys = CertificateKeyStore(store: vault.store, fileID: file.id, dataKey: try vault.dataKey(file, reason: "recording the certificate"))
             let facts = cert.der.flatMap { CertificateFacts(der: $0) }
-            try keys.record(name: entry, secret: secret, certificateID: cert.id, expires: facts?.expires ?? cert.expires, team: facts?.teamID ?? team)
+            do {
+                try keys.record(name: entry, secret: secret, certificateID: cert.id, expires: facts?.expires ?? cert.expires, team: facts?.teamID ?? team)
+            } catch {
+                say("warning: certificate \(cert.id) was created for \(entry), but its ID could not be recorded with it (\(XlessError.wrapping(error, stage: .account).cause)); the sign stage and the next plan still find it by its public key")
+            }
             return (cert.id, "created \(type.displayName) certificate \(cert.id) for the key stored as \(entry)")
         case .environment(let name):
             guard let pem = try vault.environmentKey(name) else {

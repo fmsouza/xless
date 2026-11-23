@@ -814,14 +814,15 @@ that team, else an unteamed one). In dependency order:
 | capabilities | the ones the entitlements need ([What `sign` enables](#what-sign-enables)); the Data Protection level they name | API key |
 | app groups, iCloud containers | the `group.…` and `iCloud.…` identifiers the entitlements name: created when missing, assigned to the bundle IDs that use them | web session |
 | certificates | per lane: Apple Distribution (iOS and Mac App Store), Mac Installer Distribution (Mac App Store package), Developer ID Application (Developer ID). A key in the environment (`XLESS_*_KEY`, `_FILE`) or the store whose certificate exists is used as it is; a key whose certificate is gone gets a new certificate (recorded with the entry); otherwise a key is generated into the store (`XLESS_*_KEY@<TEAM_ID>`) and its certificate created | API key |
-| keys | an APNs key when an entitlement uses push notifications and the store has none of the team | web session |
+| keys | an APNs key when an entitlement uses push notifications and this machine has none of the team (the store, or `XLESS_APNS_KEY` / `_FILE`); when the team has one at Apple that is not here, a note says how to import it instead: one key serves every app, and Apple allows two | web session |
 | profiles | `xless <bundle ID> <TYPE>` for each lane, with its certificate | API key |
 | app record | the App Store app (iOS, else Mac App Store): name from the primary locale's `name.txt`, `sku` (default: the bundle ID), `primaryLocale` and `version` from app.yml; `--company-name` for a team's first app | web session |
 | listing | what [`xless store push`](appstore-manifest.md) would send, but App Privacy | API key |
 | App Privacy | app.yml's `privacy` | web session |
 | TestFlight | `testflight.groups` (internal, every build) and `testflight.external.groups` | API key |
 
-A macOS app signed with Developer ID has no app record, listing or TestFlight. A React Native app's entitlements (and
+A macOS app signed with Developer ID has no app record, listing or TestFlight; without `appstore/`, a missing app record
+(and with it the listing, App Privacy and TestFlight) is left out with a note. A React Native app's entitlements (and
 its app extensions) come from its last build's record (`.xless/build/ios/entitlements.json`); before a first build only
 its bundle ID, certificate and profile are planned. Other app extensions are provisioned by `sign`.
 
@@ -831,7 +832,8 @@ its bundle ID, certificate and profile are planned. Other app extensions are pro
   passphrase only to read the API key from the store, or to match a stored signing key that has no recorded
   certificate.
 - **`apply`** plans again, shows the plan, asks (or `--yes`) and runs the steps in order in one process: the secret
-  store's passphrase is asked once, and the Apple ID signs in at most once, at the first step that needs it. Each step
+  store's passphrase is asked once, and the Apple ID signs in at most once: before asking, when some steps can only be
+  checked through the web session (so the plan shown is exact), else at the first step that needs it. Each step
   reads again what it changes, so a second `apply` finds nothing to do. The first failure stops it: the error names the
   step, and standard error lists what was done and what is left; running `apply` again does only what is left. A plan
   with blockers sends nothing.
@@ -840,8 +842,8 @@ its bundle ID, certificate and profile are planned. Other app extensions are pro
   Apple enables on every new bundle ID, are not reported), an app group or container assigned but not named (`xless
   app-groups unassign`), a profile that is not active, expires within 7 days, lacks the certificate or an entitlement
   (`xless profiles renew`; `sign` replaces it too), a listing change that deletes or replaces something (`xless store
-  push`).
-- **Blockers:** no secret store where a new key must go (`xless secrets init`), several store entries for a key,
+  push`), App Privacy answers app.yml no longer declares (`xless store privacy push`).
+- **Blockers:** no secret store where a new signing key must go (`xless secrets init`), several store entries for a key,
   `appstore/` errors (as `xless store validate --draft` finds them) or an app.yml of another app, no name or primary
   locale for a new app record, a TestFlight group of the other kind.
 

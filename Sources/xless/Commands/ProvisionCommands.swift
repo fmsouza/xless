@@ -95,9 +95,25 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
             let held = WebHolder()
             defer { held.transport?.invalidate() }
             if let kept = await ProvisionCLI.kept(team: opened.inputs.team, verbose: trace.verbose) { (held.session, held.transport) = (kept.session, kept.transport) }
+            let verbose = trace.verbose, team = opened.inputs.team
+            func signIn() async throws -> AppleWebSession {
+                if let session = held.session { return session }
+                let (session, transport, _) = try await APIKeyWebCLI.open(team: team, verbose: verbose)
+                (held.session, held.transport) = (session, transport)
+                await AppleWebCLI.warnAboutAgreements(session)
+                return session
+            }
             var planner = opened.planner(web: held.session.map(ProvisionWebSide.init(session:)))
             planner.companyName = companyName?.trimmingCharacters(in: .whitespaces)
-            let plan = try await planner.plan()
+            var plan = try await planner.plan()
+            // Steps only the web session can check: sign in (the one sign-in of this apply) and plan them exactly, so
+            // what is asked and applied is what is missing.
+            if plan.blockers.isEmpty, plan.steps.contains(where: { !$0.checked }) {
+                AppleWebCLI.say("\(plan.steps.filter { !$0.checked }.count) step(s) can only be checked through the Apple ID web session: signing in to plan them exactly.")
+                planner = opened.planner(web: ProvisionWebSide(session: try await signIn()))
+                planner.companyName = companyName?.trimmingCharacters(in: .whitespaces)
+                plan = try await planner.plan()
+            }
             if !output.json { print(plan.text, terminator: "") }
             try plan.requireUnblocked()
             guard !plan.steps.isEmpty else {
@@ -109,14 +125,7 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
                 AppleWebCLI.say("cancelled; nothing was sent")
                 return
             }
-            let verbose = trace.verbose, team = opened.inputs.team
-            let done = try await opened.applier(web: {
-                if let session = held.session { return ProvisionWebSide(session: session) }
-                let (session, transport, _) = try await APIKeyWebCLI.open(team: team, verbose: verbose)
-                (held.session, held.transport) = (session, transport)
-                await AppleWebCLI.warnAboutAgreements(session)
-                return ProvisionWebSide(session: session)
-            }).apply(plan)
+            let done = try await opened.applier(web: { ProvisionWebSide(session: try await signIn()) }).apply(plan)
             if let session = held.session { await session.end() }
             print(output.json ? try ASCOutput.json(Applied(plan: plan, done: done)) : "applied \(done.count) step\(done.count == 1 ? "" : "s")\n",
                   terminator: output.json ? "\n" : "")
@@ -185,7 +194,7 @@ enum ProvisionCLI {
 
     /// The kept Apple ID session for the team, or nil (said once on standard error): planning never signs in.
     static func kept(team: String, verbose: Bool) async -> (session: AppleWebSession, transport: URLSessionAppleTransport)? {
-        guard (await AppleWebCLI.cache.info()) != nil else { return nil }
+        guard AppleWebCLI.cache.info() != nil else { return nil }
         do { return try await ReleaseWeb.kept(team: team, verbose: verbose) } catch {
             AppleWebCLI.say("note: the kept Apple ID session cannot be used (\(XlessError.wrapping(error, stage: .account).cause)); the steps that need it are checked when applied")
             return nil
