@@ -568,3 +568,30 @@ private func liveOnly() -> [String: (Int, String)] {
     let (plan, _) = try await push.plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.privacy]))
     #expect(plan.changes.isEmpty)
 }
+
+@Test func holdingDeletesAfterANewVersionLeavesThemInTheReplannedPlan() async throws {
+    // `xless provision` (#143): Apple copies the live version's it-IT text onto the new version; the plan made once it
+    // exists holds that deletion back (provision reports it as drift) and sends the rest.
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.version = "1.2"
+    let t = RoutedTransport(liveOnly())
+    t.onRequest = { r, t in
+        guard r.httpMethod == "POST", r.url!.path == "/v1/appStoreVersions" else { return }
+        t.routes["POST /v1/appStoreVersions"] = (201, single(#"{"type":"appStoreVersions","id":"V3","attributes":{"platform":"IOS","versionString":"1.2"}}"#))
+        t.routes["/v1/apps/123/appStoreVersions"] = (200, list([
+            #"{"type":"appStoreVersions","id":"V3","attributes":{"platform":"IOS","versionString":"1.2","appVersionState":"PREPARE_FOR_SUBMISSION","copyright":"2026 Example Inc.","releaseType":"SCHEDULED","earliestReleaseDate":"2026-12-01T08:00:00Z"}}"#,
+        ]))
+        t.routes["/v1/appStoreVersions/V3/appStoreVersionLocalizations"] = (200, list([
+            #"{"type":"appStoreVersionLocalizations","id":"VL7","attributes":{"locale":"it-IT","description":"Fa cose."}}"#,
+        ]))
+    }
+    let options = StorePush.Options(parts: [.text], prune: true, holdDeletes: true)
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir, options: options)
+    #expect(plan.held.isEmpty, "the new version's locales are not known yet")
+    let result = try await pusher(t).apply(plan, app: fakeASCApp, manifest: m, dir: dir, options: options, sender: sender(t))
+    #expect(result.replanned?.held.map(\.subject) == ["version text it-IT"])
+    #expect(!writes(t).contains { $0.hasPrefix("DELETE") }, "\(writes(t))")
+    #expect(writes(t).filter { $0 == "POST /v1/appStoreVersionLocalizations" }.count >= 1, "the rest is sent: \(writes(t))")
+}
