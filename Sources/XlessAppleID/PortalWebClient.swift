@@ -54,6 +54,12 @@ public actor PortalWebClient {
         if team { fields.append(("teamId", try requireTeam())) }
         let body = Data(Self.formEncoded(fields).utf8)
         let response = try await send("POST", path, body: body, headers: ["Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"])
+        return try checkResult(response, path: path, page: page)
+    }
+
+    /// The checks of a `QH65B2/…` answer to a POST: a 2xx status, a JSON body, and `resultCode` 0 when there is one.
+    /// Returns the body.
+    func checkResult(_ response: AppleWebResponse, path: String, page: String?) throws -> Data {
         try check(response, method: "POST", path: path, page: page)
         guard let object = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any] else {
             throw AppleWebFailure.malformed(.developerPortal, method: "POST", path: Self.display(path),
@@ -129,7 +135,7 @@ public actor PortalWebClient {
         }
     }
 
-    private func requireTeam() throws -> String {
+    func requireTeam() throws -> String {
         guard let teamID else {
             throw XlessError(.account, "no team is selected for the developer portal",
                              fix: "pass --team <TEAM_ID>, or save one with `xless team use <TEAM_ID>` (see `xless team list`)")

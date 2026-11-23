@@ -42,6 +42,11 @@ and seal it into the store before the certificate is requested (as `XLESS_DIST_K
 `XLESS_INSTALLER_KEY` or `XLESS_<TYPE>_KEY`, with `@<TEAM_ID>` when a team is selected), then record the certificate's
 ID, type and expiry with it. The type is authenticated the same way as an API key's role.
 
+[`xless keys create`](apple-account.md#xless-keys) puts a new APNs, Sign in with Apple, DeviceCheck or MusicKit key
+straight into the store (as `XLESS_APNS_KEY@<TEAM_ID>`, `XLESS_SIWA_KEY`, `XLESS_DEVICECHECK_KEY`, `XLESS_MUSICKIT_KEY`
+or `XLESS_AUTH_KEY`, kind `auth-key`, with its key ID, team and services); `xless keys revoke` removes it again. The
+services are authenticated the same way as an API key's role.
+
 ## How the pipeline finds a secret
 
 For each secret, xless looks at `NAME`, then at the file named by `NAME_FILE`, then at the store's entry `NAME`. The
