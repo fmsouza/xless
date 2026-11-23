@@ -121,23 +121,23 @@ public struct BuildUploader: Sendable {
             try await sleep(pollInterval)
         }
         let uploaded = "the build is uploaded (build \(buildID!)); watch App Store Connect → TestFlight — don't re-upload with the same build number"
-        while true {
+        let end = try await BuildProcessing.poll(deadline: deadline, interval: pollInterval, sleep: sleep) {
             let b: ASCDocument<ASCResource<BuildAttributes>> = try await step("polling build processing", fix: uploaded) {
                 try await client.get("/v1/builds/\(buildID!)")
             }
             record.buildID = b.data.id
             record.processingState = b.data.attributes.processingState
             try report()
-            switch record.processingState {
-            case "VALID": return record
-            case "INVALID", "FAILED":
-                let extra = record.messages.isEmpty ? "" : " (" + record.messages.joined(separator: "; ") + ")"
-                throw XlessError(.upload, "build \(b.data.id) processing ended \(record.processingState ?? "")\(extra)",
-                                 fix: "open App Store Connect → TestFlight → build \(b.data.id) for Apple's email/details")
-            default:
-                if ContinuousClock.now > deadline { throw XlessError(.upload, "build still processing after \(timeout)", fix: uploaded) }
-                try await sleep(pollInterval)
-            }
+            return record.processingState
+        }
+        switch end {
+        case .finished("VALID"): return record
+        case .finished(let state):
+            let extra = record.messages.isEmpty ? "" : " (" + record.messages.joined(separator: "; ") + ")"
+            throw XlessError(.upload, "build \(record.buildID ?? buildID!) processing ended \(state)\(extra)",
+                             fix: "open App Store Connect → TestFlight → build \(record.buildID ?? buildID!) for Apple's email/details")
+        case .timedOut:
+            throw XlessError(.upload, "build still processing after \(timeout)", fix: uploaded)
         }
     }
 }
