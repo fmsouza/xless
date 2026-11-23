@@ -55,9 +55,11 @@ public struct TestFlightConfig: Sendable, Equatable, Decodable {
     }
 
     /// The secret names this block gives of the user's own (the demo account's `passwordSecret`), for
-    /// `SecretEnvironment.scrub`: registered whenever the block is read, so no tool started after sees them.
+    /// `SecretEnvironment.scrub`: registered whenever the block is read, so no tool started after sees them. A name
+    /// validation refuses (`SecretEnvironment.passwordNameProblem`: `PATH`, `HOME`, …) is left out, so the tools a
+    /// loader starts before that error (a cargo overlay's `git ls-files`) keep the variable.
     public var secretNames: [String] {
-        [external?.review?.demoAccount?.passwordSecret].compactMap { $0 }
+        [external?.review?.demoAccount?.passwordSecret].compactMap { $0 }.filter { SecretEnvironment.passwordNameProblem($0) == nil }
     }
 
     /// Registers `secretNames` with `SecretEnvironment.scrub`. The configuration loaders call it as soon as they have
@@ -385,8 +387,8 @@ extension ProjectConfig {
                 if demo.required == true, (demo.name ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
                     throw XlessError(.config, "testflight.external.review.demoAccount is required but has no name", fix: "add demoAccount.name: the account App Review signs in with")
                 }
-                if let secret = demo.passwordSecret, SecretEnvironment.isKeyOrToken(secret) {
-                    throw XlessError(.config, "testflight.external.review.demoAccount.passwordSecret \(secret) names a key or token, not a password",
+                if let secret = demo.passwordSecret, let problem = SecretEnvironment.passwordNameProblem(secret) {
+                    throw XlessError(.config, "testflight.external.review.demoAccount.passwordSecret \(secret) \(problem)",
                                      fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD (`xless secrets import XLESS_DEMO_PASSWORD --file <file> --kind password`)")
                 }
             }

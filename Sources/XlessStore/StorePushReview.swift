@@ -37,8 +37,8 @@ extension PushContext {
                     throw XlessError(.account, "\(self.name)/app.yml: App Review signs in with the demo account, and review.demoAccount.passwordSecret names no secret for its password",
                                      fix: "store the password (`xless secrets import XLESS_DEMO_PASSWORD --file <file> --kind password`) and add `passwordSecret: XLESS_DEMO_PASSWORD`")
                 }
-                guard !ManifestValidator.isReservedSecret(name) else {
-                    throw XlessError(.account, "\(self.name)/app.yml: review.demoAccount.passwordSecret \(name) names a key or token, not a password; nothing is sent as the demo password",
+                if let problem = SecretEnvironment.passwordNameProblem(name) {
+                    throw XlessError(.account, "\(self.name)/app.yml: review.demoAccount.passwordSecret \(name) \(problem); nothing is sent as the demo password",
                                      fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
                 }
                 secret = name

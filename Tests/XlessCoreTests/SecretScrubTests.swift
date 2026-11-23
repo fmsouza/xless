@@ -99,3 +99,40 @@ private func testflight(_ demo: String?) throws -> TestFlightConfig {
     _ = try ProjectConfig.load(from: file)
     #expect(SecretEnvironment.scrubbed.contains(name) && SecretEnvironment.scrubbed.contains("\(name)_FILE"))
 }
+
+// MARK: passwordSecret may not name a variable something else relies on
+
+@Test func aPasswordsNameMayNotBeAVariableTheSystemOrXlessUses() {
+    for name in ["PATH", "HOME", "ENV", "IFS", "path", "Home", "PATH@ABCDE12345", "LD_PRELOAD", "LC_ALL", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK",
+                 "PASSWORD_STORE_DIR", "XLESS_NO_SECRET_STORE", "XLESS_USE_DOCKER", "xless_cache", "MY_PASSWORD_FILE", "SIM", "TEAM", "NAME"] {
+        #expect(SecretEnvironment.passwordNameProblem(name) != nil, "\(name)")
+    }
+    #expect(SecretEnvironment.passwordNameProblem("ASC_KEY_P8") == "names a key or token, not a password")
+    #expect(SecretEnvironment.passwordNameProblem("PATH")?.contains("the system, the shell or xless's scripts use (PATH)") == true)
+    #expect(SecretEnvironment.passwordNameProblem("XLESS_RN_CLEAN")?.contains("xless's own variables") == true)
+    for name in ["XLESS_DEMO_PASSWORD", "XLESS_DEMO_PASSWORD@ABCDE12345", "APP_REVIEW_PASSWORD", "MY_REVIEW_PW", "DEMO_LOGIN@ABCDE12345", "PATHWAY_PASSWORD"] {
+        #expect(SecretEnvironment.passwordNameProblem(name) == nil, "\(name)")
+    }
+}
+
+@Test func xlessYmlRefusesAReservedPasswordSecretAsAConfigError() throws {
+    for name in ["PATH", "HOME", "ENV", "XLESS_NO_SECRET_STORE", "LD_PRELOAD"] {
+        let e = #expect(throws: XlessError.self) { try testflight("{name: demo, passwordSecret: \(name), required: true}") }
+        #expect(e?.stage == .config)
+        #expect(e?.cause.contains("passwordSecret \(name) names") == true, "\(e?.cause ?? "")")
+    }
+    // Never registered for scrubbing, so the tools a loader starts before validating keep PATH.
+    #expect(TestFlightConfig(groups: [], external: .init(groups: ["B"], review: .init(demoAccount: .init(name: "d", passwordSecret: "PATH")))).secretNames.isEmpty)
+}
+
+/// Every upper-case global scripts/testflight.sh assigns is a reserved name: it reads the password with `${!NAME}`, so
+/// a passwordSecret naming one of its own variables would read that instead.
+@Test func testflightShGlobalsAreReservedPasswordNames() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let script = try String(contentsOf: root.appendingPathComponent("scripts/testflight.sh"), encoding: .utf8)
+    let globals = Set(script.matches(of: /(?m)(?:^|[\s;(])([A-Z][A-Z0-9_]{2,})(?:\+)?=/).map { String($0.output.1) })
+    #expect(globals.count > 10)
+    for name in globals.sorted() where name != "XLESS_DEMO_PASSWORD" {
+        #expect(SecretEnvironment.passwordNameProblem(name) != nil, "scripts/testflight.sh sets \(name): add it to SecretEnvironment.reservedVariables")
+    }
+}

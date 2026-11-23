@@ -49,9 +49,9 @@ public struct MaterializeSet: Sendable, Equatable {
         let known = SecretEnvironment.entries.map(\.name)
         if known.contains(name) { return }
         guard name.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*(@[A-Z0-9]{10})?/) != nil, !name.uppercased().hasSuffix("_FILE"),
-              !name.uppercased().contains("_FILE@"), !SecretEnvironment.isKeyOrToken(name) else {
+              !name.uppercased().contains("_FILE@"), SecretEnvironment.passwordNameProblem(name) == nil else {
             throw XlessError(.config, "\(name) is not a secret xless reads",
-                             fix: "use one of: \(known.joined(separator: ", ")), or a password's own name (letters, digits and _, optionally @TEAMID; not named like a key or token)")
+                             fix: "use one of: \(known.joined(separator: ", ")), or a password's own name (letters, digits and _, optionally @TEAMID; not named like a key or token, nor PATH, HOME, XLESS_* or another variable the system or xless uses)")
         }
     }
 }

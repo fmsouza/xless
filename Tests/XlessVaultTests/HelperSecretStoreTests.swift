@@ -316,3 +316,125 @@ esac
     for _ in 0..<3 { _ = try? resolver.lookup("B", stage: .config) }
     #expect(try dir.read("runs") == "list\n")
 }
+
+// MARK: - The test write before a key Apple offers once (#141), and the writers' lock
+
+/// `fileHelper`, steered by files in $HOME: `fail-<verb>` makes that verb fail, `lose` makes `get` answer another value,
+/// `log` records each verb, and `slow` makes `store` log `start`/`end` around a pause.
+private let steeredHelper = #"""
+[ -f "$HOME/log" ] && echo "$1" >> "$HOME/log"
+if [ -f "$HOME/fail-$1" ]; then echo "broken $1" >&2; exit 1; fi
+if [ "$1" = get ] && [ -f "$HOME/lose" ]; then
+  url=$(cat)
+  printf '{"ServerURL":"%s","Username":"{}","Secret":"something else"}' "$url"
+  exit 0
+fi
+if [ "$1" = store ] && [ -f "$HOME/slow" ]; then
+  echo start >> "$HOME/slow"; sleep 0.3; echo end >> "$HOME/slow"
+fi
+"""# + "\n" + fileHelper
+
+private func steered(_ dir: HelperDir, lock: VaultLocation? = nil) throws -> HelperSecretStore {
+    try dir.script("steered", steeredHelper)
+    return HelperSecretStore(helper: try CredentialHelper.find(name: "steered", env: dir.env), lock: lock)
+}
+
+private func touch(_ dir: HelperDir, _ file: String) throws { try Data().write(to: dir.home.appendingPathComponent(file)) }
+
+private func probeFiles(_ dir: HelperDir) throws -> [String] {
+    let creds = dir.home.appendingPathComponent("creds")
+    return ((try? FileManager.default.contentsOfDirectory(atPath: creds.path)) ?? []).filter { $0.contains("probe") }
+}
+
+@Test func theProbeStoresReadsBackAndErasesOncePerProcess() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let store = try steered(dir)
+    try touch(dir, "log")
+    try store.probeWrites(reason: "storing the new API key")
+    try store.probeWrites(reason: "storing the new API key")
+    #expect(try dir.read("log") == "store\nget\nerase\n")
+    #expect(try probeFiles(dir).isEmpty)
+    #expect(try store.catalog()?.entries.isEmpty == true)
+}
+
+@Test func aProbeCatchesAHelperThatCannotStore() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let store = try steered(dir)
+    try touch(dir, "fail-store")
+    let e = #expect(throws: VaultError.self) { try store.probeWrites(reason: "storing the new API key") }
+    #expect(e?.kind == .helper)
+    #expect(e?.cause.contains("test write") == true && e?.cause.contains("before storing the new API key") == true, "\(e?.cause ?? "")")
+    #expect(e?.fix.contains("nothing was created") == true)
+    #expect(try probeFiles(dir).isEmpty)
+    // Not remembered as passed: once the helper works, the next probe runs.
+    try FileManager.default.removeItem(at: dir.home.appendingPathComponent("fail-store"))
+    try store.probeWrites(reason: "x")
+}
+
+@Test func aProbeCatchesAHelperThatLosesTheValue() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let store = try steered(dir)
+    try touch(dir, "lose")
+    let e = #expect(throws: VaultError.self) { try store.probeWrites(reason: "storing the new auth key") }
+    #expect(e?.cause.contains("another value") == true, "\(e?.cause ?? "")")
+    #expect(try probeFiles(dir).isEmpty) // erased again
+}
+
+@Test func aProbeEntryTheHelperCannotEraseIsNamed() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let store = try steered(dir)
+    try touch(dir, "fail-erase")
+    let e = #expect(throws: VaultError.self) { try store.probeWrites(reason: "storing the new auth key") }
+    #expect(e?.cause.contains("may still hold the throwaway entry xless-helper-probe.") == true, "\(e?.cause ?? "")")
+    #expect(e?.fix.contains("xless secrets rm xless-helper-probe.") == true)
+    let left = try #require(try store.catalog()?.entries.first)
+    #expect(left.name.hasPrefix("xless-helper-probe.") && left.kind == .generic)
+}
+
+@Test func concurrentHelperWritesTakeTurnsUnderTheVaultsLock() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let lock = VaultLocation(directory: dir.root.appendingPathComponent("data/xless/vault"))
+    _ = try steered(dir, lock: lock)
+    try Data().write(to: dir.home.appendingPathComponent("slow"))
+    final class Failures: @unchecked Sendable {
+        let lock = NSLock()
+        var all: [String] = []
+        func add(_ s: String) { lock.withLock { all.append(s) } }
+    }
+    let failures = Failures()
+    DispatchQueue.concurrentPerform(iterations: 3) { i in
+        do {
+            // One store object per "command", as two xless processes would have.
+            let store = try steered(dir, lock: lock)
+            try store.update(reason: "test") { _ in [.add(name: "ENTRY_\(i)", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "v\(i)"))] }
+        } catch { failures.add("\(error)") }
+    }
+    #expect(failures.all.isEmpty, "\(failures.all)")
+    #expect(try dir.read("slow") == String(repeating: "start\nend\n", count: 3))
+    #expect(try steered(dir).catalog()?.entries.count == 3)
+    // The lock's directory is made private, as the vault's.
+    let attributes = try FileManager.default.attributesOfItem(atPath: lock.directory.path)
+    #expect((attributes[.posixPermissions] as? Int) == 0o700)
+}
+
+@Test func theConfiguredHelperUsesTheVaultsLockFile() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    try dir.script("files", fileHelper)
+    let env = dir.env.merging(["XDG_CONFIG_HOME": dir.root.appendingPathComponent("config").path,
+                               "XDG_DATA_HOME": dir.root.appendingPathComponent("data").path]) { $1 }
+    let file = UserConfig.file(env: env)
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("secrets:\n  backend: helper\n  helper: files\n".utf8).write(to: file)
+    guard case .helper(let helper) = try ConfiguredSecretStore.load(env: env, cache: nil, prompter: { nil }) else {
+        Issue.record("not the helper"); return
+    }
+    #expect(helper.writersLock == VaultLocation.standard(env: env))
+    try helper.update(reason: "test") { _ in [.add(name: "A", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "a"))] }
+    #expect(FileManager.default.fileExists(atPath: VaultLocation.standard(env: env).lockFile.path))
+}

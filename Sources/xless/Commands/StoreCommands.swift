@@ -314,8 +314,8 @@ struct StorePushCLI {
     /// The demo account's password, from the secret `name` (store, NAME or NAME_FILE), without a file's final line break.
     /// - Parameter source: where the secret's name comes from, for the message.
     static func demoPassword(_ name: String, secrets: Secrets, source: String = "app.yml's review.demoAccount.passwordSecret") throws -> String {
-        guard !ManifestValidator.isReservedSecret(name) else {
-            throw XlessError(.account, "\(name) names a key or token, not the demo account's password; nothing was sent", fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
+        if let problem = SecretEnvironment.passwordNameProblem(name) {
+            throw XlessError(.account, "\(name) (\(source)) \(problem), so it is not the demo account's password; nothing was sent", fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
         }
         guard var value = try secrets.optional(name, stage: .account) else {
             throw XlessError(.account, "missing secret \(name), the demo account's password (\(source)); nothing was sent",

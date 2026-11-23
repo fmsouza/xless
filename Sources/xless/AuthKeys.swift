@@ -112,6 +112,8 @@ struct AuthKeyCreation {
     let vault: AuthKeyStore
     /// Progress lines (standard error).
     var say: (String) -> Void = { _ in }
+    /// Where the private key goes when the store cannot keep it (a file to import), so it is not lost.
+    var rescue: KeyRescue = .standard
 
     /// - Parameter name: the name given with `--name` (a name the team uses is refused), else nil: `defaultName(...)`,
     /// with ` 2`, ` 3`… when the team already has a key of that name.
@@ -134,7 +136,14 @@ struct AuthKeyCreation {
         do {
             stored = try vault.save(base: AuthKeyStore.base(for: services), keyID: key.id, team: team, secret: secret, metadata: metadata)
         } catch {
-            throw Self.lost(key.id, because: "the secret store could not keep it (\(XlessError.wrapping(error, stage: .account).cause))")
+            let base = AuthKeyStore.base(for: services)
+            let entry = ((try? vault.store.catalog()) ?? nil).map { AuthKeyStore.entryName(base: base, keyID: key.id, team: team, in: $0) } ?? "\(base)@\(team)"
+            throw rescue.failure(secret, noun: "auth key", keyID: key.id,
+                                 because: "the secret store could not keep it (\(XlessError.wrapping(error, stage: .account).cause))",
+                                 entry: entry,
+                                 importOptions: ["--kind", VaultEntry.Kind.authKey.rawValue, "--team-id", team, "--key-id", key.id,
+                                                 "--services", AuthKeyStore.recorded(services)],
+                                 revoke: "xless keys revoke \(key.id)", lost: { Self.lost(key.id, because: $0) })
         }
         return AuthKeyCreated(keyID: key.id, name: name, services: services.map(\.argument), bundleIDs: bundleIDs, musicIDs: musicIDs,
                               team: team, entry: stored)

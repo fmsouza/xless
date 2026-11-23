@@ -43,12 +43,16 @@ enum APIKeyWebCLI {
     static func existingStore() throws -> SecretCatalog { try store().existingCatalog() }
 
     /// `make` with the store unlocked now (the passphrase asked before anything is created at Apple) and the catalog
-    /// it was unlocked for.
+    /// it was unlocked for; a credential helper must first pass a test write (`SecretStore.probeWrites`).
     static func unlocked<T>(reason: String, _ make: (any SecretStore, SecretCatalog) -> T) throws -> T {
-        let store = try store()
+        try unlocked(store: try store(), reason: reason, make)
+    }
+
+    static func unlocked<T>(store: any SecretStore, reason: String, _ make: (any SecretStore, SecretCatalog) -> T) throws -> T {
         let catalog = try store.existingCatalog()
         try catalog.requireWritable()
         try store.unlock(catalog, remember: nil, reason: reason)
+        try store.probeWrites(reason: reason)
         return make(store, catalog)
     }
 }

@@ -6,16 +6,28 @@ import XlessCore
 /// Each entry is one credential: ServerURL `xless:<NAME>`, Username its kind and metadata as compact JSON
 /// (`{"kind":"asc-api-key","keyID":"…","teamID":"…"}`; not secret, so `list` gives the whole catalog without reading
 /// a value), Secret its value. Other credentials the helper lists (no `xless:` prefix) are not xless's and are left
-/// alone. There is no lock: an update lists, then stores and erases one credential at a time; the metadata's
-/// integrity is the keyring's, as the secrets' are.
+/// alone. An update lists, then stores and erases one credential at a time, holding the vault's writers' lock
+/// (`writersLock`'s `lock` file) throughout, so two xless commands writing at once take turns and neither works from a
+/// stale list; the metadata's integrity is the keyring's, as the secrets' are.
 public final class HelperSecretStore: SecretStore, @unchecked Sendable {
     public let helper: CredentialHelper
+    /// Where the writers' lock is: the vault's directory (`VaultLocation.standard`), created 0700 when missing. nil: no
+    /// lock (tests that do not write concurrently).
+    public let writersLock: VaultLocation?
     private let lock = NSLock()
     /// The last `list`, for the rest of the process: each lookup would otherwise run the helper again (with pass, a
     /// decryption per entry). `update` lists afresh and drops it.
     private var listed: SecretCatalog?
+    /// Whether `probeWrites` passed in this process.
+    private var probed = false
 
-    public init(helper: CredentialHelper) { self.helper = helper }
+    public init(helper: CredentialHelper, lock: VaultLocation? = nil) {
+        self.helper = helper
+        writersLock = lock
+    }
+
+    /// The name of `probeWrites`' throwaway entries (a valid entry name, so a leftover shows in `xless secrets list`).
+    static let probePrefix = "xless-helper-probe."
 
     static let urlPrefix = "xless:"
     /// What a Docker credential helper prints (exit 1) for a credential it does not have.
@@ -53,19 +65,70 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
     public func update(reason: String, _ body: (SecretCatalog) throws -> [SecretChange]) throws {
         lock.withLock { listed = nil }
         defer { lock.withLock { listed = nil } }
-        let current = try list()
-        for change in try body(current) {
-            switch change {
-            case .add(let name, let kind, let metadata, let secret):
-                guard current.entry(named: name) == nil else { throw VaultSecretStore.exists(name) }
-                try store(name: name, kind: kind, metadata: metadata, secret: secret)
-            case .replace(let name, let kind, let metadata, let secret):
-                guard current.entry(named: name) != nil else { throw VaultSecretStore.missing(name) }
-                try store(name: name, kind: kind, metadata: metadata, secret: secret)
-            case .remove(let name):
-                if current.entry(named: name) != nil { try erase(name) }
+        try locked {
+            let current = try list()
+            for change in try body(current) {
+                switch change {
+                case .add(let name, let kind, let metadata, let secret):
+                    guard current.entry(named: name) == nil else { throw VaultSecretStore.exists(name) }
+                    try store(name: name, kind: kind, metadata: metadata, secret: secret)
+                case .replace(let name, let kind, let metadata, let secret):
+                    guard current.entry(named: name) != nil else { throw VaultSecretStore.missing(name) }
+                    try store(name: name, kind: kind, metadata: metadata, secret: secret)
+                case .remove(let name):
+                    if current.entry(named: name) != nil { try erase(name) }
+                }
             }
         }
+    }
+
+    /// Stores, reads back and erases a throwaway entry (`xless-helper-probe.<random>`), under the writers' lock, once
+    /// per process: a helper that cannot keep a secret is found before Apple creates a key it offers only once.
+    public func probeWrites(reason: String) throws {
+        if lock.withLock({ probed }) { return }
+        let name = Self.probePrefix + Self.randomHex(8)
+        let value = SecretBytes(utf8: Self.randomHex(16))
+        defer { value.wipe() }
+        func failed(_ what: String, fix: String) -> VaultError {
+            VaultError(.helper, "\(helper.command) failed xless's test write (store, read back and erase a throwaway entry) before \(reason): \(what)",
+                       fix: fix + "; nothing was created")
+        }
+        try locked {
+            do {
+                try store(name: name, kind: .generic, metadata: VaultEntry.Metadata(), secret: value)
+            } catch let e as VaultError {
+                try? erase(name) // whatever half of it the helper kept
+                throw failed(e.cause, fix: e.fix)
+            }
+            let back: SecretBytes?
+            do { back = try get(name) } catch let e as VaultError {
+                try? erase(name)
+                throw failed(e.cause, fix: e.fix)
+            }
+            defer { back?.wipe() }
+            guard back == value else {
+                try? erase(name)
+                throw failed(back == nil ? "it did not have the entry it had just stored" : "it gave back another value than the one it stored",
+                             fix: "fix the helper (docs/secrets.md#writing-a-credential-helper says what it must do)")
+            }
+            do { try erase(name) } catch let e as VaultError {
+                throw failed("\(e.cause); it may still hold the throwaway entry \(name)",
+                             fix: "remove it with `xless secrets rm \(name)` (or the keyring's own tool) once the helper works")
+            }
+        }
+        lock.withLock { probed = true }
+    }
+
+    /// `body` holding the writers' lock (none when `writersLock` is nil).
+    private func locked<T>(_ body: () throws -> T) throws -> T {
+        guard let writersLock else { return try body() }
+        try writersLock.createDirectory()
+        return try VaultStore(location: writersLock).withLock(body)
+    }
+
+    static func randomHex(_ bytes: Int) -> String {
+        var g = SystemRandomNumberGenerator()
+        return (0..<bytes).map { _ in String(format: "%02x", UInt8.random(in: 0...255, using: &g)) }.joined()
     }
 
     // MARK: The protocol
@@ -222,7 +285,7 @@ public enum ConfiguredSecretStore: Sendable {
                             prompter: @escaping () -> (any PassphrasePrompter)?) throws -> ConfiguredSecretStore {
         switch try UserConfig.secretsBackend(env: env) {
         case .vault: .vault(VaultSecretStore(store: VaultStore(location: .standard(env: env)), cache: cache, prompter: prompter))
-        case .helper(let name): .helper(HelperSecretStore(helper: try CredentialHelper.find(name: name, env: env)))
+        case .helper(let name): .helper(HelperSecretStore(helper: try CredentialHelper.find(name: name, env: env), lock: .standard(env: env)))
         }
     }
 }

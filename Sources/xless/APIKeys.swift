@@ -133,6 +133,8 @@ struct APIKeyCreation {
     let verify: APIKeyVerifier
     /// Progress lines (standard error).
     var say: (String) -> Void = { _ in }
+    /// Where the private key goes when the store cannot keep it (a file to import), so it is not lost.
+    var rescue: KeyRescue = .standard
 
     func run(nickname: String, roles: [String], appIDs: [String], team: String, issuerID: String, entry: String,
              now: Date = Date()) async throws -> APIKeyCreated {
@@ -159,7 +161,12 @@ struct APIKeyCreation {
         let metadata = VaultEntry.Metadata(teamID: team, keyID: key.id, issuerID: issuerID, created: now, role: APIKeyRoles.recorded(roles))
         let stored: String
         do { stored = try vault.save(name: entry, secret: secret, metadata: metadata) } catch {
-            throw Self.lost(key.id, because: "the secret store could not keep it (\(XlessError.wrapping(error, stage: .account).cause))")
+            throw rescue.failure(secret, noun: "API key", keyID: key.id,
+                                 because: "the secret store could not keep it (\(XlessError.wrapping(error, stage: .account).cause))",
+                                 entry: entry,
+                                 importOptions: ["--kind", VaultEntry.Kind.ascAPIKey.rawValue, "--team-id", team, "--key-id", key.id, "--issuer-id", issuerID]
+                                     + (APIKeyRoles.recorded(roles).map { ["--role", $0] } ?? []),
+                                 revoke: "xless auth api-key revoke \(key.id)", lost: { Self.lost(key.id, because: $0) })
         }
         say("Stored it in the secret store as \(stored); checking it with the documented API.")
         do {
