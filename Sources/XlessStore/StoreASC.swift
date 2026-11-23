@@ -99,11 +99,86 @@ public struct StoreEULA: Sendable, Equatable {
     public var id: String = ""
 }
 
+/// One territory's availability (its ID is what `push` updates).
+public struct StoreTerritoryAvailability: Sendable, Equatable {
+    public var id: String
+    public var territory: String
+    public var available: Bool
+}
+
 public struct StoreAvailability: Sendable, Equatable {
+    /// The app availability's resource ID.
+    public var id: String
     public var newTerritories: Bool?
-    public var available: [String]
+    /// Every territory App Store Connect lists for the app, by code.
+    public var entries: [StoreTerritoryAvailability]
+
+    /// The territories the app is available in, by code.
+    public var available: [String] { entries.filter(\.available).map(\.territory) }
     /// Available in every territory App Store Connect listed.
-    public var all: Bool
+    public var all: Bool { !entries.isEmpty && entries.allSatisfy(\.available) }
+}
+
+/// A manual price of the price schedule: from `start` (nil: since ever) until `end` (nil: until changed).
+public struct StorePrice: Sendable, Equatable {
+    public var territory: String
+    public var start: String?
+    public var end: String?
+    /// As App Store Connect writes it ("0.0", "0.99").
+    public var customerPrice: String
+    public var pointID: String
+
+    public init(territory: String, start: String?, end: String?, customerPrice: String, pointID: String) {
+        self.territory = territory; self.start = start; self.end = end; self.customerPrice = customerPrice; self.pointID = pointID
+    }
+
+    /// In effect on `day` (YYYY-MM-DD).
+    public func current(on day: String) -> Bool { (start.map { $0 <= day } ?? true) && (end.map { $0 > day } ?? true) }
+}
+
+public struct StorePriceSchedule: Sendable, Equatable {
+    public var id: String
+    public var baseTerritory: String?
+    public var prices: [StorePrice]
+    /// Some prices could not be read (no price point in App Store Connect's answer): replacing the schedule would drop them.
+    public var incomplete = false
+
+    public init(id: String, baseTerritory: String?, prices: [StorePrice], incomplete: Bool = false) {
+        self.id = id; self.baseTerritory = baseTerritory; self.prices = prices; self.incomplete = incomplete
+    }
+
+    /// The prices in effect on `day` and those to come (from a later day), each territory's current one first.
+    public func live(on day: String) -> [StorePrice] {
+        prices.filter { $0.current(on: day) || ($0.start.map { $0 > day } ?? false) }
+    }
+
+    /// app.yml's `pricing` for this schedule on `day`.
+    public func pricing(today day: String) -> AppYAML.Pricing {
+        guard let base = baseTerritory else { return AppYAML.Pricing() }
+        var out = AppYAML.Pricing(baseTerritory: base)
+        var others: [String: String] = [:]
+        var changes: [AppYAML.Pricing.Change] = []
+        for price in prices {
+            if price.current(on: day) {
+                if price.territory == base { out.price = CustomerPrice.display(price.customerPrice) } else { others[price.territory] = CustomerPrice.display(price.customerPrice) }
+            } else if let start = price.start, start > day {
+                changes.append(AppYAML.Pricing.Change(date: start, territory: price.territory == base ? nil : price.territory,
+                                                      price: CustomerPrice.display(price.customerPrice)))
+            }
+        }
+        if !others.isEmpty { out.territories = SortedMap(others) }
+        if !changes.isEmpty { out.changes = changes.sorted { ($0.date, $0.territory ?? "") < ($1.date, $1.territory ?? "") } }
+        return out
+    }
+
+    /// The territory an App Store Connect price point ID names: its IDs are base64 JSON such as {"s":"…","t":"USA","p":"…"}.
+    static func territory(ofPoint id: String) -> String? {
+        var text = id.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while text.count % 4 != 0 { text += "=" }
+        guard let data = Data(base64Encoded: text), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let t = object["t"] as? String, t.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil else { return nil }
+        return t
+    }
 }
 
 /// An optional part of the listing: its value, absent from App Store Connect (404, or no data), or not readable with
@@ -292,22 +367,40 @@ public struct StoreASC: Sendable {
         }
     }
 
-    /// The price schedule's base territory and the current manual price there (customer price, as Apple writes it).
-    public func pricing(of appID: String, today: Date = Date()) async throws -> StorePart<AppYAML.Pricing> {
+    /// The app's price schedule: its base territory and every manual price (past ones included).
+    public func priceSchedule(of appID: String) async throws -> StorePart<StorePriceSchedule> {
         try await optional("price schedule") {
             guard let schedule = try await one("/v1/apps/\(appID)/appPriceSchedule", query: ASCQuery(include: ["baseTerritory"])).data else { return nil }
             let base = schedule.relationships?["baseTerritory"]?["data"]?["id"]?.string
-            guard let base else { return AppYAML.Pricing() }
+            guard let base else { return StorePriceSchedule(id: schedule.id, baseTerritory: nil, prices: []) }
             let listing = try await resources.list("/v1/appPriceSchedules/\(schedule.id)/manualPrices",
-                                                   query: ASCQuery(filters: [("territory", base)], include: ["appPricePoint"]), as: ASCAnyResource.self)
-            let day = Self.day(today)
-            let current = listing.items.first { price in
-                let start = price.attributes?["startDate"]?.string, end = price.attributes?["endDate"]?.string
-                return (start.map { $0 <= day } ?? true) && (end.map { $0 > day } ?? true)
+                                                   query: ASCQuery(include: ["appPricePoint", "territory"]), as: ASCAnyResource.self)
+            var prices: [StorePrice] = []
+            var unread = 0
+            for item in listing.items {
+                guard let point = item.relationships?["appPricePoint"]?["data"]?["id"]?.string,
+                      let included = listing.included.first(where: { $0.type == "appPricePoints" && $0.id == point }),
+                      let customer = included.attributes?["customerPrice"]?.string else { unread += 1; continue }
+                let territory = item.relationships?["territory"]?["data"]?["id"]?.string
+                    ?? included.relationships?["territory"]?["data"]?["id"]?.string
+                    ?? StorePriceSchedule.territory(ofPoint: point) ?? base
+                prices.append(StorePrice(territory: territory, start: item.attributes?["startDate"]?.string, end: item.attributes?["endDate"]?.string,
+                                         customerPrice: customer, pointID: point))
             }
-            guard let point = current?.relationships?["appPricePoint"]?["data"]?["id"]?.string,
-                  let customer = listing.included.first(where: { $0.id == point })?.attributes?["customerPrice"]?.string else { return AppYAML.Pricing(baseTerritory: base) }
-            return AppYAML.Pricing(baseTerritory: base, price: Double(customer) == 0 ? "free" : customer)
+            if unread > 0 {
+                say("note: \(unread) price\(unread == 1 ? "" : "s") of the price schedule came without \(unread == 1 ? "its" : "their") price point; they are left out")
+            }
+            return StorePriceSchedule(id: schedule.id, baseTerritory: base, prices: prices, incomplete: unread > 0)
+        }
+    }
+
+    /// The price schedule as app.yml writes it: base territory, its current price, the other territories' current
+    /// manual prices and the changes to come (past prices are history and left out).
+    public func pricing(of appID: String, today: Date = Date()) async throws -> StorePart<AppYAML.Pricing> {
+        switch try await priceSchedule(of: appID) {
+        case .value(let schedule): return .value(schedule.pricing(today: Self.day(today)))
+        case .absent: return .absent
+        case .forbidden: return .forbidden
         }
     }
 
@@ -319,21 +412,19 @@ public struct StoreASC: Sendable {
         return f.string(from: date)
     }
 
-    /// Availability: whether new territories are added automatically, and the territories the app is available in.
+    /// Availability: whether new territories are added automatically, and each territory's availability.
     public func availability(of appID: String) async throws -> StorePart<StoreAvailability> {
         try await optional("availability") {
             guard let availability = try await one("/v1/apps/\(appID)/appAvailabilityV2").data else { return nil }
             let newTerritories: Bool? = { if case .bool(let b)? = availability.attributes?["availableInNewTerritories"] { return b }; return nil }()
             let listing = try await resources.list("/v2/appAvailabilities/\(availability.id)/territoryAvailabilities",
                                                    query: ASCQuery(include: ["territory"]), as: ASCAnyResource.self)
-            var available: [String] = []
-            for item in listing.items {
-                guard case .bool(true)? = item.attributes?["available"],
-                      let territory = item.relationships?["territory"]?["data"]?["id"]?.string else { continue }
-                available.append(territory)
+            let entries = listing.items.compactMap { item -> StoreTerritoryAvailability? in
+                guard let territory = item.relationships?["territory"]?["data"]?["id"]?.string else { return nil }
+                let available: Bool = { if case .bool(true)? = item.attributes?["available"] { return true }; return false }()
+                return StoreTerritoryAvailability(id: item.id, territory: territory, available: available)
             }
-            return StoreAvailability(newTerritories: newTerritories, available: available.sorted(),
-                                     all: !listing.items.isEmpty && available.count == listing.items.count)
+            return StoreAvailability(id: availability.id, newTerritories: newTerritories, entries: entries.sorted { $0.territory < $1.territory })
         }
     }
 }

@@ -11,9 +11,11 @@ public struct StorePush: Sendable {
         public var prune: Bool
         /// Send the demo account's name and password even when they look unchanged (after a new password).
         public var resendDemoAccount: Bool
+        /// The day prices are compared on: a scheduled price change from this day or earlier is in effect.
+        public var today: Date
 
-        public init(parts: [StorePushPart] = StorePushPart.allCases, prune: Bool = false, resendDemoAccount: Bool = false) {
-            self.parts = parts; self.prune = prune; self.resendDemoAccount = resendDemoAccount
+        public init(parts: [StorePushPart] = StorePushPart.allCases, prune: Bool = false, resendDemoAccount: Bool = false, today: Date = Date()) {
+            self.parts = parts; self.prune = prune; self.resendDemoAccount = resendDemoAccount; self.today = today
         }
     }
 
@@ -164,7 +166,8 @@ public struct StorePush: Sendable {
     public func plan(app: ASCApp, manifest: StoreManifest, dir: URL, options: Options = Options()) async throws -> (StorePlan, Report) {
         let target = try await target(app: app, manifest: manifest)
         var context = PushContext(push: self, manifest: manifest, dir: dir, target: target, options: options)
-        if target.creating, !options.parts.contains(.text), options.parts.contains(where: { $0 != .text }) {
+        // Pricing is the app's, not the version's: it needs no version.
+        if target.creating, !options.parts.contains(.text), options.parts.contains(where: { $0 != .text && $0 != .pricing }) {
             throw XlessError(.account, "App Store Connect has no \(target.platform) version \(target.versionString) yet, and only the text part creates it",
                              fix: "push the text part too (drop --only, or add text to it)")
         }
@@ -173,6 +176,7 @@ public struct StorePush: Sendable {
             case .text: try await context.planText()
             case .review: try await context.planReview()
             case .declarations: try await context.planDeclarations()
+            case .pricing: try await context.planPricing()
             case .media: try await context.planMedia()
             }
         }

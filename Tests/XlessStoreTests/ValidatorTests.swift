@@ -165,3 +165,39 @@ private func withManifest(_ body: (URL) throws -> Void) throws {
         #expect(out.count == 1 && out[0].contains("appstore/app.yml"), "only the reader's error, no missing-key flood: \(out)")
     }
 }
+
+@Test func pricesTerritoriesAndScheduledChangesAreChecked() throws {
+    try withManifest { dir in
+        let app = completeAppYAML.replacingOccurrences(of: "  price: free\n", with: """
+              price: 0.99
+              territories:
+                JPN: "150"
+                USA: "1.99"
+                gb: "0.99"
+                CAN: 1,99
+              changes:
+                - date: 2027-01-01
+                  price: 1.99
+                - date: "2027-01-01"
+                  territory: USA
+                  price: "2.99"
+                - date: 2027-02-30
+                  territory: jp
+                  price: lots
+
+            """)
+        try write(app, "app.yml", in: dir)
+        let read = ManifestReader.read(dir)
+        #expect(read.manifest.app.pricing?.price == "0.99", "an unquoted price reads as written")
+        #expect(read.manifest.app.pricing?.changes?.first == AppYAML.Pricing.Change(date: "2027-01-01", price: "1.99"), "so does an unquoted date")
+        #expect(lines(dir) == [
+            "[account] appstore/app.yml: pricing.territories.CAN: 1,99 is not a price — write `free` or the customer price in CAN's currency, quoted, e.g. \"0.99\"",
+            "[account] appstore/app.yml: pricing.territories lists the base territory USA — set its price with pricing.price, and remove it from pricing.territories",
+            "[account] appstore/app.yml: pricing.territories: gb is not a territory code — use App Store Connect's three-letter codes, e.g. GBR, JPN",
+            "[account] appstore/app.yml: pricing.changes has two changes for USA on 2027-01-01 — keep one",
+            "[account] appstore/app.yml: pricing.changes: 2027-02-30 is not a date — write it as YYYY-MM-DD, quoted, e.g. \"2027-01-01\"",
+            "[account] appstore/app.yml: pricing.changes: jp is not a territory code — use App Store Connect's three-letter codes, or leave territory out for the base territory",
+            "[account] appstore/app.yml: pricing.changes: lots (2027-02-30) is not a price — write `free` or the customer price, quoted, e.g. \"0.99\"",
+        ])
+    }
+}

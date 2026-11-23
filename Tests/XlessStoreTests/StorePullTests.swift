@@ -368,3 +368,48 @@ let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
     #expect(MediaFetch.fileName(index: 12, original: nil, kind: "previews") == "12-preview.mov")
     #expect(MediaFetch.fileName(index: 1, original: "clip.mp4", kind: "previews") == "01-clip.mp4")
 }
+
+/// A price schedule with a manual price in Japan (by its relationship), one in Britain (named only by its price
+/// point's ID), and scheduled changes.
+func scheduledPricing() -> [String: (Int, String)] {
+    var routes = fakeApp()
+    let gbrPoint = Data(#"{"s":"123","t":"GBR","p":"10001"}"#.utf8).base64EncodedString()
+    routes["/v1/appPriceSchedules/PR1/manualPrices"] = (200, list([
+        #"{"type":"appPrices","id":"AP1","attributes":{"startDate":null,"endDate":"2026-01-01"},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"PP1"}},"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+        #"{"type":"appPrices","id":"AP2","attributes":{"startDate":"2026-01-01","endDate":"2027-01-01"},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"PP2"}},"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+        #"{"type":"appPrices","id":"AP3","attributes":{"startDate":"2027-01-01","endDate":null},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"PP3"}},"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+        #"{"type":"appPrices","id":"AP4","attributes":{"startDate":null,"endDate":null},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"PJ1"}},"territory":{"data":{"type":"territories","id":"JPN"}}}}"#,
+        #"{"type":"appPrices","id":"AP5","attributes":{"startDate":"2026-12-24","endDate":null},"relationships":{"appPricePoint":{"data":{"type":"appPricePoints","id":"\#(gbrPoint)"}}}}"#,
+    ], included: [
+        #"{"type":"appPricePoints","id":"PP1","attributes":{"customerPrice":"0.0"}}"#, #"{"type":"appPricePoints","id":"PP2","attributes":{"customerPrice":"1.99"}}"#,
+        #"{"type":"appPricePoints","id":"PP3","attributes":{"customerPrice":"2.99"}}"#, #"{"type":"appPricePoints","id":"PJ1","attributes":{"customerPrice":"300"}}"#,
+        #"{"type":"appPricePoints","id":"\#(gbrPoint)","attributes":{"customerPrice":"0.0"}}"#,
+    ]))
+    return routes
+}
+
+@Test func pullWritesManualPricesAndScheduledChanges() async throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("appstore")
+    let t = RoutedTransport(scheduledPricing())
+    _ = try await puller(t, FakeCDN(introStream.merging([homeURL: homePNG]) { $1 })).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    let app = try #require(read("app.yml", in: dir))
+    #expect(app.contains("""
+        pricing:
+          baseTerritory: USA
+          price: '1.99'
+          territories:
+            JPN: '300'
+          changes:
+          - date: '2026-12-24'
+            territory: GBR
+            price: free
+          - date: '2027-01-01'
+            price: '2.99'
+
+        """))
+    #expect(t.queries("/v1/appPriceSchedules/PR1/manualPrices") == [["include=appPricePoint,territory", "limit=200"]])
+    let read = ManifestReader.read(dir)
+    #expect(read.issues.isEmpty && read.manifest.app.pricing?.changes?.count == 2, "pull's pricing reads back")
+}

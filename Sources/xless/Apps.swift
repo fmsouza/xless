@@ -208,6 +208,32 @@ struct AppCLI {
         return out
     }
 
+    struct PricePoint: Encodable { var pricePoint: ASCPricePoint; var equalizations: [ASCPricePoint] }
+
+    /// The app's price points in `territory`, cheapest first; with `price`, that point and what it is in every other
+    /// territory (or the nearest points when no point has that price).
+    func pricePoints(_ argument: String, territory: String, price: String?) async throws -> String {
+        let app = try await apps.resolve(argument)
+        let points = ASCPricePoints(resources: apps.resources)
+        let list = try await points.list(app: app.id, territory: territory)
+        guard let price else {
+            if json { return try ASCOutput.json(["data": list]) }
+            if list.isEmpty { return "App Store Connect lists no price point in \(territory) for \(app.name)\n" }
+            return TextTable(["PRICE", "PROCEEDS", "CURRENCY", "ID"], list.map {
+                [CustomerPrice.display($0.customerPrice), $0.proceeds ?? "", $0.currency ?? "", $0.id]
+            }).rendered
+        }
+        let point = try ASCPricePoints.resolve(price, in: list, territory: territory, app: argument)
+        let equal = try await points.equalizations(of: point.id)
+        if json { return try ASCOutput.json(PricePoint(pricePoint: point, equalizations: equal)) }
+        var out = "\(CustomerPrice.display(point.customerPrice)) in \(territory)\(point.currency.map { " (\($0))" } ?? ""): price point \(point.id)"
+        out += point.proceeds.map { ", proceeds \($0)\n" } ?? "\n"
+        if equal.isEmpty { return out }
+        return out + "\n" + TextTable(["TERRITORY", "CURRENCY", "PRICE", "PROCEEDS"], equal.map {
+            [$0.territory, $0.currency ?? "", CustomerPrice.display($0.customerPrice), $0.proceeds ?? ""]
+        }).rendered
+    }
+
     func update(_ argument: String, primaryLocale: String?, contentRights: AppContentRights?, bundleID: String?) async throws -> String {
         let app = try await apps.resolve(argument)
         guard let updated = try await apps.update(app, primaryLocale: primaryLocale, contentRights: contentRights, bundleID: bundleID) else {

@@ -197,7 +197,14 @@ struct StorePushCommand: AsyncParsableCommand {
         locale; categories; per locale name, subtitle, privacy URLs and text, description, keywords, what's new, \
         promotional text, support and marketing URLs), review (App Review contact, notes, demo account and \
         attachments), declarations (age rating, content rights, licence agreement, export compliance and its \
-        document, accessibility), media (per locale and display type, the screenshot and preview sets).
+        document, accessibility), pricing (the price schedule: base territory and price, manual prices in other \
+        territories, scheduled changes; and the territories the app is available in; it needs no version), media (per \
+        locale and display type, the screenshot and preview sets).
+
+        Prices are customer prices (`free`, "0.99"): each must be one of the app's price points in its territory \
+        (`xless apps price-points`), else push stops before sending anything and names the nearest ones. A changed \
+        schedule is sent whole (App Store Connect replaces it), keeping the manual prices and changes app.yml does not \
+        manage.
 
         Files (screenshots, previews, attachments, the compliance document) are compared with App Store Connect's by \
         MD5, so an unchanged file is never uploaded again; a changed one replaces its upload, sets are put in the \
@@ -216,7 +223,7 @@ struct StorePushCommand: AsyncParsableCommand {
 
     @OptionGroup var directory: StoreDirOption
     @Flag(help: "Print the plan and stop: nothing is sent.") var dryRun = false
-    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, media (comma-separated, or repeated).", valueName: "parts"))
+    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, pricing, media (comma-separated, or repeated).", valueName: "parts"))
     var only: [String] = []
     @Flag(help: "Delete the localizations, media sets and files App Store Connect has and the directory does not (never the primary locale).")
     var prune = false

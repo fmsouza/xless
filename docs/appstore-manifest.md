@@ -4,8 +4,8 @@ An app's App Store listing (its text in every language, screenshots, previews, c
 contact, licence agreement, price and availability) lives in an `appstore/` directory next to the project, reviewed
 like code, the way fastlane's `deliver` keeps it. [`xless store pull`](#xless-store-pull) writes it from an app that
 already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple;
-[`xless store push`](#xless-store-push) sends what differs, screenshots and previews included. Pushing price and
-availability, and App Privacy come next in [M7](https://github.com/fmsouza/xless/issues/80).
+[`xless store push`](#xless-store-push) sends what differs, screenshots, previews, price and availability included.
+App Privacy comes next in [M7](https://github.com/fmsouza/xless/issues/80).
 
 ```text
 appstore/
@@ -111,6 +111,11 @@ eula: standard                       # Apple's licence agreement, or a custom on
 pricing:
   baseTerritory: USA
   price: free                        # or the customer price there, quoted: "0.99"
+  territories:                       # manual prices outside the base territory, in their currency (optional)
+    JPN: "150"
+  changes:                           # scheduled price changes (optional); territory defaults to the base territory
+    - { date: "2027-01-01", price: "1.99" }
+    - { date: "2027-01-01", territory: JPN, price: "300" }
 availability:
   territories: all                   # or a list of territory codes: [USA, CAN, GBR]
   newTerritories: true               # add new App Store territories automatically
@@ -129,6 +134,13 @@ xless secrets import XLESS_DEMO_PASSWORD --file demo-password.txt --kind passwor
 
 A key xless does not know is reported by `validate` (a typo guard) and kept as it is by `pull`.
 
+**Prices** are customer prices, as a customer sees them: `free`, or the price in the territory's currency (`"0.99"`,
+`"150"`), quoted. Each must be one of the app's price points in its territory: `xless apps price-points
+com.example.app --territory USA` lists them, and `--price 0.99` shows what that price becomes in every other territory
+([apple-account.md](apple-account.md#xless-apps)). Territories without a manual price follow the base price (App Store
+Connect's equalization). A change takes effect on its `date` (a day in UTC); once that day has come, `push` treats it
+as the current price and `pull` writes it as `price`.
+
 ## `xless store pull`
 
 ```sh
@@ -143,8 +155,9 @@ It reads, with the App Store Connect API key (App Manager is enough), only the d
 information (categories, age rating, name, subtitle and privacy URLs per locale); one App Store version (copyright,
 release type and date, phased release, App Review contact, demo account name and notes, and per locale the
 description, keywords, what's new, promotional text, support and marketing URLs, screenshots and previews); the custom
-licence agreement; the latest encryption declaration; accessibility declarations; the price in the base territory; and
-availability. A part the app does not have is left out (or written as its default: `eula: standard`, `phased: false`);
+licence agreement; the latest encryption declaration; accessibility declarations; the price schedule (the base
+territory's current price, manual prices in other territories, changes to come; past prices are history and left
+out); and availability. A part the app does not have is left out (or written as its default: `eula: standard`, `phased: false`);
 a part the key's role may not read keeps the value `app.yml` already had, with a note.
 
 - **The version** is the one being prepared if there is one, else the one on the App Store, else the newest;
@@ -193,7 +206,9 @@ It checks:
   must have a directory), version, content rights, category IDs (at most two subcategories), release type and date,
   the App Review contact's email, the demo account's `passwordSecret` (a secret name), the custom licence file, the
   review attachments and compliance document (files inside `appstore/`, each listed once, not empty), the preview
-  poster frames (`HH:MM:SS:FF`, a preview of the directory), the price and territory codes.
+  poster frames (`HH:MM:SS:FF`, a preview of the directory), prices (`free` or a number with a dot), territory codes,
+  price change dates (`YYYY-MM-DD`, one change per territory and day), and that `pricing.territories` does not list the
+  base territory.
 - Text: name and subtitle 30 characters, keywords 100 bytes (UTF-8), promotional text 170, description and what's new
   4000; a name of at least 2; URLs are `http(s)` with a host; locale directories are App Store Connect's codes.
 - Media: screenshots are PNG or JPEG (read from the file, not its name), without transparency, in a size of their display
@@ -214,6 +229,7 @@ xless store push --dry-run                 # the plan: what differs, nothing sen
 xless store push                           # send it
 xless store push --only text,review        # some parts only
 xless store push --only media              # screenshots and previews only
+xless store push --only pricing            # price schedule and availability only
 xless store push --prune                   # also delete locales, media sets and files the directory does not have
 ```
 
@@ -257,6 +273,23 @@ The parts, in the order they are sent (`--only` chooses):
   declaration's document be replaced, so a changed one waits for the next new declaration) and accessibility
   (per device family in `app.yml`, the draft declaration is updated, or a new one created, and published; a draft that
   already has `app.yml`'s answers is published).
+- **`pricing`**: the price schedule and availability, which belong to the app, not to a version (so `--only pricing`
+  works before the version exists).
+  - **The price schedule** is compared as a whole: the base territory, and each territory's current price and changes
+    to come, as numbers (`0.99` is `0.990`, `free` is `0.0`). When anything differs, the whole schedule is sent
+    (`POST /v1/appPriceSchedules`: App Store Connect replaces it), with each price resolved to the price point with
+    exactly that customer price; a price that is no price point stops the push before anything is sent, naming the
+    nearest points. Absent keys are carried over from App Store Connect: no `territories` keeps its manual prices
+    outside the base territory, no `changes` keeps its scheduled changes, no `price` keeps the base price (changing
+    `baseTerritory` needs a `price`, in that territory's currency; the old base territory's prices are not carried
+    over, so it follows the new base unless `territories` gives it one); `territories: {}` and `changes: []` remove
+    them. If App Store Connect's schedule has a price xless cannot read, `push` refuses to replace it.
+  - **Availability**: an app with none gets one (`territories` and `newTerritories`, which defaults to `true` for
+    `territories: all`, else `false`), listing every territory App Store Connect knows as available or not. Afterwards,
+    each territory whose availability differs is changed on its own; taking the app off sale in a territory is shown
+    as a deletion (`- availability in CAN`) and asked first (or `--yes`). App Store Connect's API sets `newTerritories`
+    only when the availability is created: a different value later is a note, not a change. A territory App Store
+    Connect does not list for the app stops the push.
 - **`media`**: per locale and display (or preview) type, the screenshot and preview sets: created when App Store
   Connect has none (in a locale the `text` part creates, too), new and changed files uploaded, the set put in the
   directory's order, and poster frames (`previewFrames`) set.
@@ -287,7 +320,7 @@ What `push` leaves alone:
   not: reported and kept (after the directory's files), and deleted with `--prune`. A set that would then hold more than
   Apple allows (10 screenshots, 3 previews) stops the push before anything is sent. An upload `pull` could not download
   (`media.lock` without `md5`) is part of the directory and stays where it is;
-- price and availability, and App Privacy, which later versions of `push` send.
+- App Privacy, which a later version of `push` sends.
 
 **The demo account's password** comes from the secret `review.demoAccount.passwordSecret` names: the secret store's
 entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.md)). App Store Connect never gives it

@@ -201,11 +201,28 @@ public struct AppYAML: Codable, Sendable, Equatable {
         }
     }
 
+    /// The price schedule. Absent keys are not managed: `store push` keeps what App Store Connect has for them.
     public struct Pricing: Codable, Sendable, Equatable {
+        /// A scheduled price change: from `date` (YYYY-MM-DD) on, `territory` (default: the base territory) costs `price`.
+        public struct Change: Codable, Sendable, Equatable {
+            public var date: String
+            public var territory: String?
+            public var price: String
+            public init(date: String, territory: String? = nil, price: String) { self.date = date; self.territory = territory; self.price = price }
+        }
+
         public var baseTerritory: String?
         /// `free`, or the customer price in the base territory's currency ("0.99").
         public var price: String?
-        public init(baseTerritory: String? = nil, price: String? = nil) { self.baseTerritory = baseTerritory; self.price = price }
+        /// Manual prices outside the base territory (territory → customer price in its currency); the others follow
+        /// the base price.
+        public var territories: SortedMap<String>?
+        /// Scheduled changes, by date.
+        public var changes: [Change]?
+
+        public init(baseTerritory: String? = nil, price: String? = nil, territories: SortedMap<String>? = nil, changes: [Change]? = nil) {
+            self.baseTerritory = baseTerritory; self.price = price; self.territories = territories; self.changes = changes
+        }
     }
 
     public struct Availability: Codable, Sendable, Equatable {

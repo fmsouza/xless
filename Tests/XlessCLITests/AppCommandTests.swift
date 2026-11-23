@@ -244,3 +244,61 @@ private func creation(api: FakeAPI?, web: FakeWeb, answer: Bool = true, said: Sa
     unknownIssuer.issuer = nil
     #expect(try await creation(api: FakeAPI(), web: unknownIssuer).run(request)?.created == [made], "App Store Connect not saying is not a mismatch")
 }
+
+// MARK: - price-points
+
+private func point(_ id: String, _ price: String, _ proceeds: String, _ territory: String = "USA") -> String {
+    #"{"type":"appPricePoints","id":"\#(id)","attributes":{"customerPrice":"\#(price)","proceeds":"\#(proceeds)"},"relationships":{"territory":{"data":{"type":"territories","id":"\#(territory)"}}}}"#
+}
+private func points(_ items: [String], currencies: [(String, String)]) -> String {
+    let included = currencies.map { #"{"type":"territories","id":"\#($0.0)","attributes":{"currency":"\#($0.1)"}}"# }
+    return #"{"data":[\#(items.joined(separator: ","))],"included":[\#(included.joined(separator: ","))],"links":{"self":"x"}}"#
+}
+private let usa = points([point("P1", "0.99", "0.7"), point("P0", "0.0", "0.0"), point("P2", "1.29", "0.91")], currencies: [("USA", "USD")])
+private let shown = #"{"data":\#(app("9", "com.example.app"))}"#
+
+@Test func pricePointsListsATerritorysPointsCheapestFirst() async throws {
+    let t = FakeTransport([(200, shown), (200, usa)])
+    #expect(try await cli(t).pricePoints("9", territory: "USA", price: nil) == """
+        PRICE  PROCEEDS  CURRENCY  ID
+        free   0.0       USD       P0
+        0.99   0.7       USD       P1
+        1.29   0.91      USD       P2
+
+        """)
+    #expect(t.requests[1].url!.path == "/v1/apps/9/appPricePoints")
+    #expect(t.requests[1].url!.query?.contains("filter%5Bterritory%5D=USA") == true || t.requests[1].url!.query?.contains("filter[territory]=USA") == true)
+}
+
+@Test func aPriceShowsItsPointInEveryTerritory() async throws {
+    let equal = points([point("Q2", "150", "105", "JPN"), point("Q1", "0.99", "0.66", "GBR")], currencies: [("JPN", "JPY"), ("GBR", "GBP")])
+    let t = FakeTransport([(200, shown), (200, usa), (200, equal)])
+    #expect(try await cli(t).pricePoints("9", territory: "USA", price: "0.990") == """
+        0.99 in USA (USD): price point P1, proceeds 0.7
+
+        TERRITORY  CURRENCY  PRICE  PROCEEDS
+        GBR        GBP       0.99   0.66
+        JPN        JPY       150    105
+
+        """)
+    #expect(t.requests[2].url!.path == "/v3/appPricePoints/P1/equalizations")
+
+    let j = FakeTransport([(200, shown), (200, usa), (200, equal)])
+    let json = try await cli(j, json: true).pricePoints("9", territory: "USA", price: "free")
+    #expect(json.contains("\"pricePoint\" : {") && json.contains("\"equalizations\" : [") && json.contains("\"customerPrice\" : \"0.0\""))
+}
+
+@Test func aPriceThatIsNoPointNamesTheNearest() async throws {
+    let t = FakeTransport([(200, shown), (200, usa)])
+    await #expect(throws: XlessError(.account, "1.00 is not a price point in USA; the nearest are 0.99 and 1.29",
+                                     fix: "use one of them (`xless apps price-points 9 --territory USA` lists every price point)")) {
+        _ = try await cli(t).pricePoints("9", territory: "USA", price: "1.00")
+    }
+}
+
+@Test func pricePointsChecksItsOptions() throws {
+    #expect(throws: (any Error).self) { try AppsPricePointsCommand.parse(["com.example.app", "--territory", "us"]) }
+    #expect(throws: (any Error).self) { try AppsPricePointsCommand.parse(["com.example.app", "--price", "$1"]) }
+    let ok = try AppsPricePointsCommand.parse(["com.example.app", "--territory", "jpn", "--price", "free"])
+    #expect(ok.territory == "jpn" && ok.price == "free")
+}
