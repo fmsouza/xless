@@ -82,7 +82,12 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   XLESS_DIST_KEY_FILE=$HOME/keys/dist-key.pem    # Apple Distribution private key
   XLESS_DEVID_KEY_FILE=$HOME/keys/devid-key.pem  # Developer ID private key (macOS DMG only)
   XLESS_INSTALLER_KEY_FILE=$HOME/keys/installer-key.pem  # Mac Installer Distribution private key (macOS App-Store lane only)
+  XLESS_DEMO_PASSWORD_FILE=$HOME/keys/demo-password  # TestFlight demo account's password (testflight.external.review.demoAccount)
   ```
+
+  The TestFlight demo account's password (`<passwordSecret>_FILE` when xless.yml or the overlay names its own secret)
+  is needed only by a run that uploads with `testflight.external.review.demoAccount`, and only the upload gets it
+  ([secrets.md](secrets.md#xless-run-and-docker-builds)).
 
 - **Native or images.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
   ([native-install.md](native-install.md)); a project pinning another Xcode with `xcode:` is refused until you run

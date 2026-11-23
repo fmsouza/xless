@@ -105,6 +105,15 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   one on a disk) the run refuses, unless you pass `--allow-disk-secrets`: then they go to
   `~/.cache/xless/secrets/<random>/` (under your home directory, which Colima and Docker Desktop share with their VM)
   for the length of the run. The script runs this as `xless secrets materialize` (not listed in `--help`).
+- **The TestFlight demo account's password** (a run that uploads with `testflight.external.review.demoAccount` in
+  [xless.yml](xless-yml.md#testflight) or the overlay) goes to the container that uploads only: step 3, the project's
+  one container, or the macOS App-Store ship; never to step 1 or the build. Its secret is `passwordSecret`
+  (`XLESS_DEMO_PASSWORD` by default), a name of your own if you like (`NAME@<TEAM_ID>` too); the xless on your machine
+  reads it from the configuration (`xless secrets named-by`, not listed in `--help`). `NAME_FILE` wins, mounted
+  read-only into that container; otherwise it comes from the store like the keys, from an entry of kind `password`.
+  Apple never gives the password back, so xless sends it only when the demo account is new, renamed or newly required:
+  a store without it stops nothing up front, the run says so, and only an upload that must send it fails. A demo
+  account with `required: false` is never sent a password, and nothing is given.
 
 CI keeps using the environment and `_FILE` variables, and never opens the store.
 
