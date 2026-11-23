@@ -108,7 +108,7 @@ struct StorePullCommand: AsyncParsableCommand {
             let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
             let found = try await ASCApps(resources: session.resources).resolve(wanted)
             let client = session.client
-            let pull = StorePull(resources: session.resources, download: { url in try await StoreDownload.fetch(url, client: client) },
+            let pull = StorePull(resources: session.resources, download: { url, file in try await StoreDownload.fetch(url, to: file, client: client) },
                                  say: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) })
             let report = try await pull.run(app: found, platform: platform, selection: selection, into: dir)
             print(output.json ? try ASCOutput.json(report) : report.text, terminator: "")
@@ -117,17 +117,47 @@ struct StorePullCommand: AsyncParsableCommand {
 }
 
 enum StoreDownload {
-    /// A media file from App Store Connect's delivery network: https only, no credentials sent, retried like API calls.
-    static func fetch(_ url: URL, client: ASCClient) async throws -> Data {
+    /// A media file from App Store Connect's delivery network into a new file at `file`, written as it arrives (a
+    /// preview can be large): https only, no credentials sent, retried like API calls, each attempt starting the file
+    /// again.
+    static func fetch(_ url: URL, to file: URL, client: ASCClient) async throws {
         guard url.scheme == "https" else {
             throw XlessError(.account, "App Store Connect gave a media URL that is not https", fix: "re-run; if it persists, report it")
         }
+        var sink: FileSink?
+        defer { sink?.close() }
         do {
-            return try await client.raw(URLRequest(url: url)).0
+            try await client.download(URLRequest(url: url)) {
+                sink?.close()
+                let fresh = try FileSink(file)
+                sink = fresh
+                return { try fresh.write($0) }
+            }
         } catch let e as ASCError {
             throw XlessError(.account, "downloading \(url.lastPathComponent) from App Store Connect failed (HTTP \(e.status))",
                              fix: "re-run `xless store pull`; nothing was changed")
+        } catch let e as FileSink.WriteError {
+            throw XlessError(.account, "writing \(url.lastPathComponent) failed: \(e.description)", fix: "check the free space, then re-run `xless store pull`; nothing was changed")
         }
+    }
+
+    /// One download attempt's file: created empty (or emptied), written piece by piece.
+    final class FileSink: @unchecked Sendable {
+        struct WriteError: Error, CustomStringConvertible { let description: String }
+        private let handle: FileHandle
+        private let lock = NSLock()
+
+        init(_ file: URL) throws {
+            let fd = open(file.path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o644)
+            guard fd >= 0 else { throw WriteError(description: String(cString: strerror(errno))) }
+            handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        }
+
+        func write(_ data: Data) throws {
+            do { try lock.withLock { try handle.write(contentsOf: data) } } catch { throw WriteError(description: "\(error.localizedDescription)") }
+        }
+
+        func close() { lock.withLock { try? handle.close() } }
     }
 }
 

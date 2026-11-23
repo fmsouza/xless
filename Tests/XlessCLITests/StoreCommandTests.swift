@@ -4,6 +4,9 @@ import XlessASC
 import XlessCore
 import XlessStore
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @testable import xless
 
@@ -227,4 +230,41 @@ private let target = StorePrivacyCLI.Target(id: "123", name: "com.example.app")
     #expect(said.lines == ["note: the Apple ID web session could not be opened (your Apple ID belongs to 2 teams and none was chosen); the privacy part is skipped"])
     await #expect(throws: XlessError.self) { _ = try await StorePrivacyCLI.webForStorePush(explicit: true, say: { _ in }, open: failing) }
     #expect(try await StorePrivacyCLI.webForStorePush(explicit: false, say: { _ in }, open: { "session" }) == "session")
+}
+
+/// Streams a body in pieces; the first attempt drops the connection after its first piece.
+private final class DroppingCDN: HTTPTransport, @unchecked Sendable {
+    let lock = NSLock()
+    var attempts = 0
+    let status: Int
+    init(status: Int = 200) { self.status = status }
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) { fatalError("streamed only") }
+    func stream(_ request: URLRequest, chunk: @escaping @Sendable (Data) throws -> Void) async throws -> (HTTPURLResponse, Data) {
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil, "no credentials to the delivery network")
+        let attempt = lock.withLock { attempts += 1; return attempts }
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        guard status == 200 else { return (response, Data()) }
+        try chunk(Data("first-try ".utf8))
+        if attempt == 1 { throw URLError(.networkConnectionLost) }
+        try chunk(Data("whole".utf8))
+        return (response, Data())
+    }
+}
+
+@Test func aMediaDownloadIsWrittenAsItArrivesAndARetryStartsTheFileAgain() async throws {
+    let root = try manifest([:])
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("01-home.png")
+    let cdn = DroppingCDN()
+    let client = ASCClient(credentials: ASCCredentials(keyID: "K", issuerID: "I", privateKeyPEM: ""), transport: cdn, sleep: { _ in })
+    try await StoreDownload.fetch(URL(string: "https://is1-ssl.mzstatic.com/a/home.png")!, to: file, client: client)
+    #expect(cdn.attempts == 2)
+    #expect(String(decoding: try Data(contentsOf: file), as: UTF8.self) == "first-try whole", "the failed attempt's bytes are gone")
+
+    let missing = ASCClient(credentials: ASCCredentials(keyID: "K", issuerID: "I", privateKeyPEM: ""), transport: DroppingCDN(status: 404), sleep: { _ in })
+    await #expect { try await StoreDownload.fetch(URL(string: "https://is1-ssl.mzstatic.com/a/gone.png")!, to: file, client: missing) }
+        throws: { "\($0)".contains("downloading gone.png from App Store Connect failed (HTTP 404)") }
+    await #expect { try await StoreDownload.fetch(URL(string: "http://is1-ssl.mzstatic.com/a/home.png")!, to: file, client: client) }
+        throws: { "\($0)".contains("not https") }
 }

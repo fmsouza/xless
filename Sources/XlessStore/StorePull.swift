@@ -52,11 +52,12 @@ public struct StorePull: Sendable {
     public static let defaultDemoSecret = "XLESS_DEMO_PASSWORD"
 
     public let asc: StoreASC
-    /// Fetches a media file from its delivery URL (https, no credentials).
-    public let download: @Sendable (URL) async throws -> Data
+    /// Fetches a media file from its delivery URL (https, no credentials) into a new file (the second URL), a piece
+    /// at a time. Pull calls it `downloadConcurrency` times at once.
+    public let download: @Sendable (URL, URL) async throws -> Void
     public let say: @Sendable (String) -> Void
 
-    public init(resources: ASCResources, download: @escaping @Sendable (URL) async throws -> Data, say: @escaping @Sendable (String) -> Void = { _ in }) {
+    public init(resources: ASCResources, download: @escaping @Sendable (URL, URL) async throws -> Void, say: @escaping @Sendable (String) -> Void = { _ in }) {
         asc = StoreASC(resources: resources, say: say)
         self.download = download
         self.say = say
@@ -222,6 +223,21 @@ public struct StorePull: Sendable {
             say("note: \(path) is not on App Store Connect (never uploaded), so the pulled listing does not have it")
         }
         for (path, entry) in pulled.lock { lock.files[path] = entry }
+        // Apple's copies, read last, several at once.
+        let queue = media.downloads + pulled.downloads
+        let outcomes = try await downloadAll(queue)
+        for item in queue {
+            switch outcomes[item.path] {
+            case .file(let md5)?:
+                files[item.path] = .file(item.staged)
+                lock.files[item.path] = MediaLock.Entry(md5: md5, appleChecksum: item.appleChecksum, id: item.id)
+                if item.counted { report.downloaded += 1 }
+            case .stream?, nil:
+                report.skipped.append("\(item.path) (App Store Connect serves it only as a stream)")
+                lock.files[item.path] = MediaLock.Entry(md5: nil, appleChecksum: item.appleChecksum, id: item.id)
+                manifest.dropFile(item.path)
+            }
+        }
         try ManifestWriter.write(manifest, files: files, lock: lock, to: dir)
         return report
     }
@@ -391,7 +407,22 @@ private extension SortedMap {
     var nonEmpty: SortedMap? { isEmpty ? nil : self }
 }
 
-/// Fetching one set's media: keep the local original of an unchanged upload, else download Apple's copy.
+extension StoreManifest {
+    /// Takes a version screenshot or preview out of its set and its poster frame out of app.yml (a download that
+    /// turned out to be a stream).
+    mutating func dropFile(_ path: String) {
+        guard let locale = path.split(separator: "/").first.map(String.init), var listing = locales[locale] else { return }
+        for i in listing.screenshots.indices { listing.screenshots[i].files.removeAll { $0 == path } }
+        for i in listing.previews.indices { listing.previews[i].files.removeAll { $0 == path } }
+        locales[locale] = listing
+        if var frames = app.previewFrames {
+            frames[path] = nil
+            app.previewFrames = frames.isEmpty ? nil : frames
+        }
+    }
+}
+
+/// Fetching one set's media: keep the local original of an unchanged upload, else queue Apple's copy.
 struct MediaFetch {
     let pull: StorePull
     let dir: URL
@@ -399,6 +430,8 @@ struct MediaFetch {
     let oldLock: MediaLock
     /// Poster frames of the previews written: path → `previewFrameTimeCode`.
     var frames: [String: String] = [:]
+    /// Apple's copies to download once everything is read (their paths are already in the sets).
+    var downloads: [MediaDownload] = []
 
     mutating func fetch(_ set: StoreRemoteSet, kind: String, locale: String, files: inout [String: ManifestWriter.Content],
                         lock: inout MediaLock, report: inout StorePull.Report) async throws -> MediaSet {
@@ -421,18 +454,8 @@ struct MediaFetch {
                 lock.files[path] = MediaLock.Entry(md5: nil, appleChecksum: a.sourceFileChecksum, id: item.id)
                 continue
             }
-            let data = try await pull.download(url)
-            if kind == "previews", data.starts(with: Data("#EXTM3U".utf8)) {
-                report.skipped.append("\(path) (App Store Connect serves it only as a stream)")
-                lock.files[path] = MediaLock.Entry(md5: nil, appleChecksum: a.sourceFileChecksum, id: item.id)
-                continue
-            }
-            let staged = staging.appendingPathComponent(path)
-            try FileManager.default.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: staged)
-            files[path] = .file(staged)
-            lock.files[path] = MediaLock.Entry(md5: MD5Hex.of(data), appleChecksum: a.sourceFileChecksum, id: item.id)
-            report.downloaded += 1
+            downloads.append(MediaDownload(path: path, url: url, staged: staging.appendingPathComponent(path), appleChecksum: a.sourceFileChecksum,
+                                           id: item.id, preview: kind == "previews", counted: true))
             paths.append(path)
             if kind == "previews", let frame = a.previewFrameTimeCode { frames[path] = frame }
         }
