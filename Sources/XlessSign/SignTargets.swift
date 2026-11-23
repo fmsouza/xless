@@ -20,7 +20,7 @@ struct SignTarget {
     var entitlements: [String: Any]
 }
 
-enum SignTargets {
+public enum SignTargets {
     /// Where an iOS app keeps app extensions; each one is signed with its own profile.
     static let extensionDirs = ["PlugIns", "Extensions"]
     /// Nested apps xless does not sign yet.
@@ -121,6 +121,12 @@ enum SignTargets {
 
     static func isSymlink(_ path: String) -> Bool {
         (try? FileManager.default.attributesOfItem(atPath: path)[.type] as? FileAttributeType) == .typeSymbolicLink
+    }
+
+    /// The bundles the build recorded (`entitlements.json`): path ("" for the app), bundle ID and entitlements, sorted
+    /// by path (`xless provision` reads it before a build has been signed).
+    public static func recorded(_ file: URL) throws -> [(path: String, bundleID: String, entitlements: [String: Any])] {
+        try read(file).sorted { $0.key < $1.key }.map { ($0.key, $0.value.bundleID, $0.value.entitlements) }
     }
 
     struct Entry { var bundleID: String; var entitlements: [String: Any] }

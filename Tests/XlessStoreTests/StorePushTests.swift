@@ -138,6 +138,16 @@ private func synced() -> [String: (Int, String)] {
     #expect(keep.notes.contains("app info en-US is the primary locale: never deleted"))
 }
 
+@Test func holdDeletesLeavesEveryDeletionOutOfThePlan() async throws {
+    let (root, dir) = try await pulled(synced())
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.removeItem(at: dir.appendingPathComponent("de-DE"))
+    let t = RoutedTransport(synced())
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: manifest(dir), dir: dir, options: .init(prune: true, holdDeletes: true))
+    #expect(plan.changes.isEmpty && plan.deletes.isEmpty)
+    #expect(plan.held.map(\.text) == ["- app info de-DE", "- version text de-DE"])
+}
+
 /// The fake app with only its live version 1.0: a manifest for 1.2 creates the version.
 private func liveOnly() -> [String: (Int, String)] {
     var routes = fakeApp()
