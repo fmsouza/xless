@@ -99,7 +99,7 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
         """)
 
     @Argument(help: ArgumentHelp("The bundle identifier.", valueName: "identifier")) var identifier: String
-    @Option(help: ArgumentHelp("The name the portal shows: ASCII letters, digits and spaces.", valueName: "name")) var name: String?
+    @Option(help: ArgumentHelp("The name the portal shows: ASCII letters, digits and spaces (default: xless and the identifier's words, the name `sign` and `provision` give).", valueName: "name")) var name: String?
     @OptionGroup var platform: BundleIDPlatformOption
     @OptionGroup var team: TeamOption
     @OptionGroup var output: JSONOption
@@ -107,16 +107,14 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
 
     func validate() throws {
         do {
-            let id = try BundleIdentifier.validate(identifier)
-            if let name { try PortalName.validate(name) } else if PortalName.from(identifier: id).isEmpty {
-                throw IdentifierInputError("\(id) has no letters or digits to name it after: give --name")
-            }
+            _ = try BundleIdentifier.validate(identifier)
+            if let name { try PortalName.validate(name) }
         } catch let e as IdentifierInputError { throw ValidationError(e.description) }
     }
 
     func run() async throws {
         let identifier = try BundleIdentifier.validate(identifier)
-        let name = name?.trimmingCharacters(in: .whitespaces) ?? PortalName.from(identifier: identifier)
+        let name = name?.trimmingCharacters(in: .whitespaces) ?? PortalName.bundleID(for: identifier)
         try await runBundleIDs(team.team, verbose: trace.verbose) {
             try await $0.with(json: output.json).create(identifier: identifier, name: name, platform: platform.value ?? .universal)
         }

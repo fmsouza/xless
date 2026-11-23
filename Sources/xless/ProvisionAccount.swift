@@ -135,7 +135,7 @@ struct APIProvisionAccount: ProvisionAccount {
     func bundleID(_ identifier: String) async throws -> String? { try await bundleIDs.find(identifier: identifier)?.id }
 
     func register(bundleID identifier: String) async throws -> String {
-        try await bundleIDs.create(identifier: identifier, name: PortalName.from(identifier: identifier), platform: .universal).bundleID.id
+        try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal).bundleID.id
     }
 
     func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability] {

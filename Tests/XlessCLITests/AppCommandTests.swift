@@ -169,7 +169,7 @@ private func creation(api: FakeAPI?, web: FakeWeb, answer: Bool = true, said: Sa
     let asked = Said()
     _ = try await creation(api: api, web: web, asked: asked).run(request)
     #expect(api.calls == ["find com.example.app", "has com.example.app", "register com.example.app"])
-    #expect(asked.lines.first?.contains("Register it now (universal, named \"com example app\")") == true)
+    #expect(asked.lines.first?.contains("Register it now (universal, named \"xless com example app\")") == true)
     #expect(web.calls == ["create com.example.app"])
 
     let declined = FakeAPI(hasBundle: false)

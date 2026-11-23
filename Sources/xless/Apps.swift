@@ -59,7 +59,7 @@ struct KeyAppCreationAPI: AppCreationAPI {
     func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
     func hasBundleID(_ identifier: String) async throws -> Bool { try await bundleIDs.find(identifier: identifier) != nil }
     func registerBundleID(_ identifier: String) async throws {
-        _ = try await bundleIDs.create(identifier: identifier, name: PortalName.from(identifier: identifier), platform: .universal)
+        _ = try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal)
     }
 }
 
@@ -108,7 +108,7 @@ struct AppCreation {
         if let api {
             try await sameTeam(api, web)
             if !(try await api.hasBundleID(bundle)) {
-                let question = "Bundle ID \(bundle) is not registered on this team, and an app needs one. Register it now (universal, named \"\(PortalName.from(identifier: bundle))\")?"
+                let question = "Bundle ID \(bundle) is not registered on this team, and an app needs one. Register it now (universal, named \"\(PortalName.bundleID(for: bundle))\")?"
                 guard try confirm(question, "registering bundle ID \(bundle)") else {
                     say("cancelled; nothing was sent")
                     return nil

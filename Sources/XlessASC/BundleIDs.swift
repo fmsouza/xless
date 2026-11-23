@@ -51,6 +51,12 @@ public enum PortalName {
         let mapped = String(identifier.unicodeScalars.map { s in s.isASCII && CharacterSet.alphanumerics.contains(s) ? Character(s) : " " })
         return String(mapped.split(separator: " ").joined(separator: " ").prefix(255))
     }
+
+    /// The name xless gives a bundle ID it registers (`sign`, `provision`, `apps create`, `bundle-ids create` without
+    /// `--name`): `com.example.my-app` → `xless com example my app`.
+    public static func bundleID(for identifier: String) -> String {
+        String(("xless " + from(identifier: identifier)).trimmingCharacters(in: .whitespaces).prefix(255))
+    }
 }
 
 public enum BundleIDPlatform: String, Codable, Sendable, CaseIterable {

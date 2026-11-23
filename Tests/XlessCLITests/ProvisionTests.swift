@@ -335,6 +335,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(plan.steps.filter(\.web).map(\.area) == [.appGroups, .iCloudContainers, .keys, .app, .privacy])
     let app = try #require(plan.steps.first { $0.area == .app })
     #expect(app.details == ["\"Example\", SKU EX1, primary locale en-US, IOS version 1.0"], "a Developer ID Mac app is not on the App Store")
+    #expect(plan.steps[0].details == ["registered as universal (iOS and macOS), named \"xless com example app\""], "the name `sign` gives it")
     #expect(plan.text.contains("16 steps to apply (5 through the Apple ID web session)"))
     #expect(s.world.writes.isEmpty, "planning only reads")
     let json = try ASCOutput.json(plan)

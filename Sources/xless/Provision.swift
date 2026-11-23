@@ -212,7 +212,7 @@ struct ProvisionPlanner {
     func planBundleIDs(_ plan: inout ProvisionPlan) async throws {
         for id in inputs.bundleIDs {
             if let resource = try await account.bundleID(id) { plan.known.bundles[id] = resource; continue }
-            plan.add(.bundleIDs, .create, id, ["registered as universal (iOS and macOS), named \"\(PortalName.from(identifier: id))\""], .bundleID(id))
+            plan.add(.bundleIDs, .create, id, ["registered as universal (iOS and macOS), named \"\(PortalName.bundleID(for: id))\""], .bundleID(id))
         }
     }
 
