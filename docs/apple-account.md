@@ -137,9 +137,12 @@ Account Holder may first have to request API access once, at App Store Connect >
 4. checks it with one documented call (`GET /v1/apps?limit=1`; a brand-new key can be refused for a few seconds, so a
    401 is retried a few times) before reporting success.
 
-If anything fails once the key exists (the download, the store, a body xless cannot read), the error says that key
-`<KEY_ID>` exists, that xless does not have its private key and that it cannot be downloaded again: revoke it with
-`xless auth api-key revoke <KEY_ID>`.
+If anything fails once the key exists (the download, a body xless cannot read), the error says that key `<KEY_ID>`
+exists, that xless does not have its private key and that it cannot be downloaded again: revoke it with
+`xless auth api-key revoke <KEY_ID>`. When only the store fails, the key is not lost: xless writes it to a new 0600
+file (in `$XDG_RUNTIME_DIR`, or where the terminal says) and the error gives the `xless secrets import` command that
+stores it with its IDs and role ([secrets.md](secrets.md#when-the-helper-cannot-keep-a-key-apple-offers-once)). With a
+credential helper, the helper must first pass a test write, so a broken one stops `create` before the key exists.
 
 Pick the narrowest role that covers what you plan: `APP_MANAGER` works for apps, the listing, TestFlight, builds and
 the release; bundle IDs, capabilities, devices, certificates and profiles (so `xless provision` and a first `sign`),
@@ -510,9 +513,11 @@ MapKit, WeatherKit and the other services are not supported: their service IDs a
    `XLESS_AUTH_KEY` for several services) with its key ID, team and services; when the team already has an entry
    of that name, `<name>.<KEY_ID>@<TEAM_ID>`, so a lookup of the name stays unambiguous. Then it reports.
 
-If anything fails once the key exists (the download, the store, an answer xless cannot read), the error says that key
+If anything fails once the key exists (the download, an answer xless cannot read), the error says that key
 `<KEY_ID>` exists, that xless does not have its `.p8` and that it cannot be downloaded again: revoke it with
-`xless keys revoke <KEY_ID>`. The `.p8` is never written to a file: `xless secrets export <entry> --out
+`xless keys revoke <KEY_ID>`. When only the store fails, the `.p8` is written to a new 0600 file instead (in
+`$XDG_RUNTIME_DIR`, or where the terminal says), and the error gives the `xless secrets import` command that stores it
+([secrets.md](secrets.md#when-the-helper-cannot-keep-a-key-apple-offers-once)). Otherwise the `.p8` is never written to a file: `xless secrets export <entry> --out
 AuthKey_<KEY_ID>.p8` does that when a server needs one ([secrets.md](secrets.md)).
 
 `revoke` reads the key, asks before it revokes (Apple cannot undo it; every server signing with it stops working),

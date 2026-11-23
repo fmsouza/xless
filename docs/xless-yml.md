@@ -72,7 +72,7 @@ testflight:
 | `external.testers` | list | no | Added to every external group: any address (Apple emails them), as in `testers`. |
 | `external.submit` | boolean | no | Submit the build for beta app review (default `true`): external testers get a build once Apple approves it. |
 | `external.info` | map | no | The beta information of `locale`: `description` (at most 4000 characters), `feedbackEmail`, `marketingUrl`, `privacyPolicyUrl`. |
-| `external.review` | map | no | Beta App Review's `contact` (`firstName`, `lastName`, `phone`, `email`), `notes` and `demoAccount` (`name`, `required`, `passwordSecret`: the secret holding the password, default `XLESS_DEMO_PASSWORD`; never the password itself). |
+| `external.review` | map | no | Beta App Review's `contact` (`firstName`, `lastName`, `phone`, `email`), `notes` and `demoAccount` (`name`, `required`, `passwordSecret`: the secret holding the password, default `XLESS_DEMO_PASSWORD`; never the password itself, a key's or token's name, nor a variable the system, the shell or xless uses, such as `PATH`, `HOME`, `ENV` or `XLESS_*`: [config] error). |
 
 After `upload` reaches `VALID`, xless (iOS, and the macOS App Store package):
 

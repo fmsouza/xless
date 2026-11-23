@@ -345,7 +345,10 @@ entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.m
 back, so it cannot be compared: `push` sends it when it creates the review details with a required demo account, when
 the demo account becomes required or its name changes, and with `--resend-demo-account` (after changing the
 password). `passwordSecret` may not name one of xless's keys or anything named like a key or token (`ASC_*`, `*_KEY`,
-`*_TOKEN`, `*_P8`, `*_PEM`, `*_SECRET`): its value would be sent to App Store Connect, where App Review reads it. It is read once, before anything is sent (a missing secret sends nothing), goes into that one request, sent
+`*_TOKEN`, `*_P8`, `*_PEM`, `*_SECRET`): its value would be sent to App Store Connect, where App Review reads it. Nor
+may it name a variable something else relies on: the system's or the shell's (`PATH`, `HOME`, `ENV`, `IFS`, `LANG`,
+`LC_*`, `LD_*`, `XDG_*`, `SSH_*`, …), one of xless's own (`XLESS_*` other than `XLESS_DEMO_PASSWORD`, `*_FILE`) or of its
+scripts (`TEAM`, `NAME`, `SIM`, …); case does not matter. It is read once, before anything is sent (a missing secret sends nothing), goes into that one request, sent
 once and never retried, and is never printed, written, or shown in a `--verbose` trace or an error, even when App Store
 Connect's answer repeats it.
 

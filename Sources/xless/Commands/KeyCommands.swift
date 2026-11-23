@@ -111,11 +111,14 @@ struct KeysCreateCommand: AsyncParsableCommand {
         discussion: AppleWebHelp.note + """
 
 
-        Needs a secret store (`xless secrets init`); it is unlocked before anything is created. xless first lists the \
+        Needs a secret store (`xless secrets init`); it is unlocked (a credential helper must pass a test write) before \
+        anything is created. xless first lists the \
         team's keys: a name already used, or a service at Apple's limit (two APNs keys per team; the error lists them), \
         stops it before anything is sent. The create request is sent once, never retried. Apple offers the new key's \
         .p8 once: xless downloads it once and seals it into the store. If anything fails once the key exists, the error \
-        says so: the key cannot be downloaded again and should be revoked (`xless keys revoke <KEY_ID>`).
+        says so: the key cannot be downloaded again and should be revoked (`xless keys revoke <KEY_ID>`); if only the \
+        store failed, the .p8 is saved to a new 0600 file ($XDG_RUNTIME_DIR, or a path asked on the terminal) and the \
+        error gives the `xless secrets import` command that stores it.
 
         An APNs key works for every app of the team, in the sandbox and production environments.
         """)
