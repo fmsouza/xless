@@ -10,7 +10,9 @@ Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows 
 [`xless certs`](#xless-certs), which creates, downloads and revokes certificates of every type with their private keys
 in the secret store, [`xless profiles`](#xless-profiles), which creates, downloads, renews and deletes provisioning
 profiles of every type, [`xless app-groups` and `xless icloud-containers`](#xless-app-groups-and-xless-icloud-containers),
-which register app groups and iCloud containers and assign them to bundle IDs, and [`xless api`](#xless-api), which
+which register app groups and iCloud containers and assign them to bundle IDs, [`xless keys`](#xless-keys), which
+creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with their `.p8` in the secret store, and
+[`xless api`](#xless-api), which
 calls any documented App Store Connect endpoint. More
 commands (apps, TestFlight, releases) follow the conventions on this page.
 
@@ -428,6 +430,53 @@ assignment is checked by reading the bundle ID again.
 With `--json`, `list` prints `{"data": [{"id", "identifier", "name", "prefix", …}]}`, `create`
 `{"registered": [...], "existing": [...]}`, and `assign` / `unassign` `{"bundleId", "changed", "unchanged", "linked",
 "regeneratedProfiles"}` (identifiers; each regenerated profile as `xless profiles renew --json` prints it).
+
+## `xless keys`
+
+```sh
+xless keys list                                            # key ID, name, services, downloadable, the store entry
+xless keys create --service apns --name "Push"             # straight into the secret store as XLESS_APNS_KEY@<TEAM_ID>
+xless keys create --service siwa --bundle-id com.example.app
+xless keys create --service apns,devicecheck               # several services on one key: XLESS_AUTH_KEY@<TEAM_ID>
+xless keys create --service musickit --music-id AB12CD34EF # a MusicKit key for that Music ID
+xless keys show 2X9R4HXF34                                 # services, Sign in with Apple bundle IDs, store entry
+xless keys revoke 2X9R4HXF34                               # asks first (--yes without a terminal)
+```
+
+Auth keys (Certificates, IDs & Profiles > Keys) sign the tokens of token-based APNs, Sign in with Apple's server
+side, DeviceCheck and MusicKit. No documented API covers them, so these commands use the
+[Apple ID web session](#the-apple-id-web-session) on the developer portal (`services-account/QH65B2/account/auth/key/…`,
+the calls fastlane and the App Store Connect CLI make). `--service` takes `apns`, `siwa` (Sign in with Apple, with
+`--bundle-id`: the primary App ID, by identifier or ID), `devicecheck` and `musickit` (with `--music-id`, repeatable:
+the ID of a Music ID registered in the portal), repeated or comma-separated.
+MapKit, WeatherKit and the other services are not supported: their service IDs are not confirmed.
+
+`create`, in one process and one sign-in:
+
+1. checks the secret store before anything else: it must exist ([`xless secrets init`](secrets.md)) and it is
+   unlocked (the passphrase is asked first);
+2. lists the team's keys and stops, before anything is sent, when the name is taken or a service is at Apple's limit:
+   two APNs keys per team (the error lists them; one APNs key serves every app of the team, sandbox and production);
+3. creates the key (`--name`, ASCII letters, digits and spaces; default `xless <services> <date>`, e.g.
+   `xless APNs 20261123`, with ` 2`, ` 3`… when the team has a key of that name) with one request, never
+   retried; when it gets no answer, or a server error, the error says a key may exist and to check `xless keys list`;
+4. downloads its `.p8` **once** (Apple offers it a single time, so the download is never retried) and seals it into
+   the store as `XLESS_APNS_KEY@<TEAM_ID>` (`XLESS_SIWA_KEY`, `XLESS_DEVICECHECK_KEY`, `XLESS_MUSICKIT_KEY`;
+   `XLESS_AUTH_KEY` for several services) with its key ID, team and services; when the team already has an entry
+   of that name, `<name>.<KEY_ID>@<TEAM_ID>`, so a lookup of the name stays unambiguous. Then it reports.
+
+If anything fails once the key exists (the download, the store, an answer xless cannot read), the error says that key
+`<KEY_ID>` exists, that xless does not have its `.p8` and that it cannot be downloaded again: revoke it with
+`xless keys revoke <KEY_ID>`. The `.p8` is never written to a file: `xless secrets export <entry> --out
+AuthKey_<KEY_ID>.p8` does that when a server needs one ([secrets.md](secrets.md)).
+
+`revoke` reads the key, asks before it revokes (Apple cannot undo it; every server signing with it stops working),
+then removes the store's auth-key entries for that key ID. A key the Apple ID may not revoke is refused before the
+question.
+
+With `--json`, `list` prints `{"data": [{"id", "name", "services", "bundleIDs", "canDownload", "canRevoke",
+"storeEntries"}]}` (services as `--service` names, unknown ones by Apple's service ID), `show` one such object, and
+`create` `{"keyID", "name", "services", "bundleIDs", "musicIDs", "team", "entry"}`.
 
 ## JSON output
 

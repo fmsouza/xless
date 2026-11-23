@@ -172,3 +172,26 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
     let type = VaultEntry(name: "X", kind: .signingKey, metadata: .init(certificateType: "DISTRIBUTION"), sealed: Data())
     #expect(role.associatedData != type.associatedData)
 }
+
+// MARK: auth key services (#91)
+
+@Test func theServicesOfAnAuthKeyAreRecordedAndAuthenticated() throws {
+    let key = SymmetricKey(size: .bits256)
+    let meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "K1", services: " apns,siwa ")
+    #expect(meta.services == "apns,siwa")
+    #expect(VaultEntry.Metadata(services: "").services == nil)
+    // Without services, the associated data is the one older releases wrote.
+    let plain = VaultEntry(name: "X", kind: .authKey, metadata: .init(teamID: "TEAM123456", keyID: "K1"), sealed: Data())
+    let withServices = VaultEntry(name: "X", kind: .authKey, metadata: meta, sealed: Data())
+    #expect(withServices.associatedData.starts(with: plain.associatedData) && withServices.associatedData != plain.associatedData)
+    let entry = try VaultCrypto.seal(name: "XLESS_APNS_KEY", kind: .authKey, metadata: meta, secret: SecretBytes(utf8: "p8"), dataKey: key)
+    #expect(try VaultCrypto.open(entry, dataKey: key).utf8String() == "p8")
+    for change in [{ (m: inout VaultEntry.Metadata) in m.services = "apns" }, { $0.services = nil }] {
+        var altered = meta
+        change(&altered)
+        #expect(throws: VaultError.self) { try VaultCrypto.open(VaultEntry(name: entry.name, kind: entry.kind, metadata: altered, sealed: entry.sealed), dataKey: key) }
+    }
+    let role = VaultEntry(name: "X", kind: .authKey, metadata: .init(role: "apns"), sealed: Data())
+    let services = VaultEntry(name: "X", kind: .authKey, metadata: .init(services: "apns"), sealed: Data())
+    #expect(role.associatedData != services.associatedData)
+}

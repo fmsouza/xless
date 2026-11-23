@@ -27,9 +27,13 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         /// The App Store Connect `certificateType` of the certificate a signing key belongs to (`DISTRIBUTION`).
         /// Authenticated only when set, like `role`.
         public var certificateType: String?
+        /// The services an auth key signs for (`apns`, `apns,siwa`), as `xless keys create` takes them. Authenticated
+        /// only when set, like `role`.
+        public var services: String?
 
         public init(teamID: String? = nil, keyID: String? = nil, issuerID: String? = nil, certificateID: String? = nil,
-                    created: Date? = nil, expires: Date? = nil, role: String? = nil, certificateType: String? = nil) {
+                    created: Date? = nil, expires: Date? = nil, role: String? = nil, certificateType: String? = nil,
+                    services: String? = nil) {
             func clean(_ s: String?) -> String? {
                 guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
                 return t
@@ -42,6 +46,7 @@ public struct VaultEntry: Codable, Sendable, Equatable {
             self.expires = expires.map(Self.wholeSeconds)
             self.role = clean(role)
             self.certificateType = clean(certificateType)
+            self.services = clean(services)
         }
 
         static func wholeSeconds(_ d: Date) -> Date { Date(timeIntervalSince1970: d.timeIntervalSince1970.rounded(.down)) }
@@ -93,6 +98,10 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         if let certificateType = metadata.certificateType {
             field("certificateType")
             field(certificateType)
+        }
+        if let services = metadata.services {
+            field("services")
+            field(services)
         }
         return out
     }

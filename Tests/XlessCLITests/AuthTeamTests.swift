@@ -145,7 +145,8 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
                     AuthAPIKeyRevokeCommand.self, AppGroupsCommand.self, ICloudContainersCommand.self,
                     LinkedListCommand<AppGroupKind>.self, LinkedCreateCommand<AppGroupKind>.self, LinkedAssignCommand<AppGroupKind>.self,
                     LinkedUnassignCommand<AppGroupKind>.self, LinkedListCommand<CloudContainerKind>.self, LinkedCreateCommand<CloudContainerKind>.self,
-                    LinkedAssignCommand<CloudContainerKind>.self, LinkedUnassignCommand<CloudContainerKind>.self] as [any ParsableCommand.Type] {
+                    LinkedAssignCommand<CloudContainerKind>.self, LinkedUnassignCommand<CloudContainerKind>.self,
+                    KeysCommand.self, KeysListCommand.self, KeysShowCommand.self, KeysCreateCommand.self, KeysRevokeCommand.self] as [any ParsableCommand.Type] {
         let help = command.helpMessage(columns: 10_000)
         #expect(help.contains("Uses the Apple ID web session, not the App Store Connect API"), "\(command)")
     }
