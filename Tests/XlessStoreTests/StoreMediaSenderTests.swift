@@ -11,7 +11,7 @@ import XlessCore
 /// `UP<n>` and one upload operation for the whole file; reading the asset answers `state`.
 func acceptUploads(_ t: RoutedTransport, state: String = "COMPLETE") {
     let previous = t.onRequest
-    let types = [StoreMediaKind.screenshots, .previews, .reviewAttachments, .encryptionDocument].map(\.itemType)
+    let types = [StoreMediaKind.screenshots, .previews, .reviewAttachments, .encryptionDocument, .iapReviewScreenshot, .subscriptionReviewScreenshot].map(\.itemType)
     t.onRequest = { r, t in
         previous?(r, t)
         guard r.httpMethod == "POST", let type = types.first(where: { r.url!.path == "/v1/\($0)" }) else { return }

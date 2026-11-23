@@ -174,8 +174,8 @@ public struct StorePush: Sendable {
     public func plan(app: ASCApp, manifest: StoreManifest, dir: URL, options: Options = Options()) async throws -> (StorePlan, Report) {
         let target = try await target(app: app, manifest: manifest)
         var context = PushContext(push: self, manifest: manifest, dir: dir, target: target, options: options)
-        // Pricing and App Privacy are the app's, not the version's: they need no version.
-        if target.creating, !options.parts.contains(.text), options.parts.contains(where: { ![.text, .pricing, .privacy].contains($0) }) {
+        // Pricing, App Privacy and the products are the app's, not the version's: they need no version.
+        if target.creating, !options.parts.contains(.text), options.parts.contains(where: { ![.text, .pricing, .privacy, .iap, .subscriptions].contains($0) }) {
             throw XlessError(.account, "App Store Connect has no \(target.platform) version \(target.versionString) yet, and only the text part creates it",
                              fix: "push the text part too (drop --only, or add text to it)")
         }
@@ -186,6 +186,8 @@ public struct StorePush: Sendable {
             case .declarations: try await context.planDeclarations()
             case .pricing: try await context.planPricing()
             case .privacy: try await context.planPrivacy()
+            case .iap: try await context.planInAppPurchases()
+            case .subscriptions: try await context.planSubscriptions()
             case .media: try await context.planMedia()
             }
         }
@@ -234,32 +236,67 @@ public struct StorePush: Sendable {
                 result.sent.append(change)
             }
         }
-        guard let index = plan.changes.firstIndex(where: \.replans) else {
-            try await send(plan.changes, of: plan.changes.count)
-            return result
+        // Changes that create what the rest depends on (a new version, a new in-app purchase, a subscription group)
+        // come first: they are sent, then the rest is planned again against what App Store Connect now has, which
+        // may create again (a subscription in a group just created), up to `maxReplans` rounds.
+        var current = plan
+        var total = plan.changes.count
+        var created: [String] = []
+        var rounds = 0
+        while true {
+            let leading = Array(current.changes.prefix { $0.replans })
+            guard !leading.isEmpty else {
+                try await send(current.changes, of: total)
+                return result
+            }
+            try await send(leading, of: total)
+            created += leading.map(Self.createdName)
+            let what = Self.list(created)
+            rounds += 1
+            let next: StorePlan
+            do {
+                next = try await self.plan(app: app, manifest: manifest, dir: dir, options: options).0
+            } catch {
+                say("note: the \(what) \(created.count == 1 ? "was" : "were") created; re-run `xless store push` to send the rest")
+                throw error
+            }
+            if let again = next.changes.first(where: { $0.replans && created.contains(Self.createdName($0)) }) {
+                throw XlessError(.account, "App Store Connect does not show the \(Self.createdName(again)) push just created",
+                                 fix: "wait a minute and re-run `xless store push`")
+            }
+            if rounds >= Self.maxReplans, next.changes.contains(where: \.replans) {
+                throw XlessError(.account, "the \(what) \(created.count == 1 ? "was" : "were") created, but more remains to create than one push plans",
+                                 fix: "re-run `xless store push` to send the rest")
+            }
+            result.replanned = next
+            for note in next.notes where !result.notes.contains(note) { result.notes.append(note) }
+            show(next)
+            guard try confirm(next) else {
+                say("cancelled; the \(what) \(created.count == 1 ? "was" : "were") created, nothing else was sent")
+                return result
+            }
+            current = next
+            total = result.sent.count + next.changes.count
         }
-        try await send(Array(plan.changes[...index]), of: plan.changes.count)
-        let created = "\(manifest.app.platform ?? "IOS") version \(manifest.app.version ?? "")"
-        let next: StorePlan
-        do {
-            next = try await self.plan(app: app, manifest: manifest, dir: dir, options: options).0
-        } catch {
-            say("note: the \(created) was created; re-run `xless store push` to send the rest")
-            throw error
+    }
+
+    /// How many times `apply` plans again after creating.
+    static let maxReplans = 3
+
+    /// What a replanning change creates, as messages name it: `IOS version 1.1`, `in-app purchase com.example.coins`.
+    static func createdName(_ change: StoreChange) -> String {
+        // `version 1.1 (IOS)` → `IOS version 1.1`
+        let s = change.subject
+        if s.hasPrefix("version "), s.hasSuffix(")"), let open = s.lastIndex(of: "(") {
+            let version = s[s.index(s.startIndex, offsetBy: "version ".count)..<open].trimmingCharacters(in: .whitespaces)
+            return "\(s[s.index(after: open)..<s.index(before: s.endIndex)]) version \(version)"
         }
-        if next.changes.contains(where: \.replans) {
-            throw XlessError(.account, "App Store Connect does not show the \(created) push just created",
-                             fix: "wait a minute and re-run `xless store push`")
-        }
-        result.replanned = next
-        result.notes += next.notes
-        show(next)
-        guard try confirm(next) else {
-            say("cancelled; the \(created) was created, nothing else was sent")
-            return result
-        }
-        try await send(next.changes, of: result.sent.count + next.changes.count)
-        return result
+        return s
+    }
+
+    /// `a`, `a and b`, `a, b and c`.
+    static func list(_ names: [String]) -> String {
+        names.count <= 1 ? names.joined() : names.dropLast().joined(separator: ", ") + " and " + names.last!
     }
 }
 

@@ -238,7 +238,7 @@ private func prices(_ body: [String: Any]) -> [String] {
 
 @Test func pricingIsAPartOfPush() throws {
     #expect(try StorePushPart.parse(["pricing,text"]) == [.text, .pricing])
-    #expect(StorePushPart.allCases == [.text, .review, .declarations, .pricing, .privacy, .media])
+    #expect(StorePushPart.allCases == [.text, .review, .declarations, .pricing, .privacy, .iap, .subscriptions, .media])
 }
 
 @Test func takingTheAppOffSaleSomewhereIsADeletionThatAsks() async throws {

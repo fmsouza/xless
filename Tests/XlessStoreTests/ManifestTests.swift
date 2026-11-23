@@ -167,7 +167,7 @@ import Testing
     let dir = try completeManifest()
     defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
     try write("# notes\n", "README.md", in: dir)
-    try write("product: x\n", "iap/x.yml", in: dir)
+    try write("product: x\n", "iap/notes.txt", in: dir)
     try write("old\n", "fr-FR/name.txt", in: dir)
     try write("privacy:\n  collectsData: false\n", "app.yml", in: dir)
     var manifest = ManifestReader.read(dir).manifest
@@ -175,7 +175,7 @@ import Testing
     manifest.app.primaryLocale = "en-US"
     try ManifestWriter.write(manifest, files: [:], lock: MediaLock(), to: dir)
     #expect(read("README.md", in: dir) == "# notes\n")
-    #expect(read("iap/x.yml", in: dir) == "product: x\n")
+    #expect(read("iap/notes.txt", in: dir) == "product: x\n")
     #expect(read("fr-FR/name.txt", in: dir) == nil, "a locale the new listing lacks is not carried over")
     #expect(read("en-US/screenshots/APP_IPHONE_67/01-home.png", in: dir) == nil, "media come only from `files`")
     #expect(read("app.yml", in: dir)?.hasSuffix("primaryLocale: en-US\nprivacy:\n  collectsData: false\n") == true)
