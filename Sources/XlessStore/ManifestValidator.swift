@@ -106,6 +106,8 @@ public enum ManifestValidator {
             release()
             review()
             eula()
+            attachedFiles()
+            previewFrames()
             pricing()
             if let families = app.accessibility?.values.keys {
                 for family in families.sorted() where !ManifestValidator.deviceFamilies.contains(family) {
@@ -178,6 +180,40 @@ public enum ManifestValidator {
         /// The secret store's entry names (letters, digits and `. _ @ -`, starting with a letter or digit).
         static func isSecretName(_ name: String) -> Bool {
             name.count <= 128 && name.range(of: "^[A-Za-z0-9][A-Za-z0-9._@-]*$", options: .regularExpression) != nil
+        }
+
+        /// App Review attachments and the compliance document: files inside the manifest, each listed once.
+        mutating func attachedFiles() {
+            let listed = (app.review?.attachments ?? []).map { ("review.attachments", $0, "review") }
+                + (app.encryptionDocument.map { [("encryptionDocument", $0, "compliance")] } ?? [])
+            var seen: Set<String> = []
+            for (key, file, folder) in listed {
+                guard let url = StoreManifest.resolve(file, in: dir) else {
+                    error(appPath, "\(key): \(file) is outside \(name)/", "keep the file inside the manifest, e.g. \(folder)/\((file as NSString).lastPathComponent)")
+                    continue
+                }
+                if !seen.insert(url.standardizedFileURL.path).inserted { error(appPath, "\(key) lists \(file) twice", "list each file once"); continue }
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else {
+                    error("\(name)/\(file)", "is missing (app.yml's \(key))", "put the file there, or remove it from \(key)")
+                    continue
+                }
+                if (try? AssetFile.size(url)) == 0 { error("\(name)/\(file)", "is empty (app.yml's \(key))", "App Store Connect takes no empty file") }
+            }
+        }
+
+        /// Poster frames: a preview of the manifest each, as `HH:MM:SS:FF`.
+        mutating func previewFrames() {
+            guard let frames = app.previewFrames else { return }
+            let previews = Set(manifest.locales.values.flatMap { $0.previews.flatMap(\.files) })
+            for (path, code) in frames.values.sorted(by: { $0.key < $1.key }) {
+                if !previews.contains(path) {
+                    warn(appPath, "previewFrames: \(path) is not a preview in \(name)/", "use a preview's path, e.g. en-US/previews/IPHONE_67/01-intro.mov, or remove the entry")
+                }
+                if code.range(of: "^[0-9]{2}:[0-9]{2}:[0-9]{2}:[0-9]{2}$", options: .regularExpression) == nil {
+                    error(appPath, "previewFrames: \(code) (\(path)) is not a time code", "write HH:MM:SS:FF, e.g. 00:00:05:00 (frame 0 of second 5)")
+                }
+            }
         }
 
         mutating func eula() {

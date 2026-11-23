@@ -73,8 +73,14 @@ public struct StoreMediaAttributes: ASCAttributes, Equatable {
     public var sourceFileChecksum: String?
     public var imageAsset: ImageAsset?
     public var videoUrl: String?
+    public var previewFrameTimeCode: String?
     public var assetDeliveryState: DeliveryState?
+    /// A preview's state (its `assetDeliveryState` is deprecated).
+    public var videoDeliveryState: DeliveryState?
     public init() {}
+
+    /// Where the upload is: COMPLETE, FAILED, …
+    public var state: String? { videoDeliveryState?.state ?? assetDeliveryState?.state }
 }
 
 /// One screenshot or preview set of a version localization, its items in display order.
@@ -249,11 +255,32 @@ public struct StoreASC: Sendable {
 
     /// The export compliance answers of the app's most recent encryption declaration.
     public func encryption(of appID: String) async throws -> StorePart<[String: JSONValue]> {
+        switch try await encryptionDeclaration(of: appID) {
+        case .value(let d): return d.attributes.map { .value($0) } ?? .value([:])
+        case .absent: return .absent
+        case .forbidden: return .forbidden
+        }
+    }
+
+    /// The app's most recent encryption declaration.
+    public func encryptionDeclaration(of appID: String) async throws -> StorePart<ASCAnyResource> {
         try await optional("encryption declarations") {
             let declarations = try await resources.list("/v1/appEncryptionDeclarations", query: ASCQuery(filters: [("app", appID)]), as: ASCAnyResource.self).items
-            let latest = declarations.max { ($0.attributes?["createdDate"]?.string ?? "") < ($1.attributes?["createdDate"]?.string ?? "") }
-            return latest?.attributes
+            return declarations.max { ($0.attributes?["createdDate"]?.string ?? "") < ($1.attributes?["createdDate"]?.string ?? "") }
         }
+    }
+
+    /// The document uploaded for an encryption declaration; nil when it has none.
+    public func encryptionDocument(of declarationID: String) async throws -> ASCKeptResource<StoreMediaAttributes>? {
+        do {
+            return try await resources.get("/v1/appEncryptionDeclarations/\(declarationID)/appEncryptionDeclarationDocument", as: ASCAnyResource?.self).data
+                .map { ASCKeptResource<StoreMediaAttributes>(resource: $0) }
+        } catch let e as ASCError where e.status == 404 { return nil }
+    }
+
+    /// The files attached for App Review.
+    public func reviewAttachments(of detailID: String) async throws -> [ASCKeptResource<StoreMediaAttributes>] {
+        try await all("/v1/appStoreReviewDetails/\(detailID)/appStoreReviewAttachments", as: StoreMediaAttributes.self)
     }
 
     /// Accessibility declarations: device family → state and answers.

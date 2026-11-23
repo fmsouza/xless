@@ -2,7 +2,8 @@ import Foundation
 import XlessASC
 import XlessCore
 
-// The `declarations` part: content rights, the age rating, the licence agreement, export compliance and accessibility.
+// The `declarations` part: content rights, the age rating, the licence agreement, export compliance (and its document)
+// and accessibility.
 // Each is managed only when app.yml has its key; within `ageRating`, `encryption` and `accessibility`, only the answers
 // app.yml gives are compared.
 
@@ -87,30 +88,51 @@ extension PushContext {
     /// and an old answer: read, never sent.
     static let encryptionAnswers = ["appDescription", "availableOnFrenchStore", "containsProprietaryCryptography", "containsThirdPartyCryptography"]
 
+    /// A new encryption declaration when an answer differs; the compliance document (`encryptionDocument`) is
+    /// uploaded with it, or onto the latest declaration when that one has no such document yet.
     mutating func planEncryption() async throws {
-        guard let wanted = app.encryption else { return }
+        let wanted = app.encryption ?? [:]
         let given = Self.encryptionAnswers.filter { wanted[$0] != nil }
-        guard !given.isEmpty else { return }
-        let current = try await asc.encryption(of: target.app.id)
+        guard !given.isEmpty || app.encryptionDocument != nil else { return }
+        let current = try await asc.encryptionDeclaration(of: target.app.id)
         if case .forbidden = current { return }
-        let have = current.value ?? [:]
+        let have = current.value?.attributes ?? [:]
         var diff = FieldDiff()
         for key in given { diff.value(key, want: wanted[key], have: StoreScalar(have[key])) }
-        guard !diff.isEmpty else { return }
-        let missing = Self.encryptionAnswers.filter { wanted[$0] == nil }
-        guard missing.isEmpty else {
-            throw XlessError(.account, "\(name)/app.yml: export compliance differs, and a new encryption declaration needs every answer; encryption has no \(missing.joined(separator: ", "))",
-                             fix: "answer \(Self.encryptionAnswers.joined(separator: ", ")) under `encryption:`")
+        let documentSubject = "export compliance document"
+        if !diff.isEmpty {
+            let missing = Self.encryptionAnswers.filter { wanted[$0] == nil }
+            guard missing.isEmpty else {
+                throw XlessError(.account, "\(name)/app.yml: export compliance differs, and a new encryption declaration needs every answer; encryption has no \(missing.joined(separator: ", "))",
+                                 fix: "answer \(Self.encryptionAnswers.joined(separator: ", ")) under `encryption:`")
+            }
+            var attributes: [String: JSONValue] = [:]
+            for key in Self.encryptionAnswers { attributes[key] = wanted[key]!.json }
+            var fields = Self.encryptionAnswers.map { StoreFieldChange($0, from: StoreScalar(have[$0])?.description, to: wanted[$0]!.description) }
+                .filter { $0.from != $0.to }
+            var media: StoreMediaWork?
+            if let document = app.encryptionDocument {
+                let files = try planFiles(.encryptionDocument, subject: documentSubject, paths: [document], remote: [], parent: "{id}", deletable: false)
+                media = files.work
+                fields += files.fields
+            } else if wanted["containsProprietaryCryptography"] == .bool(true) || wanted["availableOnFrenchStore"] == .bool(true) {
+                note("App Store Connect may ask for a compliance document for this encryption declaration: name it in app.yml's encryptionDocument (e.g. compliance/export.pdf)")
+            }
+            add(StoreChange(.create, .declarations, "export compliance", fields: fields,
+                            requests: [.create("appEncryptionDeclarations", attributes: attributes, relationships: ["app": StoreRequest.link("apps", target.app.id)])],
+                            media: media))
+            return
         }
-        var attributes: [String: JSONValue] = [:]
-        for key in Self.encryptionAnswers { attributes[key] = wanted[key]!.json }
-        let fields = Self.encryptionAnswers.map { StoreFieldChange($0, from: StoreScalar(have[$0])?.description, to: wanted[$0]!.description) }
-            .filter { $0.from != $0.to }
-        add(StoreChange(.create, .declarations, "export compliance", fields: fields,
-                        requests: [.create("appEncryptionDeclarations", attributes: attributes, relationships: ["app": StoreRequest.link("apps", target.app.id)])]))
-        if wanted["containsProprietaryCryptography"] == .bool(true) || wanted["availableOnFrenchStore"] == .bool(true) {
-            note("App Store Connect may ask for a compliance document for this encryption declaration; `store push` does not upload one yet")
+        guard let document = app.encryptionDocument else { return }
+        guard let declaration = current.value else {
+            note("encryptionDocument is not sent: App Store Connect has no encryption declaration to attach it to (answer every question under `encryption:` to create one)")
+            return
         }
+        let existing = try await asc.encryptionDocument(of: declaration.id)
+        let files = try planFiles(.encryptionDocument, subject: documentSubject, paths: [document], remote: existing.map { [$0] } ?? [],
+                                  parent: declaration.id, deletable: false)
+        guard let work = files.work else { return }
+        add(StoreChange(existing == nil ? .create : .update, .declarations, documentSubject, fields: files.fields, requests: [], media: work))
     }
 
     mutating func planAccessibility() async throws {

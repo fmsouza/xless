@@ -6,7 +6,9 @@ import XlessCore
 //   appstore/
 //     app.yml                  app-level values (AppYAML)
 //     eula.txt                 a custom licence agreement, when app.yml says so
-//     media.lock               which App Store Connect asset each local screenshot/preview is (MediaLock)
+//     media.lock               which App Store Connect asset each local screenshot/preview/attachment is (MediaLock)
+//     review/                  App Review attachments, when app.yml's review.attachments names them
+//     compliance/              the export compliance document, when app.yml's encryptionDocument names it
 //     <locale>/                text files (LocaleListing), screenshots/<display type>/, previews/<preview type>/
 //
 // Values are App Store Connect's own spellings (IOS, AFTER_APPROVAL, APP_IPHONE_67…), so nothing is translated between
@@ -160,8 +162,10 @@ public struct AppYAML: Codable, Sendable, Equatable {
         public var contact: Contact?
         public var demoAccount: DemoAccount?
         public var notes: String?
-        public init(contact: Contact? = nil, demoAccount: DemoAccount? = nil, notes: String? = nil) {
-            self.contact = contact; self.demoAccount = demoAccount; self.notes = notes
+        /// Files for App Review (a walkthrough video, a document), relative to the manifest directory (`review/…`).
+        public var attachments: [String]?
+        public init(contact: Contact? = nil, demoAccount: DemoAccount? = nil, notes: String? = nil, attachments: [String]? = nil) {
+            self.contact = contact; self.demoAccount = demoAccount; self.notes = notes; self.attachments = attachments
         }
     }
 
@@ -226,16 +230,21 @@ public struct AppYAML: Codable, Sendable, Equatable {
     public var release: Release?
     public var review: Review?
     public var encryption: SortedMap<StoreScalar>?
+    /// The export compliance document App Store Connect may ask for (`compliance/…`), sent with the encryption declaration.
+    public var encryptionDocument: String?
     public var accessibility: SortedMap<SortedMap<Bool>>?
     public var eula: EULA?
     public var pricing: Pricing?
     public var availability: Availability?
+    /// App preview (path relative to the manifest directory) → the frame shown as its poster, `HH:MM:SS:FF`.
+    public var previewFrames: SortedMap<String>?
 
     public init() {}
 
     /// The keys `AppYAML` models, in the order `pull` writes them.
     public static let keys = ["bundleID", "sku", "platform", "primaryLocale", "version", "copyright", "contentRights", "categories",
-                              "ageRating", "release", "review", "encryption", "accessibility", "eula", "pricing", "availability"]
+                              "ageRating", "release", "review", "encryption", "encryptionDocument", "accessibility", "eula", "pricing",
+                              "availability", "previewFrames"]
     /// Keys another part of xless owns (kept by `pull`, not reported as unknown).
     public static let reservedKeys = ["privacy"]
 }

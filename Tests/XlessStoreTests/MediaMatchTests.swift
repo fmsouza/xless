@@ -70,3 +70,10 @@ private func remote(_ id: String, _ checksum: String?, state: String? = "COMPLET
                                lock: MediaLock(), directory: set, prune: false)
     #expect(r.slots == [.keep("R2"), .keep("R1")] && r.uploads.isEmpty && r.reorder)
 }
+
+@Test func aRenamedPulledCopyIsStillItsUpload() {
+    let lock = MediaLock(files: ["\(set)/01-a.png": .init(md5: "copy", appleChecksum: "orig", id: "R1")])
+    let r = MediaMatcher.match(files: [local("03-a.png", "copy")], remote: [remote("R1", "orig")], lock: lock, directory: set, prune: false)
+    #expect(r.slots == [.keep("R1")] && r.uploads.isEmpty)
+    #expect(r.lock == ["\(set)/03-a.png": .init(md5: "copy", appleChecksum: "orig", id: "R1")])
+}

@@ -4,7 +4,8 @@ import Foundation
 /// planning computes it from the files' MD5s, the set's items and media.lock.
 ///
 /// A local file *is* an item when the item's `sourceFileChecksum` is the file's MD5 (xless sent it), or when
-/// media.lock ties the file's path, at its current MD5, to the item's checksum (a copy `pull` downloaded). A lock
+/// media.lock ties the file's MD5 (under its path, else under any path: a renamed copy) to the item's checksum (a copy
+/// `pull` downloaded). A lock
 /// entry without an MD5 is an item `pull` could not download: it stays, in its path's place. A file that is no item is
 /// uploaded; when the lock ties its path to an item (the file changed), that item is replaced. Items that failed
 /// processing are removed; any other item the manifest does not have is an extra, kept at the end, or with `prune`
@@ -77,6 +78,12 @@ public enum MediaMatcher {
             var item: Remote?
             if let entry = lock.files[file.path], entry.md5 == file.md5 { item = lockedItem(entry) }
             if item == nil { item = take { $0.checksum == file.md5 } }
+            // A pulled copy that was renamed or moved: the lock knows its MD5 under its old path.
+            if item == nil {
+                for (_, entry) in lock.files.values.sorted(by: { $0.key < $1.key }) where entry.md5 == file.md5 {
+                    if let found = lockedItem(entry) { item = found; break }
+                }
+            }
             guard let item else { unmatched.append(file); continue }
             byName[name(file.path)] = .keep(item.id)
             result.lock[file.path] = MediaLock.Entry(md5: file.md5, appleChecksum: item.checksum, id: item.id)
