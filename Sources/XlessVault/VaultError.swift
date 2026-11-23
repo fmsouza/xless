@@ -5,6 +5,10 @@ public struct VaultError: Error, StageReportableError, CustomStringConvertible, 
     public enum Kind: Sendable, Equatable {
         case notInitialized, alreadyInitialized, wrongPassphrase, tampered, unsupported, unsafePath, io
         case entryExists, noEntry, invalidName, ambiguous, locked, invalidSecret, invalidInput, cacheUnavailable
+        /// The external credential helper (`secrets.backend: helper`) could not be found, refused, failed or answered junk.
+        case helper
+        /// What the configured backend does not do (`xless secrets passwd` with a credential helper).
+        case unsupportedByBackend
     }
 
     public let kind: Kind

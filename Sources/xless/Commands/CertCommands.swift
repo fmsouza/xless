@@ -147,7 +147,7 @@ struct CertsCreateCommand: AsyncParsableCommand {
                 return try CSRFile.pem(from: data, path: path)
             }
             // The store is checked before any request, so a missing store or a taken name costs nothing.
-            let file: VaultFile? = csrPEM == nil ? try APIKeyWebCLI.existingStore() : nil
+            let file: SecretCatalog? = csrPEM == nil ? try APIKeyWebCLI.existingStore() : nil
             let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
             let certificates = ASCCertificates(resources: session.resources)
             let entry = name ?? CertificateKeyStore.entryName(base: type.defaultEntryBase, team: session.team)
@@ -167,9 +167,7 @@ struct CertsCreateCommand: AsyncParsableCommand {
                 created = try await creation.run(type: type, relatedID: related, csrPEM: csrPEM)
             } else {
                 created = try await creation.run(type: type, relatedID: related, entry: entry, team: session.team, keys: {
-                    let file = try APIKeyWebCLI.existingStore()
-                    return CertificateKeyStore(store: APIKeyWebCLI.store, fileID: file.id,
-                                               dataKey: try SecretStoreCLI.unlock(file, remember: nil, reason: "storing the new certificate's private key"))
+                    try APIKeyWebCLI.unlocked(reason: "storing the new certificate's private key") { CertificateKeyStore(store: $0, catalogID: $1.id) }
                 })
             }
             print(output.json ? try ASCOutput.json(created) : created.text, terminator: "")
@@ -238,7 +236,7 @@ struct CertCLI {
     let certificates: ASCCertificates
     var json = false
     /// The secret store's file, read without a passphrase (names and metadata only).
-    var storeFile: () -> VaultFile? = { try? VaultStore(location: .standard()).read() }
+    var storeFile: () -> (any SecretEntries)? = { try? SecretStoreCLI.store().catalog() }
     var terminal: () -> (any Confirming)? = { try? TerminalPrompter.forAccount() }
     var say: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
     var now: () -> Date = { Date() }
@@ -318,7 +316,7 @@ struct CertCLI {
 }
 
 enum CertTable {
-    static func render(_ list: [ASCCertificate], store: VaultFile?) -> String {
+    static func render(_ list: [ASCCertificate], store: (any SecretEntries)?) -> String {
         TextTable(["ID", "TYPE", "NAME", "SERIAL", "EXPIRES", "KEY IN STORE"], list.map { c in
             let keys = CertificateKeyStore.entries(holding: c.id, in: store)
             return [c.id, CertificateType(rawValue: c.certificateType)?.argument ?? c.certificateType, c.attributes.displayName ?? c.attributes.name ?? "",

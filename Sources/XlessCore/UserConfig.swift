@@ -1,9 +1,50 @@
 import Foundation
 import Yams
 
+/// Where the secrets live: `secrets: { backend: vault }` (the encrypted store, the default) or
+/// `secrets: { backend: helper, helper: <name> }` (the external credential helper `xless-credential-<name>` on PATH).
+public enum SecretsBackend: Sendable, Equatable {
+    case vault
+    case helper(String)
+
+    /// Lower-case letters, digits and `. _ -`, starting with a letter or digit, at most 64 characters: a name, never a
+    /// path (`pass`, `secret-tool`).
+    public static func isValidHelperName(_ name: String) -> Bool {
+        name.wholeMatch(of: /[a-z0-9][a-z0-9._-]{0,63}/) != nil
+    }
+
+    static let example = "secrets: { backend: helper, helper: pass } (or backend: vault, the default)"
+
+    /// The `secrets` value of config.yml (nil: not set).
+    static func parse(_ value: Any?, file: String) throws -> SecretsBackend {
+        guard let value else { return .vault }
+        func bad(_ why: String) -> XlessError {
+            XlessError(.config, "\(file): \(why)", fix: "write it as \(example)")
+        }
+        guard let map = value as? [String: Any] else { throw bad("`secrets` is not a mapping") }
+        if let extra = map.keys.sorted().first(where: { !["backend", "helper"].contains($0) }) {
+            throw bad("`secrets` has an unknown key `\(extra)`")
+        }
+        let backend = map["backend"].map { "\($0)" } ?? "vault"
+        switch backend {
+        case "vault":
+            guard map["helper"] == nil else { throw bad("`secrets.helper` is only for `backend: helper`") }
+            return .vault
+        case "helper":
+            guard let name = map["helper"] as? String else { throw bad("`backend: helper` needs `helper: <name>`") }
+            guard isValidHelperName(name) else {
+                throw bad("`secrets.helper` \(name) is not a helper name (lower-case letters, digits, . _ -; xless runs xless-credential-<name> from PATH)")
+            }
+            return .helper(name)
+        default:
+            throw bad("`secrets.backend` \(backend) is neither vault nor helper")
+        }
+    }
+}
+
 /// The user's own xless settings, `$XDG_CONFIG_HOME/xless/config.yml` (else `~/.config/xless/config.yml`): plain
-/// preferences, never a secret. Today only `team`, the default Apple team (`xless team use`). Keys xless does not know
-/// are kept as they are when it writes the file (comments are not).
+/// preferences, never a secret: `team`, the default Apple team (`xless team use`), and `secrets`, where the secrets
+/// live (`SecretsBackend`). Keys xless does not know are kept as they are when it writes the file (comments are not).
 public struct UserConfig: Sendable, Equatable {
     public var team: String?
 
@@ -21,6 +62,13 @@ public struct UserConfig: Sendable, Equatable {
     public static func load(env: [String: String] = ProcessInfo.processInfo.environment) throws -> UserConfig {
         let raw = try read(file(env: env))
         return UserConfig(team: (raw["team"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    /// Where the secrets live (`secrets:`); the vault when the file or the key is absent. A malformed value is an error,
+    /// never a silent fallback to another backend.
+    public static func secretsBackend(env: [String: String] = ProcessInfo.processInfo.environment) throws -> SecretsBackend {
+        let url = file(env: env)
+        return try SecretsBackend.parse(try read(url)["secrets"], file: url.path)
     }
 
     /// Changes the settings and writes the file (atomically, mode 0644), keeping the keys `UserConfig` does not know.

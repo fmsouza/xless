@@ -31,7 +31,7 @@ private struct TempVault {
         self.key = key
     }
 
-    var apiKeyStore: APIKeyStore { APIKeyStore(store: store, fileID: file.id, dataKey: key) }
+    var apiKeyStore: APIKeyStore { APIKeyStore(store: store.secretStore, catalogID: file.id) }
     func read() throws -> VaultFile { try #require(try store.read()) }
     func secret(_ name: String) throws -> String { try VaultCrypto.open(try #require(try read().entry(named: name)), dataKey: key).utf8String() }
     func cleanup() { try? FileManager.default.removeItem(at: root) }
@@ -152,7 +152,7 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
     let vault = try TempVault()
     defer { vault.cleanup() }
     let journal = Journal()
-    let wrong = APIKeyStore(store: vault.store, fileID: "another-store", dataKey: vault.key)
+    let wrong = APIKeyStore(store: vault.store.secretStore, catalogID: "another-store")
     let c = APIKeyCreation(web: FakeWeb(journal: journal, download: { SecretBytes(utf8: pem) }), vault: wrong, verify: { _ in journal.add("verify") })
     let e = await accountError { _ = try await run(c) }
     #expect(e?.cause.contains("the secret store could not keep it") == true)
@@ -279,11 +279,11 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
                                         ("ASC_KEY_P8@ZZZZZ99999", .ascAPIKey, .init(teamID: "ZZZZZ99999", keyID: "K2")),
                                         ("APNS", .authKey, .init(keyID: "K1"))])
     defer { vault.cleanup() }
-    #expect(try APIKeyStore.removeKeys(id: "K1", from: vault.store) == ["ASC_KEY_P8@\(team)", "ASC_KEY_P8@\(team).K1"])
+    #expect(try APIKeyStore.removeKeys(id: "K1", from: vault.store.secretStore) == ["ASC_KEY_P8@\(team)", "ASC_KEY_P8@\(team).K1"])
     #expect(try vault.read().entries.map(\.name) == ["ASC_KEY_P8@ZZZZZ99999", "APNS"])
-    #expect(try APIKeyStore.removeKeys(id: "K9", from: vault.store).isEmpty)
+    #expect(try APIKeyStore.removeKeys(id: "K9", from: vault.store.secretStore).isEmpty)
     let none = VaultStore(location: VaultLocation(directory: vault.root.appendingPathComponent("nothing")))
-    #expect(try APIKeyStore.removeKeys(id: "K1", from: none).isEmpty)
+    #expect(try APIKeyStore.removeKeys(id: "K1", from: none.secretStore).isEmpty)
 }
 
 // MARK: roles

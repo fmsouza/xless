@@ -90,21 +90,25 @@ public enum SecretRunBase {
 /// store is read (the script handles the environment and `_FILE` variables); ASC_KEY_ID and ASC_ISSUER_ID are the
 /// ASC_KEY_P8 entry's IDs. With a team, its entries are preferred (`VaultResolver.preferredCandidate`).
 public struct VaultMaterializer {
-    let store: VaultStore
+    let store: any SecretStore
     let team: String?
     let resolver: any SecretFallback
 
-    public init(store: VaultStore, team: String?, cache: (any VaultKeyCache)?, prompter: @escaping () -> (any PassphrasePrompter)?) {
+    public init(secrets store: any SecretStore, team: String?) {
         self.store = store
         self.team = team
-        let base = VaultResolver(store: store, cache: cache, prompter: prompter)
+        let base = VaultResolver(secrets: store)
         resolver = team.map { base.preferring(team: $0) } ?? base
+    }
+
+    public init(store: VaultStore, team: String?, cache: (any VaultKeyCache)?, prompter: @escaping () -> (any PassphrasePrompter)?) {
+        self.init(secrets: VaultSecretStore(store: store, cache: cache, prompter: prompter), team: team)
     }
 
     /// Every secret of `sets` has an entry (and the API key its IDs). Reads names and IDs only: no passphrase.
     public func check(_ sets: [MaterializeSet]) throws {
-        let file: VaultFile?
-        do { file = try store.read() } catch let e as VaultError { throw e.stageError(.config) }
+        let file: SecretCatalog?
+        do { file = try store.catalog() } catch let e as VaultError { throw e.stageError(.config) }
         for name in Self.names(sets) {
             let entryName = VaultResolver.metadataField(name) == nil ? name : "ASC_KEY_P8"
             let entry: VaultEntry?
@@ -115,7 +119,7 @@ public struct VaultMaterializer {
             } catch let e as VaultError { throw e.stageError(.config) }
             guard let entry, VaultResolver.metadataField(name).map({ $0(entry.metadata) != nil }) ?? true else {
                 let whose = team.map { " for team \($0)" } ?? ""
-                let place = file == nil ? "there is no secret store (\(store.location.file.path))" : "the secret store has no \(name)\(whose)"
+                let place = file == nil ? "there is no secret store (\(store.place))" : "\(store.place) has no \(name)\(whose)"
                 throw XlessError(.config, "\(place), and neither \(name) nor \(name)_FILE is set", fix: Secrets.missingFix(name))
             }
         }

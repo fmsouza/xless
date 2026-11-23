@@ -114,8 +114,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: install.sh is POSIX sh
-        run: shellcheck -s sh scripts/install.sh
+      - name: install.sh and the credential helpers are POSIX sh
+        run: shellcheck -s sh scripts/install.sh scripts/credential-helpers/xless-credential-pass scripts/credential-helpers/xless-credential-secret-tool
       - name: Shipped scripts
         run: |
           shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh

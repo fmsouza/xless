@@ -93,6 +93,19 @@ machine as you can read your files and your login session's keyring: that is why
 
 CI does not use the store: it gives secrets as `NAME` or `NAME_FILE` variables, which xless reads the same way.
 
+### With a credential helper
+
+With `secrets: { backend: helper, helper: <name> }` in config.yml, the secrets are in your keyring or pass instead of
+this file, and their protection at rest is the keyring's
+([secrets.md](secrets.md#keeping-the-secrets-in-your-keyring-or-pass-credential-helpers)). The helper,
+`xless-credential-<name>`, sees every secret xless stores or reads, so xless runs it only from an absolute PATH
+directory, and refuses it when the file, its directory or that PATH directory can be written by the group or others or
+belongs to someone other than you or root. It gets its verb as its only argument, a cut-down environment with no secret
+variable, no open file of xless's, the terminal while it runs, the secret on a pipe only; its answer is read into at most 4 MiB of memory that is
+zeroed afterwards, and it is killed with its process group after 120 seconds. The entries' names, kinds and IDs are kept
+by the keyring too (unsealed: their integrity is the keyring's), and two xless commands writing at once are not
+serialised.
+
 ## Caches: off by default, at most an hour
 
 | Cache | Turned on by | What is kept | Where | Dropped by |
@@ -235,6 +248,7 @@ with the passphrase it had then. Then:
 xless secrets lock                       # forget a remembered unlock now
 xless auth logout                        # forget a kept Apple ID session (Apple's side expires on its own)
 rm -rf ~/.local/share/xless/vault        # the secret store itself ($XDG_DATA_HOME/xless/vault): every key in it is gone
+                                         # (with a credential helper: xless secrets list, then xless secrets rm each entry)
 rm -f ~/.config/xless/config.yml         # the default team (a preference, not a secret)
 ```
 

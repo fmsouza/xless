@@ -77,8 +77,8 @@ struct AccountSession {
 
     /// The store's resolver for a team; with no team, the one `main` installed.
     static func storeFallback(_ team: String?) -> (any SecretFallback)? {
-        guard let team else { return Secrets.installedFallback }
-        return VaultResolver(store: VaultStore(location: .standard()), team: team, prompter: { try? TerminalPrompter.forSecretStore() })
+        guard let team, let store = try? SecretStoreCLI.store() else { return Secrets.installedFallback }
+        return VaultResolver(secrets: store, team: team)
     }
 
     /// Runs an account command's body; any failure leaves as `[account] cause — fix` (exit 20).

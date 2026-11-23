@@ -38,7 +38,7 @@ struct AuthKeyStore {
 
     /// `<base>@<TEAM_ID>` when nothing in the store stands for `<base>` in that team yet; else `<base>.<KEY_ID>@<TEAM_ID>`,
     /// which a lookup of `<base>` does not match, so the store never becomes ambiguous (Apple allows two APNs keys).
-    static func entryName(base: String, keyID: String, team: String, in file: VaultFile) -> String {
+    static func entryName(base: String, keyID: String, team: String, in file: some SecretEntries) -> String {
         let first = "\(base)@\(team)"
         let resolved: Bool
         do { resolved = try VaultResolver.candidate(for: base, in: file, team: team) != nil } catch { resolved = true } // several: taken
@@ -49,39 +49,35 @@ struct AuthKeyStore {
         return name
     }
 
-    let store: VaultStore
-    /// The store this command unlocked (its key is `dataKey`).
-    let fileID: String
-    let dataKey: SymmetricKey
+    /// The store, unlocked by this command (`SecretStore.unlock`) before anything was asked of Apple.
+    let store: any SecretStore
+    /// The store this command read and unlocked.
+    let catalogID: String
 
-    /// Seals the key into the store under the name `entryName` picks at that moment; returns it.
+    /// Puts the key into the store under the name `entryName` picks at that moment; returns it.
     func save(base: String, keyID: String, team: String, secret: SecretBytes, metadata: VaultEntry.Metadata) throws -> String {
         var used = ""
-        try store.update { file in
-            guard file.id == fileID else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
+        try store.update(reason: "storing the new auth key") { file in
+            guard file.id == catalogID else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
             used = Self.entryName(base: base, keyID: keyID, team: team, in: file)
-            var next = file
-            next.entries.append(try VaultCrypto.seal(name: used, kind: .authKey, metadata: metadata, secret: secret, dataKey: dataKey))
-            return next
+            return [.add(name: used, kind: .authKey, metadata: metadata, secret: secret)]
         }
         return used
     }
 
     /// Removes the store's auth-key entries of `keyID`; returns their names. Needs no passphrase.
-    static func removeKeys(id keyID: String, from store: VaultStore) throws -> [String] {
-        guard let file = try store.read(), file.entries.contains(where: { matches($0, keyID) }) else { return [] }
+    static func removeKeys(id keyID: String, from store: any SecretStore) throws -> [String] {
+        guard let file = try store.catalog(), file.entries.contains(where: { matches($0, keyID) }) else { return [] }
         var removed: [String] = []
-        try store.update { current in
-            var next = current
+        try store.update(reason: "removing auth key \(keyID)") { current in
             removed = current.entries.filter { matches($0, keyID) }.map(\.name)
-            next.entries.removeAll { matches($0, keyID) }
-            return next
+            return removed.map { .remove(name: $0) }
         }
         return removed
     }
 
     /// The names of the auth-key entries holding key `keyID`.
-    static func entries(holding keyID: String, in file: VaultFile?) -> [String] {
+    static func entries(holding keyID: String, in file: (any SecretEntries)?) -> [String] {
         (file?.entries ?? []).filter { matches($0, keyID) }.map(\.name).sorted()
     }
 
@@ -200,7 +196,7 @@ struct AuthKeyCLI {
     let web: any AuthKeyWeb
     var json = false
     /// The secret store, read without a passphrase (nil: none).
-    var storeFile: () -> VaultFile? = { nil }
+    var storeFile: () -> (any SecretEntries)? = { nil }
     /// Removes the store's entries of a revoked key.
     var removeEntries: (String) throws -> [String] = { _ in [] }
 
@@ -214,7 +210,7 @@ struct AuthKeyCLI {
         let storeEntries: [String]
     }
 
-    func row(_ k: PortalAuthKey, _ file: VaultFile?) -> Row {
+    func row(_ k: PortalAuthKey, _ file: (any SecretEntries)?) -> Row {
         Row(id: k.id, name: k.name, services: (k.services ?? []).map { AuthKeyService(id: $0.id)?.argument ?? $0.id },
             bundleIDs: (k.services ?? []).flatMap(\.bundleIDs), canDownload: k.canDownload, canRevoke: k.canRevoke,
             storeEntries: AuthKeyStore.entries(holding: k.id, in: file))

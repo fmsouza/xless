@@ -11,7 +11,7 @@ public enum VaultReport {
         return f.string(from: d)
     }
 
-    public static func list(_ file: VaultFile) -> String {
+    public static func list(_ file: some SecretEntries) -> String {
         guard !file.entries.isEmpty else { return "The secret store is empty (add a key with `xless secrets import`)." }
         let header = ["NAME", "KIND", "TEAM", "KEY ID", "ISSUER ID", "CERTIFICATE", "CREATED", "EXPIRES"]
         let rows = file.entries.sorted { $0.name < $1.name }.map { e in
@@ -38,6 +38,15 @@ public enum VaultReport {
             "KDF:      \(kdf.algorithm) (N=\(kdf.rounds), r=\(kdf.blockSize), p=\(kdf.parallelism)); entries sealed with AES-256-GCM",
             "Unlocked: " + (unlocked.map { $0 ? "yes, cached in the kernel keyring until it expires or `xless secrets lock`" : "no" }
                 ?? "no (no kernel keyring here: each command asks the passphrase)"),
+        ].joined(separator: "\n")
+    }
+
+    /// `xless secrets status` with a credential helper.
+    public static func status(helper: HelperSecretStore, catalog: SecretCatalog) -> String {
+        [
+            "Store:    the credential helper \(helper.helper.command) (\(helper.helper.executable)), secrets.backend in config.yml",
+            "Entries:  \(catalog.entries.count)",
+            "Unlocked: up to the helper (its keyring or agent locks and unlocks itself)",
         ].joined(separator: "\n")
     }
 }

@@ -36,11 +36,19 @@ enum APIKeyWebCLI {
         verbose ? TracingTransport(URLSessionTransport(), trace: .standardError) : URLSessionTransport()
     }
 
-    static var store: VaultStore { VaultStore(location: .standard()) }
+    /// The configured secret store (`secrets.backend`).
+    static func store() throws -> any SecretStore { try SecretStoreCLI.store() }
 
-    static func existingStore() throws -> VaultFile {
-        guard let file = try store.read() else { throw VaultStore.notInitialized(.standard()) }
-        return file
+    /// What it holds; an error when there is none yet.
+    static func existingStore() throws -> SecretCatalog { try store().existingCatalog() }
+
+    /// `make` with the store unlocked now (the passphrase asked before anything is created at Apple) and the catalog
+    /// it was unlocked for.
+    static func unlocked<T>(reason: String, _ make: (any SecretStore, SecretCatalog) -> T) throws -> T {
+        let store = try store()
+        let catalog = try store.existingCatalog()
+        try store.unlock(catalog, remember: nil, reason: reason)
+        return make(store, catalog)
     }
 }
 
@@ -93,7 +101,7 @@ struct AuthAPIKeyCreateCommand: AsyncParsableCommand {
             let file = try APIKeyWebCLI.existingStore()
             let wanted = AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam())
             if let wanted { try APIKeyStore.precheck(file, name: APIKeyStore.entryName(team: wanted), team: wanted) }
-            let dataKey = try SecretStoreCLI.unlock(file, remember: nil, reason: "storing the new API key")
+            let keys = try APIKeyWebCLI.unlocked(reason: "storing the new API key") { APIKeyStore(store: $0, catalogID: $1.id) }
             let (session, transport, selected) = try await APIKeyWebCLI.open(team: wanted, verbose: trace.verbose)
             defer { transport.invalidate() }
             guard let issuer = try await session.asc.session().provider?.publicProviderId, !issuer.isEmpty else {
@@ -103,7 +111,7 @@ struct AuthAPIKeyCreateCommand: AsyncParsableCommand {
             let entry = APIKeyStore.entryName(team: selected.teamId)
             try APIKeyStore.precheck(try APIKeyWebCLI.existingStore(), name: entry, team: selected.teamId)
             let creation = APIKeyCreation(web: ASCAPIKeys(asc: session.asc),
-                                          vault: APIKeyStore(store: APIKeyWebCLI.store, fileID: file.id, dataKey: dataKey),
+                                          vault: keys,
                                           verify: APIKeyVerification.verifier(transport: APIKeyWebCLI.apiTransport(verbose: trace.verbose), unauthorizedRetries: 6),
                                           say: AppleWebCLI.say)
             let created = try await creation.run(nickname: nickname?.trimmingCharacters(in: .whitespaces) ?? "xless \(AuthAPIKeyCreateCommand.today())",
@@ -168,9 +176,7 @@ struct AuthAPIKeyImportCommand: AsyncParsableCommand {
                 role: try role.map { try APIKeyRoles.parse([$0])[0] }, team: teamID, entry: entry,
                 verify: APIKeyVerification.verifier(transport: APIKeyWebCLI.apiTransport(verbose: trace.verbose)),
                 unlock: {
-                    let file = try APIKeyWebCLI.existingStore()
-                    return APIKeyStore(store: APIKeyWebCLI.store, fileID: file.id,
-                                       dataKey: try SecretStoreCLI.unlock(file, remember: nil, reason: "importing API key \(keyID)"))
+                    try APIKeyWebCLI.unlocked(reason: "importing API key \(keyID)") { APIKeyStore(store: $0, catalogID: $1.id) }
                 })
             print("imported API key \(keyID) into the secret store as \(name) (App Store Connect accepted it)")
             try SecretStoreCLI.offerToDelete(p8File)
@@ -195,7 +201,7 @@ struct AuthAPIKeyListCommand: AsyncParsableCommand {
             defer { transport.invalidate() }
             let keys = try await ASCAPIKeys(asc: session.asc).list()
             await session.end()
-            let used = APIKeyListing.usedKeyID(env: ProcessInfo.processInfo.environment, store: { try APIKeyWebCLI.store.read() }, team: wanted)
+            let used = APIKeyListing.usedKeyID(env: ProcessInfo.processInfo.environment, store: { try APIKeyWebCLI.store().catalog() }, team: wanted)
             let rows = APIKeyListing.rows(keys, used: used)
             print(output.json ? try ASCOutput.json(rows) : APIKeyListing.table(rows), terminator: "")
         }
@@ -226,7 +232,7 @@ struct AuthAPIKeyRevokeCommand: AsyncParsableCommand {
             let keys = ASCAPIKeys(asc: session.asc)
             let key = try await keys.get(id: keyID)
             if key.isActive {
-                let used = APIKeyListing.usedKeyID(env: ProcessInfo.processInfo.environment, store: { try APIKeyWebCLI.store.read() }, team: wanted) == keyID
+                let used = APIKeyListing.usedKeyID(env: ProcessInfo.processInfo.environment, store: { try APIKeyWebCLI.store().catalog() }, team: wanted) == keyID
                 let what = [key.nickname.map { "\"\($0)\"" }, key.roles.isEmpty ? nil : key.roles.joined(separator: ", ")].compactMap { $0 }.joined(separator: ", ")
                 let question = "Revoke API key \(keyID)\(what.isEmpty ? "" : " (\(what))")? Everything using it stops working at once, and Apple cannot undo it."
                     + (used ? " xless uses this key." : "")
@@ -241,7 +247,7 @@ struct AuthAPIKeyRevokeCommand: AsyncParsableCommand {
                 print("API key \(keyID) was already revoked")
             }
             await session.end()
-            let removed = try APIKeyStore.removeKeys(id: keyID, from: APIKeyWebCLI.store)
+            let removed = try APIKeyStore.removeKeys(id: keyID, from: try APIKeyWebCLI.store())
             print(removed.isEmpty ? "the secret store held no entry for it" : "removed \(removed.joined(separator: ", ")) from the secret store")
         }
     }

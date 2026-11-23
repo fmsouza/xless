@@ -36,7 +36,7 @@ private struct CertVault {
         self.key = key
     }
 
-    var keys: CertificateKeyStore { CertificateKeyStore(store: store, fileID: file.id, dataKey: key) }
+    var keys: CertificateKeyStore { CertificateKeyStore(store: store.secretStore, catalogID: file.id) }
     func read() throws -> VaultFile { try #require(try store.read()) }
     func secret(_ name: String) throws -> String { try VaultCrypto.open(try #require(try read().entry(named: name)), dataKey: key).utf8String() }
     func cleanup() { try? FileManager.default.removeItem(at: root) }

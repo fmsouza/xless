@@ -69,7 +69,7 @@ let package = Package(
         ]),
         // The encrypted secret store (`xless secrets`) and `Secrets`' fallback to it.
         .target(name: "XlessVault", dependencies: [
-            "XlessCore",
+            "XlessCore", "CXlessProcess",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),

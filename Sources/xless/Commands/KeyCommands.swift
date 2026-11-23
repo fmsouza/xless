@@ -67,8 +67,8 @@ private func runKeys(team: String?, verbose: Bool, _ body: (PortalAuthKeys) asyn
 }
 
 private func keysCLI(_ keys: PortalAuthKeys, json: Bool) -> AuthKeyCLI {
-    AuthKeyCLI(web: keys, json: json, storeFile: { try? APIKeyWebCLI.store.read() },
-               removeEntries: { try AuthKeyStore.removeKeys(id: $0, from: APIKeyWebCLI.store) })
+    AuthKeyCLI(web: keys, json: json, storeFile: { try? APIKeyWebCLI.store().catalog() },
+               removeEntries: { try AuthKeyStore.removeKeys(id: $0, from: try APIKeyWebCLI.store()) })
 }
 
 struct KeysListCommand: AsyncParsableCommand {
@@ -159,15 +159,14 @@ struct KeysCreateCommand: AsyncParsableCommand {
         try await AccountSession.run {
             SecretScope.enter()
             // The store is checked and unlocked before signing in, so nothing is created that could not be kept.
-            let file = try APIKeyWebCLI.existingStore()
-            let dataKey = try SecretStoreCLI.unlock(file, remember: nil, reason: "storing the new auth key")
+            let keys = try APIKeyWebCLI.unlocked(reason: "storing the new auth key") { AuthKeyStore(store: $0, catalogID: $1.id) }
             let (session, transport) = try await AppleWebCLI.open(verbose: trace.verbose)
             defer { transport.invalidate() }
             let teamID = try await session.selectTeam(AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam())).teamId
             var bundles: [String] = []
             if let bundleID { bundles.append(try await PortalBundleIDs(portal: session.portal).resolve(bundleID).id) }
             let creation = AuthKeyCreation(web: PortalAuthKeys(portal: session.portal),
-                                           vault: AuthKeyStore(store: APIKeyWebCLI.store, fileID: file.id, dataKey: dataKey), say: AppleWebCLI.say)
+                                           vault: keys, say: AppleWebCLI.say)
             let created = try await creation.run(name: name?.trimmingCharacters(in: .whitespaces), services: services, bundleIDs: bundles,
                                                  musicIDs: musicIDs, team: teamID)
             await session.end()

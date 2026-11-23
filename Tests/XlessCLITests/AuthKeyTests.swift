@@ -29,7 +29,7 @@ private struct KeyVault {
         self.key = key
     }
 
-    var authKeyStore: AuthKeyStore { AuthKeyStore(store: store, fileID: file.id, dataKey: key) }
+    var authKeyStore: AuthKeyStore { AuthKeyStore(store: store.secretStore, catalogID: file.id) }
     func read() throws -> VaultFile { try #require(try store.read()) }
     func secret(_ name: String) throws -> String { try VaultCrypto.open(try #require(try read().entry(named: name)), dataKey: key).utf8String() }
     func cleanup() { try? FileManager.default.removeItem(at: root) }
@@ -170,7 +170,7 @@ func aFailedAuthKeyDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownl
 @Test func aStoreThatCannotKeepTheKeySaysTheKeyIsLost() async throws {
     let vault = try KeyVault()
     defer { vault.cleanup() }
-    let replaced = AuthKeyStore(store: vault.store, fileID: "another-store", dataKey: vault.key)
+    let replaced = AuthKeyStore(store: vault.store.secretStore, catalogID: "another-store")
     let e = await accountError {
         _ = try await AuthKeyCreation(web: FakePortal(events: Events()), vault: replaced).run(name: "Push", services: [.apns], bundleIDs: [], team: team)
     }
@@ -226,7 +226,7 @@ func aFailedAuthKeyDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownl
     let events = Events()
     let store = vault.store
     let cli = AuthKeyCLI(web: FakePortal(events: events, existing: [apnsKey("K1", "Push")]), storeFile: { try? store.read() },
-                         removeEntries: { try AuthKeyStore.removeKeys(id: $0, from: store) })
+                         removeEntries: { try AuthKeyStore.removeKeys(id: $0, from: store.secretStore) })
     var asked = ""
     let out = try await cli.revoke("K1") { asked = $0; return true }
     #expect(asked.contains("Revoke auth key K1 \"Push\" (APNs)?"))

@@ -378,7 +378,7 @@ struct ProvisionPlanner {
 
     /// Whether this machine has an APNs key of the team: in the environment (`XLESS_APNS_KEY`, `_FILE`), or in the store
     /// (an auth key recording the apns service, or any entry named `XLESS_APNS_KEY…` of the team, however it was imported).
-    func hasAPNsKey(_ file: VaultFile?) throws -> Bool {
+    func hasAPNsKey(_ file: SecretCatalog?) throws -> Bool {
         let base = AuthKeyStore.base(for: [.apns])
         if try vault.environmentKey(base) != nil { return true }
         return (file?.entries ?? []).contains { e in
@@ -614,10 +614,7 @@ struct ProvisionApplier {
         return found.id
     }
 
-    func storeFile() throws -> VaultFile {
-        guard let file = try vault.file() else { throw VaultStore.notInitialized(.standard()) }
-        return file
-    }
+    func storeFile() throws -> SecretCatalog { try vault.existing() }
 
     func run(_ step: ProvisionStep, state: inout ProvisionState, web: ProvisionWebSide?) async throws -> String {
         switch step.work {
@@ -660,7 +657,8 @@ struct ProvisionApplier {
             guard let web else { throw XlessError(.account, "the Apple ID web session is not open", fix: "this is a bug in xless; please report it") }
             if let key = try await ProvisionPlanner.apnsKeysAtApple(web)?.first { say("note: " + ProvisionPlanner.apnsElsewhere(key)); return "APNs key \(key.id) exists" }
             let file = try storeFile()
-            let keys = AuthKeyStore(store: vault.store, fileID: file.id, dataKey: try vault.dataKey(file, reason: "storing the new APNs key"))
+            try vault.unlock(file, reason: "storing the new APNs key")
+            let keys = AuthKeyStore(store: vault.store, catalogID: file.id)
             let created = try await AuthKeyCreation(web: web.authKeys, vault: keys, say: say).run(name: nil, services: [.apns], bundleIDs: [], team: team, now: now)
             return "created APNs key \(created.keyID), stored as \(created.entry)"
 
@@ -715,7 +713,8 @@ struct ProvisionApplier {
             try CertificateKeyStore.precheck(file, name: entry, base: kind.secretName, team: team, stage: .account,
                                              keepBoth: "remove it, or import the key that goes with the certificate you use")
             let created = try await CertificateCreation(api: account, say: say).run(type: type, relatedID: nil, entry: entry, team: team, keys: {
-                CertificateKeyStore(store: vault.store, fileID: file.id, dataKey: try vault.dataKey(file, reason: "storing the new certificate's private key"))
+                try vault.unlock(file, reason: "storing the new certificate's private key")
+                return CertificateKeyStore(store: vault.store, catalogID: file.id)
             }, now: now)
             return (created.certificate.id, "created \(type.displayName) certificate \(created.certificate.id), its key stored as \(entry)")
         case .stored(let entry):
@@ -726,7 +725,7 @@ struct ProvisionApplier {
             let secret = try vault.open(stored, in: file, reason: "a certificate for \(entry)")
             defer { secret.wipe() }
             let cert = try await create(type, key: try SigningKey(pem: secret.utf8String()))
-            let keys = CertificateKeyStore(store: vault.store, fileID: file.id, dataKey: try vault.dataKey(file, reason: "recording the certificate"))
+            let keys = CertificateKeyStore(store: vault.store, catalogID: file.id)
             let facts = cert.der.flatMap { CertificateFacts(der: $0) }
             do {
                 try keys.record(name: entry, secret: secret, certificateID: cert.id, expires: facts?.expires ?? cert.expires, team: facts?.teamID ?? team)

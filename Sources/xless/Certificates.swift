@@ -32,7 +32,7 @@ struct CertificateKeyStore {
     /// Refuses, before a key is generated, when `name` is taken, or (for a default name, `base` given) when the store
     /// already holds a `base` key the `sign` stage would pick for the team: a second one would make its choice ambiguous.
     /// - Parameter keepBoth: how to keep the existing key and add the new one (`certs create` has `--name`; bootstrap has not).
-    static func precheck(_ file: VaultFile, name: String, base: String?, team: String?, stage: Stage,
+    static func precheck(_ file: some SecretEntries, name: String, base: String?, team: String?, stage: Stage,
                          keepBoth: String = "pass --name <another entry name>") throws {
         var clashing = file.entry(named: name).map { [$0.name] } ?? []
         if let base {
@@ -47,52 +47,44 @@ struct CertificateKeyStore {
                          fix: "if its certificate is gone, remove it (`xless secrets rm \(clashing[0])`); to keep both, \(keepBoth)\(base.map { " (the sign stage reads \($0))" } ?? "")")
     }
 
-    let store: VaultStore
-    /// The store this command unlocked (its key is `dataKey`).
-    let fileID: String
-    let dataKey: SymmetricKey
+    /// The store, unlocked by this command (`SecretStore.unlock`) before anything was asked of Apple.
+    let store: any SecretStore
+    /// The store this command read and unlocked.
+    let catalogID: String
 
-    /// Seals a new signing-key entry; a name taken meanwhile is an error (nothing was sent to Apple yet).
+    /// Adds a new signing-key entry; a name taken meanwhile is an error (nothing was sent to Apple yet).
     func save(name: String, secret: SecretBytes, metadata: VaultEntry.Metadata) throws {
-        try store.update { file in
-            guard file.id == fileID else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
+        try store.update(reason: "storing the new signing key") { file in
+            guard file.id == catalogID else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
             guard file.entry(named: name) == nil else {
                 throw VaultError(.entryExists, "the secret store already has an entry \(name)", fix: "pass --name <another entry name>, or remove it (`xless secrets rm \(name)`)")
             }
-            var next = file
-            next.entries.append(try VaultCrypto.seal(name: name, kind: .signingKey, metadata: metadata, secret: secret, dataKey: dataKey))
-            return next
+            return [.add(name: name, kind: .signingKey, metadata: metadata, secret: secret)]
         }
     }
 
     /// Re-seals `name` with the certificate's ID and expiry, and `team` (the certificate's own, when known) over the
     /// entry's.
     func record(name: String, secret: SecretBytes, certificateID: String, expires: Date?, team: String?) throws {
-        try store.update { file in
-            guard file.id == fileID, let index = file.entries.firstIndex(where: { $0.name == name }) else {
+        try store.update(reason: "recording the certificate") { file in
+            guard file.id == catalogID, let entry = file.entry(named: name) else {
                 throw VaultError(.noEntry, "the entry \(name) is no longer in the secret store", fix: "re-import the key with `xless secrets import`")
             }
-            var metadata = file.entries[index].metadata
+            var metadata = entry.metadata
             metadata.teamID = team ?? metadata.teamID
             metadata.certificateID = certificateID
             metadata.expires = expires.map { Date(timeIntervalSince1970: $0.timeIntervalSince1970.rounded(.down)) }
-            var next = file
-            next.entries[index] = try VaultCrypto.seal(name: name, kind: .signingKey, metadata: metadata, secret: secret, dataKey: dataKey)
-            return next
+            return [.replace(name: name, kind: .signingKey, metadata: metadata, secret: secret)]
         }
     }
 
     /// Removes `name` (needs no passphrase).
-    static func remove(_ name: String, from store: VaultStore) throws {
-        try store.update { file in
-            var next = file
-            next.entries.removeAll { $0.name == name }
-            return next
-        }
+    static func remove(_ name: String, from store: any SecretStore) throws {
+        try store.update(reason: "removing \(name)") { _ in [.remove(name: name)] }
     }
 
     /// The names of the entries holding the private key of certificate `id`.
-    static func entries(holding id: String, in file: VaultFile?) -> [String] {
+    static func entries(holding id: String, in file: (any SecretEntries)?) -> [String] {
         (file?.entries ?? []).filter { $0.metadata.certificateID == id }.map(\.name).sorted()
     }
 }

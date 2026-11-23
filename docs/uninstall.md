@@ -95,7 +95,7 @@ Reinstalling or upgrading with the install line keeps it. Then, if you want:
 - free Docker's build cache ([above](#free-the-build-cache));
 - remove `~/.cache/xless` by hand if `xless clean` was already gone (and `docker image rm` the images and
   `docker volume rm` the volumes listed in the table above);
-- remove `~/.config/xless` (it may hold your `testflight.env`, and `config.yml` with the default team);
+- remove `~/.config/xless` (it may hold your `testflight.env`, and `config.yml` with the default team and where the secrets live);
 - remove the line that adds `~/.local/bin` to `PATH` from your shell's startup file, if you added one;
 - delete the Xcode `.xip` you downloaded.
 

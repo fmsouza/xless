@@ -3,7 +3,7 @@
 #   scripts/package-release.sh <version> <x86_64|arm64> <xless-binary> <out-dir>
 # Writes <out-dir>/xless-<version>-linux-<arch>.tar.gz (top directory xless-<version>-linux-<arch>/) and adds its line to
 # <out-dir>/SHA256SUMS (sha256sum's format; the other arch's line is kept). Layout:
-#   bin/xless (stripped)  LICENSE  share/xless/{VERSION,versions.env,docker/,scripts/,samples/HelloShip/,licenses/}
+#   bin/xless (stripped)  LICENSE  share/xless/{VERSION,versions.env,docker/,scripts/,credential-helpers/,samples/HelloShip/,licenses/}
 # docker/ and samples/HelloShip are the tracked files only. XLESS_STRIP overrides the strip command; XLESS_CHECKOUTS is
 # passed on to third-party-licenses.sh.
 set -euo pipefail
@@ -20,7 +20,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 stage="$work/$name"
 share="$stage/share/xless"
-mkdir -p "$stage/bin" "$share/scripts"
+mkdir -p "$stage/bin" "$share/scripts" "$share/credential-helpers"
 
 install -m 755 "$bin" "$stage/bin/xless"
 if [[ -n "${XLESS_STRIP:-}" ]]; then strip_cmd="$XLESS_STRIP"
@@ -32,6 +32,8 @@ cp "$root/LICENSE" "$stage/LICENSE"
 echo "$version" > "$share/VERSION"
 cp "$root/versions.env" "$share/versions.env"
 for s in docker-images xcode-swift testflight native-toolchain; do install -m 755 "$root/scripts/$s.sh" "$share/scripts/$s.sh"; done
+# The reference credential helpers (`secrets: { backend: helper }`, docs/secrets.md): users put them on PATH.
+for h in pass secret-tool; do install -m 755 "$root/scripts/credential-helpers/xless-credential-$h" "$share/credential-helpers/xless-credential-$h"; done
 
 # Tracked files only (-c safe.directory: CI containers check out as another user).
 git_files() { git -c "safe.directory=$root" -C "$root" ls-files "$1"; }

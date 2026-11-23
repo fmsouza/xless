@@ -7,7 +7,14 @@
 #include "CXlessProcess.h"
 #include <errno.h>
 #include <string.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <pthread.h>
 #include <sys/resource.h>
+#include <sys/wait.h>
+#include <termios.h>
+#include <time.h>
+#include <unistd.h>
 #ifdef __linux__
 #include <sys/prctl.h>
 #include <sys/vfs.h>
@@ -112,4 +119,145 @@ int xless_is_memory_fs(const char *path) {
     errno = ENOSYS;
     return -1;
 #endif
+}
+
+static int cloexec_pipe(int fds[2]) {
+#ifdef __linux__
+    // In one step: a fork on another thread never inherits these.
+    return pipe2(fds, O_CLOEXEC) == 0 ? 0 : errno;
+#else
+    if (pipe(fds) != 0) return errno;
+    for (int i = 0; i < 2; i++) {
+        if (fcntl(fds[i], F_SETFD, FD_CLOEXEC) != 0) {
+            int e = errno;
+            close(fds[0]);
+            close(fds[1]);
+            return e;
+        }
+    }
+    return 0;
+#endif
+}
+
+/// tcsetpgrp without being stopped by SIGTTOU when this process is not (or no longer) in the foreground.
+static void set_foreground(int tty, pid_t group) {
+    sigset_t ttou, old;
+    sigemptyset(&ttou);
+    sigaddset(&ttou, SIGTTOU);
+    pthread_sigmask(SIG_BLOCK, &ttou, &old);
+    tcsetpgrp(tty, group);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+}
+
+void xless_terminal_restore(int tty) {
+    if (tty >= 0) set_foreground(tty, getpgrp());
+}
+
+int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int tty, int *pid, int *in_fd, int *out_fd) {
+    int in[2], out[2], status[2], e;
+    if ((e = cloexec_pipe(in)) != 0) return e;
+    if ((e = cloexec_pipe(out)) != 0) { close(in[0]); close(in[1]); return e; }
+    if ((e = cloexec_pipe(status)) != 0) { close(in[0]); close(in[1]); close(out[0]); close(out[1]); return e; }
+    long max_fd = sysconf(_SC_OPEN_MAX);
+    if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
+    pid_t child = fork();
+    if (child < 0) {
+        e = errno;
+        close(in[0]); close(in[1]); close(out[0]); close(out[1]); close(status[0]); close(status[1]);
+        return e;
+    }
+    if (child == 0) {
+        // Only async-signal-safe calls from here to execve.
+        setpgid(0, 0);
+        if (tty >= 0) {
+            // The terminal's foreground before exec, so a helper that prompts on /dev/tty is not stopped (SIGTTIN).
+            signal(SIGTTOU, SIG_IGN);
+            tcsetpgrp(tty, getpid());
+        }
+        for (int sig = 1; sig < NSIG; sig++) {
+            if (sig == SIGKILL || sig == SIGSTOP) continue;
+            signal(sig, SIG_DFL);
+        }
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        int child_out = out[1];
+        if (child_out == 0 && (child_out = fcntl(out[1], F_DUPFD, 3)) < 0) { e = errno; goto failed; } // stdin's slot
+        if (dup2(in[0], 0) < 0 || dup2(child_out, 1) < 0) { e = errno; goto failed; }
+        // dup2 onto itself (xless started with fd 0 or 1 closed) keeps close-on-exec: clear it.
+        fcntl(0, F_SETFD, 0);
+        fcntl(1, F_SETFD, 0);
+        // Nothing else of xless's reaches the helper: no store file, lock or socket left open without close-on-exec.
+        {
+            int report = status[1];
+            for (long fd = 3; fd < max_fd; fd++) if (fd != report) close((int)fd);
+        }
+        execve(path, argv, envp);
+        e = errno;
+    failed:
+        while (write(status[1], &e, sizeof e) < 0 && errno == EINTR) {}
+        _exit(127);
+    }
+    setpgid(child, child); // also in the parent, so the group exists before any kill
+    if (tty >= 0) set_foreground(tty, child);
+    close(in[0]);
+    close(out[1]);
+    close(status[1]);
+    int child_errno = 0;
+    ssize_t n;
+    do { n = read(status[0], &child_errno, sizeof child_errno); } while (n < 0 && errno == EINTR);
+    close(status[0]);
+    if (n > 0) {
+        int ignored;
+        xless_reap(child, 0, &ignored);
+        xless_terminal_restore(tty);
+        close(in[1]);
+        close(out[0]);
+        return child_errno ? child_errno : EIO;
+    }
+    fcntl(in[1], F_SETFL, fcntl(in[1], F_GETFL) | O_NONBLOCK);
+    fcntl(out[0], F_SETFL, fcntl(out[0], F_GETFL) | O_NONBLOCK);
+    *pid = child;
+    *in_fd = in[1];
+    *out_fd = out[0];
+    return 0;
+}
+
+long xless_write_nosigpipe(int fd, const void *bytes, size_t length) {
+    sigset_t pipe_only, old;
+    sigemptyset(&pipe_only);
+    sigaddset(&pipe_only, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipe_only, &old);
+    sigset_t pending;
+    sigpending(&pending);
+    int was_pending = sigismember(&pending, SIGPIPE);
+    long n = (long)write(fd, bytes, length);
+    int e = errno;
+    if (n < 0 && e == EPIPE && !was_pending) {
+        // Consume the SIGPIPE this write raised (it is pending on this thread, blocked) before unblocking.
+        struct timespec zero = { 0, 0 };
+#if defined(__APPLE__)
+        int sig;
+        sigpending(&pending);
+        if (sigismember(&pending, SIGPIPE)) sigwait(&pipe_only, &sig);
+#else
+        while (sigtimedwait(&pipe_only, NULL, &zero) < 0 && errno == EINTR) {}
+#endif
+        (void)zero;
+    }
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    errno = e;
+    return n;
+}
+
+int xless_reap(int pid, int nohang, int *code) {
+    int status = 0;
+    pid_t r;
+    do { r = waitpid((pid_t)pid, &status, nohang ? WNOHANG : 0); } while (r < 0 && errno == EINTR);
+    if (r < 0) return -1;
+    if (r == 0) return 0;
+    if (WIFEXITED(status)) *code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) *code = 128 + WTERMSIG(status);
+    else *code = -1;
+    return 1;
 }
