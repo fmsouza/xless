@@ -162,7 +162,7 @@ public struct BetaReviewChange: Sendable, Equatable {
     /// Send the password even when nothing about the demo account changed (it was changed at Apple's end).
     public var resendDemoAccount: Bool
 
-    public static let defaultPasswordSecret = "XLESS_DEMO_PASSWORD"
+    public static let defaultPasswordSecret = TestFlightConfig.defaultDemoPasswordSecret
 
     public init(contactFirstName: String? = nil, contactLastName: String? = nil, contactPhone: String? = nil, contactEmail: String? = nil,
                 notes: String? = nil, demoAccountName: String? = nil, demoAccountRequired: Bool? = nil,

@@ -172,6 +172,7 @@ public struct OverlayLocation: Sendable, Equatable {
         let text = try OverlayPaths.read(url)
         let paths = OverlayPaths(overlay: url, env: env)
         var overlay = try TauriOverlay.parse(yaml: text, name: paths.name)
+        overlay.testflight?.registerSecretNames()   // before anything may start a tool (SecretEnvironment.scrub)
         overlay.privacyManifest = overlay.privacyManifest.map { paths.resolve($0).path }
         if var mac = overlay.macos {
             mac.entitlements = mac.entitlements.map { paths.resolve($0).path }

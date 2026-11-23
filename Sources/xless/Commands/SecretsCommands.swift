@@ -25,7 +25,7 @@ struct SecretsCommand: AsyncParsableCommand {
         """,
         subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self,
                       SecretsExportCommand.self, SecretsRmCommand.self, SecretsUnlockCommand.self, SecretsLockCommand.self,
-                      SecretsPasswdCommand.self, SecretsMaterializeCommand.self])
+                      SecretsPasswdCommand.self, SecretsMaterializeCommand.self, SecretsNamedByCommand.self])
 }
 
 /// What the `secrets` commands share.
@@ -406,6 +406,31 @@ struct SecretsMaterializeCommand: ParsableCommand {
             // Unbuffered: the script reads this line even when the command is stopped half-way.
             _ = try materializer.write(parsed, base: base) { FileHandle.standardOutput.write(Data("\($0.path)\n".utf8)) }
         }
+    }
+}
+
+struct SecretsNamedByCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "named-by",
+        abstract: "Print the secrets a run's upload reads under names its configuration gives, one per line (used by xless run).",
+        discussion: """
+        The TestFlight demo account's password: testflight.external.review.demoAccount's passwordSecret \
+        (XLESS_DEMO_PASSWORD by default), when the demo account may need its password sent. Nothing when it never does. \
+        The configuration is only parsed: no tool runs, and the secret store is not opened.
+        """,
+        shouldDisplay: false)
+
+    @Option(help: "An overlay file (Tauri, cargo or React Native).") var config: String?
+    @Option(help: "A project directory (its xless.yml).") var project: String?
+    @Option(help: "The platform the run ships (ios or macos).") var platform: Platform = .ios
+
+    func validate() throws {
+        guard (config == nil) != (project == nil) else { throw ValidationError("give --config <overlay> or --project <dir>") }
+    }
+
+    func run() throws {
+        let file = { (p: String) in URL(fileURLWithPath: p).standardizedFileURL }
+        for name in try RunSecretNames.upload(config: config.map(file), project: project.map(file), platform: platform) { print(name) }
     }
 }
 

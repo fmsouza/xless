@@ -13,7 +13,8 @@ private func sets(_ texts: String...) throws -> [MaterializeSet] { try texts.map
 
 @Test func setsParseAndRefuseWhatXlessDoesNotRead() throws {
     #expect(try MaterializeSet.parse("sign=ASC_KEY_P8, XLESS_DIST_KEY,ASC_KEY_P8") == MaterializeSet(name: "sign", secrets: ["ASC_KEY_P8", "XLESS_DIST_KEY"]))
-    for bad in ["sign", "Sign=ASC_KEY_P8", "sign=", "sign=ASC_KEY_P8_FILE", "sign=HOME", "../x=ASC_KEY_P8"] {
+    for bad in ["sign", "Sign=ASC_KEY_P8", "sign=", "sign=ASC_KEY_P8_FILE", "sign=MY-PW", "../x=ASC_KEY_P8",
+                "sign=?", "sign=MY_PW_FILE", "sign=MY_PW_FILE@ABCDE12345", "sign=MY_PW@abc", "sign=DEPLOY_TOKEN", "sign=?ASC_FOO", "sign=APP_KEY"] {
         #expect(throws: XlessError.self) { try MaterializeSet.parse(bad) }
     }
 }
@@ -141,3 +142,61 @@ private func sets(_ texts: String...) throws -> [MaterializeSet] { try texts.map
     #expect(!SecretRunBase.isMemoryFileSystem("/nonexistent-\(UUID().uuidString)"))
 }
 #endif
+
+@Test func optionalSecretsAndPasswordsUnderTheirOwnNamesParse() throws {
+    #expect(try MaterializeSet.parse("sign=ASC_KEY_P8,?XLESS_DEMO_PASSWORD")
+            == MaterializeSet(name: "sign", secrets: ["ASC_KEY_P8", "XLESS_DEMO_PASSWORD"], optional: ["XLESS_DEMO_PASSWORD"]))
+    #expect(try MaterializeSet.parse("sign=?MY_REVIEW_PW@ABCDE12345").optional == ["MY_REVIEW_PW@ABCDE12345"])
+    #expect(try MaterializeSet.parse("sign=MY_REVIEW_PW").optional == [])
+    // named both ways: needed
+    #expect(try MaterializeSet.parse("sign=?XLESS_DEMO_PASSWORD,XLESS_DEMO_PASSWORD").optional == [])
+}
+
+private let withPasswords = entries + [
+    ("XLESS_DEMO_PASSWORD", VaultEntry.Kind.password, VaultEntry.Metadata(), "demo-pw"),
+    ("MY_REVIEW_PW", .password, .init(), "my-pw"),
+    ("MY_SIGNING_PW", .signingKey, .init(), "PEM"),
+]
+
+@Test func anOptionalSecretIsWrittenWhenTheStoreHasItAndLeftOutWhenNot() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make(entries: withPasswords)
+    let m = VaultMaterializer(store: t.store, team: "TEAMA12345", cache: nil, prompter: { ScriptedPrompter(["correct horse battery"]) })
+    try m.check(try sets("sign=XLESS_DIST_KEY,?NOT_STORED_PW,?MY_REVIEW_PW"))
+    let run = try m.write(try sets("next=ASC_KEY_P8", "sign=XLESS_DIST_KEY,?NOT_STORED_PW,?MY_REVIEW_PW,?XLESS_DEMO_PASSWORD"),
+                          base: t.root.appendingPathComponent("runtime/xless")) { _ in }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: run.appendingPathComponent("sign").path).sorted()
+            == ["MY_REVIEW_PW", "XLESS_DEMO_PASSWORD", "XLESS_DIST_KEY"])
+    #expect(try String(contentsOf: run.appendingPathComponent("sign/MY_REVIEW_PW"), encoding: .utf8) == "my-pw")
+    #expect(try mode(run.appendingPathComponent("sign/XLESS_DEMO_PASSWORD").path) == 0o600)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: run.appendingPathComponent("next").path) == ["ASC_KEY_P8"])
+    // needed, it is a missing secret as before
+    #expect(throws: XlessError.self) { try m.check(try sets("sign=NOT_STORED_PW")) }
+}
+
+@Test func onlyAPasswordLeavesTheStoreUnderANameOfTheUsersOwn() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make(entries: withPasswords)
+    let m = VaultMaterializer(store: t.store, team: nil, cache: nil, prompter: { ScriptedPrompter(["correct horse battery"]) })
+    for text in ["sign=MY_SIGNING_PW", "sign=?MY_SIGNING_PW"] {
+        do { try m.check(try sets(text)); Issue.record("a signing key left as a password: \(text)") } catch let e as XlessError {
+            #expect(e.cause.contains("MY_SIGNING_PW is a signing-key, not a password"))
+        }
+    }
+    let base = t.root.appendingPathComponent("runtime/xless")
+    #expect(throws: XlessError.self) { _ = try m.write(try sets("sign=?MY_SIGNING_PW"), base: base) { _ in Issue.record("nothing may be created") } }
+    #expect(!FileManager.default.fileExists(atPath: base.path))
+}
+
+@Test func aStoreWithoutAnyOfTheOptionalSecretsAsksNoPassphrase() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let prompter = ScriptedPrompter([])
+    let none = VaultMaterializer(store: t.store, team: nil, cache: nil, prompter: { prompter })
+    try none.check(try sets("sign=?XLESS_DEMO_PASSWORD"))
+    let run = try none.write(try sets("sign=?XLESS_DEMO_PASSWORD"), base: t.root.appendingPathComponent("runtime/xless")) { _ in }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: run.appendingPathComponent("sign").path) == [])
+    #expect(prompter.asked == 0)
+}

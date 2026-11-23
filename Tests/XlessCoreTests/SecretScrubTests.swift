@@ -56,3 +56,46 @@ private func unique(_ prefix: String) -> String { "\(prefix)_\(UUID().uuidString
     #expect(c.secretNames == ["MY_REVIEW_PW"])
     #expect(try ProjectConfig.parse(yaml: validYAML).secretNames == [])
 }
+
+private func testflight(_ demo: String?) throws -> TestFlightConfig {
+    let review = demo.map { "\n    review:\n      demoAccount: \($0)" } ?? ""
+    return try #require(try ProjectConfig.parse(yaml: validYAML + """
+
+    testflight:
+      whatToTest: Try it
+      external:
+        groups: [Beta]\(review)
+    """).testflight)
+}
+
+@Test func theDemoPasswordSecretIsNamedOnlyWhenTheAccountMayNeedItsPassword() throws {
+    #expect(try testflight("{name: demo, required: true}").demoPasswordSecret == "XLESS_DEMO_PASSWORD")
+    #expect(try testflight("{name: demo, passwordSecret: MY_REVIEW_PW, required: true}").demoPasswordSecret == "MY_REVIEW_PW")
+    #expect(try testflight("{name: demo, passwordSecret: MY_REVIEW_PW@ABCDE12345}").demoPasswordSecret == "MY_REVIEW_PW@ABCDE12345")   // Apple may still require it
+    #expect(try testflight("{name: demo, passwordSecret: MY_REVIEW_PW, required: false}").demoPasswordSecret == nil)   // never sent
+    #expect(try testflight("{passwordSecret: MY_REVIEW_PW}").demoPasswordSecret == nil)   // says nothing about the account
+    #expect(try testflight(nil).demoPasswordSecret == nil)
+    #expect(TestFlightConfig(groups: ["Internal"]).demoPasswordSecret == nil)
+    // what is scrubbed stays the custom name, whether or not it may be sent
+    #expect(try testflight("{name: demo, passwordSecret: MY_REVIEW_PW, required: false}").secretNames == ["MY_REVIEW_PW"])
+}
+
+@Test func loadingAnXlessYmlRegistersItsDemoPasswordSecret() throws {
+    let name = unique("YML_REVIEW_PW")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-scrub-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("xless.yml")
+    try (validYAML + """
+
+    testflight:
+      whatToTest: Try it
+      external:
+        groups: [Beta]
+        review:
+          demoAccount: {name: demo, passwordSecret: \(name), required: true}
+    """).write(to: file, atomically: true, encoding: .utf8)
+    #expect(!SecretEnvironment.scrubbed.contains(name))
+    _ = try ProjectConfig.load(from: file)
+    #expect(SecretEnvironment.scrubbed.contains(name) && SecretEnvironment.scrubbed.contains("\(name)_FILE"))
+}

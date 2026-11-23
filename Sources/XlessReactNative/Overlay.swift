@@ -226,6 +226,7 @@ extension ReactNativeOverlay {
         let text = try OverlayPaths.read(url)
         let paths = OverlayPaths(overlay: url, env: env)
         var overlay = try parse(yaml: text, name: paths.name)
+        overlay.testflight?.registerSecretNames()   // before anything may start a tool (SecretEnvironment.scrub)
         overlay.privacyManifest = overlay.privacyManifest.map { paths.resolve($0).path }
         return (overlay, try paths.sourceRoot(source: overlay.source, sourceOverride: sourceOverride), paths.workRoot)
     }

@@ -41,6 +41,30 @@ public struct TestFlightConfig: Sendable, Equatable, Decodable {
         testers = try c.decodeIfPresent([TestFlightTester].self, forKey: .testers) ?? []
         external = try c.decodeIfPresent(ExternalTestFlight.self, forKey: .external)
     }
+
+    /// The secret the demo account's password is in when `external.review.demoAccount` names none.
+    public static let defaultDemoPasswordSecret = "XLESS_DEMO_PASSWORD"
+
+    /// The secret a run's TestFlight publishing may read: the external beta review's demo account password
+    /// (`passwordSecret`, else `XLESS_DEMO_PASSWORD`). Apple never gives the password back, so it is sent only when the
+    /// account is required (`required: true`, or unset and the account named, when Apple may still require it); nil
+    /// when it never is. scripts/testflight.sh gives it to the container that uploads (`xless secrets named-by`).
+    public var demoPasswordSecret: String? {
+        guard let demo = external?.review?.demoAccount, demo.required == true || (demo.required == nil && demo.name != nil) else { return nil }
+        return demo.passwordSecret ?? Self.defaultDemoPasswordSecret
+    }
+
+    /// The secret names this block gives of the user's own (the demo account's `passwordSecret`), for
+    /// `SecretEnvironment.scrub`: registered whenever the block is read, so no tool started after sees them.
+    public var secretNames: [String] {
+        [external?.review?.demoAccount?.passwordSecret].compactMap { $0 }
+    }
+
+    /// Registers `secretNames` with `SecretEnvironment.scrub`. The configuration loaders call it as soon as they have
+    /// parsed, before anything that may start a tool (a cargo overlay's `git ls-files` of its manifests).
+    public func registerSecretNames() {
+        for name in secretNames { SecretEnvironment.scrub(name) }
+    }
 }
 
 /// A tester in xless.yml: an email address, or `{email, firstName, lastName}`.
@@ -160,7 +184,7 @@ public struct ProjectConfig: Sendable, Equatable {
     /// account password): a run registers them with `SecretEnvironment.scrub` before its first tool starts, so the
     /// build tools never see them even though they are read only at upload.
     public var secretNames: [String] {
-        [testflight?.external?.review?.demoAccount?.passwordSecret].compactMap { $0 }
+        testflight?.secretNames ?? []
     }
 
     public func platform(_ p: Platform) throws -> PlatformConfig {
@@ -232,7 +256,9 @@ extension ProjectConfig {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw XlessError(.config, "cannot read \(url.path)", fix: "run xless in the directory containing xless.yml or pass --project")
         }
-        return try parse(yaml: text, buildOverride: buildOverride)
+        let config = try parse(yaml: text, buildOverride: buildOverride)
+        config.testflight?.registerSecretNames()
+        return config
     }
 
     public func validate() throws {

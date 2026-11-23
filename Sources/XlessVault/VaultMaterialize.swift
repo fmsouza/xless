@@ -8,30 +8,51 @@ import Musl
 
 /// One container's secrets for `xless secrets materialize` (scripts/testflight.sh): `sign=ASC_KEY_P8,XLESS_DIST_KEY`
 /// becomes `<run dir>/sign/ASC_KEY_P8` and `<run dir>/sign/XLESS_DIST_KEY`, mounted into that container only.
+/// `?NAME` is optional: written when the store has it, left out (no error) when it has not. The TestFlight demo
+/// account's password is: it is sent only when the demo account changes, so a run may well not need it.
 public struct MaterializeSet: Sendable, Equatable {
     public let name: String
     public let secrets: [String]
+    /// The secrets of `secrets` the store may lack.
+    public let optional: Set<String>
 
-    public init(name: String, secrets: [String]) {
+    public init(name: String, secrets: [String], optional: Set<String> = []) {
         self.name = name
         self.secrets = secrets
+        self.optional = optional
     }
 
-    /// `NAME=SECRET[,SECRET…]`: a lower-case set name, then secrets of `SecretEnvironment` (not their `_FILE` forms).
+    /// `NAME=SECRET[,SECRET…]`: a lower-case set name, then secrets (not their `_FILE` forms), each `?`-prefixed when
+    /// optional. A secret is one of `SecretEnvironment`'s, or a password under a name of the user's own (xless.yml's
+    /// `passwordSecret`): a variable name, optionally `@TEAMID`, named like no key or token.
     public static func parse(_ text: String) throws -> MaterializeSet {
         let parts = text.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 2, parts[0].wholeMatch(of: /[a-z0-9][a-z0-9-]{0,31}/) != nil else {
             throw XlessError(.config, "'\(text)' is not a set of secrets", fix: "write SET=NAME[,NAME…], e.g. sign=ASC_KEY_P8,XLESS_DIST_KEY")
         }
-        let names = parts[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard !names.isEmpty else { throw XlessError(.config, "the set \(parts[0]) names no secret", fix: "write \(parts[0])=NAME[,NAME…]") }
-        let known = SecretEnvironment.entries.map(\.name)
-        for name in names where !known.contains(name) {
-            throw XlessError(.config, "\(name) is not a secret xless reads", fix: "use one of: \(known.joined(separator: ", "))")
+        let words = parts[1].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !words.isEmpty else { throw XlessError(.config, "the set \(parts[0]) names no secret", fix: "write \(parts[0])=NAME[,NAME…]") }
+        var unique: [String] = [], optional: Set<String> = [], required: Set<String> = []
+        for word in words {
+            let isOptional = word.hasPrefix("?")
+            let name = isOptional ? String(word.dropFirst()) : word
+            try requireSecretName(name)
+            if isOptional { optional.insert(name) } else { required.insert(name) }
+            if !unique.contains(name) { unique.append(name) }
         }
-        var unique: [String] = []
-        for name in names where !unique.contains(name) { unique.append(name) }
-        return MaterializeSet(name: parts[0], secrets: unique)
+        // named both ways: required wins
+        return MaterializeSet(name: parts[0], secrets: unique, optional: optional.subtracting(required))
+    }
+
+    /// One of xless's own secrets, or a password's name of the user's own (never a key's or a token's, never `_FILE`).
+    static func requireSecretName(_ name: String) throws {
+        let known = SecretEnvironment.entries.map(\.name)
+        if known.contains(name) { return }
+        guard name.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*(@[A-Z0-9]{10})?/) != nil, !name.uppercased().hasSuffix("_FILE"),
+              !name.uppercased().contains("_FILE@"), !SecretEnvironment.isKeyOrToken(name) else {
+            throw XlessError(.config, "\(name) is not a secret xless reads",
+                             fix: "use one of: \(known.joined(separator: ", ")), or a password's own name (letters, digits and _, optionally @TEAMID; not named like a key or token)")
+        }
     }
 }
 
@@ -105,7 +126,8 @@ public struct VaultMaterializer {
         self.init(secrets: VaultSecretStore(store: store, cache: cache, prompter: prompter), team: team)
     }
 
-    /// Every secret of `sets` has an entry (and the API key its IDs). Reads names and IDs only: no passphrase.
+    /// Every secret of `sets` has an entry (and the API key its IDs), an optional one may have none. Reads names and IDs
+    /// only: no passphrase.
     public func check(_ sets: [MaterializeSet]) throws {
         let file: SecretCatalog?
         do { file = try store.catalog() } catch let e as VaultError { throw e.stageError(.config) }
@@ -117,10 +139,17 @@ public struct VaultMaterializer {
                     try team.map { try VaultResolver.preferredCandidate(for: entryName, in: f, team: $0) } ?? VaultResolver.candidate(for: entryName, in: f, team: nil)
                 }
             } catch let e as VaultError { throw e.stageError(.config) }
+            if entry == nil, Self.optional(name, in: sets) { continue }
             guard let entry, VaultResolver.metadataField(name).map({ $0(entry.metadata) != nil }) ?? true else {
                 let whose = team.map { " for team \($0)" } ?? ""
                 let place = file == nil ? "there is no secret store (\(store.place))" : "\(store.place) has no \(name)\(whose)"
                 throw XlessError(.config, "\(place), and neither \(name) nor \(name)_FILE is set", fix: Secrets.missingFix(name))
+            }
+            // A name of the user's own stands for a password: the store's entry must be one, so no other kind of
+            // secret (a key) leaves the store under it.
+            if !SecretEnvironment.entries.contains(where: { $0.name == name }), entry.kind != .password {
+                throw XlessError(.config, "\(store.place)'s entry for \(name) is a \(entry.kind.rawValue), not a password",
+                                 fix: "keep the password in its own entry (`xless secrets import \(name) --file <file> --kind password`)")
             }
         }
     }
@@ -134,7 +163,10 @@ public struct VaultMaterializer {
         var values: [String: SecretBytes] = [:]
         defer { values.values.forEach { $0.wipe() } }
         for name in Self.names(sets) {
-            guard let value = try resolver.lookup(name, stage: .config) else { throw XlessError(.config, "missing secret \(name)", fix: Secrets.missingFix(name)) }
+            guard let value = try resolver.lookup(name, stage: .config) else {
+                if Self.optional(name, in: sets) { continue }
+                throw XlessError(.config, "missing secret \(name)", fix: Secrets.missingFix(name))
+            }
             values[name] = SecretBytes(utf8: value)
         }
         try Self.prepare(base)
@@ -149,13 +181,21 @@ public struct VaultMaterializer {
                 guard mkdir(dir.path, 0o700) == 0 else {
                     throw XlessError(.config, "cannot create \(dir.path): \(String(cString: strerror(errno)))", fix: "check \(run.path)")
                 }
-                for name in set.secrets { try Self.writeFile(dir.appendingPathComponent(name).path, values[name]!) }
+                for name in set.secrets {
+                    guard let value = values[name] else { continue }   // an optional secret the store has not
+                    try Self.writeFile(dir.appendingPathComponent(name).path, value)
+                }
             }
         } catch {
             try? FileManager.default.removeItem(at: run)
             throw error
         }
         return run
+    }
+
+    /// `name` is optional wherever a set names it (a set that needs it makes it needed).
+    static func optional(_ name: String, in sets: [MaterializeSet]) -> Bool {
+        !sets.contains { $0.secrets.contains(name) && !$0.optional.contains(name) }
     }
 
     static func names(_ sets: [MaterializeSet]) -> [String] {

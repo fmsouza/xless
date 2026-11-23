@@ -69,3 +69,39 @@ private struct TeamStore: SecretFallback {
         }
     }
 }
+
+/// A cargo overlay's load lists the source's manifests with `git ls-files` (`CargoManifest`) while the configuration is
+/// still being read: its demo password secret is registered before that, when the overlay has just been parsed.
+@Test func aCargoOverlaysDemoPasswordSecretIsRegisteredBeforeItsManifestsAreListed() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-isolation-\(UUID().uuidString)")
+    let source = dir.appendingPathComponent("app")
+    try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let name = "CARGO_REVIEW_PW_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+    let overlay = dir.appendingPathComponent("app.yml")
+    try """
+    type: cargo
+    source: app
+    bundleID: com.example.hello
+    teamID: ABCDE12345
+    version: cargo
+    build: "7"
+    testflight:
+      whatToTest: Try it
+      external:
+        groups: [Beta]
+        review:
+          demoAccount: {name: demo, passwordSecret: \(name), required: true}
+    ios: { package: hello-mobile, product: Hello, minimumOS: "17.0", assets: Assets.xcassets, infoPlist: ios/Info.plist }
+    """.write(to: overlay, atomically: true, encoding: .utf8)
+    #expect(!SecretEnvironment.scrubbed.contains(name))
+    let options = try ProjectOptions.parse(["--config", overlay.path, "--platform", "ios"])
+    // The source is no git checkout: listing its manifests fails, after the name was registered.
+    do {
+        _ = try await Context.load(options, env: ["PATH": "/usr/bin:/bin", "XLESS_WORK_ROOT": dir.appendingPathComponent("work").path])
+        Issue.record("expected the manifests' listing to fail")
+    } catch let e as XlessError {
+        #expect(e.cause.contains("git"), "\(e.cause)")
+    }
+    #expect(SecretEnvironment.scrubbed.contains(name))
+}
