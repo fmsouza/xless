@@ -190,15 +190,21 @@ public struct ASCProfiles: Sendable {
     struct CreateAttributes: Encodable, Sendable { var name: String; var profileType: String }
     struct CreateRelationships: Encodable, Sendable { var bundleId: ASCToOne; var certificates: ASCToMany; var devices: ASCToMany? }
 
-    /// Creates a profile. The POST is sent once, never retried. `deviceIDs` is sent only when not empty.
+    /// Creates a profile. `deviceIDs` is sent only when not empty. The POST is sent once, never retried, unless `once` is
+    /// false (the `sign` stage, which always retried it and deletes a same-named profile first).
     public func create(name: String, type: ProfileType, bundleIDResourceID: String, certificateIDs: [String],
-                       deviceIDs: [String] = []) async throws -> ASCProfile {
+                       deviceIDs: [String] = [], once: Bool = true) async throws -> ASCProfile {
         let relationships = CreateRelationships(
             bundleId: ASCToOne(ASCRef(type: "bundleIds", id: bundleIDResourceID)),
             certificates: ASCToMany(certificateIDs.map { ASCRef(type: "certificates", id: $0) }),
             devices: deviceIDs.isEmpty ? nil : ASCToMany(deviceIDs.map { ASCRef(type: "devices", id: $0) }))
-        let created: ASCSingle<ASCProfile> = try await resources.create(
-            Self.path, type: "profiles", attributes: CreateAttributes(name: name, profileType: type.rawValue), relationships: relationships)
+        let attributes = CreateAttributes(name: name, profileType: type.rawValue)
+        if !once {
+            let body = ASCResources.Body(data: .init(type: "profiles", id: nil, attributes: attributes, relationships: relationships))
+            let created: ASCSingle<ASCProfile> = try await resources.client.post(Self.path, body: body)
+            return created.data
+        }
+        let created: ASCSingle<ASCProfile> = try await resources.create(Self.path, type: "profiles", attributes: attributes, relationships: relationships)
         return created.data
     }
 

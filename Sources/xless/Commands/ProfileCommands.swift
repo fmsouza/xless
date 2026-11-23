@@ -212,7 +212,7 @@ struct ProfilesRenewCommand: AsyncParsableCommand {
     func validate() throws { try ProfileArgument.validate(profile) }
 
     func run() async throws {
-        try await runProfiles(team.team, verbose: trace.verbose) { cli, _ in try await cli.with(json: output.json).renew(profile, yes: confirmation.yes) }
+        try await runProfiles(team.team, verbose: trace.verbose) { cli, team in try await cli.with(json: output.json).renew(profile, yes: confirmation.yes, team: team) }
     }
 }
 
@@ -286,7 +286,7 @@ struct ProfileCLI {
         }
         let certificates = try await pickCertificates(request)
         let devices = type.usesDevices ? try await pickDevices(request.devices ?? .all, for: type) : []
-        let name = request.name ?? "xless \(bundle.identifier) \(type.rawValue)"
+        let name = request.name ?? ProfileService.defaultName(bundleIdentifier: bundle.identifier, type: type)
         if let existing = try await profiles.find(name: name).first {
             throw XlessError(.account, "a profile named \(name) exists already (\(existing.id), \(existing.profileType))",
                              fix: "renew it with `xless profiles renew \(existing.id)`, or choose another --name")
@@ -367,14 +367,20 @@ struct ProfileCLI {
                              fix: "re-run; if it persists, check it with `xless profiles list --json`")
         }
         let parsed = try ProvisioningProfile.parse(content)
-        try parsed.verify(team: team ?? prefix, appIDPrefix: prefix, bundleIdentifier: bundle.identifier, uuid: p.attributes.uuid)
+        do {
+            try parsed.verify(team: team ?? prefix, appIDPrefix: prefix, bundleIdentifier: bundle.identifier, uuid: p.attributes.uuid)
+        } catch let e as XlessError where team == nil {
+            throw XlessError(.account, e.cause, fix: e.fix + "; if the team's ID is not the App ID prefix \(prefix), pass --team <TEAM_ID>")
+        }
         do { try SigningKey.writeExclusively(content, toPath: path, mode: 0o644) } catch let e as XlessError {
-            throw XlessError(.account, e.cause, fix: e.fix)
+            throw XlessError(.account, e.cause, fix: "choose another path; xless never overwrites a file")
         }
         return "wrote profile \(p.name) (\(p.id), \(p.profileType)\(p.expires.map { ", expires \(CertTable.day($0))" } ?? "")) to \(path)\n"
     }
 
-    func renew(_ id: String, yes: Bool) async throws -> String {
+    /// Renews a profile: everything it lists that can still go into a profile (its certificates that exist and have
+    /// not expired; its devices that are registered, enabled and of its kind) is checked before anything is deleted.
+    func renew(_ id: String, yes: Bool, team: String? = nil) async throws -> String {
         let (p, bundle) = try await profiles.get(id: id)
         guard let type = ProfileType(rawValue: p.profileType) else {
             throw XlessError(.account, "profile \(id) has type \(p.profileType), which xless does not know", fix: "renew it at developer.apple.com/account/resources/profiles")
@@ -382,17 +388,37 @@ struct ProfileCLI {
         guard let bundle else {
             throw XlessError(.account, "App Store Connect did not say which bundle ID profile \(id) is for", fix: "re-run; if it persists, check it with `xless profiles list --json`")
         }
-        let certificates = try await profiles.certificateIDs(of: id)
-        let devices = type.usesDevices ? try await profiles.deviceIDs(of: id) : []
-        let recreate = Self.createCommand(type: type, bundle: bundle.identifier, certificates: certificates, devices: devices, name: p.name)
-        guard !certificates.isEmpty else {
-            throw XlessError(.account, "profile \(p.name) (\(id)) has no certificate left (revoked or expired), so it cannot be created again as it is",
-                             fix: "create a new one with `xless profiles create --type \(type.argument) --bundle-id \(bundle.identifier)` and delete this one")
+        let listedCertificates = try await profiles.certificateIDs(of: id)
+        let usableCertificates = Set(try await ASCCertificates(resources: resources).list(types: type.certificateTypes)
+            .filter { ($0.expires ?? .distantFuture) > now() }.map(\.id))
+        let certificates = listedCertificates.filter(usableCertificates.contains)
+        for c in listedCertificates where !usableCertificates.contains(c) { say("left out: certificate \(c) (expired or revoked)") }
+        var devices: [String] = []
+        var droppedDevices = 0
+        if type.usesDevices {
+            let listedDevices = try await profiles.deviceIDs(of: id)
+            let usableDevices = Set(try await ASCDevices(resources: resources).list(platform: type.devicePlatform)
+                .filter { $0.status == .enabled && type.accepts(deviceClass: $0.attributes.deviceClass) }.map(\.id))
+            devices = listedDevices.filter(usableDevices.contains)
+            droppedDevices = listedDevices.count - devices.count
+            for d in listedDevices where !usableDevices.contains(d) { say("left out: device \(d) (disabled, or no longer registered)") }
         }
-        var question = "Renew \(type.displayName) profile \(p.name) (\(id)) for \(bundle.identifier)? It is deleted and created again with its "
+        let fresh = "create a new one with `xless profiles create --type \(type.argument) --bundle-id \(bundle.identifier)`, then delete this one"
+        guard !certificates.isEmpty else {
+            throw XlessError(.account, "profile \(p.name) (\(id)) has no unexpired certificate left, so it cannot be created again as it is; nothing was sent", fix: fresh)
+        }
+        if type.usesDevices, devices.isEmpty {
+            throw XlessError(.account, "profile \(p.name) (\(id)) has no enabled device left, so it cannot be created again as it is; nothing was sent",
+                             fix: "enable or register devices (`xless devices`) and renew it, or \(fresh)")
+        }
+        let recreate = Self.createCommand(type: type, bundle: bundle.identifier, certificates: certificates, devices: devices, name: p.name, team: team)
+        var question = "Renew \(type.displayName) profile \(p.name) (\(id)) for \(bundle.identifier)? It is deleted and created again with "
         question += "\(certificates.count) certificate\(certificates.count == 1 ? "" : "s")"
-        question += type.usesDevices ? " and \(devices.count) device\(devices.count == 1 ? "" : "s"). " : ". "
-        question += "Files of the old profile stop working."
+        question += type.usesDevices ? " and \(devices.count) device\(devices.count == 1 ? "" : "s")" : ""
+        if certificates.count < listedCertificates.count || droppedDevices > 0 {
+            question += " (the ones that can no longer be in a profile are left out)"
+        }
+        question += ". Files of the old profile stop working."
         guard try AccountConfirm.confirm(question, action: "renewing profile \(id)", yes: yes, terminal: terminal) else {
             say("cancelled; nothing was sent")
             return ""
@@ -437,11 +463,13 @@ struct ProfileCLI {
     }
 
     /// The `xless profiles create` command line that makes this profile again.
-    static func createCommand(type: ProfileType, bundle: String, certificates: [String], devices: [String], name: String) -> String {
+    static func createCommand(type: ProfileType, bundle: String, certificates: [String], devices: [String], name: String, team: String? = nil) -> String {
         var parts = ["xless profiles create", "--type \(type.argument)", "--bundle-id \(shellQuoted(bundle))"]
         parts += certificates.map { "--cert \($0)" }
         if type.usesDevices, !devices.isEmpty { parts.append("--devices \(devices.joined(separator: ","))") }
-        parts.append("--name \(shellQuoted(name))")
+        // `--name=…` keeps a name that starts with `-` a value.
+        parts.append("--name=\(shellQuoted(name))")
+        if let team { parts.append("--team \(team)") }
         return parts.joined(separator: " ")
     }
 

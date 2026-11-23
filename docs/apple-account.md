@@ -365,16 +365,18 @@ universal one.
   renew it instead.
 
 `download` reads the profile, checks that it is a CMS envelope around a property list, that its `TeamIdentifier` is
-the team (`--team` or the default team, else the bundle ID's App ID prefix), that its `application-identifier` is
+the team (`--team` or the default team, else the bundle ID's App ID prefix, which is the team ID on all but some
+older teams), that its `application-identifier` is
 `<App ID prefix>.<identifier>` and that its UUID is the one App Store Connect lists, and only then writes it, with
 mode 0644, to a file that must not exist yet. The signature is not checked: the file comes from App Store Connect over
 TLS, and devices check it.
 
 A profile cannot be edited. `renew` reads its name, type, bundle ID, certificates and (development, ad hoc) devices,
-asks, deletes it and creates it again with all of them, so it gets a new expiry and every capability now enabled on the
-bundle ID. A profile whose certificates were all revoked cannot be renewed as it is: `create` a new one. If the create
-fails after the delete, the error gives the exact `xless profiles create` command that makes it again. `delete` asks
-first; Apple has no undo.
+asks, deletes it and creates it again with them, so it gets a new expiry and every capability now enabled on the
+bundle ID. Before anything is deleted, it leaves out (and names, on standard error) the certificates that expired or
+were revoked and the devices that were disabled; when no certificate (or, for development and ad hoc profiles, no
+device) is left, nothing is sent and the error says to `create` a new profile. If the create fails after the delete,
+the error gives the exact `xless profiles create` command that makes it again. `delete` asks first; Apple has no undo.
 
 `xless sign` keeps making and replacing its own `xless <identifier> <TYPE>` profiles (`IOS_APP_STORE`,
 `MAC_APP_STORE`, `MAC_APP_DIRECT`) through the same create path.

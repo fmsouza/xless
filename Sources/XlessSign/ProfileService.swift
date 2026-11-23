@@ -45,7 +45,7 @@ public struct ProfileService: Sendable {
     /// `forceNew` always replaces it (used after a capability was enabled, so the profile carries it).
     public func ensureProfile(bundleIDResourceID: String, certificateID: String, type: ProfileType, bundleIdentifier: String,
                               forceNew: Bool = false) async throws -> Data {
-        let name = "xless \(bundleIdentifier) \(type.rawValue)"
+        let name = Self.defaultName(bundleIdentifier: bundleIdentifier, type: type)
         let list: ASCDocument<[ASCResource<ProfileAttributes>]> = try await client.get(
             "/v1/profiles", query: [("filter[name]", name), ("filter[profileType]", type.rawValue), ("limit", "200")])
         for p in list.data where p.attributes.name == name {
@@ -62,7 +62,7 @@ public struct ProfileService: Sendable {
         }
         let created: ASCProfile
         do {
-            created = try await create(name: name, type: type, bundleIDResourceID: bundleIDResourceID, certificateIDs: [certificateID])
+            created = try await create(name: name, type: type, bundleIDResourceID: bundleIDResourceID, certificateIDs: [certificateID], once: false)
         } catch let e as ASCError {
             throw XlessError(.sign, "cannot create \(type.rawValue) profile for \(bundleIdentifier): \(e)",
                              fix: type != .iosAppStore ? "if \(bundleIdentifier) was registered for iOS only (before xless registered identifiers as universal), set platforms.macos.bundleID to a separate identifier" : "check the bundle ID and certificate in App Store Connect")
@@ -73,12 +73,16 @@ public struct ProfileService: Sendable {
         return content
     }
 
+    /// The name `sign` gives its profiles, and `xless profiles create`'s default: `xless <identifier> <TYPE>`.
+    public static func defaultName(bundleIdentifier: String, type: ProfileType) -> String { "xless \(bundleIdentifier) \(type.rawValue)" }
+
     /// The general create path (`xless profiles create` and `renew`, and `ensureProfile`): a profile of any type for a
-    /// bundle ID, with these certificates and, for development and ad hoc profiles, devices. Sent once, never retried.
+    /// bundle ID, with these certificates and, for development and ad hoc profiles, devices. Sent once, never retried,
+    /// unless `once` is false.
     public func create(name: String, type: ProfileType, bundleIDResourceID: String, certificateIDs: [String],
-                       deviceIDs: [String] = []) async throws -> ASCProfile {
+                       deviceIDs: [String] = [], once: Bool = true) async throws -> ASCProfile {
         try await ASCProfiles(resources: ASCResources(client: client)).create(
-            name: name, type: type, bundleIDResourceID: bundleIDResourceID, certificateIDs: certificateIDs, deviceIDs: deviceIDs)
+            name: name, type: type, bundleIDResourceID: bundleIDResourceID, certificateIDs: certificateIDs, deviceIDs: deviceIDs, once: once)
     }
 
     static func parseDate(_ s: String) -> Date? {

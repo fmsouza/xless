@@ -145,12 +145,20 @@ private let created = #"{"data":{"type":"profiles","id":"P2","attributes":{"name
     #expect(body.contains("\"TVOS_APP_DEVELOPMENT\"") && body.contains("\"D2\"") && body.contains("\"devices\""))
 }
 
-@Test func ensureProfileSendsItsCreateOnce() async throws {
-    // The general path never retries a POST: a retried create whose first attempt went through would make a duplicate.
-    let t = MockTransport([(200, #"{"data":[]}"#), (500, #"{"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}"#)])
+@Test func ensureProfileStillRetriesItsCreate() async throws {
+    // `sign` keeps its behaviour: a 5xx on the create is retried (the commands send theirs once).
+    let t = MockTransport([(200, #"{"data":[]}"#), (500, #"{"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}"#), (201, created)])
     let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
-    await #expect(throws: XlessError.self) {
-        _ = try await svc.ensureProfile(bundleIDResourceID: "B1", certificateID: "C1", type: .macAppDirect, bundleIdentifier: "a.b")
-    }
-    #expect(t.requests.map { $0.httpMethod ?? "" } == ["GET", "POST"])
+    let data = try await svc.ensureProfile(bundleIDResourceID: "B1", certificateID: "C1", type: .macAppDirect, bundleIdentifier: "a.b")
+    #expect(data == Data("NEW".utf8))
+    #expect(t.requests.map { $0.httpMethod ?? "" } == ["GET", "POST", "POST"])
+    #expect(String(decoding: t.requests[2].httpBody!, as: UTF8.self).contains("\"xless a.b MAC_APP_DIRECT\""))
+}
+
+@Test func theGeneralCreatePathSendsOnce() async throws {
+    let t = MockTransport([(500, #"{"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}"#)])
+    let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    await #expect(throws: ASCError.self) { _ = try await svc.create(name: "n", type: .iosAppStore, bundleIDResourceID: "B1", certificateIDs: ["C1"]) }
+    #expect(t.requests.count == 1)
+    #expect(ProfileService.defaultName(bundleIdentifier: "a.b", type: .iosAppAdHoc) == "xless a.b IOS_APP_ADHOC")
 }

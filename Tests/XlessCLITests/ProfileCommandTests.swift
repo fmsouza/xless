@@ -104,6 +104,8 @@ private func tempPath(_ name: String) -> String {
     #expect(request.devices == .some([iphone, "D2"]) && request.name == "Ad hoc")
     #expect(try ProfilesCreateCommand.parse(["--type", "tvos-app-development", "--bundle-id", "a.b", "--devices", "ALL"]).request().devices == .all)
     _ = try ProfilesDeleteCommand.parse(["8U3T4X5YZA", "--yes"])
+    // The recreate command `renew` prints spells the name `--name=…`, which keeps a leading dash a value.
+    #expect(try ProfilesCreateCommand.parse(["--type", "ios-app-store", "--bundle-id", "a.b", "--name=-odd"]).name == "-odd")
 }
 
 // MARK: - list
@@ -155,7 +157,8 @@ private func tempPath(_ name: String) -> String {
     #expect(t.requests.map(\.httpMethod) == ["GET", "GET", "GET", "GET", "POST"])
 }
 
-@Test(arguments: [ProfileType.iosAppStore, .macAppStore, .macAppDirect, .tvosAppStore, .iosAppInHouse, .macCatalystAppStore, .macCatalystAppDirect])
+@Test(arguments: [ProfileType.iosAppStore, .macAppStore, .macAppDirect, .tvosAppStore, .iosAppInHouse, .tvosAppInHouse, .macCatalystAppStore,
+                  .macCatalystAppDirect])
 func createWithoutDevices(type: ProfileType) async throws {
     let certType = type.certificateTypes[0].rawValue
     let t = FakeTransport([(200, listing([bundle()])), (200, listing([cert("C1", certType)])), (200, listing([])),
@@ -253,22 +256,30 @@ private func refused(_ t: FakeTransport, _ request: ProfileRequest, _ cause: Str
         await #expect(throws: XlessError.self) { _ = try await cli(t).download("P1", to: path, team: team) }
         #expect(!FileManager.default.fileExists(atPath: path))
     }
+    // Without a team, the check uses the App ID prefix, and says how to name the team when they differ.
+    let other = FakeTransport([(200, #"{"data":\#(profile("P1", content: profileFile(team: "ZZZZZ99999"))),"included":[\#(bundle())]}"#)])
+    do { _ = try await cli(other).download("P1", to: tempPath("x.mobileprovision"), team: nil); Issue.record("expected throw") } catch let e as XlessError {
+        #expect(e.fix.hasSuffix("pass --team <TEAM_ID>"))
+    }
 }
 
 // MARK: - renew
 
+private func renewing(_ p: String, certs: [String], usableCerts: [String], devices: [String]? = nil, usableDevices: [String] = [],
+                      then more: [(Int, String)] = []) -> FakeTransport {
+    var steps: [(Int, String)] = [(200, #"{"data":\#(p),"included":[\#(bundle())]}"#), (200, refs("certificates", certs)), (200, listing(usableCerts))]
+    if let devices { steps += [(200, refs("devices", devices)), (200, listing(usableDevices))] }
+    return FakeTransport(steps + more)
+}
+
 @Test func renewKeepsNameCertificatesAndDevices() async throws {
-    let t = FakeTransport([
-        (200, #"{"data":\#(profile("P1", name: "My Ad Hoc")),"included":[\#(bundle())]}"#),
-        (200, refs("certificates", ["C1", "C2"])),
-        (200, refs("devices", ["D1", "D2", "D3"])),
-        (204, ""),
-        (201, #"{"data":\#(profile("P2", name: "My Ad Hoc"))}"#),
-    ])
+    let t = renewing(profile("P1", name: "My Ad Hoc"), certs: ["C1", "C2"], usableCerts: [cert("C1"), cert("C2", "IOS_DISTRIBUTION")],
+                     devices: ["D1", "D2", "D3"], usableDevices: [device("D1", iphone), device("D2", iphone), device("D3", iphone)],
+                     then: [(204, ""), (201, #"{"data":\#(profile("P2", name: "My Ad Hoc"))}"#)])
     let out = try await cli(t, terminal: FakeTerminal(answer: true)).renew("P1", yes: false)
     #expect(out.hasPrefix("deleted profile P1; created profile My Ad Hoc (P2, ios-app-adhoc) for com.example.app: 2 certificates, 3 devices"))
-    #expect(t.requests[3].httpMethod == "DELETE" && t.requests[3].url!.path == "/v1/profiles/P1")
-    let sent = try body(t.requests[4])
+    #expect(t.requests[5].httpMethod == "DELETE" && t.requests[5].url!.path == "/v1/profiles/P1")
+    let sent = try body(t.requests[6])
     #expect(sent["data"]?["attributes"]?["name"] == .string("My Ad Hoc"))
     #expect(sent["data"]?["attributes"]?["profileType"] == .string("IOS_APP_ADHOC"))
     #expect(sent["data"]?["relationships"]?["bundleId"]?["data"]?["id"] == .string("B1"))
@@ -276,43 +287,56 @@ private func refused(_ t: FakeTransport, _ request: ProfileRequest, _ cause: Str
     #expect(ids(sent["data"]?["relationships"]?["devices"]?["data"]) == ["D1", "D2", "D3"])
 }
 
+@Test func renewLeavesOutWhatCanNoLongerBeInAProfile() async throws {
+    let said = Said()
+    let t = renewing(profile("P1"), certs: ["C1", "OLD"], usableCerts: [cert("C1"), cert("OLD", expires: "2026-01-01T00:00:00.000+0000")],
+                     devices: ["D1", "D2", "GONE"], usableDevices: [device("D1", iphone), device("D2", iphone, status: "DISABLED")],
+                     then: [(204, ""), (201, #"{"data":\#(profile("P2"))}"#)])
+    _ = try await cli(t, said: said).renew("P1", yes: true)
+    let sent = try body(t.requests[6])
+    #expect(ids(sent["data"]?["relationships"]?["certificates"]?["data"]) == ["C1"])
+    #expect(ids(sent["data"]?["relationships"]?["devices"]?["data"]) == ["D1"])
+    #expect(said.lines == ["left out: certificate OLD (expired or revoked)", "left out: device D2 (disabled, or no longer registered)",
+                           "left out: device GONE (disabled, or no longer registered)"])
+}
+
 @Test func renewOfAStoreProfileReadsNoDevicesAndPrintsJSON() async throws {
-    let t = FakeTransport([
-        (200, #"{"data":\#(profile("P1", type: "MAC_APP_STORE")),"included":[\#(bundle())]}"#),
-        (200, refs("certificates", ["C1"])),
-        (204, ""),
-        (201, #"{"data":\#(profile("P2", type: "MAC_APP_STORE"))}"#),
-    ])
+    let t = renewing(profile("P1", type: "MAC_APP_STORE"), certs: ["C1"], usableCerts: [cert("C1", "MAC_APP_DISTRIBUTION")],
+                     then: [(204, ""), (201, #"{"data":\#(profile("P2", type: "MAC_APP_STORE"))}"#)])
     let doc = try JSONDecoder().decode(JSONValue.self, from: Data(try await cli(t, json: true).renew("P1", yes: true).utf8))
     #expect(doc["replaced"] == .string("P1") && doc["profile"]?["id"] == .string("P2"))
     #expect(doc["certificates"] == .array([.string("C1")]) && doc["devices"] == .array([]))
     #expect(!t.requests.contains { $0.url!.path.hasSuffix("/devices") })
+    #expect(t.requests[1].url!.path == "/v1/profiles/P1/relationships/certificates" && t.requests[2].url!.query?.contains("MAC_APP_DISTRIBUTION") == true)
 }
 
-@Test func renewDeclinedOrWithoutCertificatesSendsNothing() async throws {
+@Test func renewDeclinedOrWithNothingUsableLeftSendsNothing() async throws {
     let said = Said()
-    let declined = FakeTransport([(200, #"{"data":\#(profile("P1")),"included":[\#(bundle())]}"#), (200, refs("certificates", ["C1"])), (200, refs("devices", ["D1"]))])
+    let declined = renewing(profile("P1"), certs: ["C1"], usableCerts: [cert("C1")], devices: ["D1"], usableDevices: [device("D1", iphone)])
     #expect(try await cli(declined, terminal: FakeTerminal(answer: false), said: said).renew("P1", yes: false) == "")
     #expect(said.lines == ["cancelled; nothing was sent"])
     #expect(declined.requests.allSatisfy { $0.httpMethod == "GET" })
 
-    let empty = FakeTransport([(200, #"{"data":\#(profile("P1")),"included":[\#(bundle())]}"#), (200, refs("certificates", [])), (200, refs("devices", ["D1"]))])
-    await #expect(throws: XlessError.self) { _ = try await cli(empty).renew("P1", yes: true) }
-    #expect(empty.requests.allSatisfy { $0.httpMethod == "GET" })
+    let noCertificates = renewing(profile("P1"), certs: ["OLD"], usableCerts: [cert("OLD", expires: "2026-01-01T00:00:00.000+0000")],
+                                  devices: ["D1"], usableDevices: [device("D1", iphone)])
+    let noDevices = renewing(profile("P1"), certs: ["C1"], usableCerts: [cert("C1")], devices: ["D1"], usableDevices: [device("D1", iphone, status: "DISABLED")])
+    let empty = renewing(profile("P1"), certs: [], usableCerts: [], devices: ["D1"], usableDevices: [device("D1", iphone)])
+    for (t, cause) in [(noCertificates, "no unexpired certificate left"), (noDevices, "no enabled device left"), (empty, "no unexpired certificate left")] {
+        do { _ = try await cli(t).renew("P1", yes: true); Issue.record("expected throw") } catch let e as XlessError {
+            #expect(e.cause.contains(cause) && e.cause.hasSuffix("nothing was sent"), "\(e.cause)")
+        }
+        #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
+    }
 }
 
 @Test func renewThatFailsAfterTheDeleteSaysHowToRecreate() async throws {
-    let t = FakeTransport([
-        (200, #"{"data":\#(profile("P1", name: "Fred's Ad Hoc")),"included":[\#(bundle())]}"#),
-        (200, refs("certificates", ["C1"])),
-        (200, refs("devices", ["D1", "D2"])),
-        (204, ""),
-        (409, #"{"errors":[{"status":"409","code":"ENTITY_ERROR","title":"conflict","detail":"There is a problem with the request entity"}]}"#),
-    ])
-    do { _ = try await cli(t).renew("P1", yes: true); Issue.record("expected throw") } catch let e as XlessError {
+    let conflict = #"{"errors":[{"status":"409","code":"ENTITY_ERROR","title":"conflict","detail":"There is a problem with the request entity"}]}"#
+    let t = renewing(profile("P1", name: "Fred's Ad Hoc"), certs: ["C1"], usableCerts: [cert("C1")], devices: ["D1", "D2"],
+                     usableDevices: [device("D1", iphone), device("D2", iphone)], then: [(204, ""), (409, conflict)])
+    do { _ = try await cli(t).renew("P1", yes: true, team: "ABCDE12345"); Issue.record("expected throw") } catch let e as XlessError {
         #expect(e.stage == .account)
         #expect(e.cause.hasPrefix("profile Fred's Ad Hoc (P1) was deleted, but creating it again failed: "))
-        #expect(e.fix == #"create it again with: xless profiles create --type ios-app-adhoc --bundle-id com.example.app --cert C1 --devices D1,D2 --name 'Fred'\''s Ad Hoc'"#)
+        #expect(e.fix == #"create it again with: xless profiles create --type ios-app-adhoc --bundle-id com.example.app --cert C1 --devices D1,D2 --name='Fred'\''s Ad Hoc' --team ABCDE12345"#)
     }
 }
 
