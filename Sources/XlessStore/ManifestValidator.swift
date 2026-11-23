@@ -53,7 +53,7 @@ public enum ManifestValidator {
                     error(appPath, "bundleID \(id) is not an explicit bundle identifier", "use the app's bundle ID, e.g. com.example.app")
                 }
             } else if inheritedBundleID == nil {
-                error(appPath, "no bundleID, and no xless.yml next to \(name)/ to take it from", "add `bundleID: com.example.app` to app.yml")
+                error(appPath, "no bundleID, and no usable xless.yml next to \(name)/ to take it from", "add `bundleID: com.example.app` to app.yml")
             }
             if let p = app.platform, !ManifestValidator.platforms.contains(p) {
                 error(appPath, "platform \(p) is not one App Store Connect knows", "use one of \(oneOf(ManifestValidator.platforms))")
