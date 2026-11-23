@@ -17,8 +17,9 @@ keeps the App Store listing in an `appstore/` directory, [`xless builds`](#xless
 waits for their processing, answers their export compliance and expires them, [`xless users`](#xless-users), which
 invites, updates and removes the team's App Store Connect users, [`xless testflight`](#xless-testflight), which
 manages TestFlight groups and testers, delivers builds and runs external testing, [`xless release`](#xless-release),
-which submits a version for review and releases it, and [`xless api`](#xless-api), which calls any documented App Store
-Connect endpoint.
+which submits a version for review and releases it, [`xless provision`](#xless-provision), which does all of the
+above that a project needs in one go, and [`xless api`](#xless-api), which calls any documented App Store Connect
+endpoint.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -792,6 +793,63 @@ With `--json`, `create` prints `{"result": "created" | "renamed" | "existing", "
 "phasedRelease", "submissions": [{"id", "state", "submittedDate", "items"}]}`, `cancel` `{"result": "canceled" |
 "unchanged" | "none", "submissionID", "state"}`, `publish` `{"result": "released" | "unchanged", "versionID", "state"}`
 and `phased` `{"result", "data": phased release}`.
+
+## `xless provision`
+
+```sh
+xless provision plan                         # what the account lacks for ./xless.yml and ./appstore/; reads only
+xless provision plan --json                  # the same, for review in CI
+xless provision apply                        # asks, then does it (--yes without a terminal)
+xless provision apply --config app.overlay.yml --company-name "Example Ltd"
+```
+
+Everything the project needs from the account, read from xless.yml (`--project`) or an overlay (`--config`, with
+`--source`) and the [`appstore/` manifest](appstore-manifest.md) next to it (`--dir` points at another one). The team is
+the config's `teamID`; its API key is picked as the pipeline picks it (the environment's, else the store's entry of
+that team, else an unteamed one). In dependency order:
+
+| Area | What is planned | Interface |
+|---|---|---|
+| bundle IDs | each platform's identifier, registered as universal (as `sign` does) | API key |
+| capabilities | the ones the entitlements need ([What `sign` enables](#what-sign-enables)); the Data Protection level they name | API key |
+| app groups, iCloud containers | the `group.…` and `iCloud.…` identifiers the entitlements name: created when missing, assigned to the bundle IDs that use them | web session |
+| certificates | per lane: Apple Distribution (iOS and Mac App Store), Mac Installer Distribution (Mac App Store package), Developer ID Application (Developer ID). A key in the environment (`XLESS_*_KEY`, `_FILE`) or the store whose certificate exists is used as it is; a key whose certificate is gone gets a new certificate (recorded with the entry); otherwise a key is generated into the store (`XLESS_*_KEY@<TEAM_ID>`) and its certificate created | API key |
+| keys | an APNs key when an entitlement uses push notifications and the store has none of the team | web session |
+| profiles | `xless <bundle ID> <TYPE>` for each lane, with its certificate | API key |
+| app record | the App Store app (iOS, else Mac App Store): name from the primary locale's `name.txt`, `sku` (default: the bundle ID), `primaryLocale` and `version` from app.yml; `--company-name` for a team's first app | web session |
+| listing | what [`xless store push`](appstore-manifest.md) would send, but App Privacy | API key |
+| App Privacy | app.yml's `privacy` | web session |
+| TestFlight | `testflight.groups` (internal, every build) and `testflight.external.groups` | API key |
+
+A macOS app signed with Developer ID has no app record, listing or TestFlight. A React Native app's entitlements (and
+its app extensions) come from its last build's record (`.xless/build/ios/entitlements.json`); before a first build only
+its bundle ID, certificate and profile are planned. Other app extensions are provisioned by `sign`.
+
+- **`plan`** only reads, and prints the steps grouped by area (`[web]` marks the ones that use the Apple ID web
+  session), the **drift** and what **blocks** the plan. Planning never signs in: it uses a session kept by `xless auth
+  login --keep 30m`; without one, the web steps are listed as "checked when applied". It asks the secret store's
+  passphrase only to read the API key from the store, or to match a stored signing key that has no recorded
+  certificate.
+- **`apply`** plans again, shows the plan, asks (or `--yes`) and runs the steps in order in one process: the secret
+  store's passphrase is asked once, and the Apple ID signs in at most once, at the first step that needs it. Each step
+  reads again what it changes, so a second `apply` finds nothing to do. The first failure stops it: the error names the
+  step, and standard error lists what was done and what is left; running `apply` again does only what is left. A plan
+  with blockers sends nothing.
+- **Never deletes or revokes.** What differs that way is drift, reported with the command that would change it: a
+  capability no entitlement needs (`xless bundle-ids capabilities … disable`; In-App Purchase and Game Center, which
+  Apple enables on every new bundle ID, are not reported), an app group or container assigned but not named (`xless
+  app-groups unassign`), a profile that is not active, expires within 7 days, lacks the certificate or an entitlement
+  (`xless profiles renew`; `sign` replaces it too), a listing change that deletes or replaces something (`xless store
+  push`).
+- **Blockers:** no secret store where a new key must go (`xless secrets init`), several store entries for a key,
+  `appstore/` errors (as `xless store validate --draft` finds them) or an app.yml of another app, no name or primary
+  locale for a new app record, a TestFlight group of the other kind.
+
+With `--json`, `plan` prints `{"team", "steps": [{"area", "action", "subject", "details", "webSession", "checked"}],
+"drift": [{"area", "subject", "message", "fix"}], "blockers": [{"area", "message", "fix"}], "notes"}`, and `apply`
+`{"plan", "done": [{"area", "subject", "result"}]}`. Areas: `bundle-ids`, `capabilities`, `app-groups`,
+`icloud-containers`, `certificates`, `keys`, `profiles`, `app`, `listing`, `privacy`, `testflight`; actions: `create`,
+`enable`, `update`, `assign`, `push`.
 
 ## JSON output
 

@@ -118,7 +118,7 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
                 return ProvisionWebSide(session: session)
             }).apply(plan)
             if let session = held.session { await session.end() }
-            print(output.json ? try ASCOutput.json(Applied(plan: plan, done: done)) : "applied \(done.count) step\(done.count == 1 ? "" : "s"); `xless provision plan` now finds nothing to do\n",
+            print(output.json ? try ASCOutput.json(Applied(plan: plan, done: done)) : "applied \(done.count) step\(done.count == 1 ? "" : "s")\n",
                   terminator: output.json ? "\n" : "")
         }
     }
