@@ -147,6 +147,32 @@ func certificateJSON(_ id: String, type: String = "DISTRIBUTION", expires: Strin
     #expect(q.contains("fields[profiles]=name,profileType,profileState,certificates"))
 }
 
+@Test func revokeReadsEveryProfilePageAndEveryCertificateOfAProfile() async throws {
+    func refs(_ ids: [String]) -> String { ids.map { #"{"type":"certificates","id":"\#($0)"}"# }.joined(separator: ",") }
+    func profile(_ id: String, certs: [String], total: Int?) -> String {
+        let meta = total.map { #","meta":{"paging":{"total":\#($0),"limit":50}}"# } ?? ""
+        return #"{"type":"profiles","id":"\#(id)","attributes":{"name":"\#(id.lowercased())","profileType":"IOS_APP_STORE","profileState":"ACTIVE"},"relationships":{"certificates":{"data":[\#(refs(certs))]\#(meta)}}}"#
+    }
+    let fifty = (1...50).map { "X\($0)" }
+    let next = "https://api.appstoreconnect.apple.com/v1/profiles?cursor=AB&limit=200"
+    let t = MockTransport([
+        // Page 1: P1 lists 50 of its 51 certificates (C1 is the 51st), P2 has exactly 50 and says so (nothing more to read),
+        // P3 lists 50 and gives no total (it may have more).
+        (200, dataList([profile("P1", certs: fifty, total: 51), profile("P2", certs: fifty, total: 50), profile("P3", certs: fifty, total: nil)], next: next)),
+        // Page 2 of the profiles: P4 holds C1 in its first 50.
+        (200, dataList([profile("P4", certs: ["C1"], total: 1)])),
+        // P1's certificates, two pages.
+        (200, #"{"data":[\#(refs(fifty))],"links":{"self":"x","next":"https://api.appstoreconnect.apple.com/v1/profiles/P1/relationships/certificates?cursor=CD"}}"#),
+        (200, #"{"data":[\#(refs(["C1"]))],"links":{"self":"x"}}"#),
+        // P3's certificates: C1 is not among them.
+        (200, #"{"data":[\#(refs(fifty + ["X51"]))],"links":{"self":"x"}}"#),
+    ])
+    let using = try await certificates(t).profiles(using: "C1")
+    #expect(using.map(\.id) == ["P1", "P4"])
+    #expect(t.requests.map { $0.url!.path } == ["/v1/profiles", "/v1/profiles", "/v1/profiles/P1/relationships/certificates",
+                                                "/v1/profiles/P1/relationships/certificates", "/v1/profiles/P3/relationships/certificates"])
+}
+
 @Test func passTypeIDsResolveByIdentifier() async throws {
     let t = MockTransport([(200, dataList([#"{"type":"passTypeIds","id":"PT1","attributes":{"identifier":"pass.com.example.ticket","name":"Ticket"}}"#]))])
     #expect(try await certificates(t).passTypeID("pass.com.example.ticket") == "PT1")

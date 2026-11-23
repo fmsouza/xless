@@ -231,19 +231,40 @@ public struct ASCCertificates: Sendable {
         try await resources.delete("\(Self.path)/\(id)")
     }
 
-    /// The team's profiles that contain the certificate `id` (they stop working once it is revoked). A profile lists at
-    /// most 50 certificates here (`limit[certificates]`, Apple's maximum).
+    /// The team's profiles that contain the certificate `id` (they stop working once it is revoked): every page of
+    /// profiles, and every certificate of each. A listing carries at most 50 of a profile's certificates
+    /// (`limit[certificates]`, Apple's maximum); a profile that may hold more (its `meta.paging.total` says so, or, without
+    /// a total, it lists 50) and does not list `id` among them is read in full from its certificates relationship.
     public func profiles(using id: String) async throws -> [ASCCertificateProfile] {
         let query = ASCQuery(fields: [("profiles", ["name", "profileType", "profileState", "certificates"]), ("certificates", ["certificateType"])],
-                             include: ["certificates"], extra: [("limit[certificates]", "50")])
+                             include: ["certificates"], extra: [("limit[certificates]", "\(Self.includedCertificates)")])
         let listing = try await resources.list("/v1/profiles", query: query, as: ASCAnyResource.self)
-        return listing.items.filter { profile in
-            guard case .array(let refs)? = profile.relationships?["certificates"]?["data"] else { return false }
-            return refs.contains { $0["id"]?.string == id }
-        }.map { p in
-            ASCCertificateProfile(id: p.id, name: p.attributes?["name"]?.string ?? "", profileType: p.attributes?["profileType"]?.string,
-                                  profileState: p.attributes?["profileState"]?.string)
-        }.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
+        var found: [ASCCertificateProfile] = []
+        for profile in listing.items {
+            let relationship = profile.relationships?["certificates"]
+            guard case .array(let refs)? = relationship?["data"] else { continue }
+            var contains = refs.contains { $0["id"]?.string == id }
+            if !contains, Self.mayHoldMore(listed: refs.count, total: relationship?["meta"]?["paging"]?["total"]) {
+                contains = try await resources.relationship("/v1/profiles/\(profile.id)", "certificates").contains { $0.id == id }
+            }
+            guard contains else { continue }
+            found.append(ASCCertificateProfile(id: profile.id, name: profile.attributes?["name"]?.string ?? "",
+                                               profileType: profile.attributes?["profileType"]?.string,
+                                               profileState: profile.attributes?["profileState"]?.string))
+        }
+        return found.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
+    }
+
+    /// How many of a profile's certificates a profile listing includes (Apple's maximum for `limit[certificates]`).
+    static let includedCertificates = 50
+
+    /// Whether a profile listing `listed` certificates may hold more: its total says so, or it has no total and is full.
+    static func mayHoldMore(listed: Int, total: JSONValue?) -> Bool {
+        switch total {
+        case .int(let n)?: n > listed
+        case .double(let n)?: Int(n) > listed
+        default: listed >= includedCertificates
+        }
     }
 
     /// After a create POST was sent, only a definite App Store Connect refusal (4xx other than 429) proves no
