@@ -131,7 +131,26 @@ private let created = #"{"data":{"type":"profiles","id":"P2","attributes":{"name
 
 @Test func profileTypeFollowsPlatformAndDistribution() {
     #expect(ProfileType.for(platform: .ios, distribution: .appStore) == .iosAppStore)
-    #expect(ProfileType.for(platform: .macos, distribution: .developerID) == .macDirect)
+    #expect(ProfileType.for(platform: .macos, distribution: .developerID) == .macAppDirect)
     #expect(ProfileType.for(platform: .macos, distribution: .appStore) == .macAppStore)
     #expect(ProfileType.macAppStore.rawValue == "MAC_APP_STORE")
+}
+
+@Test func theGeneralCreatePathTakesAnyTypeAndDevices() async throws {
+    let t = MockTransport([(201, #"{"data":{"type":"profiles","id":"P3","attributes":{"name":"dev","profileType":"TVOS_APP_DEVELOPMENT"}}}"#)])
+    let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    let p = try await svc.create(name: "dev", type: .tvosAppDevelopment, bundleIDResourceID: "B1", certificateIDs: ["C1"], deviceIDs: ["D1", "D2"])
+    #expect(p.id == "P3" && p.profileType == "TVOS_APP_DEVELOPMENT")
+    let body = String(decoding: t.requests[0].httpBody!, as: UTF8.self)
+    #expect(body.contains("\"TVOS_APP_DEVELOPMENT\"") && body.contains("\"D2\"") && body.contains("\"devices\""))
+}
+
+@Test func ensureProfileSendsItsCreateOnce() async throws {
+    // The general path never retries a POST: a retried create whose first attempt went through would make a duplicate.
+    let t = MockTransport([(200, #"{"data":[]}"#), (500, #"{"errors":[{"status":"500","code":"UNEXPECTED_ERROR"}]}"#)])
+    let svc = ProfileService(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }))
+    await #expect(throws: XlessError.self) {
+        _ = try await svc.ensureProfile(bundleIDResourceID: "B1", certificateID: "C1", type: .macAppDirect, bundleIdentifier: "a.b")
+    }
+    #expect(t.requests.map { $0.httpMethod ?? "" } == ["GET", "POST"])
 }

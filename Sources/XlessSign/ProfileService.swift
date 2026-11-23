@@ -2,13 +2,10 @@ import Foundation
 import XlessASC
 import XlessCore
 
-public enum ProfileType: String, Sendable {
-    case iosAppStore = "IOS_APP_STORE"
-    case macDirect = "MAC_APP_DIRECT"
-    case macAppStore = "MAC_APP_STORE"
+extension ProfileType {
     /// A Developer ID build embeds a `MAC_APP_DIRECT` profile; a Mac App Store (TestFlight) build needs `MAC_APP_STORE`.
     public static func `for`(platform: Platform, distribution: Distribution) -> ProfileType {
-        platform == .ios ? .iosAppStore : distribution == .appStore ? .macAppStore : .macDirect
+        platform == .ios ? .iosAppStore : distribution == .appStore ? .macAppStore : .macAppDirect
     }
 }
 
@@ -63,20 +60,25 @@ public struct ProfileService: Sendable {
             }
             try await client.delete("/v1/profiles/\(p.id)")
         }
-        struct Attrs: Codable, Sendable { var name: String; var profileType: String }
-        struct Rels: Codable, Sendable { var bundleId: ASCToOne; var certificates: ASCToMany }
-        let body = ASCCreate<Attrs, Rels>(type: "profiles", attributes: .init(name: name, profileType: type.rawValue),
-                                          relationships: .init(bundleId: .init(.init(type: "bundleIds", id: bundleIDResourceID)),
-                                                               certificates: .init([.init(type: "certificates", id: certificateID)])))
-        let created: ASCDocument<ASCResource<ProfileAttributes>>
-        do { created = try await client.post("/v1/profiles", body: body) } catch let e as ASCError {
+        let created: ASCProfile
+        do {
+            created = try await create(name: name, type: type, bundleIDResourceID: bundleIDResourceID, certificateIDs: [certificateID])
+        } catch let e as ASCError {
             throw XlessError(.sign, "cannot create \(type.rawValue) profile for \(bundleIdentifier): \(e)",
                              fix: type != .iosAppStore ? "if \(bundleIdentifier) was registered for iOS only (before xless registered identifiers as universal), set platforms.macos.bundleID to a separate identifier" : "check the bundle ID and certificate in App Store Connect")
         }
-        guard let content = created.data.attributes.profileContent.flatMap({ Data(base64Encoded: $0) }) else {
+        guard let content = created.content else {
             throw XlessError(.sign, "App Store Connect returned a profile without content", fix: "re-run; if it persists, delete the profile in the portal")
         }
         return content
+    }
+
+    /// The general create path (`xless profiles create` and `renew`, and `ensureProfile`): a profile of any type for a
+    /// bundle ID, with these certificates and, for development and ad hoc profiles, devices. Sent once, never retried.
+    public func create(name: String, type: ProfileType, bundleIDResourceID: String, certificateIDs: [String],
+                       deviceIDs: [String] = []) async throws -> ASCProfile {
+        try await ASCProfiles(resources: ASCResources(client: client)).create(
+            name: name, type: type, bundleIDResourceID: bundleIDResourceID, certificateIDs: certificateIDs, deviceIDs: deviceIDs)
     }
 
     static func parseDate(_ s: String) -> Date? {
