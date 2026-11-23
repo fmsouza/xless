@@ -366,12 +366,44 @@ func unsafeOrInvalidExtensionsAreRefusedBeforeAppStoreConnect(_ kind: String) as
     #expect(capture.entitlements.keys.sorted() == [""])
 }
 
+/// iCloud and Sign in with Apple: `sign` enables both, with their settings, and signs without a portal visit.
+@Test func iCloudAndSignInWithAppleAreEnabledBySign() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("icloud-\(UUID())", isDirectory: true)
+    let input = root.appendingPathComponent("final/X.app", isDirectory: true), project = root.appendingPathComponent("proj", isDirectory: true)
+    try FileManager.default.createDirectory(at: input, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    try Plist.write(["CFBundleExecutable": "X", "CFBundleIdentifier": appID], to: input.appendingPathComponent("Info.plist"), stage: .sign)
+    try Plist.write(["com.apple.developer.icloud-container-identifiers": [String](), "com.apple.developer.icloud-services": "*",
+                     "com.apple.developer.applesignin": ["Default"]],
+                    to: project.appendingPathComponent("ios.entitlements"), format: .xml, stage: .sign)
+    let config = try ProjectConfig.parse(yaml: """
+    bundleID: \(appID)
+    teamID: ABCDE12345
+    version: "1.0"
+    build: 1
+    platforms:
+      ios: { minimumOS: "17.0", product: X, entitlements: ios.entitlements }
+    """)
+    let key = try SigningKey.generate()
+    let asc = FakeASC(certificateJSON: certJSON(id: "C1", der: try selfSigned(key)))
+    let capture = SignCapture()
+    _ = try await SignStage.run(input: input, outputDir: root.appendingPathComponent("signed"), platform: .ios, config: config, project: project,
+                                secrets: Secrets(env: ["XLESS_DIST_KEY": key.pem]), client: ASCClient(credentials: testCreds, transport: asc, sleep: { _ in }),
+                                manifest: nil, codesign: { try capture.record($0) })
+    #expect(asc.created.map { "\($0.0) \($0.1)" } == ["\(appID) APPLE_ID_AUTH", "\(appID) ICLOUD"])
+    #expect(asc.createdSettings == ["APPLE_ID_AUTH APPLE_ID_AUTH_APP_CONSENT=PRIMARY_APP_CONSENT", "ICLOUD ICLOUD_VERSION=XCODE_6"])
+    #expect(capture.entitlements[""]?["com.apple.developer.applesignin"] as? [String] == ["Default"])
+    #expect(capture.entitlements[""]?["com.apple.developer.icloud-services"] as? String == "*")
+}
+
 // MARK: Units
 
-@Test func theFourMappedKeysNeedTheirCapabilityTypesOnIOSOnly() {
+@Test func theMappedKeysNeedTheirCapabilityTypesOnEachPlatform() {
     let ents: [String: Any] = ["aps-environment": "production", domains: ["applinks:example.com"], autofill: true, appGroups: ["group.x"]]
     #expect(Capabilities.required(entitlements: ents, platform: .ios).types == ["PUSH_NOTIFICATIONS", "ASSOCIATED_DOMAINS", "AUTOFILL_CREDENTIAL_PROVIDER", "APP_GROUPS"])
-    #expect(Capabilities.required(entitlements: ents, platform: .macos).types.isEmpty)
+    // macOS spells push `com.apple.developer.aps-environment`: the iOS key is left to the profile check there.
+    let mac = Capabilities.required(entitlements: ents, platform: .macos)
+    #expect(mac.types == ["ASSOCIATED_DOMAINS", "AUTOFILL_CREDENTIAL_PROVIDER", "APP_GROUPS"] && mac.unmapped == ["aps-environment"])
 }
 
 @Test func signingPrefixesExpandToTheTeam() {

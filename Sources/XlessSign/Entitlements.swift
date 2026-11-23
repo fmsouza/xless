@@ -152,10 +152,16 @@ public enum Entitlements {
         let portal = "developer.apple.com/account/resources/identifiers"
         switch problem {
         case .missing(let key):
-            let manual = Capabilities.map(for: platform)[key] == nil
+            let cause = "entitlement '\(key)' is not granted by the provisioning profile for \(bundleID)"
+            // A key xless enables a capability for: the capability is enabled, so what is left is the identifier it needs
+            // (an iCloud container, a merchant ID…) or a capability disabled since; `xless bundle-ids` shows and fixes it.
+            if let type = Capabilities.map(for: platform)[key] {
+                let command = "xless bundle-ids capabilities \(bundleID)"
+                let linked = type.linkedIdentifier.map { " \(type.displayName) also needs \($0) assigned to \(bundleID) at \(portal) (\(type.displayName) → Configure)." } ?? ""
+                return XlessError(.sign, cause, fix: "check that \(type.displayName) is enabled with `\(command) list` (enable it with `\(command) enable \(type.rawValue)`).\(linked) Then re-run. \(finishFirst)")
+            }
             let name = Capabilities.portalNames[key].map { " (\($0))" } ?? ""
-            return XlessError(.sign, "entitlement '\(key)' is not granted by the provisioning profile for \(bundleID)"
-                              + (manual ? "; xless cannot enable this capability automatically" : ""),
+            return XlessError(.sign, cause + "; xless cannot enable this capability automatically",
                               fix: "enable the matching capability\(name) for \(bundleID) at \(portal), then re-run. \(finishFirst)")
         // `SignStage` refuses missing app groups for all bundles at once (`checkAppGroups`) before merging; this is the
         // backstop for a direct `merge` caller.

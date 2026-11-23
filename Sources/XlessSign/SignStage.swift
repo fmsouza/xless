@@ -105,7 +105,7 @@ public enum SignStage {
                           client: ASCClient) async throws -> Provisioned {
         let needed = Capabilities.required(entitlements: target.entitlements, platform: platform)
         let resource = try await profiles.ensureBundleID(identifier: target.bundleID, platform: platform)
-        let enabled = try await Capabilities.ensure(needed.types, bundleIDResourceID: resource, client: client)
+        let enabled = try await Capabilities.ensure(needed.requests, bundleIDResourceID: resource, client: client)
         let type = ProfileType.for(platform: platform, distribution: distribution)
         var profile = try await profiles.ensureProfile(bundleIDResourceID: resource, certificateID: certificateID,
                                                        type: type, bundleIdentifier: target.bundleID, forceNew: enabled)
