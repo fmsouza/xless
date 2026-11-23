@@ -257,9 +257,11 @@ public struct ASCRelease: Sendable {
             .sorted { ($0.attributes.submittedDate ?? "~", $0.id) > ($1.attributes.submittedDate ?? "~", $1.id) }
     }
 
-    /// A submission's items, with the version each submits.
+    /// A submission's items, with the version (or product version) each submits: App Store Connect gives a
+    /// relationship's linkage only when it is included.
     public func items(of submissionID: String) async throws -> [ASCReviewSubmissionItem] {
-        try await resources.list("/v1/reviewSubmissions/\(submissionID)/items", query: ASCQuery(include: ["appStoreVersion"]),
+        try await resources.list("/v1/reviewSubmissions/\(submissionID)/items",
+                                 query: ASCQuery(include: ["appStoreVersion", "inAppPurchaseVersion", "subscriptionVersion", "subscriptionGroupVersion"]),
                                  as: ASCReviewSubmissionItem.self).items
     }
 

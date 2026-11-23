@@ -70,12 +70,15 @@ public struct ReleasePreflight: Sendable {
         public var overridesReleaseType: Bool
         public var overridesPhased: Bool
         public var today: Date
+        /// Check the manifest's in-app purchases and subscriptions (false: `release submit --no-products`).
+        public var products: Bool
 
         public init(app: ASCApp, platform: String, version: ASCAppStoreVersion, build: ASCBuildDetail?, manifestDir: URL?,
-                    inheritedBundleID: String? = nil, overridesReleaseType: Bool = false, overridesPhased: Bool = false, today: Date = Date()) {
+                    inheritedBundleID: String? = nil, overridesReleaseType: Bool = false, overridesPhased: Bool = false, today: Date = Date(),
+                    products: Bool = true) {
             self.app = app; self.platform = platform; self.version = version; self.build = build; self.manifestDir = manifestDir
             self.inheritedBundleID = inheritedBundleID; self.overridesReleaseType = overridesReleaseType; self.overridesPhased = overridesPhased
-            self.today = today
+            self.today = today; self.products = products
         }
     }
 
@@ -98,7 +101,9 @@ public struct ReleasePreflight: Sendable {
         checks += try await pricing(input)
         checks += build(input)
         checks.append(try await reviewContact(input))
-        if let products = try await ManifestProducts.read(input.manifestDir, app: input.app.id, resources: resources) { checks.append(products.check) }
+        if input.products, let products = try await ManifestProducts.read(input.manifestDir, app: input.app.id, resources: resources) {
+            checks.append(products.check)
+        }
         return PreflightReport(checks: checks)
     }
 

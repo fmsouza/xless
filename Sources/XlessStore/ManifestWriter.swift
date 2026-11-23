@@ -89,7 +89,7 @@ public enum ManifestWriter {
                 if let value = listing[keyPath: field] { try put(Data(ManifestText.render(value).utf8), "\(locale)/\(file)") }
             }
         }
-        for (relative, text) in manifest.products.files.sorted(by: { $0.key < $1.key }) { try put(Data(text.utf8), relative) }
+        for (relative, text) in try manifest.products.files().sorted(by: { $0.key < $1.key }) { try put(Data(text.utf8), relative) }
         for (relative, content) in files.sorted(by: { $0.key < $1.key }) {
             switch content {
             case .data(let data): try put(data, relative)

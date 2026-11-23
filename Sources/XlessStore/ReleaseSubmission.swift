@@ -131,7 +131,7 @@ public struct ReleaseSubmission: Sendable {
 
         let report = try await preflight.run(ReleasePreflight.Input(
             app: r.app, platform: r.platform, version: v, build: build, manifestDir: r.manifestDir, inheritedBundleID: r.inheritedBundleID,
-            overridesReleaseType: r.release != nil, overridesPhased: r.phased != nil, today: r.today))
+            overridesReleaseType: r.release != nil, overridesPhased: r.phased != nil, today: r.today, products: r.products))
         out.preflight = report
         guard report.passed else {
             out.outcome = .preflightFailed
@@ -178,11 +178,10 @@ public struct ReleaseSubmission: Sendable {
             }
         }
         if let holding = found.holding {
-            if holding.state == SubmissionState.draft {
+            // A draft, or a submission App Review sent back (UNRESOLVED_ISSUES), takes items until it is submitted again.
+            if !(manifestProducts?.found.isEmpty ?? true) {
                 let items = holding.id == found.draft?.id ? found.draftItems : try await release.items(of: holding.id)
                 steps += productSteps(items) { holding.id }
-            } else if !(manifestProducts?.toSubmit(existing: []).isEmpty ?? true) {
-                out.notes.append("the manifest's products are not added to review submission \(holding.id) (\(VersionState.display(holding.state))): App Review has it already")
             }
             steps.append((holding.state == SubmissionState.unresolved ? "submit review submission \(holding.id) again" : "submit review submission \(holding.id)",
                           { submittedState = try await release.submit(holding.id).state }))

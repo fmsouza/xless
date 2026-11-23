@@ -92,7 +92,8 @@ extension PushContext {
                 inspect: "xless api GET /v2/inAppPurchases/\(iapID)/iapPriceSchedule --include manualPrices",
                 path: "/v1/inAppPurchasePriceSchedules", scheduleType: "inAppPurchasePriceSchedules", priceType: "inAppPurchasePrices",
                 pointRelationship: "inAppPurchasePricePoint", pointType: "inAppPurchasePricePoints", holder: ("inAppPurchase", "inAppPurchases", iapID),
-                points: { try await points.list(path: "/v2/inAppPurchases/\(iapID)/pricePoints", territory: $0) }))
+                points: { try await points.list(path: "/v2/inAppPurchases/\(iapID)/pricePoints", territory: $0) },
+                priceHolder: ("inAppPurchaseV2", "inAppPurchases", iapID)))
         }
         if let availability = file.availability {
             try await planProductAvailability(subject, part: .iap, path: path, wanted: availability, have: try await products.iapAvailability(have.id),
@@ -119,6 +120,13 @@ extension PushContext {
             note("subscriptions are not pushed: this API key may not read the app's subscription groups (HTTP 403)")
             return
         }
+        // Every subscription App Store Connect has, and its group: a subscription never moves between groups.
+        var subsByGroup: [String: [ASCSubscription]] = [:]
+        for group in remote { subsByGroup[group.id] = try await products.subscriptions(group: group.id) }
+        func groupOf(_ productID: String) -> ASCSubscriptionGroup? {
+            remote.first { g in subsByGroup[g.id]?.contains { $0.attributes.productId == productID } ?? false }
+        }
+        let named = Set(wanted.values.compactMap(\.group.referenceName))
         var matched: Set<String> = []
         for dir in wanted.keys.sorted() {
             let g = wanted[dir]!
@@ -127,13 +135,33 @@ extension PushContext {
                 throw XlessError(.account, "\(base)/\(StoreProducts.groupFile) has no referenceName, so push cannot tell which group it is",
                                  fix: "add `referenceName:` (`xless store validate` lists what else is missing)")
             }
-            guard let group = remote.first(where: { $0.attributes.referenceName == reference }) else {
+            var found = remote.first { $0.attributes.referenceName == reference }
+            if found == nil {
+                // A group whose subscriptions App Store Connect has in one group the manifest does not name: renamed.
+                let homes = Set(g.subscriptions.keys.compactMap { groupOf($0)?.id })
+                if homes.count == 1, let old = remote.first(where: { $0.id == homes.first! }), !named.contains(old.attributes.referenceName ?? "") {
+                    add(StoreChange(.update, .subscriptions, "subscription group \(old.attributes.referenceName ?? old.id)",
+                                    fields: [StoreFieldChange("referenceName", from: old.attributes.referenceName, to: reference)],
+                                    requests: [.update("subscriptionGroups", id: old.id, attributes: ["referenceName": .string(reference)])]))
+                    found = old
+                } else if let id = g.subscriptions.keys.sorted().first(where: { groupOf($0) != nil }) {
+                    throw XlessError(.account, "\(base)/\(StoreProducts.groupFile) names group \(reference), which App Store Connect does not have, but subscription \(id) is in group \(groupOf(id)?.attributes.referenceName ?? "") there",
+                                     fix: "a subscription cannot move between groups: put its file in that group's directory, or give the directory that group's referenceName")
+                }
+            }
+            guard let group = found else {
                 add(StoreChange(.create, .subscriptions, "subscription group \(reference)", fields: [StoreFieldChange("referenceName", from: nil, to: reference)],
                                 requests: [.create("subscriptionGroups", attributes: ["referenceName": .string(reference)],
                                                    relationships: ["app": StoreRequest.link("apps", target.app.id)])],
                                 replans: true))
                 note("subscription group \(reference): its text and subscriptions are planned once App Store Connect has it")
                 continue
+            }
+            for id in g.subscriptions.keys.sorted() {
+                if let other = groupOf(id), other.id != group.id {
+                    throw XlessError(.account, "\(base)/\(id).yml is in group \(reference), but App Store Connect has subscription \(id) in group \(other.attributes.referenceName ?? other.id)",
+                                     fix: "a subscription cannot move between groups: put the file back in that group's directory")
+                }
             }
             matched.insert(group.id)
             if let texts = g.group.localizations {
@@ -142,7 +170,7 @@ extension PushContext {
                                      remote: try await products.groupLocalizations(group.id), type: "subscriptionGroupLocalizations",
                                      parent: ("subscriptionGroup", "subscriptionGroups", group.id), part: .subscriptions)
             }
-            let subs = try await products.subscriptions(group: group.id)
+            let subs = subsByGroup[group.id] ?? []
             let byProduct = Dictionary(subs.compactMap { s in s.attributes.productId.map { ($0, s) } }, uniquingKeysWith: { a, _ in a })
             for id in g.subscriptions.keys.sorted() {
                 let file = g.subscriptions[id]!
@@ -157,7 +185,6 @@ extension PushContext {
                 note("subscription group \(reference) has \(extra.joined(separator: ", ")) at App Store Connect with no file in \(base)/: kept (push never deletes a product)")
             }
         }
-        let named = Set(wanted.values.compactMap(\.group.referenceName))
         let extra = remote.filter { !matched.contains($0.id) && !named.contains($0.attributes.referenceName ?? "") }
             .compactMap(\.attributes.referenceName).sorted()
         if !extra.isEmpty {

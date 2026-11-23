@@ -323,8 +323,11 @@ private func pulledWithProducts(_ routes: [String: (Int, String)]) async throws 
     ]))
     let (root, dir) = try await pulledWithProducts(routes)
     defer { try? FileManager.default.removeItem(at: root) }
-    let out = try await submit(RoutedTransport(routes), build: nil, dir: dir, dryRun: true)
+    let t = RoutedTransport(routes)
+    let out = try await submit(t, build: nil, dir: dir, dryRun: true)
     #expect(out.steps == ["add subscription group Premium to it", "submit subscription com.example.monthly with the version", "submit review submission S1"])
+    // App Store Connect gives an item's product version only when it is included.
+    #expect(t.queries("/v1/reviewSubmissions/S1/items").allSatisfy { $0.contains("include=appStoreVersion,inAppPurchaseVersion,subscriptionVersion,subscriptionGroupVersion") })
 
     let none = try await ReleaseSubmission(resources: resources(RoutedTransport(routes))).run(.init(
         app: fakeASCApp, platform: "IOS", version: releaseVersion, manifestDir: dir, dryRun: true, today: today, products: false))
@@ -340,4 +343,27 @@ private func pulledWithProducts(_ routes: [String: (Int, String)]) async throws 
     let check = try #require(out.preflight?.checks.first { $0.name == "products" })
     #expect(check.status == .failed && check.message == "in-app purchase com.example.coins is missing metadata")
     #expect(writes(t).isEmpty)
+}
+
+@Test func noProductsSkipsTheProductsCheck() async throws {
+    let (root, dir) = try await pulledWithProducts(releaseWithProducts(iapState: "MISSING_METADATA"))
+    defer { try? FileManager.default.removeItem(at: root) }
+    let t = RoutedTransport(releaseWithProducts(iapState: "MISSING_METADATA"))
+    let out = try await ReleaseSubmission(resources: resources(t)).run(.init(
+        app: fakeASCApp, platform: "IOS", version: releaseVersion, build: .version("1.1", number: "42"), manifestDir: dir, dryRun: true, today: today, products: false))
+    #expect(out.outcome == .dryRun, "\(out.preflight?.text ?? "")")
+    #expect(out.preflight?.checks.contains { $0.name == "products" } == false)
+    #expect(!out.steps.contains { $0.contains("in-app purchase") || $0.contains("subscription") })
+}
+
+@Test func aSubmissionAppReviewSentBackTakesTheProductsToo() async throws {
+    var routes = releaseWithProducts()
+    routes["/v1/appStoreVersions/V2/relationships/build"] = (200, #"{"data":{"type":"builds","id":"B1"}}"#)
+    routes["/v1/reviewSubmissions"] = (200, list([#"{"type":"reviewSubmissions","id":"S2","attributes":{"platform":"IOS","state":"UNRESOLVED_ISSUES"},"relationships":{"appStoreVersionForReview":{"data":{"type":"appStoreVersions","id":"V2"}}}}"#]))
+    routes["/v1/reviewSubmissions/S2/items"] = (200, list([#"{"type":"reviewSubmissionItems","id":"IT1","attributes":{"state":"REJECTED"},"relationships":{"appStoreVersion":{"data":{"type":"appStoreVersions","id":"V2"}}}}"#]))
+    let (root, dir) = try await pulledWithProducts(routes)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let out = try await submit(RoutedTransport(routes), build: nil, dir: dir, dryRun: true)
+    #expect(out.steps == ["add in-app purchase com.example.coins to it", "add subscription group Premium to it",
+                          "submit subscription com.example.monthly with the version", "submit review submission S2 again"])
 }

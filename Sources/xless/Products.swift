@@ -71,8 +71,9 @@ struct ProductCLI {
 
     func subscriptionsList(app argument: String) async throws -> String {
         let app = try await apps.resolve(argument)
-        let all = try await products.allSubscriptions(app: app.id)
         let groups = try await products.groups(app: app.id)
+        var all: [(group: ASCSubscriptionGroup, subscription: ASCSubscription)] = []
+        for g in groups { for s in try await products.subscriptions(group: g.id) { all.append((g, s)) } }
         if json {
             struct Group: Encodable { var group: ASCSubscriptionGroup; var subscriptions: [ASCSubscription] }
             return try ASCOutput.json(Listing(data: groups.map { g in Group(group: g, subscriptions: all.filter { $0.group.id == g.id }.map(\.subscription)) }))

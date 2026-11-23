@@ -465,7 +465,8 @@ what App Review needs: a type, a reference name and localized names.
 - **`store pull`** writes every product of the app: its text, its current prices (an in-app purchase's schedule as
   `app.yml` writes the app's; a subscription's base territory price, USA when it has one, and the territories whose
   price is not Apple's equivalent of it), its availability, and its App Review screenshot (downloaded, recorded in
-  `media.lock`). A subscription group keeps the directory name the manifest already has for it.
+  `media.lock`). A subscription group keeps the directory name the manifest already has for it. A product file App
+  Store Connect has no product for (never pushed) is not kept: a note names it.
 - **`store push`** (parts `iap`, `subscriptions`): a product or group App Store Connect does not have is created
   (`POST /v2/inAppPurchases`, `/v1/subscriptionGroups`, `/v1/subscriptions`) alone, and `push` plans again once it
   exists (its text, screenshot, prices and availability need its ID): `--dry-run` shows the creation and says the rest
@@ -476,13 +477,16 @@ what App Review needs: a type, a reference name and localized names.
   subscription's price in each territory it is sold in, one `POST /v1/subscriptionPrices` per territory whose price
   differs, in effect at once (with `preserveCurrentPrice` where it already had a price); and the availability, sent
   whole whenever it differs (the API has no update: `POST /v1/inAppPurchaseAvailabilities`,
-  `/v1/subscriptionAvailabilities`). An in-app purchase's type cannot change: a different `type` stops the push.
+  `/v1/subscriptionAvailabilities`). An in-app purchase's type cannot change: a different `type` stops the push. A
+  group is found by its `referenceName`; a new name whose subscriptions App Store Connect has in one other group renames
+  that group. A subscription cannot move between groups: a file in another group's directory stops the push before
+  anything is sent.
 - **Never deleted**: a product or group App Store Connect has and `appstore/` does not is reported, never removed.
 - **`release submit`** adds each product the manifest lists to the review submission: its version being prepared
   (`inAppPurchaseVersion`, `subscriptionGroupVersion`, `subscriptionVersion` items); a product ready to submit without
   such a version is submitted with the app's version (`POST /v1/inAppPurchaseSubmissions`, `/v1/subscriptionSubmissions`).
-  The pre-flight fails when a listed product is not on App Store Connect or is missing metadata. `--no-products` leaves
-  them out.
+  A submission App Review sent back takes them too when it is submitted again. The pre-flight fails when a listed
+  product is not on App Store Connect or is missing metadata. `--no-products` leaves them out, check included.
 
 [`xless iap`](apple-account.md#xless-iap-and-xless-subscriptions) and `xless subscriptions` show what App Store Connect
 has, and list the price points a file may name.

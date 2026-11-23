@@ -80,7 +80,7 @@ private func cli(_ t: FakeTransport, json: Bool = false, terminal: (any Confirmi
     let group = #"{"type":"subscriptionGroups","id":"G1","attributes":{"referenceName":"Premium"}}"#
     let empty = #"{"type":"subscriptionGroups","id":"G2","attributes":{"referenceName":"Later"}}"#
     let sub = #"{"type":"subscriptions","id":"S1","attributes":{"productId":"com.example.monthly","name":"Monthly","subscriptionPeriod":"ONE_MONTH","groupLevel":1,"state":"READY_TO_SUBMIT"}}"#
-    let t = FakeTransport([(200, listing([appJSON])), (200, listing([group, empty])), (200, listing([sub])), (200, listing([])), (200, listing([group, empty]))])
+    let t = FakeTransport([(200, listing([appJSON])), (200, listing([group, empty])), (200, listing([sub])), (200, listing([]))])
     let out = try await cli(t).subscriptionsList(app: "com.example.app")
     #expect(out.contains("Premium") && out.contains("com.example.monthly") && out.contains("ONE_MONTH") && out.contains("READY_TO_SUBMIT"))
     #expect(out.contains("Later") && out.contains("(none)"))

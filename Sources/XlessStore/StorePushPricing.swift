@@ -60,6 +60,8 @@ extension PushContext {
         var holder: (name: String, type: String, id: String)
         /// The price points of a territory.
         var points: (String) async throws -> [ASCPricePoint]
+        /// Each price's own relationship to what it prices, when the API has one (`inAppPurchaseV2`).
+        var priceHolder: (name: String, type: String, id: String)? = nil
     }
 
     mutating func planSchedule(_ wanted: AppYAML.Pricing, read: StorePart<StorePriceSchedule>, _ t: ScheduleTarget) async throws {
@@ -159,9 +161,11 @@ extension PushContext {
 
         let ids = want.indices.map { "${price-\($0 + 1)}" }
         let included: [JSONValue] = want.indices.map { i in
-            .object(["type": .string(t.priceType), "id": .string(ids[i]),
-                     "attributes": .object(["startDate": want[i].start.map { .string($0) } ?? .null]),
-                     "relationships": .object([t.pointRelationship: StoreRequest.link(t.pointType, want[i].point)])])
+            var relationships: [String: JSONValue] = [t.pointRelationship: StoreRequest.link(t.pointType, want[i].point)]
+            if let price = t.priceHolder { relationships[price.name] = StoreRequest.link(price.type, price.id) }
+            return .object(["type": .string(t.priceType), "id": .string(ids[i]),
+                            "attributes": .object(["startDate": want[i].start.map { .string($0) } ?? .null]),
+                            "relationships": .object(relationships)])
         }
         let data: JSONValue = .object([
             "type": .string(t.scheduleType),

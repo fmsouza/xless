@@ -92,6 +92,17 @@ extension StorePull {
                 out.products.groups[dirName] = g
             }
         }
+        // Product files App Store Connect does not have (never pushed) are not part of what was pulled: say so.
+        let name = dir.lastPathComponent
+        for id in (old?.iaps.keys.sorted() ?? []) where out.products.iaps[id] == nil {
+            say("note: \(name)/\(StoreProducts.iapDirectory)/\(id).yml is not on App Store Connect (never pushed), so the pulled listing does not have it")
+        }
+        let pulledSubscriptions = Set(out.products.groups.values.flatMap(\.subscriptions.keys))
+        for (groupDir, g) in (old?.groups ?? [:]).sorted(by: { $0.key < $1.key }) {
+            for id in g.subscriptions.keys.sorted() where !pulledSubscriptions.contains(id) {
+                say("note: \(name)/\(StoreProducts.subscriptionsDirectory)/\(groupDir)/\(id).yml is not on App Store Connect (never pushed), so the pulled listing does not have it")
+            }
+        }
         return out
     }
 

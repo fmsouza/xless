@@ -70,7 +70,7 @@ private let versionJSON = #"{"type":"appStoreVersions","id":"V9","attributes":{"
     #expect(found[1].versionID == "V1" && found[0].versionID == nil)
     #expect(q(t.requests[0], "filter[app]") == "123" && q(t.requests[0], "filter[platform]") == "IOS" && q(t.requests[0], "include") == "appStoreVersionForReview")
     #expect(try await r.items(of: "S2").first?.versionID == "V2")
-    #expect(q(t.requests[1], "include") == "appStoreVersion")
+    #expect(q(t.requests[1], "include") == "appStoreVersion,inAppPurchaseVersion,subscriptionVersion,subscriptionGroupVersion")
     _ = try await r.addItem(version: "V2", to: "S2")
     #expect(try await r.submit("S2").state == "WAITING_FOR_REVIEW")
     #expect(try await r.cancel("S2").state == "CANCELING")

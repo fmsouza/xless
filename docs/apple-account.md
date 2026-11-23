@@ -797,7 +797,7 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   | pricing, availability | a price schedule, and at least one territory |
   | build, encryption | the build valid, not expired, of the version's string and platform; its export compliance answered |
   | review contact | the App Review contact's name, phone and email; a demo account name when one is required |
-  | products | when the manifest lists in-app purchases or subscriptions: each one on App Store Connect, none missing metadata |
+  | products | when the manifest lists in-app purchases or subscriptions (and no `--no-products`): each one on App Store Connect, none missing metadata |
 
   `--release manual|auto|<date>` and `--phased` are what the submission sets: app.yml's `release` values are not
   compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (`--build`;

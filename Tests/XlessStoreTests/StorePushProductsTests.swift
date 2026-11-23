@@ -314,3 +314,39 @@ private func withProducts() -> [String: (Int, String)] {
     #expect(ManifestReader.read(dir).manifest.products.iaps["com.example.coins100"]?.referenceName == "100 Coins")
     #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("iap/com.example.coins100.png").path))
 }
+
+@Test func aGroupWhoseSubscriptionsAppStoreConnectHasElsewhereIsRenamed() async throws {
+    let renamed = premiumGroupYAML.replacingOccurrences(of: "referenceName: Premium", with: "referenceName: Premium Plus")
+    let (root, dir) = try await pulledWith(["subscriptions/premium/group.yml": renamed, "subscriptions/premium/com.example.monthly.yml": monthlyPriced])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let t = RoutedTransport(withMonthly())
+    let (plan, _) = try await push(t).plan(app: fakeASCApp, manifest: ManifestReader.read(dir).manifest, dir: dir, options: productParts)
+    #expect(plan.changes.map(\.text) == [#"~ subscription group Premium: referenceName: "Premium" → "Premium Plus""#])
+    #expect(plan.changes.first?.requests.first?.path == "/v1/subscriptionGroups/G1")
+}
+
+@Test func aSubscriptionCannotMoveToAnotherGroup() async throws {
+    var routes = withMonthly()
+    routes["/v1/apps/123/subscriptionGroups"] = (200, list([#"{"type":"subscriptionGroups","id":"G1","attributes":{"referenceName":"Premium"}}"#,
+                                                             #"{"type":"subscriptionGroups","id":"G2","attributes":{"referenceName":"Basic"}}"#]))
+    routes["/v1/subscriptionGroups/G2/subscriptions"] = (200, list([]))
+    routes["/v1/subscriptionGroups/G2/subscriptionGroupLocalizations"] = (200, list([]))
+    let (root, dir) = try await pulledWith(["subscriptions/premium/group.yml": premiumGroupYAML,
+                                            "subscriptions/basic/group.yml": "referenceName: Basic\n",
+                                            "subscriptions/basic/com.example.monthly.yml": monthlyPriced])
+    defer { try? FileManager.default.removeItem(at: root) }
+    try? FileManager.default.removeItem(at: dir.appendingPathComponent("subscriptions/premium/com.example.monthly.yml"))
+    let t = RoutedTransport(routes)
+    await #expect { _ = try await push(t).plan(app: fakeASCApp, manifest: ManifestReader.read(dir).manifest, dir: dir, options: productParts) } throws: {
+        ($0 as? XlessError)?.cause == "appstore/subscriptions/basic/com.example.monthly.yml is in group Basic, but App Store Connect has subscription com.example.monthly in group Premium"
+    }
+    #expect(!t.requests.contains { $0.httpMethod != "GET" })
+}
+
+@Test func pullSaysWhichProductFilesItDrops() async throws {
+    let (root, dir) = try await pulledWith(["iap/com.example.unpushed.yml": coinsYAML])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let notes = Notes()
+    _ = try await puller(RoutedTransport(fakeApp()), FakeCDN(introStream.merging([homeURL: homePNG]) { $1 }), notes).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    #expect(notes.lines.contains("note: appstore/iap/com.example.unpushed.yml is not on App Store Connect (never pushed), so the pulled listing does not have it"))
+}

@@ -130,13 +130,13 @@ public struct StoreProducts: Sendable, Equatable {
     public static let subscriptionsDirectory = "subscriptions"
     public static let groupFile = "group.yml"
 
-    /// The manifest path of each product file, by path.
-    public var files: [String: String] {
+    /// Each product file's text, by its path in the manifest.
+    public func files() throws -> [String: String] {
         var out: [String: String] = [:]
-        for (id, iap) in iaps { out["\(Self.iapDirectory)/\(id).yml"] = (try? ProductRender.yaml(iap)) ?? "" }
+        for (id, iap) in iaps { out["\(Self.iapDirectory)/\(id).yml"] = try ProductRender.yaml(iap) }
         for (dir, g) in groups {
-            out["\(Self.subscriptionsDirectory)/\(dir)/\(Self.groupFile)"] = (try? ProductRender.yaml(g.group)) ?? ""
-            for (id, s) in g.subscriptions { out["\(Self.subscriptionsDirectory)/\(dir)/\(id).yml"] = (try? ProductRender.yaml(s)) ?? "" }
+            out["\(Self.subscriptionsDirectory)/\(dir)/\(Self.groupFile)"] = try ProductRender.yaml(g.group)
+            for (id, s) in g.subscriptions { out["\(Self.subscriptionsDirectory)/\(dir)/\(id).yml"] = try ProductRender.yaml(s) }
         }
         return out
     }
