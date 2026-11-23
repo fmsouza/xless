@@ -112,8 +112,10 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   reads it from the configuration (`xless secrets named-by`, not listed in `--help`). `NAME_FILE` wins, mounted
   read-only into that container; otherwise it comes from the store like the keys, from an entry of kind `password`.
   Apple never gives the password back, so xless sends it only when the demo account is new, renamed or newly required:
-  a store without it stops nothing up front, the run says so, and only an upload that must send it fails. A demo
-  account with `required: false` is never sent a password, and nothing is given.
+  a store without it stops nothing up front (the run says so, and asks the passphrase only if the store holds it or
+  something else the run needs), and only an upload that must send it fails. A demo account with `required: false` is
+  never sent a password, and nothing is given. Without xless on your machine (all secrets as files), only
+  `XLESS_DEMO_PASSWORD_FILE` is passed: the configuration's own `passwordSecret` cannot be read there.
 
 CI keeps using the environment and `_FILE` variables, and never opens the store.
 

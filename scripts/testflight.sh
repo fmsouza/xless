@@ -432,18 +432,22 @@ if [[ $upload == 1 ]]; then
        && [[ "$names_out" =~ ^([A-Za-z_][A-Za-z0-9_]*(@[A-Z0-9]{10})?($'\n'|$))*$ ]]; then
       while IFS= read -r n; do [[ -z "$n" ]] || demo_names+=("$n"); done <<<"$names_out"
     else
-      echo "==> note: \"$xself\" secrets named-by could not tell which secret holds the TestFlight demo account's password; it is given to no container (xless says what is wrong when it reads the configuration)" >&2
+      if [[ $use_docker == 1 ]]; then what="it is given to no container"; else what="xless reads it itself when it uploads"; fi
+      echo "==> note: \"$xself\" secrets named-by could not tell which secret holds the TestFlight demo account's password: $what (xless says what is wrong when it reads the configuration)" >&2
     fi
   elif [[ -n "${XLESS_DEMO_PASSWORD_FILE:-}" ]]; then
     demo_names=(XLESS_DEMO_PASSWORD)   # no xless here to read the configuration: the default name, set as a file
   fi
 fi
+# (NAME and NAME_FILE are read from the environment only for upper-case names other than ENV: never one of this
+# script's own variables, such as ENV_FILE, the env file)
+own() { [[ "$1" =~ ^[A-Z][A-Z0-9_]*$ && "$1" != ENV ]]; }
 for n in ${demo_names[@]+"${demo_names[@]}"}; do
   f="${n}_FILE"
-  if [[ "$n" != *@* && -n "${!f:-}" ]]; then
+  if own "$n" && [[ -n "${!f:-}" ]]; then
     abs_file "$f"; demo_files+=("$n")
   elif [[ $use_docker == 1 ]]; then
-    [[ "$n" == *@* || -z "${!n:-}" ]] || echo "==> note: $n is set, but docker builds take only ${n}_FILE (a file to mount); using the secret store's $n" >&2
+    ! own "$n" || [[ -z "${!n:-}" ]] || echo "==> note: $n is set, but docker builds take only ${n}_FILE (a file to mount); using the secret store's $n" >&2
     demo_store+=("?$n")
   fi
 done
@@ -638,6 +642,7 @@ store_words() {   # SET: words=(the set's read-only mount, and NAME_FILE=/secret
 build_mounts=()   # the host folders the build container (step 2) mounts: no secret may be inside one
 materialise() {   # docker: write the store's sets (one passphrase), after every check that could still stop the run
   [[ $use_docker == 1 && ${#store_sets[@]} -gt 0 ]] || return 0
+  [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]] || prune_optional || return 0
   local mat=("$xself" secrets materialize ${team_arg[@]+"${team_arg[@]}"}) base d code=0
   [[ $ALLOW_DISK == 0 ]] || mat+=(--allow-disk)
   mat+=("${store_sets[@]}")
@@ -662,6 +667,36 @@ materialise() {   # docker: write the store's sets (one passphrase), after every
   store_words next; next_store=(${words[@]+"${words[@]}"})
   store_words sign; sign_store=(${words[@]+"${words[@]}"})
   store_words appstore; appstore_store=(${words[@]+"${words[@]}"})
+}
+# Docker: the optional secrets (?NAME, the demo password) the store does not have leave store_sets, asked by name first
+# (`materialize --check` prints those it has; no passphrase). A run whose other secrets are all files then opens the
+# store, and needs a tmpfs, only when the store has the password. False when no secret is left to write.
+prune_optional() {
+  [[ "${store_sets[*]}" == *\?* ]] || return 0
+  local s n out code=0 required=0 list names kept=()
+  for s in "${store_sets[@]}"; do
+    IFS=, read -r -a names <<<"${s#*=}"
+    for n in "${names[@]}"; do [[ "$n" == \?* ]] || required=1; done
+  done
+  out="$("$xself" secrets materialize --check ${team_arg[@]+"${team_arg[@]}"} "${store_sets[@]}")" || code=$?
+  if [[ $code -ne 0 ]]; then
+    [[ $required == 0 ]] || { echo "==> xless exited with code $code (the secret store)" >&2; exit "$code"; }
+    out=""   # only optional secrets: a store that cannot be read gives none of them
+  fi
+  for s in "${store_sets[@]}"; do
+    list=()
+    IFS=, read -r -a names <<<"${s#*=}"
+    for n in "${names[@]}"; do
+      if [[ "$n" == \?* ]] && ! grep -qxF -- "${n#\?}" <<<"$out"; then
+        echo "==> note: the secret store has no ${n#\?}: a run that must send the TestFlight demo account's password stops at upload (store it with: xless secrets import ${n#\?} --file <file> --kind password, or set ${n#\?}_FILE)" >&2
+        continue
+      fi
+      list+=("$n")
+    done
+    [[ ${#list[@]} -eq 0 ]] || kept+=("${s%%=*}=$(IFS=,; echo "${list[*]}")")
+  done
+  store_sets=(${kept[@]+"${kept[@]}"})
+  [[ ${#store_sets[@]} -gt 0 ]]
 }
 not_in_build_mounts() {   # DIR: neither DIR (or, while it does not exist, its nearest parent) nor a parent of it is mounted into the build
   local p="$1" d

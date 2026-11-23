@@ -127,10 +127,13 @@ public struct VaultMaterializer {
     }
 
     /// Every secret of `sets` has an entry (and the API key its IDs), an optional one may have none. Reads names and IDs
-    /// only: no passphrase.
-    public func check(_ sets: [MaterializeSet]) throws {
+    /// only: no passphrase. Returns the optional secrets the store has (scripts/testflight.sh leaves the others out, and
+    /// opens the store for nothing when that leaves no secret to write).
+    @discardableResult
+    public func check(_ sets: [MaterializeSet]) throws -> [String] {
         let file: SecretCatalog?
         do { file = try store.catalog() } catch let e as VaultError { throw e.stageError(.config) }
+        var present: [String] = []
         for name in Self.names(sets) {
             let entryName = VaultResolver.metadataField(name) == nil ? name : "ASC_KEY_P8"
             let entry: VaultEntry?
@@ -151,7 +154,9 @@ public struct VaultMaterializer {
                 throw XlessError(.config, "\(store.place)'s entry for \(name) is a \(entry.kind.rawValue), not a password",
                                  fix: "keep the password in its own entry (`xless secrets import \(name) --file <file> --kind password`)")
             }
+            if Self.optional(name, in: sets) { present.append(name) }
         }
+        return present
     }
 
     /// Checks, unlocks once and reads every secret, then creates `<base>/<random>/` and its sets. `announce` gets the

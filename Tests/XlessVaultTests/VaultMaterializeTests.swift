@@ -163,7 +163,8 @@ private let withPasswords = entries + [
     defer { t.cleanup() }
     try t.make(entries: withPasswords)
     let m = VaultMaterializer(store: t.store, team: "TEAMA12345", cache: nil, prompter: { ScriptedPrompter(["correct horse battery"]) })
-    try m.check(try sets("sign=XLESS_DIST_KEY,?NOT_STORED_PW,?MY_REVIEW_PW"))
+    #expect(try m.check(try sets("sign=XLESS_DIST_KEY,?NOT_STORED_PW,?MY_REVIEW_PW", "appstore=?XLESS_DEMO_PASSWORD,?MY_REVIEW_PW")) == ["MY_REVIEW_PW", "XLESS_DEMO_PASSWORD"])
+    #expect(try m.check(try sets("sign=XLESS_DIST_KEY,MY_REVIEW_PW")) == [])   // needed: not reported as optional
     let run = try m.write(try sets("next=ASC_KEY_P8", "sign=XLESS_DIST_KEY,?NOT_STORED_PW,?MY_REVIEW_PW,?XLESS_DEMO_PASSWORD"),
                           base: t.root.appendingPathComponent("runtime/xless")) { _ in }
     #expect(try FileManager.default.contentsOfDirectory(atPath: run.appendingPathComponent("sign").path).sorted()
@@ -195,7 +196,7 @@ private let withPasswords = entries + [
     defer { t.cleanup() }
     let prompter = ScriptedPrompter([])
     let none = VaultMaterializer(store: t.store, team: nil, cache: nil, prompter: { prompter })
-    try none.check(try sets("sign=?XLESS_DEMO_PASSWORD"))
+    #expect(try none.check(try sets("sign=?XLESS_DEMO_PASSWORD")) == [])
     let run = try none.write(try sets("sign=?XLESS_DEMO_PASSWORD"), base: t.root.appendingPathComponent("runtime/xless")) { _ in }
     #expect(try FileManager.default.contentsOfDirectory(atPath: run.appendingPathComponent("sign").path) == [])
     #expect(prompter.asked == 0)
