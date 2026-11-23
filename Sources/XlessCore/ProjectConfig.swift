@@ -156,6 +156,13 @@ public struct ProjectConfig: Sendable, Equatable {
         self.usesNonExemptEncryption = usesNonExemptEncryption; self.buildScheme = buildScheme; self.xcode = xcode
     }
 
+    /// The secrets this configuration names under names of the user's own (the external TestFlight review's demo
+    /// account password): a run registers them with `SecretEnvironment.scrub` before its first tool starts, so the
+    /// build tools never see them even though they are read only at upload.
+    public var secretNames: [String] {
+        [testflight?.external?.review?.demoAccount?.passwordSecret].compactMap { $0 }
+    }
+
     public func platform(_ p: Platform) throws -> PlatformConfig {
         guard let c = platforms[p] else {
             throw XlessError(.config, "platform '\(p.rawValue)' is not configured in xless.yml", fix: "add a platforms.\(p.rawValue) entry")

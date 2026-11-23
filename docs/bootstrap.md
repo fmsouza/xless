@@ -180,13 +180,12 @@ To use the images on other machines (a CI runner, a build server), push them to 
 ## 7. Ship
 
 ```sh
-xless secrets lock; xless auth logout   # a native build runs the project's plugins as you: keep nothing for them
 xless run <project-dir>                 # or, in the images: xless run --docker <project-dir>
 ```
 
-A native build runs the project's SwiftPM plugins and macros in your login session, where they could read a
-remembered unlock or a kept Apple ID session: drop both first ([security.md](security.md#the-build-and-your-secrets)).
-The keys come from the secret store: one passphrase per run, no secrets file
+A native build runs the project's SwiftPM plugins and macros as you, but in an empty session keyring and without the
+secret variables, so a remembered unlock or a kept Apple ID session is out of their reach
+([security.md](security.md#the-build-and-your-secrets)). The keys come from the secret store: one passphrase per run, no secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight), which also covers the overlay apps and
 running `xless ship` in a container yourself).
 

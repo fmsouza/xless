@@ -176,7 +176,7 @@ extension ReactNativeOverlay {
             if key.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*/) == nil {
                 throw invalid("env name '\(key)' is not a variable name", "use letters, digits and _")
             }
-            if reservedEnvironment.contains(key) || key.hasPrefix("XLESS_") || key.hasPrefix("SWIFT_") || Shell.scrubbedEnvironment.contains(key) {
+            if reservedEnvironment.contains(key) || key.hasPrefix("XLESS_") || key.hasPrefix("SWIFT_") || SecretEnvironment.names.contains(key) {
                 throw invalid("env.\(key) is set by xless itself", "remove it from env:")
             }
             env[key] = value

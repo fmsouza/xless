@@ -24,10 +24,9 @@ public enum SwiftBuildRunner {
     public static func build(pif: URL, request: URL, derivedData: URL, environment: SwiftBuildEnvironment, log: URL,
                              extraEnvironment: [String: String?] = [:], stage: Stage,
                              baseEnvironment: [String: String] = ProcessInfo.processInfo.environment) throws -> SwiftBuildOutput.Summary {
-        var env = baseEnvironment
-        for name in Shell.scrubbedEnvironment { env[name] = nil }
-        for (k, v) in environment.processEnvironment(path: baseEnvironment["PATH"]) { env[k] = v }
-        for (k, v) in extraEnvironment { env[k] = v }
+        var extra: [String: String?] = environment.processEnvironment(path: baseEnvironment["PATH"]).mapValues { $0 }
+        for (k, v) in extraEnvironment { extra[k] = v }
+        let env = ChildProcess.environment(baseEnvironment, extra: extra)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = ["swbuild", "build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path]
@@ -38,8 +37,10 @@ public enum SwiftBuildRunner {
             let out = try FileHandle(forWritingTo: log)
             defer { try? out.close() }
             p.standardOutput = out
-            try p.run()
+            try ChildProcess.start(p, stage: stage)
             p.waitUntilExit()
+        } catch let e as XlessError {
+            throw e
         } catch {
             throw XlessError(stage, "cannot run swbuild: \(error)", fix: "run in the xless-rn image, which has Swift Build's swbuild on PATH")
         }

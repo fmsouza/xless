@@ -170,6 +170,21 @@ final class URLSessionAppleTransportTests: XCTestCase {
         } catch {}
     }
 
+    /// The transport never follows a redirect itself (swift-corelibs-foundation would resend every header to the new
+    /// host): the 3xx is the answer, and `AppleWebClient` decides the next hop and its headers.
+    func testARedirectComesBackUnfollowed() async throws {
+        let target = try LoopbackServer { _ in LoopbackServer.reply("200 OK", ["Content-Type": "text/plain"], body: Data("other".utf8)) }
+        let server = try LoopbackServer { _ in
+            LoopbackServer.reply("302 Found", ["Location": "http://localhost:\(target.port)/elsewhere"], body: Data())
+        }
+        var request = URLRequest(url: server.url("/start"))
+        request.setValue("session-cookie=1", forHTTPHeaderField: "Cookie")
+        let (_, response) = try await transport.send(request)
+        XCTAssertEqual(response.statusCode, 302)
+        XCTAssertEqual(response.value(forHTTPHeaderField: "Location"), "http://localhost:\(target.port)/elsewhere")
+        XCTAssertTrue(target.heads.isEmpty, "nothing reached the other host")
+    }
+
     #if os(Linux)
     /// A full disk mid-download (/dev/full fails every write with ENOSPC) is an error, not a crash.
     func testDiskFullIsAnError() async throws {

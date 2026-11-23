@@ -28,6 +28,7 @@ public enum KernelKeyring {
     public static let possessorOnly: UInt32 = 0x3b00_0000
 
     private static let sessionKeyring = Int32(XLESS_KEY_SPEC_SESSION_KEYRING)
+    private static let userSessionKeyring = Int32(XLESS_KEY_SPEC_USER_SESSION_KEYRING)
     /// ENOKEY, EKEYEXPIRED, EKEYREVOKED (Linux's values; the calls only succeed on Linux).
     private static let gone: [Int32] = [126, 127, 128]
 
@@ -38,6 +39,13 @@ public enum KernelKeyring {
     /// kept Apple ID session (possessor-only keys) is out of their reach. False where there is no keyring.
     @discardableResult
     public static func leaveSession() -> Bool { xless_key_join_new_session() >= 0 }
+
+    /// `leaveSession`, throwing the kernel's reason when it fails. Linux credentials belong to a thread: the calling
+    /// thread, and the threads and processes it starts from then on, get the new keyring; the process's other threads
+    /// keep theirs (`ChildProcess.start` relies on this).
+    public static func joinNewSession() throws {
+        if xless_key_join_new_session() < 0 { throw failure("join_session_keyring") }
+    }
 
     /// Stores `secret` as the `user` key `name` in the session keyring (replacing a key of that name), possessor-only,
     /// expiring after `timeout` seconds (1…3600). If the permissions or the timeout cannot be set, the key is revoked
@@ -53,6 +61,13 @@ public enum KernelKeyring {
         do {
             try check(xless_key_setperm(key.serial, possessorOnly), "setperm")
             try check(xless_key_set_timeout(key.serial, UInt32(timeout)), "set_timeout")
+            // Every process of the user possesses the user's default session keyring (it is reachable by its special ID
+            // from any session), so a key there is no secret from the code the user builds. Linux gives a process
+            // without a session keyring of its own a fresh one when a key is added to it, so this does not happen; if
+            // a kernel ever did, the key is revoked rather than left there.
+            if xless_key_search(userSessionKeyring, name) == serial {
+                throw Failure(operation: "store (the key would be in your user's default session keyring, which every process of yours can read)", code: EPERM)
+            }
         } catch {
             _ = xless_key_revoke(key.serial)
             throw error

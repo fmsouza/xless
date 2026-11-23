@@ -10,10 +10,11 @@ public enum Shell {
     /// Secrets never handed to child processes: builds run third-party package code (SwiftPM macros and plugins,
     /// unsandboxed on Linux), and signing/notarization get their keys through 0600 temp files instead. The list is
     /// `SecretEnvironment`'s registry: a new secret is added there.
-    public static var scrubbedEnvironment: [String] { SecretEnvironment.names }
+    public static var scrubbedEnvironment: [String] { SecretEnvironment.scrubbed }
     /// Runs `executable` (resolved via PATH) with `arguments`. Throws XlessError(stage) on non-zero exit.
     /// The child inherits `baseEnvironment` (default: this process's environment; tests inject one instead of mutating the process) minus `scrubbedEnvironment`, plus `env` (explicit entries win;
-    /// a nil value removes a variable). passthrough: stream output to the terminal instead of capturing it.
+    /// a nil value removes a variable), plus `XLESS_NO_SECRET_STORE=1`; it starts in an empty session keyring
+    /// (`ChildProcess`). passthrough: stream output to the terminal instead of capturing it.
     /// captureTo: stream stdout and stderr to the terminal (like passthrough) and also write both, in order, to this file, so a caller
     /// can parse the full output (the error's tail keeps only 20 lines); the run returns once both pipes have ended.
     /// keepErrorLine: which stderr lines may appear in the error's 20-line tail (drops known noise, e.g. a linker
@@ -29,10 +30,7 @@ public enum Shell {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = [executable] + arguments
         if let cwd { p.currentDirectoryURL = cwd }
-        var environment = baseEnvironment
-        for name in scrubbedEnvironment { environment[name] = nil }
-        for (k, v) in env { environment[k] = v }
-        p.environment = environment
+        p.environment = ChildProcess.environment(baseEnvironment, extra: env)
 
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-shell-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -57,7 +55,10 @@ public enum Shell {
             p.standardOutput = out
             p.standardError = err
         }
-        do { try p.run() } catch {
+        do { try ChildProcess.start(p, stage: stage) } catch let e as XlessError {
+            try? log?.close()
+            throw e
+        } catch {
             try? log?.close()
             throw XlessError(stage, "cannot start \(executable): \(error)", fix: "install \(executable) or check PATH")
         }

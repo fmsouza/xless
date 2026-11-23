@@ -38,7 +38,9 @@ public struct Secrets: Sendable {
 
     /// Value of NAME, else contents of the file at NAME_FILE, else the secret store's (asked last, and only then).
     /// Handing out a value enters `SecretScope`.
+    /// The name joins `SecretEnvironment.scrub`: a tool xless runs later never sees it in its environment.
     public func optional(_ name: String, stage: Stage = .config) throws -> String? {
+        SecretEnvironment.scrub(name)
         if let v = env[name], !v.isEmpty {
             SecretScope.enter()
             return v

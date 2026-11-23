@@ -83,20 +83,8 @@ struct TauriInspectCommand: AsyncParsableCommand {
         let resolved = try TauriProject.resolve(overlay: loc.overlay, source: loc.sourceRoot)
         // Swift packages come from `cargo metadata`, which inspect never runs. The next build number is a read-only App Store
         // Connect query, made only when credentials are present; nothing is persisted.
-        var nextBuild: String? = nil
-        if loc.overlay.build == "dated" {
-            let secrets = Secrets()
-            if (try? ASCCredentials.fromSecrets(secrets, stage: .config)) != nil {
-                do {
-                    nextBuild = try await withStage(.config) {
-                        try await DatedBuildNumber.compute(version: resolved.config.version, bundleID: resolved.config.bundleID(for: .ios), secrets: secrets)
-                    }
-                } catch let e as XlessError {
-                    nextBuild = "(App Store Connect query failed: \(e.cause))"
-                } catch {
-                    nextBuild = "(App Store Connect query failed: \(error))"
-                }
-            }
+        let nextBuild = try await InspectNextBuild.query(dated: loc.overlay.build == "dated", team: resolved.config.teamID) { secrets in
+            try await DatedBuildNumber.compute(version: resolved.config.version, bundleID: resolved.config.bundleID(for: .ios), secrets: secrets)
         }
         print(InspectReport.make(resolved: resolved, overlay: loc.overlay,
                                  contract: TauriContract.detect(source: loc.sourceRoot, tauriDir: resolved.tauriDir),

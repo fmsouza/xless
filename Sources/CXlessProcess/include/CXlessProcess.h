@@ -22,6 +22,8 @@ void xless_secure_zero(void *bytes, size_t length);
 /// Each returns what the syscall returns (-1 with errno set on failure); elsewhere than Linux, -1 with errno ENOSYS.
 /// `keyring` is a serial or a special ID such as XLESS_KEY_SPEC_SESSION_KEYRING.
 #define XLESS_KEY_SPEC_SESSION_KEYRING (-3)
+/// The user's default session keyring, which every process of the user can reach (possessed) by this ID.
+#define XLESS_KEY_SPEC_USER_SESSION_KEYRING (-5)
 
 /// add_key("user", description, payload, length, keyring): the new key's serial.
 long xless_key_add(const char *description, const void *payload, size_t length, int32_t keyring);
