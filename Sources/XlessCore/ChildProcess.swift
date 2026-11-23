@@ -32,6 +32,7 @@ public enum ChildProcess {
         SecretScope.enter()
         #if os(Linux)
         guard KernelKeyring.isAvailable else { return try process.run() }
+        primeProcessManager
         // Linux credentials (the session keyring among them) are per thread, and a spawned child gets the credentials of
         // the thread that spawned it: this thread joins a new anonymous keyring, starts the child and ends. The process's
         // other threads, and so xless's own later lookups, keep the user's keyring.
@@ -58,6 +59,15 @@ public enum ChildProcess {
         #endif
     }
 }
+
+#if os(Linux)
+/// swift-corelibs-foundation starts its process manager thread in the first `Process.run()` of the process, from the
+/// calling thread, whose credentials it inherits; that thread lives as long as the process and starts the termination
+/// handlers' threads. Started from the thread that joined an empty keyring, it (and they) would have lost the user's
+/// keyring: a later stage would ask the passphrase again. So the first isolated start makes corelibs set it up from the
+/// caller's thread: `run()` sets the manager up before it checks the executable, and with none set it starts nothing.
+private let primeProcessManager: Void = { _ = try? Process().run() }()
+#endif
 
 private final class Outcome: @unchecked Sendable {
     var error: Error?

@@ -196,7 +196,7 @@ extension CargoOverlay {
             if key.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*/) == nil {
                 throw invalid("\(what) name '\(key)' is not a variable name", "use letters, digits and _")
             }
-            if reservedEnvironment.contains(key) || reservedPrefixes.contains(where: key.hasPrefix) || Shell.scrubbedEnvironment.contains(key) {
+            if reservedEnvironment.contains(key) || reservedPrefixes.contains(where: key.hasPrefix) || SecretEnvironment.names.contains(key) {
                 throw invalid("\(what) \(key) is set by xless itself or carries a secret", "remove it; secrets reach xless only through the environment of the stage that uses them")
             }
         }

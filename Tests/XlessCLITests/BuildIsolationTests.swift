@@ -12,22 +12,22 @@ private struct TeamStore: SecretFallback {
     func preferring(team: String) -> any SecretFallback { TeamStore(team: team) }
 }
 
-@Test func inspectAsksForTheNextBuildWithTheProjectsTeam() async {
+@Test func inspectAsksForTheNextBuildWithTheProjectsTeam() async throws {
     let secrets = Secrets(env: [:], fallback: TeamStore())
-    let next = await InspectNextBuild.query(dated: true, team: "ABCDE12345", secrets: secrets) { secrets in
+    let next = try await InspectNextBuild.query(dated: true, team: "ABCDE12345", secrets: secrets) { secrets in
         // The query gets the team's key.
         try ASCCredentials.fromSecrets(secrets, stage: .config).keyID == "KEY123" ? "20261123.1" : "wrong key"
     }
     #expect(next == "20261123.1")
     // Another team's run finds no key: no query.
-    let none = await InspectNextBuild.query(dated: true, team: "ZZZZZ99999", secrets: secrets) { _ in "queried" }
+    let none = try await InspectNextBuild.query(dated: true, team: "ZZZZZ99999", secrets: secrets) { _ in "queried" }
     #expect(none == nil)
 }
 
-@Test func inspectMakesNoQueryForAFixedBuildAndReportsAFailedOne() async {
+@Test func inspectMakesNoQueryForAFixedBuildAndReportsAFailedOne() async throws {
     let secrets = Secrets(env: fakeKeyEnv, fallback: nil)
-    #expect(await InspectNextBuild.query(dated: false, team: "ABCDE12345", secrets: secrets) { _ in "queried" } == nil)
-    let failed = await InspectNextBuild.query(dated: true, team: "ABCDE12345", secrets: secrets) { _ in
+    #expect(try await InspectNextBuild.query(dated: false, team: "ABCDE12345", secrets: secrets) { _ in "queried" } == nil)
+    let failed = try await InspectNextBuild.query(dated: true, team: "ABCDE12345", secrets: secrets) { _ in
         throw XlessError(.config, "App Store Connect said no", fix: "x")
     }
     #expect(failed == "(App Store Connect query failed: App Store Connect said no)")
@@ -60,4 +60,12 @@ private struct TeamStore: SecretFallback {
     #expect(SecretEnvironment.scrubbed.contains(name))
     let out = try Shell.run("env", [], baseEnvironment: ["PATH": "/usr/bin:/bin", name: "hunter2"], stage: .build).stdout
     #expect(!out.contains("hunter2"))
+}
+
+@Test func ctrlCDuringTheInspectQueryIsNoFailedQuery() async {
+    await #expect(throws: CancellationError.self) {
+        _ = try await InspectNextBuild.query(dated: true, team: "ABCDE12345", secrets: Secrets(env: fakeKeyEnv, fallback: nil)) { _ in
+            throw CancellationError()
+        }
+    }
 }

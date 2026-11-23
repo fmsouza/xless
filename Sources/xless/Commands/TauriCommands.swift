@@ -83,7 +83,7 @@ struct TauriInspectCommand: AsyncParsableCommand {
         let resolved = try TauriProject.resolve(overlay: loc.overlay, source: loc.sourceRoot)
         // Swift packages come from `cargo metadata`, which inspect never runs. The next build number is a read-only App Store
         // Connect query, made only when credentials are present; nothing is persisted.
-        let nextBuild = await InspectNextBuild.query(dated: loc.overlay.build == "dated", team: resolved.config.teamID) { secrets in
+        let nextBuild = try await InspectNextBuild.query(dated: loc.overlay.build == "dated", team: resolved.config.teamID) { secrets in
             try await DatedBuildNumber.compute(version: resolved.config.version, bundleID: resolved.config.bundleID(for: .ios), secrets: secrets)
         }
         print(InspectReport.make(resolved: resolved, overlay: loc.overlay,

@@ -179,7 +179,8 @@ An app's build runs code you did not write. What that code can reach depends on 
   and with `XLESS_NO_SECRET_STORE=1`, so an xless they run never opens the store. Before it starts a tool, xless
   makes itself non-dumpable: the tool cannot attach to it or read its memory or its environment. Natively the build
   still runs as you: its SwiftPM plugins and macros can read your files, including the key files a `_FILE` variable
-  names (the store keeps keys sealed on disk).
+  names (the store keeps keys sealed on disk), and the environment of your shell, or of any other process of yours
+  that exported a secret variable (`/proc/<pid>/environ`): keep keys in the store rather than in exported variables.
 
 If that matters for a project you do not fully trust, keep the signing in a second run, so no build code runs while a
 key is in use:
@@ -212,8 +213,9 @@ Cookies are sent only to hosts within the domain that set them, and no other hea
 to another host (but `Accept`, `User-Agent` and `Range`). The App Store
 Connect API key's JWT goes only on requests xless addresses to `api.appstoreconnect.apple.com` (and, made by
 rcodesign, to the notary service); upload and download addresses get no credential. xless follows every redirect
-itself (URLSession never does it for xless, since it would resend every header): the `Authorization` header stays with
-the origin (scheme, host and port) it was made for, at most 10 hops, and never from HTTPS to plain HTTP.
+itself (URLSession never does it for xless, since it would resend every header), at most 10 hops: the `Authorization`
+header stays with the origin (scheme, host and port) it was made for, a request's body is never sent on to another
+origin, and nothing goes from HTTPS to plain HTTP.
 
 ## The Apple ID web session
 

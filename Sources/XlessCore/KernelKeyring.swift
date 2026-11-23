@@ -28,6 +28,7 @@ public enum KernelKeyring {
     public static let possessorOnly: UInt32 = 0x3b00_0000
 
     private static let sessionKeyring = Int32(XLESS_KEY_SPEC_SESSION_KEYRING)
+    private static let userSessionKeyring = Int32(XLESS_KEY_SPEC_USER_SESSION_KEYRING)
     /// ENOKEY, EKEYEXPIRED, EKEYREVOKED (Linux's values; the calls only succeed on Linux).
     private static let gone: [Int32] = [126, 127, 128]
 
@@ -60,6 +61,13 @@ public enum KernelKeyring {
         do {
             try check(xless_key_setperm(key.serial, possessorOnly), "setperm")
             try check(xless_key_set_timeout(key.serial, UInt32(timeout)), "set_timeout")
+            // Every process of the user possesses the user's default session keyring (it is reachable by its special ID
+            // from any session), so a key there is no secret from the code the user builds. Linux gives a process
+            // without a session keyring of its own a fresh one when a key is added to it, so this does not happen; if
+            // a kernel ever did, the key is revoked rather than left there.
+            if xless_key_search(userSessionKeyring, name) == serial {
+                throw Failure(operation: "store (the key would be in your user's default session keyring, which every process of yours can read)", code: EPERM)
+            }
         } catch {
             _ = xless_key_revoke(key.serial)
             throw error

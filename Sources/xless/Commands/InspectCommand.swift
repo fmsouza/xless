@@ -45,7 +45,7 @@ struct InspectCommand: AsyncParsableCommand {
         let (overlay, sourceRoot, workRoot) = try ReactNativeOverlay.load(from: url, sourceOverride: source)
         let resolved = try ReactNativeProject.resolve(overlay: overlay, source: sourceRoot, work: workRoot)
         // The next build number is a read-only App Store Connect query, made only when credentials are present.
-        let nextBuild = await InspectNextBuild.query(dated: overlay.build == "dated", team: resolved.config.teamID) { secrets in
+        let nextBuild = try await InspectNextBuild.query(dated: overlay.build == "dated", team: resolved.config.teamID) { secrets in
             try await DatedBuildNumber.compute(version: resolved.config.version, bundleID: resolved.config.bundleID, secrets: secrets)
         }
         print(ReactNativeInspectReport.make(resolved: resolved, overlay: overlay,
@@ -59,17 +59,18 @@ struct InspectCommand: AsyncParsableCommand {
 /// project's team has credentials (the store's lookups prefer that team, like every stage of a run); a failed query is
 /// reported in its place.
 enum InspectNextBuild {
+    /// Ctrl-C (`CancellationError`) is rethrown, not reported as a failed query.
     static func query(dated: Bool, team: String, secrets: Secrets = Secrets(),
-                      compute: @escaping (Secrets) async throws -> String) async -> String? {
+                      compute: @escaping (Secrets) async throws -> String) async throws -> String? {
         guard dated else { return nil }
         let secrets = secrets.preferring(team: team)
         guard (try? ASCCredentials.fromSecrets(secrets, stage: .config)) != nil else { return nil }
         do {
-            return try await withStage(.config) { try await compute(secrets) }
-        } catch let e as XlessError {
-            return "(App Store Connect query failed: \(e.cause))"
+            return try await compute(secrets)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
-            return "(App Store Connect query failed: \(error))"
+            return "(App Store Connect query failed: \(XlessError.wrapping(error, stage: .config).cause))"
         }
     }
 }

@@ -7,8 +7,10 @@ import Testing
 /// `docker run --security-opt seccomp=unconfined …` runs them.
 private let keyringAvailable = KernelKeyring.isAvailable
 
-/// The probe: a python3 script that searches its session keyring for a `user` key (raw keyctl, like xless) and prints
-/// `found` or `missing`. /proc/keys is no probe: Docker masks it.
+/// The probe: a python3 script that looks for a `user` key (raw keyctl, like xless) everywhere a process of the user can
+/// reach on its own: its session keyring, the user's default session keyring and the user keyring (both reachable by
+/// their special IDs from any session, as possessed), each time linking what it finds into its own session keyring as
+/// a thief would. Prints `found <name>` or `missing <name>`. /proc/keys is no probe: Docker masks it.
 private let python3 = ["/usr/bin/python3", "/usr/local/bin/python3"].first { FileManager.default.isExecutableFile(atPath: $0) }
 
 private func probeScript() throws -> URL {
@@ -19,8 +21,9 @@ private func probeScript() throws -> URL {
     libc = ctypes.CDLL(None, use_errno=True)
     libc.syscall.restype = ctypes.c_long
     for name in sys.argv[1:]:
-        serial = libc.syscall(number, 10, -3, b"user", name.encode(), 0)  # KEYCTL_SEARCH in KEY_SPEC_SESSION_KEYRING
-        print(("found " if serial >= 0 else "missing ") + name)
+        # KEYCTL_SEARCH in @s, @us and @u, linking a find into @s
+        found = any(libc.syscall(number, 10, spec, b"user", name.encode(), -3) >= 0 for spec in (-3, -5, -4))
+        print(("found " if found else "missing ") + name)
     """.write(to: url, atomically: true, encoding: .utf8)
     return url
 }

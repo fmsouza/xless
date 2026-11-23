@@ -48,7 +48,7 @@ public struct URLSessionTransport: HTTPTransport {
             let (response, errorBody) = try await NoRedirectSession.shared.exchange(request, errorLimit: errorLimit, chunk: chunk)
             guard let next = try HTTPRedirect.next(after: request, response: response) else { return (response, errorBody) }
             hops += 1
-            guard hops <= HTTPRedirect.maxHops else { throw URLError(.httpTooManyRedirects) }
+            guard hops <= HTTPRedirect.maxHops else { throw TooManyRedirects(host: next.url?.host ?? "?") }
             request = next
         }
     }
@@ -63,7 +63,9 @@ private final class Body: @unchecked Sendable {
 }
 
 /// The one URLSession `URLSessionTransport` uses, and its delegate. Delegate-driven data tasks only: for a task with a
-/// completion handler, swift-corelibs-foundation follows redirects without asking the delegate.
+/// completion handler, swift-corelibs-foundation follows redirects without asking the delegate. One serial delegate
+/// queue for every request: callbacks (a report's `chunk` writes included) run one at a time, which keeps each task's
+/// pieces in order; xless sends its requests a few at a time at most.
 final class NoRedirectSession: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     static let shared = NoRedirectSession()
 

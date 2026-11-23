@@ -93,6 +93,7 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
     r.httpBody = body
     r.setValue("Bearer secret-jwt", forHTTPHeaderField: "Authorization")
     r.setValue("application/json", forHTTPHeaderField: "Accept")
+    r.setValue("upload-token", forHTTPHeaderField: "X-Custom-Header")
     return r
 }
 
@@ -110,6 +111,7 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
     let followed = try #require(target.requests.first)
     #expect(followed.path == "/file?sig=1")
     #expect(followed.headers["authorization"] == nil)
+    #expect(followed.headers["x-custom-header"] == nil) // only Accept, User-Agent and Range follow to another host
     #expect(followed.headers["accept"] == "application/json")
 }
 
@@ -134,7 +136,7 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
     let (_, response) = try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/v1/apps"))
     #expect(response.statusCode == 200)
     #expect(server.requests.map(\.path) == ["/v1/apps", "/v1/apps/"])
-    #expect(server.requests.allSatisfy { $0.headers["authorization"] == "Bearer secret-jwt" })
+    #expect(server.requests.allSatisfy { $0.headers["authorization"] == "Bearer secret-jwt" && $0.headers["x-custom-header"] == "upload-token" })
 }
 
 @Test func aSeeOtherAfterAPostBecomesAGetWithoutABody() async throws {
@@ -153,7 +155,7 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
 @Test func endlessRedirectsFail() async throws {
     let server = try RecordingServer { r in (302, ["Location": r.path + "x"], Data()) }
     defer { server.stop() }
-    await #expect(throws: URLError.self) {
+    await #expect(throws: TooManyRedirects.self) {
         _ = try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/a"))
     }
     #expect(server.requests.count == HTTPRedirect.maxHops + 1)
@@ -165,6 +167,29 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
     defer { server.stop() }
     let (data, response) = try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/v1/apps"))
     #expect(response.statusCode == 500 && data == big)
+}
+
+@Test func aBodyIsNeverRedirectedToAnotherHost() async throws {
+    let target = try RecordingServer { _ in (200, [:], Data()) }
+    defer { target.stop() }
+    let origin = try RecordingServer { _ in (307, ["Location": "http://localhost:\(target.port)/v1/betaAppReviewDetails/1"], Data()) }
+    defer { origin.stop() }
+    let patch = request("http://127.0.0.1:\(origin.port)/v1/betaAppReviewDetails/1", method: "PATCH", body: Data(#"{"demoAccountPassword":"pw"}"#.utf8))
+    await #expect(throws: RedirectRefused(host: "localhost", reason: .bodyToAnotherOrigin)) {
+        _ = try await URLSessionTransport().send(patch)
+    }
+    #expect(target.requests.isEmpty)
+}
+
+@Test func aCancelledRequestEnds() async throws {
+    let server = try RecordingServer { _ in Thread.sleep(forTimeInterval: 3); return (200, [:], Data()) }
+    defer { server.stop() }
+    let started = Date()
+    let task = Task { try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/slow")) }
+    try await Task.sleep(for: .milliseconds(300))
+    task.cancel()
+    await #expect(throws: (any Error).self) { _ = try await task.value }
+    #expect(Date().timeIntervalSince(started) < 2.5)
 }
 
 private final class Got: @unchecked Sendable {
