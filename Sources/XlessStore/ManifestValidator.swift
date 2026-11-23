@@ -71,6 +71,7 @@ public enum ManifestValidator {
         var v = Run(manifest: manifest, dir: dir, draft: draft)
         if checkApp { v.app(inheritedBundleID: inheritedBundleID) }
         for locale in manifest.orderedLocales { v.locale(locale, manifest.locales[locale]!) }
+        v.products()
         v.submission()
         return v.issues
     }
@@ -272,51 +273,55 @@ public enum ManifestValidator {
             territoryList(territories, key: "eula.territories")
         }
 
-        mutating func territoryList(_ territories: StoreTerritories?, key: String) {
+        mutating func territoryList(_ territories: StoreTerritories?, key: String, path: String? = nil) {
+            let path = path ?? appPath
             guard case .only(let list)? = territories else { return }
-            if list.isEmpty { error(appPath, "\(key) is an empty list", "list territories (USA, CAN…) or write `all`") }
+            if list.isEmpty { error(path, "\(key) is an empty list", "list territories (USA, CAN…) or write `all`") }
             for t in list where t.range(of: "^[A-Z]{3}$", options: .regularExpression) == nil {
-                error(appPath, "\(key): \(t) is not a territory code", "use App Store Connect's three-letter codes, e.g. USA, GBR, JPN")
+                error(path, "\(key): \(t) is not a territory code", "use App Store Connect's three-letter codes, e.g. USA, GBR, JPN")
             }
         }
 
         mutating func pricing() {
-            if let p = app.pricing {
-                if let base = p.baseTerritory, base.range(of: "^[A-Z]{3}$", options: .regularExpression) == nil {
-                    error(appPath, "pricing.baseTerritory \(base) is not a territory code", "use a three-letter code, e.g. USA")
+            if let p = app.pricing { pricingIssues(p, path: appPath) }
+            territoryList(app.availability?.territories, key: "availability.territories")
+        }
+
+        /// What is wrong with a `pricing` section (app.yml's, or an in-app purchase's at `path`).
+        mutating func pricingIssues(_ p: AppYAML.Pricing, path: String) {
+            if let base = p.baseTerritory, base.range(of: "^[A-Z]{3}$", options: .regularExpression) == nil {
+                error(path, "pricing.baseTerritory \(base) is not a territory code", "use a three-letter code, e.g. USA")
+            }
+            if let price = p.price, CustomerPrice.parse(price) == nil {
+                error(path, "pricing.price \(price) is not a price", "write `free` or the customer price in the base territory, quoted, e.g. \"0.99\"")
+            }
+            for (territory, price) in (p.territories?.values ?? [:]).sorted(by: { $0.key < $1.key }) {
+                if !Self.isTerritory(territory) {
+                    error(path, "pricing.territories: \(territory) is not a territory code", "use App Store Connect's three-letter codes, e.g. GBR, JPN")
+                } else if territory == p.baseTerritory {
+                    error(path, "pricing.territories lists the base territory \(territory)", "set its price with pricing.price, and remove it from pricing.territories")
                 }
-                if let price = p.price, CustomerPrice.parse(price) == nil {
-                    error(appPath, "pricing.price \(price) is not a price", "write `free` or the customer price in the base territory, quoted, e.g. \"0.99\"")
-                }
-                for (territory, price) in (p.territories?.values ?? [:]).sorted(by: { $0.key < $1.key }) {
-                    if !Self.isTerritory(territory) {
-                        error(appPath, "pricing.territories: \(territory) is not a territory code", "use App Store Connect's three-letter codes, e.g. GBR, JPN")
-                    } else if territory == p.baseTerritory {
-                        error(appPath, "pricing.territories lists the base territory \(territory)", "set its price with pricing.price, and remove it from pricing.territories")
-                    }
-                    if CustomerPrice.parse(price) == nil {
-                        error(appPath, "pricing.territories.\(territory): \(price) is not a price", "write `free` or the customer price in \(territory)'s currency, quoted, e.g. \"0.99\"")
-                    }
-                }
-                var seen: Set<String> = []
-                for change in p.changes ?? [] {
-                    let territory = change.territory ?? p.baseTerritory ?? "the base territory"
-                    if !Self.isDay(change.date) {
-                        error(appPath, "pricing.changes: \(change.date) is not a date", "write it as YYYY-MM-DD, quoted, e.g. \"2027-01-01\"")
-                    }
-                    if let t = change.territory, !Self.isTerritory(t) {
-                        error(appPath, "pricing.changes: \(t) is not a territory code", "use App Store Connect's three-letter codes, or leave territory out for the base territory")
-                    }
-                    if CustomerPrice.parse(change.price) == nil {
-                        error(appPath, "pricing.changes: \(change.price) (\(change.date)) is not a price", "write `free` or the customer price, quoted, e.g. \"0.99\"")
-                    }
-                    // Without baseTerritory, a change naming no territory is for USA (push's default base territory).
-                    if !seen.insert("\(change.territory ?? p.baseTerritory ?? "USA") \(change.date)").inserted {
-                        error(appPath, "pricing.changes has two changes for \(territory) on \(change.date)", "keep one")
-                    }
+                if CustomerPrice.parse(price) == nil {
+                    error(path, "pricing.territories.\(territory): \(price) is not a price", "write `free` or the customer price in \(territory)'s currency, quoted, e.g. \"0.99\"")
                 }
             }
-            territoryList(app.availability?.territories, key: "availability.territories")
+            var seen: Set<String> = []
+            for change in p.changes ?? [] {
+                let territory = change.territory ?? p.baseTerritory ?? "the base territory"
+                if !Self.isDay(change.date) {
+                    error(path, "pricing.changes: \(change.date) is not a date", "write it as YYYY-MM-DD, quoted, e.g. \"2027-01-01\"")
+                }
+                if let t = change.territory, !Self.isTerritory(t) {
+                    error(path, "pricing.changes: \(t) is not a territory code", "use App Store Connect's three-letter codes, or leave territory out for the base territory")
+                }
+                if CustomerPrice.parse(change.price) == nil {
+                    error(path, "pricing.changes: \(change.price) (\(change.date)) is not a price", "write `free` or the customer price, quoted, e.g. \"0.99\"")
+                }
+                // Without baseTerritory, a change naming no territory is for USA (push's default base territory).
+                if !seen.insert("\(change.territory ?? p.baseTerritory ?? "USA") \(change.date)").inserted {
+                    error(path, "pricing.changes has two changes for \(territory) on \(change.date)", "keep one")
+                }
+            }
         }
 
         static func isTerritory(_ code: String) -> Bool { code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil }

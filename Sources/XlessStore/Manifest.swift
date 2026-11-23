@@ -9,6 +9,7 @@ import XlessCore
 //     media.lock               which App Store Connect asset each local screenshot/preview/attachment is (MediaLock)
 //     review/                  App Review attachments, when app.yml's review.attachments names them
 //     compliance/              the export compliance document, when app.yml's encryptionDocument names it
+//     iap/, subscriptions/     in-app purchases and auto-renewable subscriptions (Products.swift)
 //     <locale>/                text files (LocaleListing), screenshots/<display type>/, previews/<preview type>/
 //
 // Values are App Store Connect's own spellings (IOS, AFTER_APPROVAL, APP_IPHONE_67…), so nothing is translated between
@@ -22,13 +23,17 @@ public struct StoreManifest: Sendable, Equatable {
     public var locales: [String: LocaleListing]
     /// Top-level `app.yml` keys xless does not model, kept as YAML text in file order; `pull` writes them back unchanged.
     public var extras: [(key: String, yaml: String)]
+    /// In-app purchases and subscriptions (`iap/`, `subscriptions/`).
+    public var products: StoreProducts
 
-    public init(app: AppYAML = AppYAML(), locales: [String: LocaleListing] = [:], extras: [(key: String, yaml: String)] = []) {
-        self.app = app; self.locales = locales; self.extras = extras
+    public init(app: AppYAML = AppYAML(), locales: [String: LocaleListing] = [:], extras: [(key: String, yaml: String)] = [],
+                products: StoreProducts = StoreProducts()) {
+        self.app = app; self.locales = locales; self.extras = extras; self.products = products
     }
 
     public static func == (a: StoreManifest, b: StoreManifest) -> Bool {
         a.app == b.app && a.locales == b.locales && a.extras.map(\.key) == b.extras.map(\.key) && a.extras.map(\.yaml) == b.extras.map(\.yaml)
+            && a.products == b.products
     }
 
     /// A file `app.yml` names (e.g. `eula.file`), inside the manifest directory `dir`; nil when the name leads outside it

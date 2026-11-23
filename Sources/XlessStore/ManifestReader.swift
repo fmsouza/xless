@@ -5,8 +5,8 @@ import Yams
 /// `StoreIssue` (the caller decides whether errors stop it), so `validate` reports every problem in one run.
 public enum ManifestReader {
     public static let appFile = "app.yml"
-    /// Directories at the top of the manifest that are not locales: in-app purchases (#108), App Review attachments
-    /// and the export compliance document.
+    /// Directories at the top of the manifest that are not locales: in-app purchases and subscriptions, App Review
+    /// attachments and the export compliance document.
     public static let reservedDirectories: Set<String> = ["iap", "subscriptions", "review", "compliance"]
 
     public struct Result: Sendable {
@@ -48,6 +48,9 @@ public enum ManifestReader {
             manifest.locales[entry.lastPathComponent] = listing
             issues += localeIssues
         }
+        let (products, productIssues) = readProducts(dir)
+        manifest.products = products
+        issues += productIssues
         return Result(manifest: manifest, issues: issues, hasAppFile: hasAppFile, appReadable: appReadable)
     }
 

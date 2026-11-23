@@ -46,15 +46,26 @@ public struct ASCPricePoints: Sendable {
 
     /// Every price point of `app` (its resource ID) in `territory`, cheapest first.
     public func list(app: String, territory: String) async throws -> [ASCPricePoint] {
+        try await list(path: "/v1/apps/\(app)/appPricePoints", territory: territory)
+    }
+
+    /// Every price point the listing at `path` has in `territory` (an app's, an in-app purchase's
+    /// `/v2/inAppPurchases/{id}/pricePoints`, a subscription's `/v1/subscriptions/{id}/pricePoints`), cheapest first.
+    public func list(path: String, territory: String) async throws -> [ASCPricePoint] {
         var q = Self.query
         q.filters = [("territory", territory)]
-        let listing = try await resources.list("/v1/apps/\(app)/appPricePoints", query: q, as: ASCAnyResource.self)
+        let listing = try await resources.list(path, query: q, as: ASCAnyResource.self)
         return Self.points(listing, territory: territory)
     }
 
     /// The price point `id` in every other territory, by territory.
     public func equalizations(of id: String) async throws -> [ASCPricePoint] {
-        let listing = try await resources.list("/v3/appPricePoints/\(id)/equalizations", query: Self.query, as: ASCAnyResource.self)
+        try await equalizations(path: "/v3/appPricePoints/\(id)/equalizations")
+    }
+
+    /// The equalizations at `path` (`/v1/subscriptionPricePoints/{id}/equalizations`), by territory.
+    public func equalizations(path: String) async throws -> [ASCPricePoint] {
+        let listing = try await resources.list(path, query: Self.query, as: ASCAnyResource.self)
         return Self.points(listing, territory: nil).sorted { $0.territory < $1.territory }
     }
 
@@ -69,25 +80,27 @@ public struct ASCPricePoints: Sendable {
     }
 
     /// The point whose customer price is exactly `price` (`free` or "0.99"); otherwise an error naming the nearest
-    /// points below and above it. `app` is how the fix names the app (its bundle ID or ID).
-    public static func resolve(_ price: String, in points: [ASCPricePoint], territory: String, app: String) throws -> ASCPricePoint {
+    /// points below and above it. `app` is how the fix names the app (its bundle ID or ID); `command`, the command that
+    /// lists the points (default `xless apps price-points <app>`), `--territory` appended.
+    public static func resolve(_ price: String, in points: [ASCPricePoint], territory: String, app: String, command: String? = nil) throws -> ASCPricePoint {
+        let lister = command ?? "xless apps price-points \(app)"
         guard let wanted = CustomerPrice.parse(price) else {
             throw XlessError(.account, "\(price) is not a price: write `free` or the customer price, e.g. 0.99", fix: "use a number with a dot, without a currency sign")
         }
         if let found = points.first(where: { $0.price == wanted }) { return found }
         guard !points.isEmpty else {
             throw XlessError(.account, "App Store Connect lists no price point in \(territory) for this app",
-                             fix: "check the territory code (`xless apps price-points \(app) --territory USA`)")
+                             fix: "check the territory code (`\(lister) --territory USA`)")
         }
         let sorted = points.sorted { ($0.price ?? 0) < ($1.price ?? 0) }
         let below = sorted.last { ($0.price ?? 0) < wanted }, above = sorted.first { ($0.price ?? 0) > wanted }
         let nearest = [below, above].compactMap { $0?.customerPrice }
         guard !nearest.isEmpty else {
             throw XlessError(.account, "\(price) is not a price point in \(territory)",
-                             fix: "`xless apps price-points \(app) --territory \(territory)` lists every price point")
+                             fix: "`\(lister) --territory \(territory)` lists every price point")
         }
         let named = nearest.count == 2 ? "the nearest are \(nearest[0]) and \(nearest[1])" : "the nearest is \(nearest[0])"
         throw XlessError(.account, "\(price) is not a price point in \(territory); \(named)",
-                         fix: "use \(nearest.count == 2 ? "one of them" : "it") (`xless apps price-points \(app) --territory \(territory)` lists every price point)")
+                         fix: "use \(nearest.count == 2 ? "one of them" : "it") (`\(lister) --territory \(territory)` lists every price point)")
     }
 }
