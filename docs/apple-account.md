@@ -6,9 +6,10 @@ Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows 
 [`xless team`](#xless-team), which picks the default team, [`xless secrets`](secrets.md), which keeps the keys,
 [`xless devices`](#xless-devices), which registers the devices of development and ad hoc profiles,
 [`xless bundle-ids`](#xless-bundle-ids), which registers bundle IDs and enables their capabilities,
-[`xless merchant-ids`](#xless-merchant-ids), which registers Apple Pay merchant IDs, and
-[`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More commands (certificates,
-profiles, apps, TestFlight, releases) follow the conventions on this page.
+[`xless merchant-ids`](#xless-merchant-ids), which registers Apple Pay merchant IDs,
+[`xless certs`](#xless-certs), which creates, downloads and revokes certificates of every type with their private keys
+in the secret store, and [`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More
+commands (profiles, apps, TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -268,6 +269,60 @@ the team has already sends nothing. An app takes Apple Pay payments to a merchan
 of its bundle ID; assigning the merchant ID to the bundle ID is not in the API, so it is done on
 [developer.apple.com](https://developer.apple.com/account/resources/identifiers). With `--json`, `list` prints
 `{"data": [merchant IDs]}`, `create` `{"registered": [...], "existing": [...]}` and `delete` `{"deleted": merchant ID}`.
+
+## `xless certs`
+
+```sh
+xless certs list [--type distribution]… [--expiring 30]     # ID, type, name, serial, expiry, key in the store
+xless certs create --type distribution                        # key into the secret store, then the certificate
+xless certs create --type developer-id --csr devid.csr        # a key that lives elsewhere: only the CSR is sent
+xless certs create --type apple-pay-merchant-identity --merchant-id merchant.com.example.store
+xless certs create --type pass-type-id --pass-type-id pass.com.example.ticket
+xless certs show 8U3T4X5YZA
+xless certs download 8U3T4X5YZA --out distribution.cer        # DER, mode 0644, never overwrites
+xless certs revoke 8U3T4X5YZA                                 # asks first, naming the profiles that stop working
+```
+
+They use the API key (`/v1/certificates`); creating and revoking need the Admin role, and Developer ID certificates the
+Account Holder. `--type` takes the 18 `CertificateType` values of App Store Connect API 4.6.1 (`DISTRIBUTION`,
+`DEVELOPMENT`, `IOS_DEVELOPMENT`, `IOS_DISTRIBUTION`, `MAC_APP_DEVELOPMENT`, `MAC_APP_DISTRIBUTION`,
+`MAC_INSTALLER_DISTRIBUTION`, `DEVELOPER_ID_APPLICATION(_G2)`, `DEVELOPER_ID_KEXT(_G2)`, `APPLE_PAY`,
+`APPLE_PAY_MERCHANT_IDENTITY`, `APPLE_PAY_PSP_IDENTITY`, `APPLE_PAY_RSA`, `PASS_TYPE_ID(_WITH_NFC)`, `IDENTITY_ACCESS`)
+in any case, with dashes or underscores; `developer-id` and `installer` stand for `DEVELOPER_ID_APPLICATION_G2` and
+`MAC_INSTALLER_DISTRIBUTION`. Developer ID Installer certificates are not in the API: create them on
+[developer.apple.com](https://developer.apple.com/account/resources/certificates).
+
+`create` without `--csr` generates an RSA-2048 key, keeps it in memory only, and seals it into the
+[secret store](secrets.md) **before** the create request: a store that cannot keep it (no store, a wrong passphrase, a
+taken name) means nothing is sent. The entry is `XLESS_DIST_KEY`, `XLESS_DEVID_KEY` or `XLESS_INSTALLER_KEY` for the
+three certificates `sign` uses, `XLESS_<TYPE>_KEY` otherwise, with `@<TEAM_ID>` when a team is selected; `--name`
+chooses another. xless refuses up front when the store already has a key the `sign` stage would read for that team. The
+create request is sent once, never retried. A definite refusal (a 4xx other than 429) removes the key again; any other
+failure may have created the certificate, so the key is kept and the error says to check `xless certs list`. Once the
+certificate exists, its ID, type and expiry (and the team, read from the certificate when none was selected) are
+recorded with the key. `sign` finds the key through the store and matches it to its certificate by public key.
+
+`create --csr <file>` (PEM or DER) is for keys that live elsewhere (an HSM, another machine): xless checks the CSR and
+sends it, and nothing secret touches it. Apple Pay payment processing (`apple-pay`) needs an ECC P-256 key, usually made
+by the payment provider, so it always takes `--csr`. Apple Pay certificates need `--merchant-id` (an identifier or
+ID, see [`xless merchant-ids`](#xless-merchant-ids)), Wallet pass certificates `--pass-type-id` (an identifier
+`pass.…` or ID).
+
+Limits: Apple allows five Developer ID Application certificates per team ([Create Developer ID
+certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/), read
+2026-11-23), which `create` checks before generating anything. Apple's [certificates
+overview](https://developer.apple.com/help/account/certificates/certificates-overview/) gives no number for the other
+types; App Store Connect refuses one too many itself (HTTP 409), and the error points to `xless certs revoke`.
+
+`revoke` lists the profiles that contain the certificate (they become invalid), warns that apps signed with a
+Developer ID certificate can no longer be installed, and asks (or needs `--yes`). It leaves the store entry holding the
+private key in place and names it (`xless secrets rm <name>`). `xless sign bootstrap --type
+distribution|developer-id|installer` is `create` for the three certificates `sign` uses, with its own `--allow-new`
+check ([bootstrap.md](bootstrap.md#how-sign-bootstrap-behaves)); `--out <file>` keeps its file behaviour.
+
+With `--json`, `list` prints `{"data": [certificates]}`, `show` the certificate, `create`
+`{"certificate": certificate, "entry": store entry or absent, "team": team ID or absent}` and `revoke`
+`{"revoked", "certificateType", "profiles", "storeEntries"}`.
 
 ## JSON output
 
