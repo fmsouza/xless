@@ -4,14 +4,16 @@ An app's App Store listing (its text in every language, screenshots, previews, c
 contact, licence agreement, price and availability) lives in an `appstore/` directory next to the project, reviewed
 like code, the way fastlane's `deliver` keeps it. [`xless store pull`](#xless-store-pull) writes it from an app that
 already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple;
-[`xless store push`](#xless-store-push) sends what differs. Pushing screenshots and previews, price and availability,
-and App Privacy come next in [M7](https://github.com/fmsouza/xless/issues/80).
+[`xless store push`](#xless-store-push) sends what differs, screenshots and previews included. Pushing price and
+availability, and App Privacy come next in [M7](https://github.com/fmsouza/xless/issues/80).
 
 ```text
 appstore/
   app.yml                          the app-level values
   eula.txt                         a custom licence agreement, when app.yml says so
-  media.lock                       written by xless: which App Store Connect upload each screenshot or preview is
+  media.lock                       written by xless: which App Store Connect upload each screenshot, preview or attachment is
+  review/                          files for App Review, when app.yml's review.attachments lists them
+  compliance/                      the export compliance document, when app.yml's encryptionDocument names it
   en-US/                           one directory per locale, spelled as App Store Connect spells it
     name.txt                       the app's name (2 to 30 characters)
     subtitle.txt                   30 characters
@@ -41,8 +43,9 @@ the same thing: the field is not set. `name`, `subtitle` and the privacy URLs an
 (they change with a new version's review), the other fields to the App Store version.
 
 Locale directories use App Store Connect's codes exactly: `en-US`, `de-DE`, `fr-FR`, `ja`, `zh-Hans`, `pt-BR`…
-(`de-de` is reported, with the right spelling). Every directory of `appstore/` is a locale, except `iap/` and
-`subscriptions/`, kept for in-app purchases; other files (a README) may sit at the top.
+(`de-de` is reported, with the right spelling). Every directory of `appstore/` is a locale, except `review/` and
+`compliance/` (files `app.yml` names) and `iap/` and `subscriptions/`, kept for in-app purchases; other files (a
+README) may sit at the top.
 
 ## Screenshots and previews
 
@@ -52,11 +55,12 @@ Locale directories use App Store Connect's codes exactly: `en-US`, `de-DE`, `fr-
 number (`2-…` before `10-…`). PNG or JPEG, no transparency, at most 10 per set, in one of the sizes Apple lists for the
 display type ([screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/screenshot-specifications)),
 portrait or landscape. `<locale>/previews/<preview type>/` is the same for app previews (`IPHONE_67`, `IPAD_PRO_3GEN_129`,
-`DESKTOP`…): `.mov`, `.m4v` or `.mp4`, at most 3 per set, at most 500 MB each.
+`DESKTOP`…): `.mov`, `.m4v` or `.mp4`, at most 3 per set, at most 500 MB each. A preview's poster frame is
+`app.yml`'s `previewFrames` entry for its path (`HH:MM:SS:FF`); without one, App Store Connect picks it.
 
 App Store Connect never gives back an uploaded file, only a re-encoded copy. `media.lock` records, for each media file,
 its MD5 and the checksum Apple keeps of the upload it is (`sourceFileChecksum`). As long as a file is unchanged, it
-*is* that upload: `pull` keeps it instead of downloading Apple's copy, and `push` will upload nothing. An upload
+*is* that upload: `pull` keeps it instead of downloading Apple's copy, and `push` uploads nothing. An upload
 `pull` could not download (still processing, or a preview App Store Connect only streams) is recorded without a local
 file (`md5` absent), so `push` knows it is there and leaves it alone. xless writes this file; commit it with the rest.
 
@@ -95,9 +99,11 @@ review:                              # for App Review
     passwordSecret: XLESS_DEMO_PASSWORD   # the secret that holds the password, never the password
   notes: |
     Sign in with the demo account; the camera screen needs a QR code: https://example.com/qr
+  attachments: [review/walkthrough.mov]   # files for App Review (kept by pull: Apple gives them no download)
 encryption:                          # export compliance: the latest encryption declaration's answers
   exempt: true
   containsProprietaryCryptography: false
+encryptionDocument: compliance/export.pdf   # the compliance document, when App Store Connect asks for one
 accessibility:                       # Accessibility Nutrition Labels, per device family
   IPHONE: { supportsVoiceover: true, supportsDarkInterface: true, supportsLargerText: true }
 eula: standard                       # Apple's licence agreement, or a custom one:
@@ -108,6 +114,8 @@ pricing:
 availability:
   territories: all                   # or a list of territory codes: [USA, CAN, GBR]
   newTerritories: true               # add new App Store territories automatically
+previewFrames:                       # a preview's poster frame (HH:MM:SS:FF), by path
+  en-US/previews/IPHONE_67/01-intro.mov: "00:00:05:00"
 privacy: …                           # App Privacy (#97); kept as it is by pull
 ```
 
@@ -183,8 +191,9 @@ It checks:
 
 - `app.yml`: YAML and value types (naming the key), unknown keys (warning), the bundle ID, platform, primary locale (it
   must have a directory), version, content rights, category IDs (at most two subcategories), release type and date,
-  the App Review contact's email, the demo account's `passwordSecret` (a secret name), the custom licence file, the price
-  and territory codes.
+  the App Review contact's email, the demo account's `passwordSecret` (a secret name), the custom licence file, the
+  review attachments and compliance document (files inside `appstore/`, each listed once, not empty), the preview
+  poster frames (`HH:MM:SS:FF`, a preview of the directory), the price and territory codes.
 - Text: name and subtitle 30 characters, keywords 100 bytes (UTF-8), promotional text 170, description and what's new
   4000; a name of at least 2; URLs are `http(s)` with a host; locale directories are App Store Connect's codes.
 - Media: screenshots are PNG or JPEG (read from the file, not its name), without transparency, in a size of their display
@@ -204,6 +213,7 @@ It exits with 20 when there is an error, 0 otherwise. `--json` prints `{"valid":
 xless store push --dry-run                 # the plan: what differs, nothing sent
 xless store push                           # send it
 xless store push --only text,review        # some parts only
+xless store push --only media              # screenshots and previews only
 xless store push --prune                   # also delete locales the directory does not have
 ```
 
@@ -236,14 +246,31 @@ The parts, in the order they are sent (`--only` chooses):
   information (name, subtitle, privacy policy URL and text, privacy choices URL) and the version's text (description,
   keywords, what's new, promotional text, support and marketing URLs). A version on the App Store, or in review, takes
   only new promotional text; the app information changes only with a new version.
-- **`review`**: App Review's contact, notes and demo account.
+- **`review`**: App Review's contact, notes and demo account, and the files `review.attachments` lists (uploaded
+  onto the review details, which are created for them if App Store Connect has none).
 - **`declarations`**: the age rating (only the answers `app.yml` gives are compared and sent), the content rights
   declaration, the licence agreement (`standard` deletes a custom one; `territories: all` is every territory App Store
   Connect lists), export compliance (a new encryption declaration when `appDescription`, `availableOnFrenchStore`,
   `containsProprietaryCryptography` or `containsThirdPartyCryptography` differ from the latest one, all four needed;
-  `exempt` is App Store Connect's verdict and is not sent; a compliance document is not uploaded yet) and accessibility
+  `exempt` is App Store Connect's verdict and is not sent), its compliance document (`encryptionDocument`: uploaded
+  with a new declaration, or onto the latest one when that has no such document yet) and accessibility
   (per device family in `app.yml`, the draft declaration is updated, or a new one created, and published; a draft that
   already has `app.yml`'s answers is published).
+- **`media`**: per locale and display (or preview) type, the screenshot and preview sets: created when App Store
+  Connect has none (in a locale the `text` part creates, too), new and changed files uploaded, the set put in the
+  directory's order, and poster frames (`previewFrames`) set.
+
+**Files are uploaded only when App Store Connect lacks them.** Each file's MD5 is compared with the checksum App Store
+Connect keeps of each upload (`sourceFileChecksum`, which is the MD5 xless sent) and with `media.lock` (for copies
+`pull` downloaded, renamed ones included), so an unchanged set uploads nothing and a renamed file only moves. A file
+whose content changed replaces the upload `media.lock` ties its path to; an upload App Store Connect could not process
+(FAILED) is removed. An upload is App Store Connect's documented protocol: the file is reserved with its name and size,
+sent in the parts App Store Connect asks for (read from disk one part at a time, each part retried on its own, no
+credentials sent to Apple's storage), committed with its MD5, then watched until App Store Connect has processed it.
+A file it refuses fails the push with App Store Connect's message (the failed upload is removed, so a re-run starts
+clean); one still processing after ten minutes is a note. `media.lock` is updated with every upload, even when a later
+change fails. Screenshots and previews are checked first, as `store validate` does (format, size for the display type,
+transparency, how many per set), so nothing App Store Connect would refuse is reserved.
 
 A manifest of the version on the App Store (`pull --live`) is compared with the live app information and the published
 accessibility answers, as `pull` read them.
@@ -255,7 +282,11 @@ What `push` leaves alone:
 - a locale App Store Connect has and `appstore/` does not: reported, and deleted with `--prune` (never the primary
   locale). In a locale directory that exists, a missing text file clears the field, as `pull` would have written it;
   `name.txt` is never cleared, and a new locale needs one;
-- screenshots and previews, price and availability, and App Privacy, which later versions of `push` send.
+- a screenshot or preview set, a file in a set, or an App Review attachment App Store Connect has and `appstore/` does
+  not: reported and kept (after the directory's files), and deleted with `--prune`. A set that would then hold more than
+  Apple allows (10 screenshots, 3 previews) stops the push before anything is sent. An upload `pull` could not download
+  (`media.lock` without `md5`) is part of the directory and stays where it is;
+- price and availability, and App Privacy, which later versions of `push` send.
 
 **The demo account's password** comes from the secret `review.demoAccount.passwordSecret` names: the secret store's
 entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.md)). App Store Connect never gives it
