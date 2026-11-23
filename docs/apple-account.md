@@ -17,7 +17,10 @@ keeps the App Store listing in an `appstore/` directory, [`xless builds`](#xless
 waits for their processing, answers their export compliance and expires them, [`xless users`](#xless-users), which
 invites, updates and removes the team's App Store Connect users, [`xless testflight`](#xless-testflight), which
 manages TestFlight groups and testers, delivers builds and runs external testing, [`xless release`](#xless-release),
-which submits a version for review and releases it, [`xless provision`](#xless-provision), which does all of the
+which submits a version for review and releases it, [`xless reviews`](#xless-reviews), which lists customer reviews and
+responds to them, [`xless reports`](#xless-reports), which downloads sales and finance reports,
+[`xless webhooks`](#xless-webhooks), which creates webhooks with their signing secrets in the secret store,
+[`xless provision`](#xless-provision), which does all of the
 above that a project needs in one go, and [`xless api`](#xless-api), which calls any documented App Store Connect
 endpoint.
 
@@ -872,6 +875,103 @@ has.
 "reviewScreenshot", "versions"}` / `{"group", "subscription", "localizations", "prices", "availability",
 "reviewScreenshot", "versions"}` for `show`, and `{"cleared": [...]}` for `clear-history`.
 
+## `xless reviews`
+
+```sh
+xless reviews list --app com.example.app                          # newest first, each with its response
+xless reviews list --app com.example.app --rating 1,2 --territory USA --unanswered --all
+xless reviews respond 00000057-9d5b-1a03-6a2f-c33b00000000 --text "Thanks! Fixed in 1.2."
+xless reviews respond 00000057-9d5b-1a03-6a2f-c33b00000000 --file response.txt
+xless reviews delete-response 00000057-9d5b-1a03-6a2f-c33b00000000   # asks first
+```
+
+With the App Store Connect API key (`/v1/apps/{id}/customerReviews`, `/v1/customerReviews`,
+`/v1/customerReviewResponses`), which needs the **Customer Support** role (or App Manager, Admin).
+
+- **`list`** (`--app`, app ID or bundle ID) prints each review: its ID, rating, territory, date, nickname, title and
+  text, then its response and the response's state. `--rating` (1 to 5) and `--territory` (`USA`, `FRA`…) are
+  repeatable or comma-separated; `--answered` / `--unanswered` keep only the reviews with or without a published
+  response; `--sort newest|oldest|highest|lowest`. It stops after 100 reviews (`--limit <n>`, or `--all`).
+- **`respond`** sends the text of `--text` or `--file` (at most 5,970 characters). A review has one response:
+  responding to one that has a response replaces it, after asking (or `--yes`); the same text again sends nothing.
+  Apple publishes a response after checking it (state `PENDING_PUBLISH`, then `PUBLISHED`). The request is sent once,
+  never retried.
+- **`delete-response`** removes a review's response, after asking (or `--yes`).
+
+With `--json`, `list` prints `{"data": [reviews], "included": [responses]}`, `respond` prints `{"result": "created" |
+"replaced" | "unchanged", "data": response}` and `delete-response` prints `{"deleted": response}` (`null` when there was
+none).
+
+## `xless reports`
+
+```sh
+xless reports sales download --vendor 85012345 --date 2026-11-20 --out reports/
+xless reports sales download --vendor 85012345 --frequency weekly --date 2026-11-15 --out reports/
+xless reports sales download --vendor 85012345 --type subscription --frequency monthly --date 2026-10 --report-version 1_3 --out reports/
+xless reports finance download --vendor 85012345 --date 2026-10 --out reports/
+xless reports finance download --vendor 85012345 --type finance-detail --date 2026-10 --out reports/ --force
+```
+
+With the App Store Connect API key (`/v1/salesReports`, `/v1/financeReports`): sales reports need the **Sales** role,
+finance reports the **Finance** role (or Admin). The vendor number is in App Store Connect → Payments and Financial
+Reports.
+
+- **Sales:** `--type` (`SALES` by default, `PRE_ORDER`, `NEWSSTAND`, `SUBSCRIPTION`, `SUBSCRIPTION_EVENT`,
+  `SUBSCRIBER`, `SUBSCRIPTION_OFFER_CODE_REDEMPTION`, `INSTALLS`, `FIRST_ANNUAL`, `WIN_BACK_ELIGIBILITY`), `--subtype`
+  (`SUMMARY` by default, `DETAILED`, `SUMMARY_INSTALL_TYPE`, `SUMMARY_TERRITORY`, `SUMMARY_CHANNEL`), `--frequency`
+  (`daily` by default, `weekly`, `monthly`, `yearly`) and `--date`: the day (`YYYY-MM-DD`) of a daily report, the last
+  day of the week (`YYYY-MM-DD`) of a weekly one, the month (`YYYY-MM`) of a monthly one, the year (`YYYY`) of a yearly
+  one. `--report-version` (`1_0`, `1_3`…) picks the format; without it, Apple's default for the type applies. Which
+  combinations exist is Apple's to say ([Apple's
+  reference](https://developer.apple.com/documentation/appstoreconnectapi/get-v1-salesreports)).
+- **Finance:** `--type` (`FINANCIAL` by default, or `FINANCE_DETAIL`), `--date` the fiscal month (`YYYY-MM`) and
+  `--region` (`ZZ`, every region consolidated, by default; `FINANCE_DETAIL` exists for `Z1` only).
+- **The file:** Apple sends the report gzipped. xless decompresses it as it arrives, into a hidden
+  `.<name>.partial-<pid>` file in `--out` (made when missing), and gives it its name only once it is complete and its
+  checksum matched: `SALES_SUMMARY_DAILY_85012345_2026-11-20.tsv`, `FINANCIAL_ZZ_85012345_2026-10.tsv`. The report is
+  never held in memory whole, so a large one costs no more than a small one. A file of that name in `--out` is left
+  alone and nothing is downloaded, unless `--force` replaces it; a failed download leaves nothing behind. A date that
+  has no report (no sales that day, or not ready yet) is an `[account]` error saying so.
+
+With `--json`, a download prints `{"path", "bytes", "replaced"}`.
+
+## `xless webhooks`
+
+```sh
+xless webhooks list --app com.example.app
+xless webhooks create --app com.example.app --url https://hooks.example.com/asc \
+  --events build-upload-state-updated,app-store-version-app-version-state-updated
+xless secrets export XLESS_WEBHOOK_SECRET.6f1c0c3e-1e45-4c83-9b55-7d1f3a0e1b2c@ABCDE12345 --out webhook-secret.txt
+xless webhooks delete 6f1c0c3e-1e45-4c83-9b55-7d1f3a0e1b2c   # asks first
+```
+
+With the App Store Connect API key (`/v1/apps/{id}/webhooks`, `/v1/webhooks`). App Store Connect POSTs each event to
+the webhook's URL, signed with a secret its owner chose.
+
+- **`create`** makes that secret itself (32 random bytes, as 64 hexadecimal characters) and keeps it in the [secret
+  store](secrets.md) as `XLESS_WEBHOOK_SECRET.<webhook ID>`, with `@<TEAM_ID>` when a team is selected. The store is
+  opened (and unlocked) before anything is sent; the secret is never printed, never on the command line, and hidden
+  from `--verbose` traces and from App Store Connect's error text. Should the store refuse it after the webhook was
+  made, the webhook is deleted again, since nobody could check its signatures. Give the server that receives the
+  events the secret with `xless secrets export <entry> --out <file>`. `--url` is an `https` address; `--events` takes
+  `ALTERNATIVE_DISTRIBUTION_PACKAGE_AVAILABLE_UPDATED`, `ALTERNATIVE_DISTRIBUTION_PACKAGE_VERSION_CREATED`,
+  `ALTERNATIVE_DISTRIBUTION_TERRITORY_AVAILABILITY_UPDATED`, `APP_STORE_VERSION_APP_VERSION_STATE_UPDATED`,
+  `BACKGROUND_ASSET_VERSION_APP_STORE_RELEASE_STATE_UPDATED`, `BACKGROUND_ASSET_VERSION_EXTERNAL_BETA_RELEASE_STATE_UPDATED`,
+  `BACKGROUND_ASSET_VERSION_INTERNAL_BETA_RELEASE_CREATED`, `BACKGROUND_ASSET_VERSION_STATE_UPDATED`,
+  `BETA_FEEDBACK_CRASH_SUBMISSION_CREATED`, `BETA_FEEDBACK_SCREENSHOT_SUBMISSION_CREATED`,
+  `BUILD_BETA_DETAIL_EXTERNAL_BUILD_STATE_UPDATED` and `BUILD_UPLOAD_STATE_UPDATED` (any case, `-` or `_`; a name Apple
+  added since is sent as given, with a warning). `--name` defaults to the URL's host; `--disabled` creates it switched
+  off. An app that already has a webhook for the URL is reported, and nothing is sent. The request is sent once,
+  never retried.
+- **`list`** shows each webhook's ID, name, URL, whether it is enabled, its events and the store entry holding its
+  secret (`-` for one this store does not have).
+- **`delete`** asks first (or `--yes`), deletes the webhook and removes its secret from the store.
+
+With `--json`, `list` prints `{"data": [{"data": webhook, "secretEntries": [...]}]}`, `create` prints `{"result":
+"created" | "existing", "data": webhook, "secretEntry"}` and `delete` prints `{"deleted": webhook, "removedEntries":
+[...]}`. Deliveries, pings and changing a webhook are reachable with [`xless api`](#xless-api) (`/v1/webhooks/{id}/deliveries`,
+`/v1/webhookPings`, `PATCH /v1/webhooks/{id}`).
+
 ## `xless provision`
 
 ```sh
@@ -977,7 +1077,7 @@ session was kept). For the App Store Connect API, the fix depends on the status:
 | Status | Fix |
 |---|---|
 | 401 | The key was revoked, `ASC_ISSUER_ID` is not its issuer, or the machine's clock is off. |
-| 403 | The key's role is too narrow: the fix names the role the request needs (Admin for users and certificates, identifiers, devices and profiles; Finance or Sales for their reports; App Manager for the app's own resources) and how to create a key with it (`xless auth api-key create --role <ROLE>`). |
+| 403 | The key's role is too narrow: the fix names the role the request needs (Admin for users and certificates, identifiers, devices and profiles; Finance or Sales for their reports; Customer Support for customer reviews; App Manager for the app's own resources) and how to create a key with it (`xless auth api-key create --role <ROLE>`). |
 | 404 | No such resource: check the ID, and that it belongs to the key's team. |
 | 409 | A conflict: the fix names the field Apple refused (`name`, `identifier`, …). |
 | 429 | The hour's request budget is spent: the fix says how long to wait. |

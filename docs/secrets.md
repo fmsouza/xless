@@ -48,6 +48,11 @@ straight into the store (as `XLESS_APNS_KEY@<TEAM_ID>`, `XLESS_SIWA_KEY`, `XLESS
 or `XLESS_AUTH_KEY`, kind `auth-key`, with its key ID, team and services); `xless keys revoke` removes it again. The
 services are authenticated the same way as an API key's role.
 
+[`xless webhooks create`](apple-account.md#xless-webhooks) makes a webhook's signing secret and keeps it in the store
+as `XLESS_WEBHOOK_SECRET.<webhook ID>` (with `@<TEAM_ID>` when a team is selected, kind `generic`); `xless webhooks
+delete` removes it again. `xless secrets export <entry> --out <file>` hands it to the server that checks the
+signatures.
+
 The App Review demo account's password, which [`xless store push`](appstore-manifest.md#xless-store-push) sends, is the
 secret `app.yml` names (`review.demoAccount.passwordSecret`, `XLESS_DEMO_PASSWORD` by default):
 `xless secrets import XLESS_DEMO_PASSWORD --file demo-password.txt` stores it as a `password`.
