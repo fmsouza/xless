@@ -4,6 +4,13 @@ import Foundation
 /// only after `NAME` and `NAME_FILE`, so CI (which sets them) never opens it. Returns nil when it has no such secret.
 public protocol SecretFallback: Sendable {
     func lookup(_ name: String, stage: Stage) throws -> String?
+    /// The same source, preferring `team`'s secrets: its entries, else ones recorded for no team; another team's are
+    /// never handed out. A project's run (`ship`) knows its team. Default: unchanged.
+    func preferring(team: String) -> any SecretFallback
+}
+
+extension SecretFallback {
+    public func preferring(team: String) -> any SecretFallback { self }
 }
 
 public struct Secrets: Sendable {
@@ -14,6 +21,12 @@ public struct Secrets: Sendable {
     public init(env: [String: String] = ProcessInfo.processInfo.environment, fallback: (any SecretFallback)? = Secrets.installedFallback) {
         self.env = env
         self.fallback = fallback
+    }
+
+    /// These secrets, the store's lookups preferring `team` (see `SecretFallback.preferring`); unchanged for an empty team.
+    public func preferring(team: String) -> Secrets {
+        guard !team.isEmpty, let fallback else { return self }
+        return Secrets(env: env, fallback: fallback.preferring(team: team))
     }
 
     private static let installed = Installed()
@@ -56,7 +69,7 @@ public struct Secrets: Sendable {
         try required(name, stage: stage).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    static func missingFix(_ name: String) -> String {
+    public static func missingFix(_ name: String) -> String {
         switch name {
         case "ASC_KEY_ID", "ASC_ISSUER_ID":
             "set \(name) or \(name)_FILE, or keep the API key in the secret store with its IDs (`xless secrets import ASC_KEY_P8 --file AuthKey_<KEY_ID>.p8 --issuer-id <ISSUER_ID>`)"

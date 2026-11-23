@@ -39,5 +39,12 @@ long xless_key_setperm(int32_t key, uint32_t permissions);
 long xless_key_describe(int32_t key, char *buffer, size_t length);
 /// KEYCTL_GET_KEYRING_ID for `keyring` without creating it: its serial (a probe for whether keyrings work at all).
 long xless_key_keyring_id(int32_t keyring);
+/// KEYCTL_JOIN_SESSION_KEYRING(NULL): this process (and the children it starts from now on) gets a new, empty anonymous
+/// session keyring, and no longer possesses the one it had: keys kept there (possessor-only) are out of its reach.
+long xless_key_join_new_session(void);
+
+/// Whether `path` is on a memory file system (Linux statfs: tmpfs or ramfs): 1 yes, 0 no, -1 on error or elsewhere
+/// than Linux. Where a run's materialised secrets may go without touching a disk.
+int xless_is_memory_fs(const char *path);
 
 #endif

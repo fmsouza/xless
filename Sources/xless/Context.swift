@@ -84,10 +84,11 @@ struct Context {
             // build number is chosen without App Store Connect.
             let simulator = opts.destination == .simulator
             let paths = simulator ? StagePaths.iosSimulator(project: workRoot) : StagePaths(project: workRoot, platform: .ios)
+            let team = resolved.config.teamID
             try await DatedBuildNumber.settle(&resolved.config, override: override, file: paths.root.appendingPathComponent("build-number"),
-                                              secrets: Secrets(env: env), fresh: fresh, local: simulator)
+                                              secrets: Secrets(env: env).preferring(team: team), fresh: fresh, local: simulator)
             resolved.config = try resolved.config.overridingDistribution(distribution, for: .ios)
-            return Context(project: workRoot, config: resolved.config, platform: .ios, paths: paths, secrets: Secrets(env: env),
+            return Context(project: workRoot, config: resolved.config, platform: .ios, paths: paths, secrets: Secrets(env: env).preferring(team: resolved.config.teamID),
                            buildOverride: override, sourceRoot: sourceRoot, workRoot: workRoot, rnOverlay: overlay, reactNative: resolved,
                            simulator: simulator)
         }
@@ -98,7 +99,7 @@ struct Context {
             var resolved = try CargoProject.resolve(overlay: overlay, platform: opts.platform, source: sourceRoot, distribution: distribution)
             try await settleBuild(&resolved.config, platform: opts.platform, override: override, workRoot: workRoot, env: env, fresh: fresh)
             return Context(project: workRoot, config: resolved.config, platform: opts.platform,
-                           paths: StagePaths(project: workRoot, platform: opts.platform), secrets: Secrets(env: env),
+                           paths: StagePaths(project: workRoot, platform: opts.platform), secrets: Secrets(env: env).preferring(team: resolved.config.teamID),
                            buildOverride: override, sourceRoot: sourceRoot, workRoot: workRoot, cargo: overlay, cargoResolved: resolved)
         }
         if let configURL = opts.configURL {
@@ -108,7 +109,7 @@ struct Context {
                 try await settleBuild(&mac.config, platform: .macos, override: override, workRoot: loc.workRoot, env: env, fresh: fresh)
                 mac.config = try mac.config.overridingDistribution(distribution, for: .macos)
                 return Context(project: loc.workRoot, config: mac.config, platform: .macos,
-                               paths: StagePaths(project: loc.workRoot, platform: .macos), secrets: Secrets(env: env),
+                               paths: StagePaths(project: loc.workRoot, platform: .macos), secrets: Secrets(env: env).preferring(team: mac.config.teamID),
                                buildOverride: override, overlay: loc.overlay, sourceRoot: loc.sourceRoot, workRoot: loc.workRoot, tauriMac: mac)
             }
             var resolved = try TauriProject.resolve(overlay: loc.overlay, source: loc.sourceRoot)
@@ -116,7 +117,7 @@ struct Context {
             try await settleBuild(&resolved.config, platform: .ios, override: override, workRoot: loc.workRoot, env: env, fresh: fresh)
             resolved.config = try resolved.config.overridingDistribution(distribution, for: opts.platform)
             return Context(project: loc.workRoot, config: resolved.config, platform: opts.platform,
-                           paths: StagePaths(project: loc.workRoot, platform: opts.platform), secrets: Secrets(env: env),
+                           paths: StagePaths(project: loc.workRoot, platform: opts.platform), secrets: Secrets(env: env).preferring(team: resolved.config.teamID),
                            buildOverride: override, overlay: loc.overlay, sourceRoot: loc.sourceRoot, workRoot: loc.workRoot, tauri: resolved)
         }
         let project = opts.projectURL
@@ -125,7 +126,7 @@ struct Context {
         try await settleBuild(&config, platform: .ios, override: override, workRoot: project, env: env, fresh: fresh)
         config = try config.overridingDistribution(distribution, for: opts.platform)
         return Context(project: project, config: config, platform: opts.platform,
-                       paths: StagePaths(project: project, platform: opts.platform), secrets: Secrets(env: env),
+                       paths: StagePaths(project: project, platform: opts.platform), secrets: Secrets(env: env).preferring(team: config.teamID),
                        buildOverride: override)
     }
 
@@ -137,6 +138,7 @@ struct Context {
     /// a run that starts, freshly chosen) number. Inside the `config` stage (`DatedBuildNumber.settle`).
     private static func settleBuild(_ config: inout ProjectConfig, platform: Platform, override: String?, workRoot: URL, env: [String: String], fresh: Bool) async throws {
         let file = StagePaths(project: workRoot, platform: platform).root.appendingPathComponent("build-number")
-        try await DatedBuildNumber.settle(&config, override: override, file: file, secrets: Secrets(env: env), fresh: fresh)
+        let team = config.teamID
+        try await DatedBuildNumber.settle(&config, override: override, file: file, secrets: Secrets(env: env).preferring(team: team), fresh: fresh)
     }
 }

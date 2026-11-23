@@ -51,8 +51,10 @@ out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto n
 [[ "$out" == "xless ship --platform ios "* ]] || fail "default toolchain-meta path ignored: $out"
 rm -rf "$t/home/.config"
 
-# every missing variable is a usage error (exit 2) naming the variable
-for v in ASC_KEY_ID ASC_ISSUER_ID_FILE ASC_KEY_P8_FILE XLESS_DIST_KEY_FILE; do
+# with ASC_KEY_P8_FILE set, each missing ID is a usage error (exit 2) naming the variable; IDs without the key file too
+# (the App Store Connect key and its IDs come from one place). A missing key file means the secret store
+# (testflight-secrets.test.sh).
+for v in ASC_KEY_ID ASC_ISSUER_ID_FILE ASC_KEY_P8_FILE; do
   code=0; "${base[@]}" "$v=" "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
   [[ $code -eq 2 ]] || fail "missing $v exits $code, want 2"
   grep -q "$v\|ASC_ISSUER_ID" "$t/err" || fail "error does not name $v"
@@ -70,10 +72,9 @@ done
 grep -q "stopped after finalize (--to), nothing delivered" "$t/err" || fail "no stop message: $(cat "$t/err")"
 grep -q "delivery finished" "$t/err" && fail "a run stopped at finalize claims a delivery: $(cat "$t/err")"
 grep -q "build number from --build-number" "$t/err" || fail "the --build-number override is not reported: $(cat "$t/err")"
-code=0; "${nosec[@]}" "$S" "$t/proj" --from sign >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -q ASC_KEY_ID "$t/err" || fail "a project dir run through sign without secrets: exit $code"
-code=0; "${nosec[@]}" "$S" "$t/proj" --to sign >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] || fail "--to sign without secrets: exit $code, want 2"
+# through sign without secret variables: the secret store gives them (testflight-secrets.test.sh)
+out=$("${nosec[@]}" "$S" "$t/proj" --from sign 2>"$t/err") || fail "a project dir run through sign without secret variables: $(cat "$t/err")"
+[[ "$out" == "xless secrets materialize sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY"* ]] || fail "--from sign without variables does not use the store: $out"
 # with secrets set, a run that stops before sign still mounts none
 out=$("${base[@]}" "$S" "$t/proj" --to finalize 2>/dev/null) || fail "--to finalize with secrets failed"
 [[ "$out" != *"/secrets/"* ]] || fail "--to finalize mounts secrets: $out"
@@ -243,18 +244,21 @@ dmgship=$(line "--to package "); pkgship=$(line "--distribution app-store")
 [[ "$pkgship" != *"dst=/secrets/devid-key.pem"* ]] || fail "the pkg ship must not carry the Developer ID key: $pkgship"
 [[ "$out" == *"ISSUER-SECRET-VALUE"* ]] && fail "issuer value leaked"
 
-# the lane without the Apple Distribution key is refused before anything runs
-code=0; "${mac[@]}" XLESS_DIST_KEY_FILE= XLESS_INSTALLER_KEY_FILE="$t/installer.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload >/dev/null 2>"$t/lanerr" || code=$?
-[[ $code -eq 2 ]] && grep -q "XLESS_DIST_KEY_FILE" "$t/lanerr" || fail "the lane needs the dist key: exit $code: $(cat "$t/lanerr")"
-code=0; "${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload >/dev/null 2>"$t/lanerr" || code=$?
-[[ $code -eq 2 ]] && grep -q "XLESS_INSTALLER_KEY_FILE" "$t/lanerr" || fail "the lane needs the installer key: exit $code: $(cat "$t/lanerr")"
+# the lane's keys not set: the secret store gives them, to the pkg ship only
+out=$("${mac[@]}" XLESS_DIST_KEY_FILE= XLESS_INSTALLER_KEY_FILE="$t/installer.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>"$t/lanerr") \
+  || fail "the lane's dist key from the store: $(cat "$t/lanerr")"
+[[ "$(sed -n 1p <<<"$out")" == "xless secrets materialize appstore=XLESS_DIST_KEY " ]] || fail "the lane's dist key is not materialised: $out"
+[[ "$(line "--distribution app-store")" == *"src=\$XDG_RUNTIME_DIR/xless/<run>/appstore,dst=/secrets/store,readonly"*"-e XLESS_DIST_KEY_FILE=/secrets/store/XLESS_DIST_KEY"* ]] || fail "pkg ship store mount: $out"
+[[ "$(line "--to package ")" != *"/secrets/store"* ]] || fail "the DMG ship gets the lane's store set: $out"
+out=$("${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>"$t/lanerr") || fail "the lane's installer key from the store"
+[[ "$(sed -n 1p <<<"$out")" == "xless secrets materialize appstore=XLESS_INSTALLER_KEY " ]] || fail "the lane's installer key is not materialised: $out"
 # the installer key inside the overlay's directory is refused like every other secret
 cp "$t/installer.pem" "$t/sec/installer.pem"
 code=0; "${lane[@]}" XLESS_INSTALLER_KEY_FILE="$t/sec/installer.pem" "$S" --config "$t/sec/o.yml" --platform macos --to upload >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q "keep the overlay in its own directory" "$t/err" || fail "installer key inside the overlay directory: exit $code"
 
-code=0; "${mac[@]}" XLESS_DEVID_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -q XLESS_DEVID_KEY_FILE "$t/err" || fail "missing devid key exits $code: $(cat "$t/err")"
+out=$("${mac[@]}" XLESS_DEVID_KEY_FILE= "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>"$t/err") || fail "devid key from the store: $(cat "$t/err")"
+[[ "$(sed -n 1p <<<"$out")" == "xless secrets materialize sign=XLESS_DEVID_KEY " ]] || fail "the devid key is not materialised: $out"
 code=0; "${mac[@]}" "$S" "$t/proj" --platform macos >/dev/null 2>&1 || code=$?
 [[ $code -eq 2 ]] || fail "macos with a project directory exits $code, want 2"
 code=0; "${mac[@]}" "$S" --config "$t/ov/my.overlay.yml" --platform tvos >/dev/null 2>&1 || code=$?
@@ -309,11 +313,11 @@ out=$("${base[@]}" XLESS_IMAGE=rn:1 XLESS_SIGN_IMAGE=keys:1 XLESS_RN_WORK_VOLUME
 bare=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1)
 out=$("${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --build-number 1.0.0.2026101601 --to finalize 2>/dev/null) || fail "offline rn run needs secrets"
 [[ $(wc -l <<<"$out") -eq 1 && "$out" == *"--from build --to finalize --build-number 1.0.0.2026101601 "* && "$out" != *"/secrets/"* ]] || fail "offline rn run: $out"
-# ... step 3 does, and step 1 needs the App Store Connect key only
-code=0; "${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --build-number 1.0.0.2026101601 >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -q ASC_KEY_ID "$t/err" || fail "step 3 without secrets: exit $code"
-code=0; "${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --to finalize >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -q ASC_KEY_ID "$t/err" || fail "step 1 without the App Store Connect key: exit $code"
+# ... step 3 does, and step 1 needs the App Store Connect key only: from the secret store, without variables
+out=$("${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --build-number 1.0.0.2026101601 2>"$t/err") || fail "step 3 from the store: $(cat "$t/err")"
+[[ "$(sed -n 1p <<<"$out")" == "xless secrets materialize sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY " ]] || fail "step 3 store set: $out"
+out=$("${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --to finalize 2>"$t/err") || fail "step 1 from the store: $(cat "$t/err")"
+[[ "$(sed -n 1p <<<"$out")" == "xless secrets materialize next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID " ]] || fail "step 1 store set: $out"
 out=$("${base[@]}" XLESS_DIST_KEY_FILE= "$S" --config "$t/rn/app.yml" --to finalize 2>/dev/null) || fail "--to finalize needs the dist key"
 [[ $(wc -l <<<"$out") -eq 2 && "$out" != *"dist-key"* ]] || fail "--to finalize: $out"
 # React Native is iOS only

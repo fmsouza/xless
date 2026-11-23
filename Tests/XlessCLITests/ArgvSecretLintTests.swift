@@ -42,3 +42,16 @@ import XlessCore
     #expect(flagged.contains("api-key"))
     #expect(flagged.contains("password"))
 }
+
+/// scripts/testflight.sh runs the native build step (the app's build code) without any secret variable: its list is
+/// `SecretEnvironment.entries`, every name of which it unsets with its `_FILE` form (fmsouza/xless#102).
+@Test func theBuildStepOfTestflightShUnsetsEverySecretVariable() throws {
+    let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("scripts/testflight.sh")
+    let text = try String(contentsOf: script, encoding: .utf8)
+    let line = try #require(text.split(separator: "\n").first { $0.contains("scrub=(env); for v in ") })
+    let listed = Set(line.split(separator: ";")[1].split(separator: " ").dropFirst(3).map(String.init))
+    #expect(listed == Set(SecretEnvironment.entries.map(\.name)))
+    #expect(line.contains(#"scrub+=(-u "$v" -u "${v}_FILE")"#))
+    #expect(text.contains("scrub+=(XLESS_NO_SECRET_STORE=1)"))
+}

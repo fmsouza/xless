@@ -60,11 +60,15 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
 `share/xless/scripts/testflight.sh` (`xless docker` is the same as `xless run --docker`); from a source checkout, `make testflight PROJECT=<dir>` (or
 `CONFIG=<overlay.yml>`, with `ARGS="…"`) runs the same script.
 
-- **Secrets file.** The script reads the paths of your secret files from the environment, or from a local file that it
-  sources first: `~/.config/xless/testflight.env` (override with `XLESS_TESTFLIGHT_ENV`; it never belongs in git). The
-  files are mounted read-only into the container (natively, read where they are); values are never printed or put on
-  a command line. A run that stops
-  before `sign` (`--to finalize`) needs none of them and mounts none.
+- **Secrets.** With the keys in the encrypted store ([secrets.md](secrets.md#xless-run-and-docker-builds)), a run
+  needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run (with
+  `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload;
+  `--allow-disk-secrets` where there is no tmpfs, as on macOS). Otherwise, or to override the store, the script reads
+  the paths of your secret files from the environment, or from a local file that it sources first:
+  `~/.config/xless/testflight.env` (override with `XLESS_TESTFLIGHT_ENV`; it never belongs in git), and a `NAME_FILE`
+  set there wins over the store. The files are mounted read-only into the container (natively, read where they are);
+  values are never printed or put on a command line. A run that stops before `sign` (`--to finalize`) needs none of
+  them, mounts none and never opens the store.
 
   ```sh
   # ~/.config/xless/testflight.env
@@ -129,8 +133,10 @@ An overlay app's build runs third-party code: npm scripts, `build.rs`, CocoaPods
 3. `xless ship --from sign`, with the secrets: sign, package, upload. No build code runs here.
 
 `--from` and `--to` choose which steps run, and each step needs only its own secrets: `--build-number <n> --to
-finalize` needs none. The overlay's folder and the app source are mounted into the build container, so the script
-refuses to start when either holds the secrets file or a secret file. Details: [tauri.md](tauri.md#shipping) and
+finalize` needs none. Secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are written
+once, before step 1, one directory per step, each mounted into its own step only. The overlay's folder and the app
+source are mounted into the build container, so the script refuses to start when either holds the secrets file or a
+secret file. Details: [tauri.md](tauri.md#shipping) and
 [react-native.md](react-native.md#shipping-three-containers).
 
 ## Notarized DMG (Tauri macOS)

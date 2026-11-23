@@ -16,7 +16,9 @@ struct RunCommand: ParsableCommand {
         Runs <share>/scripts/testflight.sh with the other arguments unchanged, XLESS_SHARE set to the share directory and \
         XLESS_SELF to this xless executable, and XLESS_USE_DOCKER=1 with --docker, else 0 (an XLESS_USE_DOCKER already \
         set wins over the default, not over --docker). Natively on Linux it builds xless.yml projects; Tauri, plain Cargo \
-        and React Native overlays (--config) build in the images: add --docker. \
+        and React Native overlays (--config) build in the images: add --docker. Secrets not set in the environment or \
+        ~/.config/xless/testflight.env come from the secret store (`xless secrets`); with --docker they are written to \
+        a tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
         """)
 

@@ -236,6 +236,11 @@ public struct OverlayPaths: Sendable {
         (try? Yams.load(yaml: text) as? [String: Any])?["type"] as? String
     }
 
+    /// The `teamID:` of an overlay file of any type (nil when there is no string `teamID:`): whose secrets a run uses.
+    public static func team(of text: String) -> String? {
+        (try? Yams.load(yaml: text) as? [String: Any])?["teamID"] as? String
+    }
+
     public func expand(_ p: String) -> String {
         p == "~" ? home : p.hasPrefix("~/") ? home + String(p.dropFirst(1)) : p
     }
