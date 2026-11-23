@@ -94,3 +94,40 @@ private func cli(_ t: FakeTransport, json: Bool = false, terminal: (any Confirmi
     #expect(t.requests[1].httpMethod == "DELETE")
     #expect(t.requests[1].url?.path == "/v1/customerReviewResponses/P1")
 }
+
+@Test func reviewTextCannotDriveTheTerminal() {
+    #expect(ReviewCLI.printable("a\u{1B}]52;c;ZXZpbA==\u{07}b\u{9B}2J") == "a\u{FFFD}]52;c;ZXZpbA==\u{FFFD}b\u{FFFD}2J")
+    #expect(ReviewCLI.printable("line\r\nnext\tx", keepingLines: true) == "line\nnext\tx")
+    #expect(ReviewCLI.printable("line\nnext") == "line\u{FFFD}next")
+    let review = ASCCustomerReview(resource: ASCAnyResource(type: "customerReviews", id: "R1", attributes: [
+        "rating": .int(1), "title": .string("\u{1B}[2JGone"), "body": .string("ok\u{1B}[31m"), "reviewerNickname": .string("x\u{07}")]))
+    let text = ReviewCLI.block(review, response: nil)
+    #expect(!text.unicodeScalars.contains { $0.value == 0x1B || $0.value == 0x07 })
+}
+
+@Test func reportArgumentsAreCheckedBeforeAnythingIsSent() throws {
+    #expect(throws: (any Error).self) { try ReportsSalesDownloadCommand.parse(["--vendor", "1", "--date", "2026-11-20"]) }           // no --out
+    #expect(throws: (any Error).self) { try ReportsSalesDownloadCommand.parse(["--vendor", "x", "--date", "2026-11-20", "--out", "d"]) }
+    #expect(throws: (any Error).self) { try ReportsSalesDownloadCommand.parse(["--vendor", "1", "--date", "2026-11", "--out", "d"]) }
+    #expect(throws: (any Error).self) { try ReportsSalesDownloadCommand.parse(["--vendor", "1", "--date", "2026-11-20", "--type", "nope", "--out", "d"]) }
+    #expect(throws: (any Error).self) { try ReportsFinanceDownloadCommand.parse(["--vendor", "1", "--date", "2026-10", "--type", "finance-detail", "--region", "US", "--out", "d"]) }
+    let sales = try ReportsSalesDownloadCommand.parse(["--vendor", "85012345", "--frequency", "monthly", "--date", "2026-10", "--type", "subscription-event",
+                                                       "--report-version", "1_3", "--out", "d", "--force"])
+    #expect(try sales.request().fileName == "SUBSCRIPTION_EVENT_SUMMARY_MONTHLY_85012345_2026-10.tsv")
+    #expect(sales.output.force)
+    let finance = try ReportsFinanceDownloadCommand.parse(["--vendor", "85012345", "--date", "2026-10", "--out", "d"])
+    #expect(try finance.request().region == "ZZ")
+}
+
+@Test func aReportDownloadSaysWhereItWent() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-report-cli-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let creds = try ASCCredentials.fromSecrets(Secrets(env: fakeKeyEnv, fallback: nil), stage: .account)
+    let t = FakeTransport([(200, "Provider\tUnits\n"), (200, "Provider\tUnits\n")])
+    let report = try SalesReportRequest(vendor: "85012345", date: "2026-11-20")
+    let out = try await ReportCLI(reports: ASCReports(client: ASCClient(credentials: creds, transport: t, sleep: { _ in }))).download(report, into: dir.path, force: false)
+    #expect(out == "wrote \(dir.path)/SALES_SUMMARY_DAILY_85012345_2026-11-20.tsv (15 bytes)\n")
+    let json = try await ReportCLI(reports: ASCReports(client: ASCClient(credentials: creds, transport: t, sleep: { _ in })), json: true)
+        .download(report, into: dir.path, force: true)
+    #expect(json.contains(#""replaced" : true"#))
+}

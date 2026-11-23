@@ -69,3 +69,17 @@ func webhookJSON(_ id: String, url: String = "https://hooks.example.com/asc", na
     _ = try await hooks.create(WebhookRequest(appID: "1", name: "n", url: "https://h.example.com", events: ["BUILD_UPLOAD_STATE_UPDATED"]), secret: secret)
     #expect(!lines.all.joined().contains("fedcba9876543210"))
 }
+
+@Test func aSecretAppleSendsBackIsNeverKept() async throws {
+    let secret = SecretBytes(utf8: "aaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccdddd")
+    let echoed = #"{"data":{"type":"webhooks","id":"W1","attributes":{"enabled":true,"eventTypes":[],"name":"n","url":"https://h.example.com","secret":"aaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccdddd"}}}"#
+    let t = MockTransport([(201, echoed), (200, echoed), (200, #"{"data":[\#(echoed.dropFirst(8).dropLast())]}"#)])
+    let hooks = webhooks(t)
+    let created = try await hooks.create(WebhookRequest(appID: "1", name: "n", url: "https://h.example.com", events: ["BUILD_UPLOAD_STATE_UPDATED"]), secret: secret)
+    let read = try await hooks.get(id: "W1")
+    let listed = try await hooks.list(app: "1")
+    for hook in [created, read] + listed {
+        #expect(!(try ASCOutput.json(hook)).contains("aaaabbbbcccc"))
+        #expect(hook.resource.attributes?["name"]?.string == "n")
+    }
+}

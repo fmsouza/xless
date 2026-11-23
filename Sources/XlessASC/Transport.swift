@@ -33,8 +33,10 @@ public struct URLSessionTransport: HTTPTransport {
     }
 
     public func stream(_ request: URLRequest, chunk: @escaping @Sendable (Data) throws -> Void) async throws -> (HTTPURLResponse, Data) {
+        try Task.checkCancellation()
         let delegate = StreamingDelegate(chunk: chunk)
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        // Ephemeral: nothing of the body (a financial report) is kept in a disk cache.
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in

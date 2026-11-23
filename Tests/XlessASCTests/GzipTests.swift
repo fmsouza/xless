@@ -156,3 +156,18 @@ func reportText(lines: Int) -> Data {
     let gz = Data([0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 3] + bytes + [0, 0, 0, 0, 0, 0, 0, 0])
     #expect(throws: GzipError("the gzip data is corrupt (distance too far back)")) { try gunzip(gz) }
 }
+
+@Test func aDynamicHuffmanBlockDecodesWithoutTheGzipBinary() throws {
+    // zlib level 9 on report-like lines: one dynamic-Huffman block (BTYPE 2), 2752 bytes decompressed.
+    let gz = try #require(Data(base64Encoded: "H4sIAAAAAAACA43VMW7DQAxE0Vo+RU5gLMndJVm6cKoUBoIcwAjcxYjLHD/a4QE0hQAVUwjvQ+Dldvu4bl+f2/fv8/z4uz9fP4/z/fXarvX+1jY578/71k6Xo63sW1nblDxe677WtQ6L47Xta1trH3687vu6r/X0ebwe+3qs9chxvJ77emIt/Xi9/HytuxknGGttQzlBtFEXThB1JBsniDrSkhNEHQ0OEHGyOweIODEnB4g4HoMDRBxvnQNEnKnGASLO6MoBIk6fwgkijkXjBCtOJieIOirBCaKOmHOC9etMDhBx0gcHiDiRnQNEnBDjABHHTTlAxJlDOEDEGd44QMTpkZwg4vQWnCDimDoniDraJyeIOjIHJ1h1OgeIOMbxIU2qcnxWnyEcH9L4bBzfqAOVHF/9Nxkcn9eBcs4v6kBNTrDVgRqcoNSB6pxgnZw0ThB1RJQTRB0TDhBxcjQOcNaBSg6wTk4EBxh1oJwDbHWgJgcodaAGB6h1oDonaHWgjBOsOE05QdRRldM/hmBKHsAKAAA="))
+    let text = try gunzip(gz)
+    #expect(text.count == 2752)
+    #expect(try gunzip(gz, chunk: 1) == text)
+    #expect(String(decoding: text.prefix(30), as: UTF8.self).hasPrefix("APPLE\tUS\tcom.example.app\t"))
+}
+
+@Test func zeroPaddingAfterTheLastMemberIsAccepted() throws {
+    let payload = Data("abc\n".utf8)
+    #expect(try gunzip(storedGzip(payload) + Data(repeating: 0, count: 9), chunk: 2) == payload)
+    #expect(throws: GzipError.self) { try gunzip(storedGzip(payload) + Data([0, 0, 7])) }
+}

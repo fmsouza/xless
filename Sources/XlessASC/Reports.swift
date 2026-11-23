@@ -244,7 +244,7 @@ public struct ASCReports: Sendable {
         } catch let e as ASCError where e.status == 404 {
             let said = e.items.compactMap { $0.detail ?? $0.title }.first.map { " (Apple: \($0))" } ?? ""
             throw XlessError(.account, "App Store Connect has no \(report.display)\(said); nothing was written",
-                             fix: "check --date (and --frequency): a day's report appears the next day, a week's on Monday, a month's early in the next month; a period with no sales has no report, and daily reports are kept for a year")
+                             fix: "check --date (and --frequency): a day's report appears the next day, a week's (dated its Sunday) on Monday, a month's early in the next month; a period with no sales has no report, and daily reports are kept for a year")
         } catch let e as GzipError {
             throw XlessError(.account, "the report App Store Connect sent is unreadable (\(e.description)); nothing was written", fix: "re-run the command")
         } catch let e as ReportSink.WriteError {
@@ -262,12 +262,13 @@ public struct ASCReports: Sendable {
         }
         if link(partial.path, target.path) == 0 { return }
         let linkError = errno
-        if linkError == EEXIST {
-            throw XlessError(.account, "\(target.path) appeared while the report was downloaded; nothing was written", fix: "re-run with --force to replace it, or give another --out")
-        }
+        let appeared = XlessError(.account, "\(target.path) appeared while the report was downloaded; nothing was written",
+                                  fix: "re-run with --force to replace it, or give another --out")
+        if linkError == EEXIST { throw appeared }
         // A file system without hard links: the existence check and the rename are not one step there.
-        guard !FileManager.default.fileExists(atPath: target.path), rename(partial.path, target.path) == 0 else {
-            throw XlessError(.account, "could not move the report to \(target.path): \(String(cString: strerror(linkError)))", fix: "check that --out is writable, then re-run")
+        if FileManager.default.fileExists(atPath: target.path) { throw appeared }
+        guard rename(partial.path, target.path) == 0 else {
+            throw XlessError(.account, "could not move the report to \(target.path): \(String(cString: strerror(errno)))", fix: "check that --out is writable, then re-run")
         }
     }
 }
@@ -303,6 +304,9 @@ final class ReportSink: @unchecked Sendable {
         head = Data()
         if GzipDecoder.isGzip(first) {
             decoder = GzipDecoder { [unowned self] in try self.save($0) }
+        } else if let lead = first.first(where: { ![0x20, 0x09, 0x0A, 0x0D].contains($0) }), lead == UInt8(ascii: "{") || lead == UInt8(ascii: "<") {
+            // A JSON or HTML page is no report (a proxy's or an error page answered with 200).
+            throw GzipError("App Store Connect answered with a JSON or HTML document instead of a report")
         }
         try feed(first)
     }

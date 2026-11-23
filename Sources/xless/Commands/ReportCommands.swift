@@ -41,13 +41,21 @@ struct ReportOutputOptions: ParsableArguments {
     @OptionGroup var trace: VerboseOption
 }
 
-/// Opens the account session, downloads `report` and prints where it went.
+/// Opens the account session, downloads `report` and prints where it went. Ctrl-C stops the download and removes what
+/// it wrote.
 private func download(_ report: some ReportRequest, _ options: ReportOutputOptions) async throws {
-    try await AccountSession.run {
-        let session = try AccountSession.open(team: options.team.team, verbose: options.trace.verbose)
-        let out = try await ReportCLI(reports: ASCReports(client: session.client), json: options.output.json)
-            .download(report, into: options.out, force: options.force)
-        FileHandle.standardOutput.write(Data(out.utf8))
+    let flag = Interrupt.Flag()
+    do {
+        try await AccountSession.run {
+            let session = try AccountSession.open(team: options.team.team, verbose: options.trace.verbose)
+            let cli = ReportCLI(reports: ASCReports(client: session.client), json: options.output.json)
+            let (out, force) = (options.out, options.force)
+            let text = try await Interrupt.cancelling(flag: flag) { try await cli.download(report, into: out, force: force) }
+            FileHandle.standardOutput.write(Data(text.utf8))
+        }
+    } catch where flag.interrupted {
+        FileHandle.standardError.write(Data("stopped the download of the \(report.display); nothing was written\n".utf8))
+        throw ExitCode(130)
     }
 }
 
@@ -60,7 +68,7 @@ struct ReportsSalesDownloadCommand: AsyncParsableCommand {
         commandName: "download",
         abstract: "Download one sales report: <TYPE>_<SUBTYPE>_<FREQUENCY>_<vendor>_<date>.tsv in --out.",
         discussion: """
-        --date is the day (YYYY-MM-DD) of a daily report, the last day of the week (YYYY-MM-DD) of a weekly \
+        --date is the day (YYYY-MM-DD) of a daily report, the Sunday that ends the week (YYYY-MM-DD) of a weekly \
         one, the month (YYYY-MM) of a monthly one and the year (YYYY) of a yearly one. Each type has its own subtypes, \
         frequencies and versions (developer.apple.com/documentation/appstoreconnectapi/get-v1-salesreports); without \
         --report-version, Apple's default for the type is used.
@@ -112,7 +120,7 @@ struct ReportsFinanceDownloadCommand: AsyncParsableCommand {
 }
 
 /// What a report download prints.
-struct ReportCLI {
+struct ReportCLI: Sendable {
     let reports: ASCReports
     var json = false
 

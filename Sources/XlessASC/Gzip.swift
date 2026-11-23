@@ -40,7 +40,7 @@ public struct GzipDecoder {
         prefix.count >= 2 && prefix[prefix.startIndex] == 0x1F && prefix[prefix.startIndex + 1] == 0x8B
     }
 
-    private enum Phase { case header, block, stored(Int), codes, trailer }
+    private enum Phase { case header, block, stored(Int), codes, trailer, padding }
     private struct NeedMore: Error {}
 
     private let output: (Data) throws -> Void
@@ -79,7 +79,11 @@ public struct GzipDecoder {
     public mutating func finish() throws {
         try run()
         try flush()
-        guard case .header = phase, pos == input.count, bitCount == 0 else { throw GzipError("the gzip data ends before its end (truncated)") }
+        switch phase {
+        case .header, .padding: break
+        default: throw GzipError("the gzip data ends before its end (truncated)")
+        }
+        guard pos == input.count, bitCount == 0 else { throw GzipError("the gzip data ends before its end (truncated)") }
         guard members > 0 else { throw GzipError("the gzip data is empty") }
     }
 
@@ -104,8 +108,16 @@ public struct GzipDecoder {
         switch phase {
         case .header:
             guard pos < input.count || bitCount > 0 else { return false }
+            if members > 0, bitCount == 0, input[pos] == 0 { phase = .padding; return true }
             try readHeader()
             phase = .block
+        case .padding:
+            // Zero bytes after the last member (what some writers pad with), as gzip(1) accepts them.
+            while pos < input.count {
+                guard input[pos] == 0 else { throw GzipError("the gzip data has something that is not gzip after its end") }
+                pos += 1
+            }
+            return false
         case .block:
             try readBlockHeader()
         case .stored(var left):

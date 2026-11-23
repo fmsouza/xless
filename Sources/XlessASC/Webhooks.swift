@@ -113,11 +113,20 @@ public struct ASCWebhooks: Sendable {
     public init(resources: ASCResources) { self.resources = resources }
 
     public func list(app appID: String) async throws -> [ASCWebhook] {
-        try await resources.list("/v1/apps/\(appID)/webhooks", as: ASCWebhook.self).items.sorted { $0.name < $1.name }
+        try await resources.list("/v1/apps/\(appID)/webhooks", as: ASCWebhook.self).items.map(Self.withoutSecret).sorted { $0.name < $1.name }
     }
 
     public func get(id: String) async throws -> ASCWebhook {
-        try await resources.get("/v1/webhooks/\(id)", as: ASCWebhook.self).data
+        Self.withoutSecret(try await resources.get("/v1/webhooks/\(id)", as: ASCWebhook.self).data)
+    }
+
+    /// The webhook without a `secret` attribute, should App Store Connect ever send one back: what xless prints (`--json`
+    /// prints Apple's resource as it came) must never hold it.
+    public static func withoutSecret(_ hook: ASCWebhook) -> ASCWebhook {
+        guard hook.resource.attributes?["secret"] != nil else { return hook }
+        var resource = hook.resource
+        resource.attributes?["secret"] = nil
+        return ASCWebhook(resource: resource)
     }
 
     /// Creates the webhook, signed with `secret`. Sent once, never retried; the secret is hidden from `--verbose` traces
@@ -133,7 +142,7 @@ public struct ASCWebhooks: Sendable {
             let created: ASCSingle<ASCWebhook> = try await resources.create(
                 "/v1/webhooks", type: "webhooks", attributes: attributes,
                 relationships: ["app": ASCToOne(ASCRef(type: "apps", id: request.appID))])
-            return created.data
+            return Self.withoutSecret(created.data)
         } catch let e as ASCError {
             throw e.scrubbing(value)
         } catch {

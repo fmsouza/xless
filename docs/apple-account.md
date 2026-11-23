@@ -919,8 +919,8 @@ Reports.
 - **Sales:** `--type` (`SALES` by default, `PRE_ORDER`, `NEWSSTAND`, `SUBSCRIPTION`, `SUBSCRIPTION_EVENT`,
   `SUBSCRIBER`, `SUBSCRIPTION_OFFER_CODE_REDEMPTION`, `INSTALLS`, `FIRST_ANNUAL`, `WIN_BACK_ELIGIBILITY`), `--subtype`
   (`SUMMARY` by default, `DETAILED`, `SUMMARY_INSTALL_TYPE`, `SUMMARY_TERRITORY`, `SUMMARY_CHANNEL`), `--frequency`
-  (`daily` by default, `weekly`, `monthly`, `yearly`) and `--date`: the day (`YYYY-MM-DD`) of a daily report, the last
-  day of the week (`YYYY-MM-DD`) of a weekly one, the month (`YYYY-MM`) of a monthly one, the year (`YYYY`) of a yearly
+  (`daily` by default, `weekly`, `monthly`, `yearly`) and `--date`: the day (`YYYY-MM-DD`) of a daily report, the Sunday
+  that ends the week (`YYYY-MM-DD`) of a weekly one, the month (`YYYY-MM`) of a monthly one, the year (`YYYY`) of a yearly
   one. `--report-version` (`1_0`, `1_3`…) picks the format; without it, Apple's default for the type applies. Which
   combinations exist is Apple's to say ([Apple's
   reference](https://developer.apple.com/documentation/appstoreconnectapi/get-v1-salesreports)).
@@ -930,7 +930,7 @@ Reports.
   `.<name>.partial-<pid>` file in `--out` (made when missing), and gives it its name only once it is complete and its
   checksum matched: `SALES_SUMMARY_DAILY_85012345_2026-11-20.tsv`, `FINANCIAL_ZZ_85012345_2026-10.tsv`. The report is
   never held in memory whole, so a large one costs no more than a small one. A file of that name in `--out` is left
-  alone and nothing is downloaded, unless `--force` replaces it; a failed download leaves nothing behind. A date that
+  alone and nothing is downloaded, unless `--force` replaces it; a failed or interrupted (Ctrl-C) download leaves nothing behind. A date that
   has no report (no sales that day, or not ready yet) is an `[account]` error saying so.
 
 With `--json`, a download prints `{"path", "bytes", "replaced"}`.

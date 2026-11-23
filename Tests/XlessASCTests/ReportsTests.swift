@@ -185,3 +185,13 @@ private func pieces(_ data: Data, size: Int = 100) -> [Data?] {
     #expect(text.contains("(26 bytes streamed)"))
     #expect(!text.contains("report body"))
 }
+
+@Test func aJSONOrHTMLPageIsNoReport() async throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let report = try SalesReportRequest(vendor: "85012345", date: "2026-11-20")
+    for page in ["  {\"data\":[]}", "<html><body>Sign in</body></html>"] {
+        let t = ChunkTransport([.body([Data(page.utf8)])])
+        await #expect(throws: XlessError.self) { try await reports(t).download(report, into: dir, force: false) }
+        #expect(listing(dir).isEmpty)
+    }
+}
