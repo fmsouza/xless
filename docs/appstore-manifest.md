@@ -230,7 +230,8 @@ The parts, in the order they are sent (`--only` chooses):
 
 - **`text`**: the App Store version of `app.yml`'s `version` and `platform`. When App Store Connect has no such
   version, `push` renames the version being prepared, or creates it (with its copyright and release), then plans the
-  rest again against the new version. The version's copyright, release type and date, and phased release; the app's
+  rest again against the new version (App Store Connect may have copied the live version's text onto it): that second
+  plan is printed, and its deletions asked, before it is sent. The version's copyright, release type and date, and phased release; the app's
   primary locale; the categories, checked against App Store Connect's list for the platform; and per locale the app
   information (name, subtitle, privacy policy URL and text, privacy choices URL) and the version's text (description,
   keywords, what's new, promotional text, support and marketing URLs). A version on the App Store, or in review, takes
@@ -241,11 +242,16 @@ The parts, in the order they are sent (`--only` chooses):
   Connect lists), export compliance (a new encryption declaration when `appDescription`, `availableOnFrenchStore`,
   `containsProprietaryCryptography` or `containsThirdPartyCryptography` differ from the latest one, all four needed;
   `exempt` is App Store Connect's verdict and is not sent; a compliance document is not uploaded yet) and accessibility
-  (per device family in `app.yml`, the draft declaration is updated, or a new one created, and published).
+  (per device family in `app.yml`, the draft declaration is updated, or a new one created, and published; a draft that
+  already has `app.yml`'s answers is published).
+
+A manifest of the version on the App Store (`pull --live`) is compared with the live app information and the published
+accessibility answers, as `pull` read them.
 
 What `push` leaves alone:
 
-- an `app.yml` key that is absent (no `review:`, no `ageRating:`… means App Store Connect keeps what it has);
+- an `app.yml` key that is absent (no `review:`, no `ageRating:`… means App Store Connect keeps what it has), and
+  within `review`, a key that is absent (an empty value, `notes: ""`, clears it);
 - a locale App Store Connect has and `appstore/` does not: reported, and deleted with `--prune` (never the primary
   locale). In a locale directory that exists, a missing text file clears the field, as `pull` would have written it;
   `name.txt` is never cleared, and a new locale needs one;
@@ -255,7 +261,8 @@ What `push` leaves alone:
 entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.md)). App Store Connect never gives it
 back, so it cannot be compared: `push` sends it when it creates the review details with a required demo account, when
 the demo account becomes required or its name changes, and with `--resend-demo-account` (after changing the
-password). It is read once, before anything is sent (a missing secret sends nothing), goes into that one request, sent
+password). `passwordSecret` may not name one of xless's keys or anything named like a key or token (`ASC_*`, `*_KEY`,
+`*_TOKEN`, `*_P8`, `*_PEM`, `*_SECRET`): its value would be sent to App Store Connect, where App Review reads it. It is read once, before anything is sent (a missing secret sends nothing), goes into that one request, sent
 once and never retried, and is never printed, written, or shown in a `--verbose` trace or an error, even when App Store
 Connect's answer repeats it.
 

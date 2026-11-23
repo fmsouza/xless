@@ -272,6 +272,9 @@ struct StorePushCLI {
 
     /// The demo account's password, from the secret `name` (store, NAME or NAME_FILE), without a file's final line break.
     static func demoPassword(_ name: String, secrets: Secrets) throws -> String {
+        guard !ManifestValidator.isReservedSecret(name) else {
+            throw XlessError(.account, "\(name) names a key or token, not the demo account's password; nothing was sent", fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
+        }
         guard var value = try secrets.optional(name, stage: .account) else {
             throw XlessError(.account, "missing secret \(name), the demo account's password (app.yml's review.demoAccount.passwordSecret); nothing was sent",
                              fix: "store it: `xless secrets import \(name) --file <file> --kind password` (or set \(name) or \(name)_FILE)")
@@ -307,8 +310,13 @@ struct StorePushCLI {
         }
         let secrets = self.secrets
         let sender = StoreSender(client: client, secret: { try Self.demoPassword($0, secrets: secrets) })
-        report.applied = try await push.apply(plan, app: app, manifest: manifest, dir: dir, options: options, sender: sender)
-        report.dryRun = false
+        let json = self.json, say = self.say
+        let result = try await push.apply(plan, app: app, manifest: manifest, dir: dir, options: options, sender: sender, show: { next in
+            // Once the new version exists, the rest is planned again against it: shown before it is sent.
+            for note in next.notes { say("note: \(note)") }
+            if !json { print("planned again against the new version:\n" + next.text, terminator: "") }
+        }, confirm: { try confirmDeletes($0, yes: yes) })
+        report.record(result)
         return json ? try ASCOutput.json(report) : "sent \(report.applied) change\(report.applied == 1 ? "" : "s") to App Store Connect\n"
     }
 }

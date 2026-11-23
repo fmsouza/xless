@@ -24,6 +24,8 @@ public struct StorePush: Sendable {
             public var part: StorePushPart
             public var subject: String
             public var fields: [StoreFieldChange]
+
+            init(_ c: StoreChange) { action = c.action; part = c.part; subject = c.subject; fields = c.fields }
         }
 
         public var appID: String
@@ -33,8 +35,9 @@ public struct StorePush: Sendable {
         /// The version's state at App Store Connect, or `new` when push creates it.
         public var versionState: String
         public var dryRun: Bool
-        /// Changes sent (all of them, unless one failed); 0 on a dry run.
+        /// Changes sent (all of them, unless one failed or a question was answered no); 0 on a dry run.
         public var applied: Int
+        /// The plan; once sent, the changes sent (after a new version, those planned again against it).
         public var changes: [Change]
         public var notes: [String]
         let plan: StorePlan
@@ -44,19 +47,29 @@ public struct StorePush: Sendable {
         init(target: Target, plan: StorePlan) {
             appID = target.app.id; bundleID = target.app.bundleID; platform = target.platform; version = target.versionString
             versionState = target.versionState; dryRun = true; applied = 0
-            changes = plan.changes.map { Change(action: $0.action, part: $0.part, subject: $0.subject, fields: $0.fields) }
+            changes = plan.changes.map(Change.init)
             notes = plan.notes
             self.plan = plan
         }
 
         /// The plan, one change per line (`+` create, `~` update, `-` delete), and its summary.
-        public var planText: String {
-            var out = "\(bundleID) (\(platform) \(version), \(versionState)):\n"
-            for change in plan.changes {
-                out += change.text.split(separator: "\n", omittingEmptySubsequences: false).map { "  \($0)" }.joined(separator: "\n") + "\n"
-            }
-            return out + plan.summary + "\n"
+        public var planText: String { "\(bundleID) (\(platform) \(version), \(versionState)):\n" + plan.text }
+
+        /// After sending: what was sent, and the notes of every plan.
+        public mutating func record(_ result: StorePush.Applied) {
+            dryRun = false
+            applied = result.sent.count
+            changes = result.sent.map(Change.init)
+            for note in result.notes where !notes.contains(note) { notes.append(note) }
         }
+    }
+
+    /// What `apply` sent, and what planning again (after a new version) noted.
+    public struct Applied: Sendable {
+        public var sent: [StoreChange] = []
+        public var notes: [String] = []
+        /// The plan made once the new version existed, when there was one.
+        public var replanned: StorePlan?
     }
 
     public let asc: StoreASC
@@ -97,6 +110,9 @@ public struct StorePush: Sendable {
 
         var creating: Bool { if case .create = version { return true }; return false }
 
+        /// The manifest describes the version on the App Store.
+        var live: Bool { if case .existing(let v) = version { return StorePull.isLive(v.attributes) }; return false }
+
         var editable: Bool {
             switch version {
             case .existing(let v): StorePull.isEditable(v.attributes)
@@ -129,7 +145,12 @@ public struct StorePush: Sendable {
         }
         let infos = try await asc.appInfos(of: app.id)
         let editableInfo = infos.first { Self.isEditableInfo($0.attributes) }
-        let info = editableInfo ?? infos.first { StorePull.isLiveInfo($0.attributes) } ?? infos.first
+        let liveInfo = infos.first { StorePull.isLiveInfo($0.attributes) }
+        // A manifest of the live version (`pull --live`) is compared with the live app information, as pull read it.
+        if case .existing(let v) = version, StorePull.isLive(v.attributes) {
+            return Target(app: app, platform: platform, versionString: wanted, version: version, info: liveInfo ?? infos.first, infoEditable: false)
+        }
+        let info = editableInfo ?? liveInfo ?? infos.first
         return Target(app: app, platform: platform, versionString: wanted, version: version, info: info, infoEditable: editableInfo != nil)
     }
 
@@ -163,33 +184,49 @@ public struct StorePush: Sendable {
     // MARK: - Apply
 
     /// Sends the plan's changes in order. After a change that `replans` (a new version), the rest is planned again
-    /// against what App Store Connect now has, and that plan is applied. Returns how many changes were sent.
-    public func apply(_ plan: StorePlan, app: ASCApp, manifest: StoreManifest, dir: URL, options: Options = Options(),
-                      sender: StoreSender) async throws -> Int {
+    /// against what App Store Connect now has: that plan is shown (`show`), its deletions confirmed (`confirm`; no
+    /// sends nothing more), then sent.
+    public func apply(_ plan: StorePlan, app: ASCApp, manifest: StoreManifest, dir: URL, options: Options = Options(), sender: StoreSender,
+                      show: (StorePlan) -> Void = { _ in }, confirm: (StorePlan) throws -> Bool = { _ in true }) async throws -> Applied {
         // A secret is read before the first write: a missing one stops the push with nothing sent.
         for name in Set(plan.changes.flatMap(\.requests).compactMap(\.secret)).sorted() { _ = try sender.value(of: name) }
-        var applied = 0
+        var result = Applied()
         func send(_ changes: [StoreChange], of total: Int) async throws {
             for change in changes {
                 do { try await sender.apply(change) } catch {
-                    say("note: \(applied) of \(total) change\(total == 1 ? " was" : "s were") sent before this failure; re-run `xless store push` to send the rest (it sends only what still differs)")
+                    let n = result.sent.count
+                    say("note: \(n) of \(total) change\(total == 1 ? "" : "s") \(n == 1 ? "was" : "were") sent before this failure; re-run `xless store push` to send the rest (it sends only what still differs)")
                     throw error
                 }
-                applied += 1
+                result.sent.append(change)
             }
         }
-        if let index = plan.changes.firstIndex(where: \.replans) {
-            try await send(Array(plan.changes[...index]), of: plan.changes.count)
-            let (next, _) = try await self.plan(app: app, manifest: manifest, dir: dir, options: options)
-            if next.changes.contains(where: \.replans) {
-                throw XlessError(.account, "App Store Connect does not show the \(manifest.app.platform ?? "IOS") version \(manifest.app.version ?? "") push just created",
-                                 fix: "wait a minute and re-run `xless store push`")
-            }
-            try await send(next.changes, of: applied + next.changes.count)
-        } else {
+        guard let index = plan.changes.firstIndex(where: \.replans) else {
             try await send(plan.changes, of: plan.changes.count)
+            return result
         }
-        return applied
+        try await send(Array(plan.changes[...index]), of: plan.changes.count)
+        let created = "\(manifest.app.platform ?? "IOS") version \(manifest.app.version ?? "")"
+        let next: StorePlan
+        do {
+            next = try await self.plan(app: app, manifest: manifest, dir: dir, options: options).0
+        } catch {
+            say("note: the \(created) was created; re-run `xless store push` to send the rest")
+            throw error
+        }
+        if next.changes.contains(where: \.replans) {
+            throw XlessError(.account, "App Store Connect does not show the \(created) push just created",
+                             fix: "wait a minute and re-run `xless store push`")
+        }
+        result.replanned = next
+        result.notes = next.notes
+        show(next)
+        guard try confirm(next) else {
+            say("cancelled; the \(created) was created, nothing else was sent")
+            return result
+        }
+        try await send(next.changes, of: result.sent.count + next.changes.count)
+        return result
     }
 }
 
@@ -234,12 +271,13 @@ struct FieldDiff {
     var isEmpty: Bool { fields.isEmpty }
 
     /// A text attribute: `want` is the manifest's (nil: not set), `have` Apple's (normalised as `pull` writes it). A
-    /// difference sets the attribute, or clears it (`null`) unless `clears` is false.
+    /// difference sets the attribute, or clears it (`null`) when `clears`, or when the manifest says so with "".
     mutating func text(_ name: String, want: String?, have: String?, isURL: Bool = false, clears: Bool = true) {
         let current = have.flatMap { ManifestText.normalize($0, isURL: isURL) }
-        guard want != current, want != nil || clears else { return }
-        attributes[name] = want.map { .string($0) } ?? .null
-        fields.append(StoreFieldChange(name, from: current, to: want))
+        let wanted = want.flatMap { ManifestText.normalize($0, isURL: isURL) }
+        guard wanted != current, wanted != nil || clears || want != nil else { return }
+        attributes[name] = wanted.map { .string($0) } ?? .null
+        fields.append(StoreFieldChange(name, from: current, to: wanted))
     }
 
     /// A value managed only when the manifest gives one.

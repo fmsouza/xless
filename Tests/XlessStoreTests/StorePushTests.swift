@@ -56,22 +56,31 @@ private func request(_ t: RoutedTransport, _ key: String) -> URLRequest? {
     t.requests.first { "\($0.httpMethod!) \($0.url!.path)" == key }
 }
 
+/// The fake app with nothing pending: its accessibility answers published, no draft.
+private func synced() -> [String: (Int, String)] {
+    var routes = fakeApp()
+    routes["/v1/apps/123/accessibilityDeclarations"] = (200, list([
+        #"{"type":"accessibilityDeclarations","id":"AC1","attributes":{"deviceFamily":"IPHONE","state":"PUBLISHED","supportsVoiceover":true,"supportsDarkInterface":true}}"#,
+    ]))
+    return routes
+}
+
 @Test func pulledManifestPushesNothing() async throws {
-    let (root, dir) = try await pulled()
+    let (root, dir) = try await pulled(synced())
     defer { try? FileManager.default.removeItem(at: root) }
-    let t = RoutedTransport(fakeApp())
+    let t = RoutedTransport(synced())
     let push = pusher(t)
     let (plan, report) = try await push.plan(app: fakeASCApp, manifest: manifest(dir), dir: dir)
     #expect(plan.changes.isEmpty)
     #expect(report.planText == "com.example.app (IOS 1.1, PREPARE_FOR_SUBMISSION):\nnothing to push: App Store Connect already matches the manifest\n")
     let secrets = FakeSecrets(["XLESS_DEMO_PASSWORD": "demo-pass-1"])
-    #expect(try await push.apply(plan, app: fakeASCApp, manifest: manifest(dir), dir: dir, sender: sender(t, secrets)) == 0)
+    #expect(try await push.apply(plan, app: fakeASCApp, manifest: manifest(dir), dir: dir, sender: sender(t, secrets)).sent.isEmpty)
     #expect(writes(t).isEmpty, "a no-op push makes no write call")
     #expect(secrets.read.isEmpty, "nor reads the demo password")
 }
 
 @Test func planShowsWhatDiffersAndADryRunSendsNothing() async throws {
-    let (root, dir) = try await pulled()
+    let (root, dir) = try await pulled(synced())
     defer { try? FileManager.default.removeItem(at: root) }
     try write("Does more\n", "en-US/subtitle.txt", in: dir)
     try FileManager.default.removeItem(at: dir.appendingPathComponent("en-US/whats_new.txt"))
@@ -79,7 +88,7 @@ private func request(_ t: RoutedTransport, _ key: String) -> URLRequest? {
     try FileManager.default.removeItem(at: dir.appendingPathComponent("de-DE"))
     try write("Exemple\n", "fr-FR/name.txt", in: dir)
     try write("Fait des choses.\n", "fr-FR/description.txt", in: dir)
-    let t = RoutedTransport(fakeApp())
+    let t = RoutedTransport(synced())
     let notes = Notes()
     let (plan, report) = try await pusher(t, notes).plan(app: fakeASCApp, manifest: manifest(dir), dir: dir)
     #expect(report.planText == """
@@ -112,10 +121,10 @@ private func request(_ t: RoutedTransport, _ key: String) -> URLRequest? {
 }
 
 @Test func pruneDeletesExtraLocalesButNeverThePrimary() async throws {
-    let (root, dir) = try await pulled()
+    let (root, dir) = try await pulled(synced())
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.removeItem(at: dir.appendingPathComponent("de-DE"))
-    let t = RoutedTransport(fakeApp())
+    let t = RoutedTransport(synced())
     let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: manifest(dir), dir: dir, options: .init(prune: true))
     #expect(plan.changes.map(\.text) == ["- app info de-DE", "- version text de-DE"])
     #expect(plan.changes.flatMap(\.requests).map { "\($0.method) \($0.path)" } == ["DELETE /v1/appInfoLocalizations/L2", "DELETE /v1/appStoreVersionLocalizations/VL2"])
@@ -177,7 +186,7 @@ private func liveOnly() -> [String: (Int, String)] {
                                        sender: sender(t, FakeSecrets(["XLESS_DEMO_PASSWORD": "demo-pass-1"])))
     #expect(writes(t) == ["POST /v1/appStoreVersions", "POST /v1/appStoreVersionPhasedReleases", "POST /v1/appStoreVersionLocalizations",
                           "POST /v1/appStoreVersionLocalizations", "POST /v1/appStoreReviewDetails"])
-    #expect(applied == 5)
+    #expect(applied.sent.count == 5)
     #expect(t.requests.filter { $0.url!.path == "/v1/appStoreVersions" }.count == 1, "the create is sent once")
     let localization = body(t.requests.first { $0.httpMethod == "POST" && $0.url!.path == "/v1/appStoreVersionLocalizations" }!)
     #expect("\(localization)".contains("V3"), "planned again: the localization belongs to the new version")
@@ -189,6 +198,8 @@ private func liveOnly() -> [String: (Int, String)] {
     routes["/v1/appStoreVersions/V1/appStoreVersionLocalizations"] = (200, list([
         #"{"type":"appStoreVersionLocalizations","id":"VL9","attributes":{"locale":"en-US","description":"Old.","promotionalText":"Old promo"}}"#,
     ]))
+    // The live version's manifest is compared with the live app information.
+    routes["/v1/appInfos/I1/appInfoLocalizations"] = routes["/v1/appInfos/I2/appInfoLocalizations"]
     var app = AppYAML()
     app.platform = "IOS"; app.version = "1.0"; app.primaryLocale = "en-US"
     let listing = LocaleListing(name: "Example", subtitle: "Does things", privacyURL: "https://example.com/privacy", description: "Old.", promotionalText: "New promo")
@@ -287,7 +298,7 @@ private func liveOnly() -> [String: (Int, String)] {
 @Test func aCustomLicenceIsCreatedForEveryTerritory() async throws {
     let (root, dir) = try await pulled()
     defer { try? FileManager.default.removeItem(at: root) }
-    var routes = fakeApp()
+    var routes = synced()
     routes["/v1/apps/123/endUserLicenseAgreement"] = (200, single(nil))
     let t = RoutedTransport(routes)
     var m = manifest(dir)
@@ -366,16 +377,133 @@ private func liveOnly() -> [String: (Int, String)] {
 }
 
 @Test func aMissingDemoPasswordSendsNothing() async throws {
-    let (root, dir) = try await pulled()
+    let (root, dir) = try await pulled(synced())
     defer { try? FileManager.default.removeItem(at: root) }
     try write("Does more\n", "en-US/subtitle.txt", in: dir)
     var m = manifest(dir)
     m.app.review?.demoAccount?.name = "demo2@example.com"
-    let t = RoutedTransport(fakeApp())
+    let t = RoutedTransport(synced())
     let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir)
     #expect(plan.changes.count == 2)
     await #expect(throws: XlessError.self) {
         _ = try await pusher(t).apply(plan, app: fakeASCApp, manifest: m, dir: dir, sender: sender(t))
     }
     #expect(writes(t).isEmpty, "the secret is read before the first write")
+}
+
+@Test func whatIsPlannedAgainstANewVersionIsShownAndItsDeletionsAsked() async throws {
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.version = "1.2"
+    let t = RoutedTransport(liveOnly())
+    t.onRequest = { r, t in
+        guard r.httpMethod == "POST", r.url!.path == "/v1/appStoreVersions" else { return }
+        // Apple copies the live version's localizations, it-IT included, onto the new version.
+        t.routes["POST /v1/appStoreVersions"] = (201, single(#"{"type":"appStoreVersions","id":"V3","attributes":{"platform":"IOS","versionString":"1.2"}}"#))
+        t.routes["/v1/apps/123/appStoreVersions"] = (200, list([
+            #"{"type":"appStoreVersions","id":"V3","attributes":{"platform":"IOS","versionString":"1.2","appVersionState":"PREPARE_FOR_SUBMISSION","copyright":"2026 Example Inc.","releaseType":"SCHEDULED","earliestReleaseDate":"2026-12-01T08:00:00Z"}}"#,
+        ]))
+        t.routes["/v1/appStoreVersions/V3/appStoreVersionLocalizations"] = (200, list([
+            #"{"type":"appStoreVersionLocalizations","id":"VL7","attributes":{"locale":"it-IT","description":"Fa cose."}}"#,
+        ]))
+    }
+    let options = StorePush.Options(parts: [.text], prune: true)
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir, options: options)
+    #expect(plan.deletes.isEmpty && plan.notes.isEmpty, "the new version's locales are not known yet")
+    var shown: [StorePlan] = []
+    let result = try await pusher(t).apply(plan, app: fakeASCApp, manifest: m, dir: dir, options: options, sender: sender(t),
+                                          show: { shown.append($0) }, confirm: { $0.deletes.isEmpty })
+    #expect(shown.count == 1 && shown[0].deletes.map(\.subject) == ["version text it-IT"])
+    #expect(writes(t) == ["POST /v1/appStoreVersions"], "a no to the deletions sends nothing more")
+    #expect(result.sent.map(\.subject) == ["version 1.2 (IOS)"] && result.replanned != nil)
+}
+
+@Test func reviewKeysThatAreAbsentAreKeptAndAnEmptyOneClears() async throws {
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.review?.contact = nil
+    m.app.review?.notes = ""
+    m.app.review?.demoAccount?.name = nil
+    let t = RoutedTransport(fakeApp())
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.review]))
+    #expect(plan.changes.map(\.text) == ["~ App Review details: notes (17 → 0 characters)"])
+    #expect(plan.changes[0].requests[0].body?["data"]?["attributes"] == .object(["notes": .null]))
+}
+
+@Test func theDemoPasswordSecretCannotBeAnotherKey() async throws {
+    for name in ["ASC_KEY_P8", "ASC_KEY_P8@ABCDE12345", "XLESS_DIST_KEY", "GITHUB_TOKEN", "MY_API_KEY_FILE", "XLESS_APNS_KEY@TEAM"] {
+        #expect(ManifestValidator.isReservedSecret(name), "\(name)")
+    }
+    for name in ["XLESS_DEMO_PASSWORD", "APP_REVIEW_PASSWORD", "DEMO_LOGIN@ABCDE12345"] { #expect(!ManifestValidator.isReservedSecret(name), "\(name)") }
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.review?.demoAccount?.passwordSecret = "ASC_KEY_P8"
+    #expect(ManifestValidator.validate(m, at: dir, draft: true).contains { $0.message.contains("names a key or token") })
+    await #expect {
+        _ = try await pusher(RoutedTransport(fakeApp())).plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.review], resendDemoAccount: true))
+    } throws: { "\($0)".contains("names a key or token") }
+}
+
+@Test func aPendingAccessibilityDraftIsPublished() async throws {
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let t = RoutedTransport(fakeApp())
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: manifest(dir), dir: dir, options: .init(parts: [.declarations]))
+    #expect(plan.changes.map(\.text) == [#"~ accessibility IPHONE: publish: "draft" → "published""#])
+    #expect(plan.changes[0].requests == [.update("accessibilityDeclarations", id: "AC2", attributes: ["publish": .bool(true)])])
+}
+
+@Test func phasedReleaseIsAddedOrRemovedWhileItHasNotStarted() async throws {
+    let (root, dir) = try await pulled(synced())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.release?.phased = false
+    let (off, _) = try await pusher(RoutedTransport(synced())).plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.text]))
+    #expect(off.changes.map(\.text) == [#"- phased release: phased: "true" → "false""#])
+    #expect(off.changes[0].requests == [.delete("appStoreVersionPhasedReleases", id: "P1")])
+
+    var started = synced()
+    started["/v1/appStoreVersions/V2/appStoreVersionPhasedRelease"] = (200, single(#"{"type":"appStoreVersionPhasedReleases","id":"P1","attributes":{"phasedReleaseState":"ACTIVE"}}"#))
+    let (kept, _) = try await pusher(RoutedTransport(started)).plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.text]))
+    #expect(kept.changes.isEmpty && kept.notes.contains { $0.contains("has started (ACTIVE)") })
+
+    var none = synced()
+    none["/v1/appStoreVersions/V2/appStoreVersionPhasedRelease"] = (200, single(nil))
+    let (on, _) = try await pusher(RoutedTransport(none)).plan(app: fakeASCApp, manifest: manifest(dir), dir: dir, options: .init(parts: [.text]))
+    #expect(on.changes.map(\.subject) == ["phased release"] && on.changes[0].action == .create)
+}
+
+@Test func aCustomLicenceIsUpdatedInPlace() async throws {
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try write("New terms.\n", "eula.txt", in: dir)
+    var m = manifest(dir)
+    m.app.eula = .custom(file: "eula.txt", territories: .only(["USA", "GBR"]))
+    let (plan, _) = try await pusher(RoutedTransport(fakeApp())).plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.declarations]))
+    let eula = plan.changes.first { $0.subject == "licence agreement" }!
+    #expect(eula.text == "~ licence agreement\n    agreementText: \"Terms.\" → \"New terms.\"\n    territories: \"CAN, USA\" → \"GBR, USA\"")
+    #expect(eula.requests == [.update("endUserLicenseAgreements", id: "EU1", attributes: ["agreementText": .string("New terms.")],
+                                      relationships: ["territories": StoreRequest.links("territories", ["GBR", "USA"])])])
+}
+
+@Test func theVersionBeingPreparedTakesTheManifestsVersionString() async throws {
+    let (root, dir) = try await pulled(synced())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.version = "1.2"
+    let (plan, report) = try await pusher(RoutedTransport(synced())).plan(app: fakeASCApp, manifest: m, dir: dir)
+    #expect(report.versionState == "PREPARE_FOR_SUBMISSION")
+    #expect(plan.changes.map(\.text) == [#"~ version 1.2 (IOS): versionString: "1.1" → "1.2""#])
+    #expect(plan.changes[0].requests == [.update("appStoreVersions", id: "V2", attributes: ["versionString": .string("1.2")])])
+}
+
+@Test func aDeleteThatAlreadyWentThroughIsDone() async throws {
+    var routes = fakeApp()
+    routes["DELETE /v1/endUserLicenseAgreements/EU1"] = (404, #"{"errors":[{"status":"404","code":"NOT_FOUND","title":"gone"}]}"#)
+    let t = RoutedTransport(routes)
+    try await sender(t).apply(StoreChange(.delete, .declarations, "licence agreement", requests: [.delete("endUserLicenseAgreements", id: "EU1")]))
+    #expect(writes(t) == ["DELETE /v1/endUserLicenseAgreements/EU1"])
 }

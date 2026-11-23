@@ -133,6 +133,12 @@ public struct StorePlan: Sendable, Equatable {
 
     public var deletes: [StoreChange] { changes.filter { $0.action == .delete } }
 
+    /// The changes, one per line (indented by two spaces), then the summary.
+    public var text: String {
+        changes.map { $0.text.split(separator: "\n", omittingEmptySubsequences: false).map { "  \($0)" }.joined(separator: "\n") + "\n" }.joined()
+            + summary + "\n"
+    }
+
     /// `3 changes: 1 to create, 2 to update`.
     public var summary: String {
         guard !changes.isEmpty else { return "nothing to push: App Store Connect already matches the manifest" }

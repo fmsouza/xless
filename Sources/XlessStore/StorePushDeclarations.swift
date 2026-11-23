@@ -124,13 +124,20 @@ extension PushContext {
         for family in wanted.values.keys.sorted() {
             let answers = wanted[family]!
             let draft = declaration(family, "DRAFT"), published = declaration(family, "PUBLISHED")
-            let have = (draft ?? published)?.attributes ?? [:]
+            // A manifest of the live version compares with what is published, as `pull --live` read it.
+            let have = (target.live ? published ?? draft : draft ?? published)?.attributes ?? [:]
             var diff = FieldDiff()
             for key in answers.values.keys.sorted() {
                 diff.value(key, want: answers[key].map { .bool($0) }, have: StoreScalar(have[key]))
             }
-            guard !diff.isEmpty else { continue }
             let subject = "accessibility \(family)"
+            // A draft that already has app.yml's answers is published (it is not on the App Store until then).
+            if diff.isEmpty, let draft, !target.live {
+                add(StoreChange(.update, .declarations, subject, fields: [StoreFieldChange("publish", from: "draft", to: "published")],
+                                requests: [.update("accessibilityDeclarations", id: draft.id, attributes: ["publish": .bool(true)])]))
+                continue
+            }
+            guard !diff.isEmpty else { continue }
             if let draft {
                 var attributes = diff.attributes
                 attributes["publish"] = .bool(true)

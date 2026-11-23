@@ -46,9 +46,13 @@ public struct StoreSender: Sendable {
     /// The created resource's ID, for a POST.
     func send(_ request: StoreRequest, path: String) async throws -> String? {
         guard let name = request.secret else {
-            let response = try await client.request(request.method, path, body: try request.body.map { try JSONEncoder().encode($0) },
-                                                    maxAttempts: request.method == "POST" ? 1 : ASCClient.maxAttempts)
-            return Self.createdID(response.data)
+            do {
+                let response = try await client.request(request.method, path, body: try request.body.map { try JSONEncoder().encode($0) },
+                                                        maxAttempts: request.method == "POST" ? 1 : ASCClient.maxAttempts)
+                return Self.createdID(response.data)
+            } catch let e as ASCError where request.method == "DELETE" && e.status == 404 {
+                return nil  // already gone (a retried DELETE whose first attempt went through)
+            }
         }
         let value = try value(of: name)
         let body = Self.inject(value, into: request.body ?? .object([:]))

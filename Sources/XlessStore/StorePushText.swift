@@ -9,10 +9,11 @@ extension PushContext {
     mutating func planText() async throws {
         try planVersion()
         try await planPhasedRelease()
-        planPrimaryLocale()
         try await planCategories()
         try await planInfoLocalizations()
         try await planVersionLocalizations()
+        // After the localizations: the new primary locale may be one this push adds.
+        planPrimaryLocale()
     }
 
     // MARK: The version
@@ -110,7 +111,8 @@ extension PushContext {
         var relationships: [String: JSONValue] = [:]
         for slot in Self.categorySlots {
             let (want, current) = (slot.pick(wanted), slot.pick(have))
-            guard want != current else { continue }
+            // An app always has a primary category: one app.yml does not give is left as it is.
+            guard want != current, want != nil || slot.relationship != "primaryCategory" else { continue }
             fields.append(StoreFieldChange(slot.relationship, from: current, to: want))
             relationships[slot.relationship] = StoreRequest.link("appCategories", want)
         }
@@ -165,7 +167,8 @@ extension PushContext {
                                 requests: [.create("appInfoLocalizations", attributes: attributes, relationships: ["appInfo": StoreRequest.link("appInfos", info.id)])]))
             }
         }
-        for (locale, l) in remote.sorted(by: { $0.key < $1.key }) where manifest.locales[locale] == nil {
+        // A version push creates gets the live locales; they are looked at once it exists.
+        for (locale, l) in remote.sorted(by: { $0.key < $1.key }) where manifest.locales[locale] == nil && !target.creating {
             try planExtraLocale(locale, subject: "app info \(locale)", type: "appInfoLocalizations", id: l.id, editable: target.infoEditable)
         }
     }
