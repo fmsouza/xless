@@ -160,11 +160,22 @@ struct CertificateCreation {
         do {
             certificate = try await api.create(type: type, csrPEM: csr, relatedID: relatedID)
         } catch {
-            if ASCCertificates.isAmbiguous(error) { throw ambiguous(type, error, kept: entry) }
+            if ASCCertificates.isAmbiguous(error) {
+                guard let made = await made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error) else {
+                    throw ambiguous(type, error, kept: entry)
+                }
+                certificate = made
+                return try finish(certificate, entry: entry, team: team, store: store, secret: secret)
+            }
             var removed = true
             do { try CertificateKeyStore.remove(entry, from: store.store) } catch { removed = false }
             throw refused(type, error, removedEntry: removed ? entry : nil, keptEntry: removed ? nil : entry)
         }
+        return try finish(certificate, entry: entry, team: team, store: store, secret: secret)
+    }
+
+    /// Records the certificate made for the key stored as `entry`.
+    private func finish(_ certificate: ASCCertificate, entry: String, team: String?, store: CertificateKeyStore, secret: SecretBytes) throws -> CertificateCreated {
         let facts = certificate.der.flatMap { CertificateFacts(der: $0) }
         if let selected = team, let actual = facts?.teamID, actual != selected {
             say("warning: certificate \(certificate.id) belongs to team \(actual) (the API key's), not \(selected); its key is recorded as team \(actual)'s in \(entry)")
@@ -181,13 +192,25 @@ struct CertificateCreation {
     /// A certificate for a key xless never sees: the CSR is sent as given, once.
     func run(type: CertificateType, relatedID: String?, csrPEM: String) async throws -> CertificateCreated {
         try await precheck(type)
+        let certificate: ASCCertificate
         do {
-            let certificate = try await api.create(type: type, csrPEM: csrPEM, relatedID: relatedID)
-            return CertificateCreated(certificate: certificate, entry: nil, team: certificate.der.flatMap { CertificateFacts(der: $0) }?.teamID)
+            certificate = try await api.create(type: type, csrPEM: csrPEM, relatedID: relatedID)
         } catch {
-            if ASCCertificates.isAmbiguous(error) { throw ambiguous(type, error, kept: nil) }
-            throw refused(type, error, removedEntry: nil, keptEntry: nil)
+            guard ASCCertificates.isAmbiguous(error) else { throw refused(type, error, removedEntry: nil, keptEntry: nil) }
+            guard let made = await made(type, for: KeyMatch.publicKey(csrPEM: csrPEM), after: error) else { throw ambiguous(type, error, kept: nil) }
+            certificate = made
         }
+        return CertificateCreated(certificate: certificate, entry: nil, team: certificate.der.flatMap { CertificateFacts(der: $0) }?.teamID)
+    }
+
+    /// After a create request that may or may not have gone through: the certificate of `type` App Store Connect now
+    /// lists for `key` (the one just asked for: a key is new, and a CSR's key is matched to its certificate by its public
+    /// key), or nil when none is listed or the listing fails too (then the create stays ambiguous).
+    func made(_ type: CertificateType, for key: KeyMatch.PublicKey?, after error: Error) async -> ASCCertificate? {
+        guard let key, let listed = try? await api.list(types: [type], withContent: true),
+              let found = KeyMatch.certificate(for: key, in: listed) else { return nil }
+        say("The create request failed (\(XlessError.wrapping(error, stage: stage).cause)), but App Store Connect lists certificate \(found.id) for this key: it was created.")
+        return found
     }
 
     static func needsCSR(_ type: CertificateType, stage: Stage) -> XlessError {
@@ -198,7 +221,7 @@ struct CertificateCreation {
     func ambiguous(_ type: CertificateType, _ error: Error, kept entry: String?) -> XlessError {
         XlessError(stage, "\(CertificateService.ambiguousMarker): the request to create the \(type.displayName) certificate failed (\(XlessError.wrapping(error, stage: stage).cause)) and may or may not have succeeded",
                    fix: "check `xless certs list \(type.listArguments)` before retrying"
-                       + (entry.map { "; the private key is kept in the secret store as \($0) in case the certificate exists (if none matches it, remove it with `xless secrets rm \($0)`)" } ?? ""))
+                       + (entry.map { "; the private key is kept in the secret store as \($0) in case the certificate exists: `xless certs link` records it with its certificate once App Store Connect lists one for it (if none ever does, remove it with `xless secrets rm \($0)`)" } ?? ""))
     }
 
     func refused(_ type: CertificateType, _ error: Error, removedEntry: String?, keptEntry: String?) -> XlessError {

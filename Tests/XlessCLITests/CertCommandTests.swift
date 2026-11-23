@@ -57,10 +57,12 @@ private struct FakeCertificates: CertificateAPI {
     var create: @Sendable (CertificateType, String) throws -> ASCCertificate
     /// Checked when the POST is sent (the key must be in the store by then).
     var atPost: @Sendable () -> Void = {}
+    /// What the listing answers when it changes after the POST (a certificate made by a request whose answer was lost).
+    var listed: (@Sendable () -> [ASCCertificate])? = nil
 
     func list(types: [CertificateType], withContent: Bool) async throws -> [ASCCertificate] {
-        journal.add("list \(types.map(\.rawValue).joined(separator: ","))")
-        return existing
+        journal.add("list \(types.map(\.rawValue).joined(separator: ","))\(withContent ? " +content" : "")")
+        return listed?() ?? existing
     }
 
     func create(type: CertificateType, csrPEM: String, relatedID: String?) async throws -> ASCCertificate {
@@ -183,6 +185,64 @@ private func accountError(_ body: () async throws -> Void) async -> XlessError? 
         #expect(try vault.read().entry(named: "XLESS_DEVELOPMENT_KEY") != nil)
         #expect(journal.events.filter { $0.hasPrefix("POST") }.count == 1)
     }
+}
+
+/// Holds what a scripted App Store Connect made.
+private final class Made: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _certificates: [ASCCertificate] = []
+    var certificates: [ASCCertificate] { lock.withLock { _certificates } }
+    func add(_ c: ASCCertificate) { lock.withLock { _certificates.append(c) } }
+}
+
+@Test func anAmbiguousCreateWhoseCertificateExistsIsRecordedWithItsKey() async throws {
+    let vault = try CertVault()
+    defer { vault.cleanup() }
+    let journal = Journal()
+    let made = Made()
+    let said = Said()
+    // Another key's certificate is listed too; only the one for the new key is taken.
+    let other = resource("C0", der: try issue(try SigningKey.generate().csrPEM(commonName: "other")))
+    let api = FakeCertificates(journal: journal, create: { _, csr in
+        made.add(resource("C7", der: try issue(csr)))
+        throw URLError(.networkConnectionLost)
+    }, listed: { [other] + made.certificates })
+    var creation = CertificateCreation(api: api)
+    creation.say = { said.lines.append($0) }
+    let created = try await creation.run(type: .distribution, relatedID: nil, entry: "XLESS_DIST_KEY@\(team)", team: team, keys: { vault.keys })
+    #expect(created.certificate.id == "C7" && created.entry == "XLESS_DIST_KEY@\(team)")
+    #expect(try vault.read().entry(named: "XLESS_DIST_KEY@\(team)")?.metadata.certificateID == "C7")
+    #expect(journal.events == ["POST DISTRIBUTION", "list DISTRIBUTION +content"])
+    #expect(said.lines.contains { $0.contains("lists certificate C7 for this key: it was created") })
+}
+
+@Test func anAmbiguousCreateWithNoCertificateListedStaysAmbiguousAndPointsAtLink() async throws {
+    let vault = try CertVault()
+    defer { vault.cleanup() }
+    let journal = Journal()
+    let other = resource("C0", der: try issue(try SigningKey.generate().csrPEM(commonName: "other")))
+    let api = FakeCertificates(journal: journal, existing: [other], create: { _, _ in throw ASCError(status: 500, items: []) })
+    let e = await accountError {
+        _ = try await CertificateCreation(api: api).run(type: .distribution, relatedID: nil, entry: "XLESS_DIST_KEY", team: nil, keys: { vault.keys })
+    }
+    #expect(e?.isAmbiguousCertificateCreation == true)
+    #expect(e?.fix.contains("`xless certs link` records it with its certificate") == true)
+    #expect(try vault.read().entry(named: "XLESS_DIST_KEY")?.metadata.certificateID == nil)
+}
+
+@Test func anAmbiguousCSRCreateWhoseCertificateExistsSucceeds() async throws {
+    let made = Made()
+    let csr = try SigningKey.generate().csrPEM(commonName: "hsm")
+    let api = FakeCertificates(journal: Journal(), create: { _, csr in
+        made.add(resource("C8", der: try issue(csr)))
+        throw ASCError(status: 502, items: [])
+    }, listed: { made.certificates })
+    let created = try await CertificateCreation(api: api).run(type: .distribution, relatedID: nil, csrPEM: csr)
+    #expect(created.certificate.id == "C8" && created.entry == nil && created.team == team)
+    // Nothing listed: still ambiguous.
+    let none = FakeCertificates(journal: Journal(), create: { _, _ in throw URLError(.timedOut) })
+    let e = await accountError { _ = try await CertificateCreation(api: none).run(type: .distribution, relatedID: nil, csrPEM: csr) }
+    #expect(e?.isAmbiguousCertificateCreation == true)
 }
 
 @Test func theDeveloperIDCapIsCheckedBeforeAKeyIsMade() async throws {

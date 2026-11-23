@@ -1,5 +1,6 @@
 import Foundation
 import X509
+import XlessASC
 import XlessCore
 
 /// A certificate signing request someone else made (`xless certs create --csr`): its key lives elsewhere (an HSM, another
@@ -39,5 +40,35 @@ public struct CertificateFacts: Sendable, Equatable {
         guard let cert = try? Certificate(derEncoded: Array(der)) else { return nil }
         expires = cert.notValidAfter
         teamID = cert.subject.flatMap { $0 }.first { $0.type == .RDNAttributeType.organizationalUnitName }.flatMap { String($0.value) }
+    }
+}
+
+/// Which certificate goes with which private key: the same public key. Used where the link is not recorded (a create
+/// whose answer was lost, a CSR whose key is in the secret store, `xless certs link`).
+public enum KeyMatch {
+    /// A public key, as its DER SubjectPublicKeyInfo.
+    public struct PublicKey: Hashable, Sendable {
+        let info: [UInt8]
+        init(_ key: Certificate.PublicKey) { info = Array(key.subjectPublicKeyInfoBytes) }
+    }
+
+    /// The public key of a private key PEM (RSA, PKCS#8, or SEC1 EC); nil when it is none of them.
+    public static func publicKey(privateKeyPEM pem: String) -> PublicKey? {
+        (try? Certificate.PrivateKey(pemEncoded: PEM.normalize(pem))).map { PublicKey($0.publicKey) }
+    }
+
+    /// The public key a CSR (PEM, as `CSRFile.pem` returns it) asks a certificate for.
+    public static func publicKey(csrPEM pem: String) -> PublicKey? {
+        (try? CertificateSigningRequest(pemEncoded: PEM.normalize(pem))).map { PublicKey($0.publicKey) }
+    }
+
+    /// The public key of a certificate (DER); nil when `der` is not a certificate.
+    public static func publicKey(certificateDER der: Data) -> PublicKey? {
+        (try? Certificate(derEncoded: Array(der))).map { PublicKey($0.publicKey) }
+    }
+
+    /// The first of `certificates` (with their content) issued for `key`.
+    public static func certificate(for key: PublicKey, in certificates: [ASCCertificate]) -> ASCCertificate? {
+        certificates.first { $0.der.flatMap(publicKey(certificateDER:)) == key }
     }
 }
