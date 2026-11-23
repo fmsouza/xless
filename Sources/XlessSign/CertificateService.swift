@@ -95,7 +95,7 @@ public struct CertificateService: Sendable {
         }
     }
 
-    static let ambiguousMarker = "certificate creation is ambiguous"
+    public static let ambiguousMarker = "certificate creation is ambiguous"
 
     /// `ASCCertificates.isAmbiguous`: whether a failed create POST may have made the certificate.
     static func isAmbiguous(_ error: Error) -> Bool { ASCCertificates.isAmbiguous(error) }
