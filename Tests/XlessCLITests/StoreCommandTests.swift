@@ -41,7 +41,7 @@ private func manifest(_ files: [String: String]) throws -> URL {
     let dir = root.appendingPathComponent("appstore")
     let json = StoreValidation.run(dir: dir, draft: true, json: true)
     #expect(json.failed, "no bundleID and no usable xless.yml")
-    #expect(json.stdout.hasPrefix("{\n  \"issues\" : [\n    {\n      \"fix\" : \"add `bundleID: com.example.app` to app.yml\",\n      \"message\" : \"no bundleID, and no usable xless.yml next to appstore/ to take it from\""))
+    #expect(json.stdout.hasPrefix("{\n  \"issues\" : [\n    {\n      \"fix\" : \"add `bundleID: com.example.app` to app.yml (or pass the app's overlay with --config)\",\n      \"message\" : \"no bundleID, and no usable xless.yml next to appstore/ to take it from\""))
     #expect(json.stdout.contains("\"valid\" : false"))
 }
 

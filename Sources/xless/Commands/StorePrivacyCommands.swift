@@ -34,7 +34,7 @@ struct StorePrivacyPullCommand: AsyncParsableCommand {
         """)
 
     @OptionGroup var directory: StoreDirOption
-    @Option(help: ArgumentHelp("The app: its app ID or bundle identifier (default: app.yml's bundleID, else xless.yml's).", valueName: "app"))
+    @Option(help: ArgumentHelp("The app: its app ID or bundle identifier (default: app.yml's bundleID, else --config's or xless.yml's).", valueName: "app"))
     var app: String?
     @OptionGroup var team: TeamOption
     @OptionGroup var output: JSONOption
@@ -45,8 +45,10 @@ struct StorePrivacyPullCommand: AsyncParsableCommand {
     func run() async throws {
         let dir = directory.url
         try await AccountSession.run {
-            let wanted = try StorePrivacyCLI.wantedApp(app, dir: dir)
-            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam()), verbose: trace.verbose)
+            let project = try directory.project()
+            let wanted = try StorePrivacyCLI.wantedApp(app, dir: dir, project: project)
+            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team ?? project?.team, saved: AccountSession.savedTeam()),
+                                                                      verbose: trace.verbose)
             defer { transport.invalidate() }
             let target = try await StorePrivacyCLI.resolve(wanted, apps: ASCWebApps(asc: session.asc))
             let cli = StorePrivacyCLI(remote: ASCWebPrivacy(asc: session.asc), json: output.json, say: StorePushCLI.standardError)
@@ -71,7 +73,7 @@ struct StorePrivacyPushCommand: AsyncParsableCommand {
         """)
 
     @OptionGroup var directory: StoreDirOption
-    @Option(help: ArgumentHelp("The app: its app ID or bundle identifier (default: app.yml's bundleID, else xless.yml's).", valueName: "app"))
+    @Option(help: ArgumentHelp("The app: its app ID or bundle identifier (default: app.yml's bundleID, else --config's or xless.yml's).", valueName: "app"))
     var app: String?
     @Flag(help: "Print the plan and stop: nothing is sent.") var dryRun = false
     @OptionGroup var team: TeamOption
@@ -84,8 +86,10 @@ struct StorePrivacyPushCommand: AsyncParsableCommand {
         let dir = directory.url
         try await AccountSession.run {
             let privacy = try StorePrivacyCLI.check(dir: dir, say: StorePushCLI.standardError)
-            let wanted = try StorePrivacyCLI.wantedApp(app, dir: dir)
-            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam()), verbose: trace.verbose)
+            let project = try directory.project()
+            let wanted = try StorePrivacyCLI.wantedApp(app, dir: dir, project: project)
+            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team ?? project?.team, saved: AccountSession.savedTeam()),
+                                                                      verbose: trace.verbose)
             defer { transport.invalidate() }
             let target = try await StorePrivacyCLI.resolve(wanted, apps: ASCWebApps(asc: session.asc))
             let cli = StorePrivacyCLI(remote: ASCWebPrivacy(asc: session.asc), json: output.json, say: StorePushCLI.standardError)
@@ -121,12 +125,13 @@ struct StorePrivacyCLI {
     let json: Bool
     let say: @Sendable (String) -> Void
 
-    /// `--app`, else app.yml's bundleID, else xless.yml's.
-    static func wantedApp(_ flag: String?, dir: URL) throws -> String {
+    /// `--app`, else app.yml's bundleID, else the project configuration's (`--config`, or the xless.yml next to `dir`).
+    static func wantedApp(_ flag: String?, dir: URL, project: StoreProject?? = nil) throws -> String {
         let existing = ManifestReader.read(dir).manifest.app
-        guard let wanted = flag ?? existing.bundleID ?? StorePlatform.inheritedBundleID(manifestDir: dir, platform: existing.platform) else {
-            throw XlessError(.account, "no app: no --app, no bundleID in \(dir.lastPathComponent)/app.yml and no xless.yml next to it",
-                             fix: "pass --app <app ID or bundle ID> (see `xless apps list`)")
+        let project = project ?? StoreProject.nextTo(manifestDir: dir)
+        guard let wanted = flag ?? existing.bundleID ?? project?.bundleID(for: existing.platform) else {
+            throw XlessError(.account, "no app: no --app, no bundleID in \(dir.lastPathComponent)/app.yml and \(project.map { "no bundle ID in \($0.name) for its platform" } ?? "no xless.yml next to it")",
+                             fix: "pass --app <app ID or bundle ID> (see `xless apps list`), or the app's overlay with --config")
         }
         return wanted
     }

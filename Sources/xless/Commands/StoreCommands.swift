@@ -27,11 +27,34 @@ struct StoreCommand: AsyncParsableCommand {
         subcommands: [StorePullCommand.self, StoreValidateCommand.self, StorePushCommand.self, StorePrivacyCommand.self])
 }
 
-/// `--dir` shared by the store commands.
+/// `--dir` and `--config` shared by the store and release commands.
 struct StoreDirOption: ParsableArguments {
-    @Option(help: ArgumentHelp("The manifest directory.", valueName: "dir")) var dir: String = "appstore"
+    @Option(help: ArgumentHelp("The manifest directory (default: appstore/ next to --config, else ./appstore).", valueName: "dir"))
+    var dir: String?
+    @Option(help: ArgumentHelp("The app's overlay (type: tauri, cargo or react-native): its bundle ID and team are the default when app.yml has no bundleID and --team is not given (default: the xless.yml next to the manifest directory).",
+                               valueName: "file"))
+    var config: String?
 
-    var url: URL { URL(fileURLWithPath: dir).standardizedFileURL }
+    var configURL: URL? { config.map { URL(fileURLWithPath: $0).standardizedFileURL } }
+
+    var url: URL {
+        if let dir { return URL(fileURLWithPath: dir).standardizedFileURL }
+        if let configURL { return configURL.deletingLastPathComponent().appendingPathComponent("appstore") }
+        return URL(fileURLWithPath: "appstore").standardizedFileURL
+    }
+
+    /// How messages name the directory.
+    var name: String { dir ?? (config == nil ? "appstore" : url.path) }
+
+    /// The project configuration the manifest inherits from: the overlay (its errors stop the command), else the
+    /// xless.yml next to the directory, else none.
+    func project() throws -> StoreProject? {
+        if let configURL { return try StoreProject.overlay(configURL) }
+        return StoreProject.nextTo(manifestDir: url)
+    }
+
+    /// What to say when no app is known.
+    var noConfig: String { config == nil ? "no xless.yml next to it" : "no bundle ID in \(config!) for this platform" }
 }
 
 enum StorePlatform {
@@ -46,12 +69,6 @@ enum StorePlatform {
         }
     }
 
-    /// The bundle ID of the xless.yml next to the manifest directory, for the manifest's platform; nil without one.
-    static func inheritedBundleID(manifestDir: URL, platform: String?) -> String? {
-        let file = manifestDir.deletingLastPathComponent().appendingPathComponent("xless.yml")
-        guard FileManager.default.fileExists(atPath: file.path), let config = try? ProjectConfig.load(from: file) else { return nil }
-        return config.bundleID(for: platform == "MAC_OS" ? .macos : .ios)
-    }
 }
 
 struct StorePullCommand: AsyncParsableCommand {
@@ -75,7 +92,7 @@ struct StorePullCommand: AsyncParsableCommand {
         """)
 
     @OptionGroup var directory: StoreDirOption
-    @Option(help: ArgumentHelp("The app: its app ID or bundle identifier (default: app.yml's bundleID, else xless.yml's).", valueName: "app"))
+    @Option(help: ArgumentHelp("The app: its app ID or bundle identifier (default: app.yml's bundleID, else --config's or xless.yml's).", valueName: "app"))
     var app: String?
     @Option(help: ArgumentHelp("ios, macos, tvos or visionos.", valueName: "platform")) var platform: String?
     @Option(help: ArgumentHelp("The App Store version to read, e.g. 1.2.", valueName: "version")) var appVersion: String?
@@ -101,11 +118,12 @@ struct StorePullCommand: AsyncParsableCommand {
         try await AccountSession.run {
             let existing = ManifestReader.read(dir).manifest.app
             let platform = self.platform.flatMap(StorePlatform.parse)
-            guard let wanted = app ?? existing.bundleID ?? StorePlatform.inheritedBundleID(manifestDir: dir, platform: platform ?? existing.platform) else {
-                throw XlessError(.account, "no app to pull: no --app, no bundleID in \(directory.dir)/app.yml and no xless.yml next to it",
-                                 fix: "pass --app <app ID or bundle ID> (see `xless apps list`)")
+            let project = try directory.project()
+            guard let wanted = app ?? existing.bundleID ?? project?.bundleID(for: platform ?? existing.platform) else {
+                throw XlessError(.account, "no app to pull: no --app, no bundleID in \(directory.name)/app.yml and \(directory.noConfig)",
+                                 fix: "pass --app <app ID or bundle ID> (see `xless apps list`)\(directory.config == nil ? ", or --config <overlay>" : "")")
             }
-            let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
+            let session = try AccountSession.open(team: team.team ?? project?.team, verbose: trace.verbose)
             let found = try await ASCApps(resources: session.resources).resolve(wanted)
             let client = session.client
             let pull = StorePull(resources: session.resources, download: { url, file in try await StoreDownload.fetch(url, to: file, client: client) },
@@ -179,7 +197,7 @@ struct StoreValidateCommand: ParsableCommand {
     @OptionGroup var output: JSONOption
 
     func run() throws {
-        let result = StoreValidation.run(dir: directory.url, draft: draft, json: output.json)
+        let result = StoreValidation.run(dir: directory.url, project: try directory.project(), draft: draft, json: output.json)
         FileHandle.standardError.write(Data(result.stderr.utf8))
         print(result.stdout, terminator: "")
         if result.failed { throw ExitCode(Stage.account.exitCode) }
@@ -196,8 +214,13 @@ enum StoreValidation {
     }
 
     static func run(dir: URL, draft: Bool, json: Bool) -> (stdout: String, stderr: String, failed: Bool) {
+        run(dir: dir, project: StoreProject.nextTo(manifestDir: dir), draft: draft, json: json)
+    }
+
+    /// - Parameter project: where app.yml's missing bundleID comes from.
+    static func run(dir: URL, project: StoreProject?, draft: Bool, json: Bool) -> (stdout: String, stderr: String, failed: Bool) {
         let read = ManifestReader.read(dir)
-        let inherited = read.manifest.app.bundleID == nil ? StorePlatform.inheritedBundleID(manifestDir: dir, platform: read.manifest.app.platform) : nil
+        let inherited = read.manifest.app.bundleID == nil ? project?.bundleID(for: read.manifest.app.platform) : nil
         let exists = FileManager.default.fileExists(atPath: dir.path)
         let found = read.issues + (!exists ? [] : ManifestValidator.validate(read.manifest, at: dir, draft: draft, inheritedBundleID: inherited, checkApp: read.appReadable))
         // Errors first, each kind in the order found.
@@ -288,8 +311,9 @@ struct StorePushCommand: AsyncParsableCommand {
     func run() async throws {
         let dir = directory.url
         try await AccountSession.run {
-            let (manifest, bundleID) = try StorePushCLI.check(dir: dir, say: StorePushCLI.standardError)
-            let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
+            let project = try directory.project()
+            let (manifest, bundleID) = try StorePushCLI.check(dir: dir, project: project, say: StorePushCLI.standardError)
+            let session = try AccountSession.open(team: team.team ?? project?.team, verbose: trace.verbose)
             // App Privacy has no API: it goes through the Apple ID web session, opened only when app.yml has answers.
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if try StorePrivacyCLI.storePushNeedsWeb(manifest: manifest, parts: options.parts, explicit: !only.isEmpty,
@@ -324,9 +348,11 @@ struct StorePushCLI {
 
     /// The manifest and its app's bundle ID; its errors (as `store validate --draft` finds them) stop the push with
     /// nothing read or sent.
-    static func check(dir: URL, say: (String) -> Void) throws -> (StoreManifest, String) {
+    /// - Parameter project: where app.yml's missing bundleID comes from (default: the xless.yml next to `dir`).
+    static func check(dir: URL, project: StoreProject?? = nil, say: (String) -> Void) throws -> (StoreManifest, String) {
         let read = ManifestReader.read(dir)
-        let inherited = read.manifest.app.bundleID == nil ? StorePlatform.inheritedBundleID(manifestDir: dir, platform: read.manifest.app.platform) : nil
+        let project = project ?? StoreProject.nextTo(manifestDir: dir)
+        let inherited = read.manifest.app.bundleID == nil ? project?.bundleID(for: read.manifest.app.platform) : nil
         let exists = FileManager.default.fileExists(atPath: dir.path)
         let found = read.issues + (!exists ? [] : ManifestValidator.validate(read.manifest, at: dir, draft: true, inheritedBundleID: inherited, checkApp: read.appReadable))
         let errors = found.filter { $0.severity == .error }
@@ -336,7 +362,8 @@ struct StorePushCLI {
                              fix: "fix \(errors.count == 1 ? "it" : "them") (`xless store validate --draft` lists them), then re-run")
         }
         guard let bundleID = read.manifest.app.bundleID ?? inherited else {
-            throw XlessError(.account, "no app to push to: no bundleID in \(dir.lastPathComponent)/app.yml and no xless.yml next to it", fix: "add `bundleID: com.example.app` to app.yml")
+            throw XlessError(.account, "no app to push to: no bundleID in \(dir.lastPathComponent)/app.yml and no \(project?.name ?? "xless.yml next to it") bundle ID for its platform",
+                             fix: "add `bundleID: com.example.app` to app.yml (or pass the app's overlay with --config)")
         }
         return (read.manifest, bundleID)
     }

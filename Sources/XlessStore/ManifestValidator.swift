@@ -64,7 +64,8 @@ public enum ManifestValidator {
 
     /// - Parameters:
     ///   - dir: the manifest directory (its name starts every issue's path).
-    ///   - inheritedBundleID: the bundle ID of the project next to the manifest (`xless.yml`), used when `app.yml` has none.
+    ///   - inheritedBundleID: the bundle ID of the project configuration (`xless.yml` next to the manifest, or the overlay
+    ///     given with `--config`), used when `app.yml` has none.
     ///   - checkApp: false when `app.yml` is missing or could not be read (the reader said why): its values are not
     ///     checked, so one bad value does not also report every key as missing.
     public static func validate(_ manifest: StoreManifest, at dir: URL, draft: Bool = false, inheritedBundleID: String? = nil,
@@ -105,7 +106,7 @@ public enum ManifestValidator {
                     error(appPath, "bundleID \(id) is not an explicit bundle identifier", "use the app's bundle ID, e.g. com.example.app")
                 }
             } else if inheritedBundleID == nil {
-                error(appPath, "no bundleID, and no usable xless.yml next to \(name)/ to take it from", "add `bundleID: com.example.app` to app.yml")
+                error(appPath, "no bundleID, and no usable xless.yml next to \(name)/ to take it from", "add `bundleID: com.example.app` to app.yml (or pass the app's overlay with --config)")
             }
             if let p = app.platform, !ManifestValidator.platforms.contains(p) {
                 error(appPath, "platform \(p) is not one App Store Connect knows", "use one of \(oneOf(ManifestValidator.platforms))")

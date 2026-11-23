@@ -17,6 +17,8 @@ struct ReleaseWanted: Sendable, Equatable {
     var platform: String?
     /// The version string; nil: the command's default version.
     var version: String?
+    /// The team of the project configuration (`--config`, xless.yml), for when --team is not given.
+    var team: String? = nil
 }
 
 /// What the `xless release` commands do once their arguments are valid; returns what goes to standard output and says the
