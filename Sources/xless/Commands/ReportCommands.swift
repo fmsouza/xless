@@ -60,7 +60,7 @@ struct ReportsSalesDownloadCommand: AsyncParsableCommand {
         commandName: "download",
         abstract: "Download one sales report: <TYPE>_<SUBTYPE>_<FREQUENCY>_<vendor>_<date>.tsv in --out.",
         discussion: """
-        --date is the day (YYYY-MM-DD) of a daily report, the last day of the week (YYYY-MM-DD, a Sunday) of a weekly \
+        --date is the day (YYYY-MM-DD) of a daily report, the last day of the week (YYYY-MM-DD) of a weekly \
         one, the month (YYYY-MM) of a monthly one and the year (YYYY) of a yearly one. Each type has its own subtypes, \
         frequencies and versions (developer.apple.com/documentation/appstoreconnectapi/get-v1-salesreports); without \
         --report-version, Apple's default for the type is used.
