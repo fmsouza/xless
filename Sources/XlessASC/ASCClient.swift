@@ -60,6 +60,8 @@ public struct ASCClient: Sendable {
     /// What the responses' `X-Rate-Limit` headers said; warns when the hourly budget is nearly spent.
     public let rateLimits: ASCRateLimitMonitor
     public static let maxAttempts = 5
+    /// The issuer ID of the key in use: its App Store Connect team (provider), never secret.
+    public var issuerID: String { credentials.issuerID }
     /// The longest `Retry-After` waited for. A longer one (the hourly budget is spent) fails at once, saying how long.
     static let maxRetryAfter = 60
 

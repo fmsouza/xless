@@ -93,7 +93,10 @@ App Store Connect's New App dialog only offers bundle IDs that are already regis
 
 ## 5. App record
 
-App Store Connect → My Apps → + → New App, choosing the bundle ID registered in step 4 (for iOS, `platforms.ios.bundleID` if you override it). The API cannot create app records; `xless upload` fails until this exists. macOS Developer ID builds do not need an app record.
+`xless upload` fails until the app record exists. macOS Developer ID builds do not need one. The API cannot create app records, so either:
+
+- with xless: `xless apps create --bundle-id <bundleID> --name "<App Store name>" --sku <SKU> --locale en-US` (for iOS, `platforms.ios.bundleID` if you override it; add `--platform macos` for a Mac App Store app). It signs in with your Apple ID once (the [web session](apple-account.md#the-apple-id-web-session)), reports an app that already exists instead of creating a second one, and offers to register a bundle ID that step 4 has not ([`xless apps`](apple-account.md#xless-apps)); or
+- by hand: App Store Connect → Apps → + → New App, choosing the bundle ID registered in step 4.
 
 ## 6. Setup (once per Xcode release)
 

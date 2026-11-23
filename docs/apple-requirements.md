@@ -74,7 +74,7 @@ Only for signing and uploading. Building up to `finalize` needs none of this.
 | Apple Distribution certificate and its private key | iOS `sign` | `xless sign bootstrap --type distribution`, on Linux ([bootstrap.md](bootstrap.md#2-apple-distribution-key-ios)) |
 | Developer ID Application certificate and its private key | macOS `sign` | `xless sign bootstrap --type developer-id` ([bootstrap.md](bootstrap.md#3-developer-id-application-key-macos-only)) |
 | A registered bundle ID | `sign`, the app record | developer.apple.com, or the first `xless ship` ([bootstrap.md](bootstrap.md#4-bundle-id-before-the-app-record)) |
-| An App Store Connect app record | `upload` | App Store Connect, by hand: the API cannot create it ([bootstrap.md](bootstrap.md#5-app-record)) |
+| An App Store Connect app record | `upload` | `xless apps create` (Apple ID sign-in: the API cannot create it), or App Store Connect by hand ([bootstrap.md](bootstrap.md#5-app-record)) |
 | Provisioning profiles | `sign` | Created by `xless sign` through the API; nothing to do (other types: [`xless profiles`](apple-account.md#xless-profiles)) |
 | TestFlight testers | delivery to a group | App Store Connect users, added to the group once in the web UI ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)) |
 
