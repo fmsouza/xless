@@ -23,4 +23,29 @@ public struct TracingTransport: HTTPTransport {
             throw error
         }
     }
+
+    /// The request and the response's headers are traced; a streamed body only by its size.
+    public func stream(_ request: URLRequest, chunk: @escaping @Sendable (Data) throws -> Void) async throws -> (HTTPURLResponse, Data) {
+        trace.request(request)
+        let counted = ByteCounter()
+        do {
+            let (response, body) = try await inner.stream(request) { data in
+                counted.add(data.count)
+                try chunk(data)
+            }
+            trace.response(response, body: body.isEmpty ? nil : body)
+            if (200..<300).contains(response.statusCode) { trace.note("< (\(counted.total) bytes streamed)") }
+            return (response, body)
+        } catch {
+            trace.failure(url: request.url, error: error)
+            throw error
+        }
+    }
+}
+
+final class ByteCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func add(_ n: Int) { lock.withLock { count += n } }
+    var total: Int { lock.withLock { count } }
 }

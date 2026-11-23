@@ -18,6 +18,7 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 | Signing keys (`XLESS_DIST_KEY`, `XLESS_DEVID_KEY`, `XLESS_INSTALLER_KEY`, other certificates' keys) | `xless certs create`, `xless sign bootstrap`, `xless provision apply` | Sign apps and packages as your team, until the certificate expires or is revoked |
 | Auth keys (APNs, Sign in with Apple, DeviceCheck, MusicKit `.p8`) | `xless keys create`, `xless provision apply` | Send push notifications to your apps' users, sign tokens as your apps |
 | The App Review demo account's password (`XLESS_DEMO_PASSWORD` or the name app.yml gives) | `xless secrets import`, the environment | Sign in to your app's demo account |
+| Webhook signing secrets (`XLESS_WEBHOOK_SECRET.<webhook ID>`) | `xless webhooks create` (random, made on this machine) | Sign requests that your webhook receiver takes as coming from App Store Connect |
 | Your Apple ID password and two-factor code | typed on the terminal | Everything the Apple ID can do |
 | The Apple ID web session (cookies) | the sign-in | The App Store Connect and developer portal web pages, until Apple expires it |
 | The secret store's passphrase, and the store's data key once unlocked | typed on the terminal | Open every entry of the store |
@@ -193,7 +194,7 @@ Every request is HTTPS. xless sends no telemetry.
 
 | Host | What xless sends | Credential | Used by |
 |---|---|---|---|
-| `api.appstoreconnect.apple.com` | The documented App Store Connect API (`/v1`, `/v2`, `/v3`) | API key (a fresh JWT; the `.p8` itself never leaves the machine) | every account command that has an API, `xless api`, `sign`, `upload`, TestFlight delivery, `next-build`, `store pull`/`push`, `release`, `iap`, `subscriptions`, `sandbox-testers`, `provision` |
+| `api.appstoreconnect.apple.com` | The documented App Store Connect API (`/v1`, `/v2`, `/v3`) | API key (a fresh JWT; the `.p8` itself never leaves the machine) | every account command that has an API, `xless api`, `sign`, `upload`, TestFlight delivery, `next-build`, `store pull`/`push`, `release`, `iap`, `subscriptions`, `sandbox-testers`, `reviews`, `reports`, `webhooks`, `provision` |
 | The upload and download addresses App Store Connect hands out | The bytes of builds, screenshots, previews and documents (`PUT` to the presigned addresses an upload reservation returns); `store pull` downloads media from the addresses Apple lists | none: the address carries Apple's own authorization; xless adds no header | `upload`, `store push`, `store pull` |
 | Apple's notary service, through rcodesign | The app or disk image to notarize | API key (a JWT rcodesign makes from the key file) | macOS `package` |
 | `idmsa.apple.com` | The Apple ID sign-in: SRP-6a (the password itself is never sent, only proofs derived from it), the two-factor code | the Apple ID | `xless auth login` and every web-session command, `xless xcode download` |

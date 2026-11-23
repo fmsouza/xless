@@ -49,6 +49,9 @@ public struct HTTPTrace: Sendable {
 
     func emit(_ text: String) { sink(Self.hidden.scrub(text)) }
 
+    /// A line of the trace's own (`< (1234 bytes streamed)`), scrubbed like the rest.
+    public func note(_ text: String) { emit(text) }
+
     /// A request that got no response. Only the error's kind is shown: error descriptions carry the full URL.
     public func failure(url: URL?, error: any Error) {
         let kind = (error as? URLError).map { "URLError \($0.code.rawValue)" } ?? String(describing: type(of: error))

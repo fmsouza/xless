@@ -48,7 +48,10 @@ EOF
 | Review submission, release, phased release | `appStoreVersions`, `reviewSubmissions`, `reviewSubmissionItems`, `appStoreVersionReleaseRequests`, `appStoreVersionPhasedReleases` | | [`xless release`](../apple-account.md#xless-release) |
 | In-app purchases, subscriptions | `inAppPurchases` (v2), `inAppPurchaseLocalizations`, `inAppPurchasePriceSchedules`, `inAppPurchaseAvailabilities`, `inAppPurchaseAppStoreReviewScreenshots`, `inAppPurchaseVersions`, `inAppPurchaseSubmissions`, `subscriptionGroups`, `subscriptionGroupLocalizations`, `subscriptions`, `subscriptionLocalizations`, `subscriptionPrices`, `subscriptionPricePoints`, `subscriptionAvailabilities`, `subscriptionAppStoreReviewScreenshots`, `subscriptionVersions`, `subscriptionGroupVersions`, `subscriptionSubmissions` | | [`xless store`](../appstore-manifest.md#in-app-purchases-and-subscriptions), [`xless iap`, `xless subscriptions`](../apple-account.md#xless-iap-and-xless-subscriptions), `xless release submit`; offers, promoted purchases and images: `xless api` |
 | Sandbox testers | `sandboxTesters` (v2: list, update), `sandboxTestersClearPurchaseHistoryRequest` | | [`xless sandbox-testers`](../apple-account.md#xless-iap-and-xless-subscriptions) (created in App Store Connect only) |
-| Customer reviews, sales and finance reports, analytics, webhooks | `customerReviews`, `customerReviewResponses`, `salesReports`, `financeReports`, `analyticsReport*`, `webhooks` | | not yet: `xless api` |
+| Customer reviews | `customerReviews`, `customerReviewResponses` | | [`xless reviews`](../apple-account.md#xless-reviews); review summarizations: `xless api` |
+| Sales and finance reports | `salesReports`, `financeReports` | | [`xless reports`](../apple-account.md#xless-reports) |
+| Webhooks | `webhooks` | | [`xless webhooks`](../apple-account.md#xless-webhooks); deliveries, pings, updates: `xless api` |
+| Analytics reports | `analyticsReportRequests`, `analyticsReports`, `analyticsReportInstances`, `analyticsReportSegments` | | `xless api` |
 | Agreements (Paid Apps, tax, banking) | none | detected only (`/olympus/v1/contractMessages`): a person accepts legal terms in a browser | the error names the page |
 
 `xless api` reaches every documented operation, including the ones xless has no command for (Game Center, App Clips,
