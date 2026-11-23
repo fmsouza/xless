@@ -78,7 +78,21 @@ Only for signing and uploading. Building up to `finalize` needs none of this.
 | Provisioning profiles | `sign` | Created by `xless sign` through the API; nothing to do (other types: [`xless profiles`](apple-account.md#xless-profiles)) |
 | TestFlight testers | delivery to a group | Internal: App Store Connect users ([`xless users invite`](apple-account.md#xless-users)); external: any address, once Apple approves the build. Added by `testflight.testers` in xless.yml or [`xless testflight testers add`](apple-account.md#xless-testflight) |
 
-All of it is done in a web browser or with xless itself; none of it needs a Mac.
+All of it is done with xless itself, or in a web browser; none of it needs a Mac. Only the membership, Apple's
+agreements and, the first time, App Store Connect API access need a browser ([account.md](account.md#before-you-start)).
+
+### The account endpoints xless calls
+
+| Interface | Host | Credential | For |
+|---|---|---|---|
+| The App Store Connect API (documented, 4.6.1) | `api.appstoreconnect.apple.com` | the API key, as a 15-minute JWT per request | everything that has an API: identifiers, capabilities, certificates, profiles, devices, the app record (but creating it), the listing, screenshots, pricing, builds, TestFlight, users, the review submission and the release |
+| App Store Connect's web interface (undocumented) | `appstoreconnect.apple.com` (`/olympus/v1`, `/iris/v1`) | the Apple ID web session | creating the app record, App Store Connect API keys, App Privacy, teams |
+| The developer portal's web interface (undocumented) | `developer.apple.com` (`/services-account/…`) | the Apple ID web session | teams, app groups, iCloud containers, auth keys (APNs, Sign in with Apple, DeviceCheck, MusicKit) |
+| Apple ID sign-in | `idmsa.apple.com` | the Apple ID, password (SRP: never sent) and two-factor code | every web-session command, `xless xcode download` |
+
+[research/asc-account-coverage.md](research/asc-account-coverage.md) lists what the API covers, read from Apple's
+OpenAPI file, and every web endpoint with the open-source client it comes from; [security.md](security.md#what-goes-to-which-host)
+has every host with what is sent to it.
 
 ## Maintainers only (on a Mac)
 

@@ -6,15 +6,19 @@ an `xless.yml` project and for the overlay apps (Tauri, React Native).
 
 ## Before you start
 
-Do the one-time Apple setup in [bootstrap.md](bootstrap.md): an App Store Connect API key, a distribution key (iOS)
-or a Developer ID key (macOS), the bundle ID and the app record. In your `xless.yml` (or overlay), set `teamID` to your
-team and `bundleID` to the registered bundle ID; the sample's values are placeholders.
+Do the one-time Apple setup from the terminal: an App Store Connect API key (`xless auth api-key create`), then
+`xless provision apply`, which registers the bundle ID, creates the distribution key (iOS) or the Developer ID key
+(macOS) with its certificate, and, with an `appstore/` listing, the app record ([bootstrap.md](bootstrap.md), [account.md](account.md)). In your
+`xless.yml` (or overlay), set `teamID` to your team and `bundleID` to the app's bundle ID; the sample's values are
+placeholders.
 
 ## Secrets
 
 Secrets come from environment variables, from a `NAME_FILE` variable naming a file that holds the value, or, on your
-own machine, from the encrypted secret store ([secrets.md](secrets.md)), in that order. They are never command-line
-flags and are never logged.
+own machine, from the encrypted secret store ([secrets.md](secrets.md)), in that order. The keys `xless auth api-key
+create`, `xless certs create`, `xless sign bootstrap` and `xless provision apply` make are already in the store, under
+`NAME@<TEAM_ID>`, and a project's run takes its `teamID`'s entries: nothing to set on your own machine. They are never
+command-line flags and are never logged ([security.md](security.md)).
 
 | Variable | Purpose | Needed for |
 |---|---|---|

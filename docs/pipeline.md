@@ -3,9 +3,10 @@
 xless takes an app's source and produces what Apple's own tools would:
 
 - **iOS and iPadOS:** a signed `.ipa`, uploaded to App Store Connect and delivered to TestFlight.
-- **macOS:** a Developer ID signed, notarized and stapled `.app` inside a `.zip`. A Tauri v2 macOS app gets a `.dmg`
-  instead ([tauri.md](tauri.md#macos), [cargo.md](cargo.md#macos)). There is no Mac App Store `.pkg` ([why](research/mas-pkg.md)) and no upload
-  step for macOS.
+- **macOS:** a Developer ID signed, notarized and stapled `.app` inside a `.zip`. A Tauri v2 or Cargo macOS app gets a
+  `.dmg` instead ([tauri.md](tauri.md#macos), [cargo.md](cargo.md#macos)), and with `distribution: app-store` also a
+  Mac App Store `.pkg`, uploaded to TestFlight ([the lane](signing-and-testflight.md#macos-app-store-lane-testflight);
+  not yet confirmed by a real upload: [research/mas-pkg.md](research/mas-pkg.md)).
 
 It does this on Linux, without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
 from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releases are supported: 27.2 (27B52), 27.1
@@ -150,5 +151,9 @@ ships them that way), so a debug map alone does not mean the app's code has debu
 - `xless sdk meta|install` manage a native SDK install ([native-install.md](native-install.md)).
 - `xless storyboard compile` compiles a launch storyboard without ibtool ([xless-yml.md](xless-yml.md#launch-storyboard)).
 - `xless sign bootstrap` creates signing keys and certificates ([bootstrap.md](bootstrap.md)).
+- The Apple account commands set up what the stages need from Apple and take over after `upload`:
+  `xless provision` (the bundle IDs, certificates, profiles, app record and listing a project declares), `xless builds`
+  (processing, export compliance), `xless testflight`, `xless store push` and `xless release` (the App Store). They
+  are not stages: [account.md](account.md) by task, [apple-account.md](apple-account.md) for every command.
 - `xless clean` removes the images, volumes and cache xless made, to free disk space ([uninstall.md](uninstall.md)).
 - `xless help <command>` describes any command.

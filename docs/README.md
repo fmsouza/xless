@@ -10,14 +10,20 @@ build. The pages below go further.
 - [xless-yml.md](xless-yml.md): the `xless.yml` reference, for Swift package apps.
 - [signing-and-testflight.md](signing-and-testflight.md): secrets, build numbers, `xless run` up to TestFlight, the
   notarized DMG, and running in CI.
+- [account.md](account.md): your Apple account from the terminal, by task: the first app from zero with
+  `xless provision`, adding a device, rotating a certificate, inviting a tester, releasing.
 - [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, and how the
   pipeline reads it.
-- [apple-account.md](apple-account.md): the Apple account commands (`xless auth`, `xless team`, `xless devices`,
-  `xless bundle-ids`, `xless merchant-ids`, `xless certs`, `xless release`, `xless provision`, `xless api`, and the shared `--team`, `--json`, `--yes`, `--verbose`), the
-  Apple ID web session, their JSON output, rate limits and `[account]` errors (exit code 20).
+- [security.md](security.md): the threat model and what xless guarantees: the secret store's format, the opt-in
+  caches, process hardening, what goes to which Apple host, the web-session commands, and how to wipe everything.
+- [apple-account.md](apple-account.md): the reference of every Apple account command (`xless auth`, `team`,
+  `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `app-groups`, `icloud-containers`, `keys`, `apps`,
+  `store`, `builds`, `users`, `testflight`, `release`, `provision`, `api`, and the shared `--team`, `--json`, `--yes`,
+  `--verbose`), the Apple ID web session, their JSON output, rate limits and `[account]` errors (exit code 20).
 - [appstore-manifest.md](appstore-manifest.md): the App Store listing as an `appstore/` directory, `xless store pull`,
   `xless store validate` and `xless store push`.
-- [bootstrap.md](bootstrap.md): the one-time Apple setup (API key, certificates, bundle ID, app record).
+- [bootstrap.md](bootstrap.md): the one-time Apple setup from the terminal (API key, `xless provision`, or bundle ID,
+  certificates and app record one at a time), and the same in a browser.
 - [react-native.md](react-native.md): React Native / Expo iOS apps, with app extensions and simulator builds.
 - [tauri.md](tauri.md): Tauri v2 apps, for iOS and macOS.
 - [cargo.md](cargo.md): plain Cargo apps (a Rust binary with its own event loop), for iOS and macOS.
@@ -46,6 +52,7 @@ build. The pages below go further.
 Measurements and decisions behind the code, in [research/](research/):
 
 - [App Store Connect build uploads](research/asc-build-uploads.md) and [TestFlight delivery](research/asc-testflight.md)
+- [What the App Store Connect API covers](research/asc-account-coverage.md), and the web endpoints xless uses for the rest
 - [Why there is no Mac App Store `.pkg`](research/mas-pkg.md)
 - [Parity known gaps](research/parity-known-gaps.md) between Xcode builds and xless builds
 - [Asset and storyboard tools by Xcode version](research/xcode-tools-by-version.md)

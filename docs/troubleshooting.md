@@ -2,7 +2,8 @@
 
 xless errors read `[stage] cause — fix`: the last part says what to do. Exit codes: 2 is `xless run`'s own
 (arguments, a missing file or secret), 10 config, 11 SDK and `xless setup`, 19 prepare, 12 build, 13 assets,
-14 finalize, 15 sign, 16 package, 17 upload ([pipeline.md](pipeline.md#stages)). Tauri and React Native apps have
+14 finalize, 15 sign, 16 package, 17 upload ([pipeline.md](pipeline.md#stages)); the Apple account commands exit 20
+(`xless release submit` also 21 and 22), and `xless secrets` exits 10 ([below](#apple-account-commands)). Tauri and React Native apps have
 their own tables: [tauri.md](tauri.md#troubleshooting), [react-native.md](react-native.md#troubleshooting).
 
 ## Installing
@@ -22,7 +23,8 @@ To install a given release, set `XLESS_VERSION`; to install somewhere else, set 
 curl -fsSL https://github.com/fmsouza/xless/releases/latest/download/install.sh | XLESS_VERSION=v0.1.0 XLESS_PREFIX=$HOME/opt/xless sh
 ```
 
-Running the install line again upgrades xless in place: the binary and `share/xless` together. xless checks that the two
+Running the install line again upgrades xless in place: the binary and `share/xless` together (a
+[secret store](secrets.md) in `share/xless/vault`, where it is with the default prefix, is kept). xless checks that the two
 come from the same release (the share's `VERSION` file) whenever it reads the share.
 
 ## `xless xcode download`
@@ -161,6 +163,30 @@ Other things worth knowing:
 - The App Store Connect API cannot create the app record: `xless apps create` does it through the Apple ID web session
   (undocumented, so it may break when Apple changes its pages), or create it by hand after the bundle ID is registered
   ([bootstrap.md](bootstrap.md#5e-app-record)).
+
+## Apple account commands
+
+Errors read `[account] cause — fix` and exit with code **20** ([apple-account.md](apple-account.md#errors) maps App
+Store Connect's 401, 403, 404, 409 and 429 to their fixes). `xless release submit` exits **21** when its pre-flight
+found problems and **22** when the version is already in review; nothing was sent in either case. `xless secrets`
+reports its own errors as `[config]`, exit 10.
+
+| Symptom | What to do |
+|---|---|
+| `missing secret ASC_KEY_ID — set ASC_KEY_ID or ASC_KEY_ID_FILE, or keep the API key in the secret store …` | No API key resolves: create one (`xless auth api-key create`), import yours (`xless auth api-key import`), or set the variables. `xless auth status` shows what resolves, from where, without reading a secret. |
+| `there is no secret store at …` (exit 10) | `xless secrets init` first ([secrets.md](secrets.md)). |
+| `the secret store is locked and there is no terminal to ask its passphrase on` | The command runs without a terminal (a script, `nohup`, CI). Run it in a terminal, or unlock first in the same login session: `xless secrets unlock --remember 30m` (Linux). CI uses `NAME` / `NAME_FILE` variables instead of the store. |
+| `the secret store has several entries for ASC_KEY_P8: …` | Pick the team: `--team <TEAM_ID>`, or `xless team use <TEAM_ID>`; entries of a team are named `NAME@<TEAM_ID>` or recorded with `--team-id`. |
+| `… is accessible to other users`, `… is a symlink`, `… belongs to another user` | xless refuses a store others could read or swap, and never fixes it: `chmod 700 ~/.local/share/xless/vault`, `chmod 600` the files in it, or move the symlink away. |
+| `the secret store failed its integrity check` | The file, or one entry, was altered or damaged: nothing was read from it. Restore it from a backup, or remove it and import the keys again ([security.md](security.md#wiping-everything)). |
+| `signing in to Apple needs an interactive terminal` | A web-session command ran without a terminal. Run it in one, or keep a session first in this login session: `xless auth login --keep 30m`. |
+| `… hardware security key …`, `… old two-step verification …` | xless supports two-factor codes only; use an Apple ID with codes (another Admin of the team) or the [browser way](bootstrap.md#appendix-the-same-in-a-browser). |
+| `Apple has agreements or terms pending for this account …` | xless never accepts legal terms. The Account Holder accepts them on the page the error names (App Store Connect > Business, or developer.apple.com/account), then run the command again. |
+| `the kernel keyring is not available here (macOS, or a container that blocks it)` | `--remember` and `--keep` need the Linux kernel keyring. Leave them out: each command asks again. |
+| A web-session command fails with `App Store Connect answered HTTP …` or `the developer portal …` | These interfaces are undocumented and may have changed. The error names the page to do it in a browser meanwhile; please report it with the `--verbose` trace (it is redacted: [security.md](security.md#process-hardening)). |
+| `HTTP 401` after `xless auth login --keep` | Apple ended the kept session early: `xless auth logout`, then sign in again. |
+| `HTTP 403` from the App Store Connect API | The key's role is too narrow: the fix names the role and `xless auth api-key create --role <ROLE>`. |
+| `API key <ID> was created, but xless does not have its private key` | Apple serves a new key's private key once, and the download or the store failed. Revoke that key (`xless auth api-key revoke <ID>`, or `xless keys revoke <ID>` for an auth key) and create another. |
 
 ## Known gaps
 

@@ -20,7 +20,7 @@ infoPlist: Resources/Info.plist
 | Key | Type | Required | Notes |
 |---|---|---|---|
 | `bundleID` | string | yes | Reverse-DNS, e.g. `com.example.app`: dot-separated segments of letters, digits and `-`, at least two segments. |
-| `teamID` | string | yes | Exactly 10 characters, `A-Z` and `0-9`. From developer.apple.com → Membership. `sign` fails if it differs from the team of the App Store Connect key (read from the provisioning profile). |
+| `teamID` | string | yes | Exactly 10 characters, `A-Z` and `0-9`. From `xless team list` (or developer.apple.com → Membership). `xless provision` and a project's run use this team's API key and store entries. `sign` fails if it differs from the team of the App Store Connect key (read from the provisioning profile). |
 | `version` | string | yes | Marketing version (`CFBundleShortVersionString`): 1 to 3 dot-separated integers. Quote it if YAML would read it as a number. |
 | `build` | string or integer | yes | Build number (`CFBundleVersion`): 1 to 3 dot-separated integers. Overridden by `--build-number` or `XLESS_BUILD_NUMBER`. Each upload of a given `version` needs a higher one than every earlier upload, from any machine (see [build numbers](signing-and-testflight.md#build-numbers)). |
 | `platforms` | map | yes | At least one of `ios`, `macos`. Any other key is an error. |
@@ -82,6 +82,10 @@ After `upload` reaches `VALID`, xless (iOS, and the macOS App Store package):
 - adds the `testers` missing from each internal group. An address that is not an App Store Connect user of the team is a warning, not a failure (the check needs an Admin key; without one, Apple decides);
 - with `external`: sets what differs in `external.info` and `external.review` (the demo account's password, read from its secret, only when the account is new, renamed or newly required), reuses or creates each external group (an internal group of that name is an error), adds the build and the missing `external.testers`, and submits the build for beta app review unless it already was or `submit: false`;
 - prints the build number, the groups and `available to N testers` (with the testers added), the beta app review state, and warns about groups with 0 testers. Afterwards, [`xless testflight`](apple-account.md#xless-testflight) manages the groups, testers, public links and the review.
+
+[`xless provision apply`](apple-account.md#xless-provision) creates the groups of `groups` and `external.groups` ahead
+of the first upload (and reports a group of the other kind as a blocker); the testers, the beta information and the
+submission are left to the ship.
 
 A failure here exits 17 as `[upload] …`; the build is already uploaded and processed, so the message says so (ship again with a higher build number, or finish in App Store Connect). One-command usage: [signing-and-testflight.md](signing-and-testflight.md#one-command-testflight).
 

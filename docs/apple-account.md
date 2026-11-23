@@ -23,7 +23,9 @@ endpoint.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
-Use a key with the narrowest role that does the job ([below](#errors)).
+Use a key with the narrowest role that does the job ([below](#errors)). The same commands by task (the first app
+from zero, a new device, a certificate rotation, a tester, a release) are in [account.md](account.md); what they keep
+and send where, in [security.md](security.md).
 
 ## Shared options
 
@@ -103,8 +105,9 @@ If anything fails once the key exists (the download, the store, a body xless can
 `<KEY_ID>` exists, that xless does not have its private key and that it cannot be downloaded again: revoke it with
 `xless auth api-key revoke <KEY_ID>`.
 
-Pick the narrowest role that covers what you plan: `APP_MANAGER` works for apps, the listing, TestFlight, builds,
-certificates and profiles; users and invitations need `ADMIN`; `DEVELOPER` cannot create certificates; `FINANCE`,
+Pick the narrowest role that covers what you plan: `APP_MANAGER` works for apps, the listing, TestFlight, builds and
+the release; bundle IDs, capabilities, devices, certificates and profiles (so `xless provision` and a first `sign`),
+and users and invitations, need `ADMIN` as far as Apple's role descriptions say (not yet checked with a real key); `DEVELOPER` cannot create certificates; `FINANCE`,
 `SALES` and `ACCESS_TO_REPORTS` read reports. App Store Connect never tells a key its own role, so xless records the
 role of the keys it creates (and of imported keys given `--role`), and `xless auth status` shows it.
 
