@@ -108,9 +108,13 @@ struct ProvisionVault: @unchecked Sendable {
     /// A key given in the environment, `NAME` or `NAME_FILE` (the secret store is not asked).
     func environmentKey(_ name: String) throws -> String? { try Secrets(env: env, fallback: nil).optional(name, stage: .account) }
 
-    /// Unlocks the store for `file` (asks the vault's passphrase, once per process).
+    /// Unlocks the store for `file` to store something in it (asks the vault's passphrase, once per process); refuses a
+    /// store a newer xless wrote first.
     func unlock(_ file: SecretCatalog, reason: String) throws {
-        do { try store.unlock(file, remember: nil, reason: reason) } catch { throw XlessError.wrapping(error, stage: .account) }
+        do {
+            try file.requireWritable()
+            try store.unlock(file, remember: nil, reason: reason)
+        } catch { throw XlessError.wrapping(error, stage: .account) }
     }
 
     func open(_ entry: VaultEntry, in file: SecretCatalog, reason: String) throws -> SecretBytes {

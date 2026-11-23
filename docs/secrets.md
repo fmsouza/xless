@@ -20,7 +20,7 @@ xless ship --platform ios                            # asks the passphrase once,
 |---|---|
 | `init` | Creates the store and asks its passphrase twice (at least 8 characters). The passphrase cannot be recovered. |
 | `status` | Where the store is, how many entries it has, and whether it is unlocked. |
-| `list` | Every entry's name, kind, team, key ID, issuer ID, certificate ID, creation and expiry dates. No passphrase needed. |
+| `list` | Every entry's name, kind, team, key ID, issuer ID, certificate ID, certificate type, API key role, auth key services, creation and expiry dates. No passphrase needed. |
 | `import <name> --file <path>` | Adds the file's content. `--kind` (default: from the name), `--team-id`, `--key-id`, `--issuer-id`, `--certificate-id`, `--expires YYYY-MM-DD` record what it is. Then offers to delete the file. |
 | `export <name> --out <path>` | Writes the secret to a new file (mode 0600; an existing file is never overwritten). That copy is in clear: delete it once used. |
 | `rm <name>` | Removes an entry, after asking (`--yes` skips the question). It cannot be recovered. |
@@ -35,18 +35,17 @@ A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID.
 
 [`xless auth api-key create`](apple-account.md#xless-auth-api-key) puts a new App Store Connect API key straight into
 the store (as `ASC_KEY_P8@<TEAM_ID>`, with its key ID, issuer ID, team and role), and `xless auth api-key import`
-checks a `.p8` against App Store Connect before storing it. The role is part of what the seal authenticates when it is
-recorded; an xless older than the one that added it reads such an entry as altered.
+checks a `.p8` against App Store Connect before storing it. Like every recorded field, the role is part of what the
+seal authenticates ([the file](#the-file)).
 
 [`xless certs create`](apple-account.md#xless-certs) and `xless sign bootstrap` generate a certificate's private key
 and seal it into the store before the certificate is requested (as `XLESS_DIST_KEY`, `XLESS_DEVID_KEY`,
 `XLESS_INSTALLER_KEY` or `XLESS_<TYPE>_KEY`, with `@<TEAM_ID>` when a team is selected), then record the certificate's
-ID, type and expiry with it. The type is authenticated the same way as an API key's role.
+ID, type and expiry with it.
 
 [`xless keys create`](apple-account.md#xless-keys) puts a new APNs, Sign in with Apple, DeviceCheck or MusicKit key
 straight into the store (as `XLESS_APNS_KEY@<TEAM_ID>`, `XLESS_SIWA_KEY`, `XLESS_DEVICECHECK_KEY`, `XLESS_MUSICKIT_KEY`
-or `XLESS_AUTH_KEY`, kind `auth-key`, with its key ID, team and services); `xless keys revoke` removes it again. The
-services are authenticated the same way as an API key's role.
+or `XLESS_AUTH_KEY`, kind `auth-key`, with its key ID, team and services); `xless keys revoke` removes it again.
 
 [`xless webhooks create`](apple-account.md#xless-webhooks) makes a webhook's signing secret and keeps it in the store
 as `XLESS_WEBHOOK_SECRET.<webhook ID>` (with `@<TEAM_ID>` when a team is selected, kind `generic`); `xless webhooks
@@ -203,13 +202,32 @@ install prefix that directory is inside the install's `~/.local/share/xless`: ru
 and removing the install by hand removes it with the rest ([uninstall.md](uninstall.md#uninstall)).
 
 Each entry is encrypted with AES-256-GCM under a random 256-bit data key; the data key is encrypted with a key derived
-from the passphrase by scrypt (N = 2^17, r = 8, p = 1, recorded in the file). The names, kinds and IDs are in clear (so
-`list` works without the passphrase) but authenticated with the secret: an entry whose file was altered fails to open,
-with an error, and nothing of it is used. Writes go to a temporary file in the same directory that replaces the store
+from the passphrase by scrypt (N = 2^17, r = 8, p = 1, recorded in the file). The names, kinds, IDs and the rest of
+each entry's metadata are in clear (so `list` works without the passphrase) but authenticated with the secret, every
+field whether it is set or not: an entry whose name, kind or metadata was altered, added or removed in the file fails
+to open, with an error, and nothing of it is used. Writes go to a temporary file in the same directory that replaces the store
 in one step, under a lock, so concurrent commands do not lose each other's changes and a crash never leaves half a
 file.
 
-`passwd` encrypts the data key again under the new passphrase; it does not encrypt the entries again. A copy of the old
+### Store format and older xless releases
+
+The file says which format it has (`"version"`) and the oldest format an xless must know to change it
+(`"minimumReaderVersion"`). This release writes format 2. A store made by an earlier release (format 1, where the
+type, role and services were authenticated only when set) still opens as it is; the first command that changes the
+store with it unlocked (`import`, `passwd`, `xless auth api-key create`, `xless certs create`, …; a remembered
+unlock counts, and nothing extra is asked) seals every entry again with all its fields and moves the file to format 2.
+Commands that only read it change nothing.
+
+An xless older than a store's `minimumReaderVersion` still reads the entries it knows, but refuses to change the file
+(`import`, `rm`, `passwd`, and the account commands that store keys), before asking anything or creating anything at
+Apple, with an error that says to upgrade xless (`[config]`, exit 10 from `xless secrets`; `[account]`, exit 20 from
+the account commands); the file is left as it was. Fields it does not know are written back unchanged whenever it does
+change the file. Releases before format 2 do not open a format-2 store at all ("the secret store is format version 2;
+this xless reads version 1"): after an upgrade has moved the store, going back to such a release means restoring a
+copy of the old file.
+
+`passwd` encrypts the data key again under the new passphrase; it does not encrypt the entries again (except to move
+a store of the first format to format 2). A copy of the old
 file (a backup) still opens with the old passphrase, so after a passphrase leak, revoke the keys at Apple too.
 
 ## What it protects against, and what it does not

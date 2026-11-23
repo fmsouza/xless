@@ -92,11 +92,11 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
     #expect((try? kdf.validate()) != nil)
 }
 
-@Test func anotherVersionOrFormatIsRefused() throws {
+@Test func anotherFormatOrAVersionBelowOneIsRefused() throws {
     let (file, _) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "pass phrase"), kdf: testKDF())
     var json = String(decoding: try file.encoded(), as: UTF8.self)
-    json = json.replacingOccurrences(of: "\"version\" : 1", with: "\"version\" : 2")
-    do { _ = try VaultFile.decode(Data(json.utf8)); Issue.record("accepted version 2") } catch let e as VaultError { #expect(e.kind == .unsupported) }
+    json = json.replacingOccurrences(of: "\"version\" : 2", with: "\"version\" : 0")
+    do { _ = try VaultFile.decode(Data(json.utf8)); Issue.record("accepted version 0") } catch let e as VaultError { #expect(e.kind == .tampered) }
     do { _ = try VaultFile.decode(Data("{\"hello\": 1}".utf8)); Issue.record("accepted junk") } catch let e as VaultError { #expect(e.kind == .tampered) }
     do { _ = try VaultFile.decode(Data("not json".utf8)); Issue.record("accepted junk") } catch let e as VaultError { #expect(e.kind == .tampered) }
 }
@@ -122,7 +122,7 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
 
 @Test func anEntryWithoutARoleKeepsTheAssociatedDataOlderReleasesWrote() {
     // The layout before the role existed: eight length-prefixed fields after the tag, nothing more.
-    let entry = VaultEntry(name: "ASC_KEY_P8", kind: .ascAPIKey, metadata: .init(teamID: "TEAM123456"), sealed: Data())
+    let entry = VaultEntry(name: "ASC_KEY_P8", kind: .ascAPIKey, metadata: .init(teamID: "TEAM123456"), sealed: Data(), format: 1)
     var expected = Data("xless-vault-entry/1".utf8)
     for field in ["ASC_KEY_P8", "asc-api-key", "TEAM123456"] as [String] {
         expected.append(1)
@@ -156,10 +156,10 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
     let meta = VaultEntry.Metadata(teamID: "TEAM123456", certificateID: "CERT1", certificateType: " DISTRIBUTION ")
     #expect(meta.certificateType == "DISTRIBUTION")
     #expect(VaultEntry.Metadata(certificateType: "").certificateType == nil)
-    // Without a type, the associated data is the one older releases wrote.
-    let plain = VaultEntry(name: "X", kind: .signingKey, metadata: .init(teamID: "TEAM123456", certificateID: "CERT1"), sealed: Data())
-    let typed = VaultEntry(name: "X", kind: .signingKey, metadata: meta, sealed: Data())
-    #expect(typed.associatedData.starts(with: plain.associatedData) && typed.associatedData != plain.associatedData)
+    // Format 1: without a type, the associated data is the one older releases wrote.
+    let plain = try #require(VaultEntry(name: "X", kind: .signingKey, metadata: .init(teamID: "TEAM123456", certificateID: "CERT1"), sealed: Data(), format: 1).associatedData)
+    let typed = try #require(VaultEntry(name: "X", kind: .signingKey, metadata: meta, sealed: Data(), format: 1).associatedData)
+    #expect(typed.starts(with: plain) && typed != plain)
     let entry = try VaultCrypto.seal(name: "XLESS_DIST_KEY", kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: "pem"), dataKey: key)
     #expect(try VaultCrypto.open(entry, dataKey: key).utf8String() == "pem")
     for change in [{ (m: inout VaultEntry.Metadata) in m.certificateType = "DEVELOPMENT" }, { $0.certificateType = nil }] {
@@ -168,9 +168,11 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
         #expect(throws: VaultError.self) { try VaultCrypto.open(VaultEntry(name: entry.name, kind: entry.kind, metadata: altered, sealed: entry.sealed), dataKey: key) }
     }
     // A role and a type never read as each other.
-    let role = VaultEntry(name: "X", kind: .signingKey, metadata: .init(role: "DISTRIBUTION"), sealed: Data())
-    let type = VaultEntry(name: "X", kind: .signingKey, metadata: .init(certificateType: "DISTRIBUTION"), sealed: Data())
-    #expect(role.associatedData != type.associatedData)
+    for format in [1, 2] {
+        let role = VaultEntry(name: "X", kind: .signingKey, metadata: .init(role: "DISTRIBUTION"), sealed: Data(), format: format)
+        let type = VaultEntry(name: "X", kind: .signingKey, metadata: .init(certificateType: "DISTRIBUTION"), sealed: Data(), format: format)
+        #expect(role.associatedData != type.associatedData)
+    }
 }
 
 // MARK: auth key services (#91)
@@ -180,10 +182,10 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
     let meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "K1", services: " apns,siwa ")
     #expect(meta.services == "apns,siwa")
     #expect(VaultEntry.Metadata(services: "").services == nil)
-    // Without services, the associated data is the one older releases wrote.
-    let plain = VaultEntry(name: "X", kind: .authKey, metadata: .init(teamID: "TEAM123456", keyID: "K1"), sealed: Data())
-    let withServices = VaultEntry(name: "X", kind: .authKey, metadata: meta, sealed: Data())
-    #expect(withServices.associatedData.starts(with: plain.associatedData) && withServices.associatedData != plain.associatedData)
+    // Format 1: without services, the associated data is the one older releases wrote.
+    let plain = try #require(VaultEntry(name: "X", kind: .authKey, metadata: .init(teamID: "TEAM123456", keyID: "K1"), sealed: Data(), format: 1).associatedData)
+    let withServices = try #require(VaultEntry(name: "X", kind: .authKey, metadata: meta, sealed: Data(), format: 1).associatedData)
+    #expect(withServices.starts(with: plain) && withServices != plain)
     let entry = try VaultCrypto.seal(name: "XLESS_APNS_KEY", kind: .authKey, metadata: meta, secret: SecretBytes(utf8: "p8"), dataKey: key)
     #expect(try VaultCrypto.open(entry, dataKey: key).utf8String() == "p8")
     for change in [{ (m: inout VaultEntry.Metadata) in m.services = "apns" }, { $0.services = nil }] {
@@ -191,7 +193,9 @@ private let p8Meta = VaultEntry.Metadata(teamID: "TEAM123456", keyID: "KEY123456
         change(&altered)
         #expect(throws: VaultError.self) { try VaultCrypto.open(VaultEntry(name: entry.name, kind: entry.kind, metadata: altered, sealed: entry.sealed), dataKey: key) }
     }
-    let role = VaultEntry(name: "X", kind: .authKey, metadata: .init(role: "apns"), sealed: Data())
-    let services = VaultEntry(name: "X", kind: .authKey, metadata: .init(services: "apns"), sealed: Data())
-    #expect(role.associatedData != services.associatedData)
+    for format in [1, 2] {
+        let role = VaultEntry(name: "X", kind: .authKey, metadata: .init(role: "apns"), sealed: Data(), format: format)
+        let services = VaultEntry(name: "X", kind: .authKey, metadata: .init(services: "apns"), sealed: Data(), format: format)
+        #expect(role.associatedData != services.associatedData)
+    }
 }

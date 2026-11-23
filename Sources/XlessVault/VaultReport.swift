@@ -13,10 +13,11 @@ public enum VaultReport {
 
     public static func list(_ file: some SecretEntries) -> String {
         guard !file.entries.isEmpty else { return "The secret store is empty (add a key with `xless secrets import`)." }
-        let header = ["NAME", "KIND", "TEAM", "KEY ID", "ISSUER ID", "CERTIFICATE", "CREATED", "EXPIRES"]
+        let header = ["NAME", "KIND", "TEAM", "KEY ID", "ISSUER ID", "CERTIFICATE", "TYPE", "ROLE", "SERVICES", "CREATED", "EXPIRES"]
         let rows = file.entries.sorted { $0.name < $1.name }.map { e in
-            [e.name, e.kind.rawValue, e.metadata.teamID ?? "-", e.metadata.keyID ?? "-", e.metadata.issuerID ?? "-",
-             e.metadata.certificateID ?? "-", day(e.metadata.created), day(e.metadata.expires)]
+            let m = e.metadata
+            return [e.name, e.kind.rawValue, m.teamID ?? "-", m.keyID ?? "-", m.issuerID ?? "-", m.certificateID ?? "-",
+                    m.certificateType ?? "-", m.role ?? "-", m.services ?? "-", day(m.created), day(m.expires)]
         }
         let widths = header.indices.map { i in ([header] + rows).map { $0[i].count }.max() ?? 0 }
         return ([header] + rows).map { row in
@@ -33,12 +34,20 @@ public enum VaultReport {
         let kdf = file.kdf
         return [
             "Store:    \(location.file.path)",
-            "Format:   \(file.format) version \(file.version)",
+            "Format:   \(file.format) version \(file.version)" + formatNote(file),
             "Entries:  \(file.entries.count)",
             "KDF:      \(kdf.algorithm) (N=\(kdf.rounds), r=\(kdf.blockSize), p=\(kdf.parallelism)); entries sealed with AES-256-GCM",
             "Unlocked: " + (unlocked.map { $0 ? "yes, cached in the kernel keyring until it expires or `xless secrets lock`" : "no" }
                 ?? "no (no kernel keyring here: each command asks the passphrase)"),
         ].joined(separator: "\n")
+    }
+
+    static func formatNote(_ file: VaultFile) -> String {
+        if !file.isWritable {
+            return " (written by a newer xless: this one reads the entries it knows but does not change the store; upgrade xless)"
+        }
+        if file.needsUpgrade { return " (its entries are sealed again with every field the next time a command unlocks it to change it)" }
+        return ""
     }
 
     /// `xless secrets status` with a credential helper.

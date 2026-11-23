@@ -63,12 +63,13 @@ public struct VaultStore: Sendable {
     }
 
     /// Read–modify–write under the writers' lock. `body` gets the current file (re-read under the lock) and returns the
-    /// new one.
+    /// new one. A file a newer xless wrote (`VaultFile.requireWritable`) is refused before `body` runs; nothing changes.
     @discardableResult
     public func update(_ body: (VaultFile) throws -> VaultFile) throws -> VaultFile {
         guard try location.checkDirectory() else { throw Self.notInitialized(location) }
         return try withLock {
             guard let current = try read() else { throw Self.notInitialized(location) }
+            try current.requireWritable()
             let next = try body(current)
             try write(next)
             return next

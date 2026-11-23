@@ -50,13 +50,31 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
                                                              dataKey: try key(for: file, remember: nil, reason: reason)))
                 case .replace(let name, let kind, let metadata, let secret):
                     guard let index = next.entries.firstIndex(where: { $0.name == name }) else { throw Self.missing(name) }
-                    next.entries[index] = try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
-                                                               dataKey: try key(for: file, remember: nil, reason: reason))
+                    var sealed = try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
+                                                      dataKey: try key(for: file, remember: nil, reason: reason))
+                    sealed.unknown = next.entries[index].unknown // the entry's fields a newer xless added stay
+                    next.entries[index] = sealed
                 case .remove(let name):
                     next.entries.removeAll { $0.name == name }
                 }
             }
+            // The first write with the data key at hand (this process's, or the unlock cache's: never asked for this)
+            // moves a store of the first format to the current one.
+            if next.needsUpgrade, let key = heldKey(for: file) { next = try VaultCrypto.upgrade(next, dataKey: key) }
             return next
+        }
+    }
+
+    /// The data key of `file` without asking: the one this process unlocked, else a valid one in the unlock cache.
+    func heldKey(for file: VaultFile) -> SymmetricKey? {
+        SecretScope.enter()
+        return lock.withLock {
+            if let dataKey, dataKey.id == file.id { return dataKey.key }
+            guard let cached = try? cache?.load(id: file.id) else { return nil }
+            let key = SymmetricKey(data: cached)
+            guard (try? VaultCrypto.verify(file, dataKey: key)) != nil else { return nil }
+            dataKey = (file.id, key)
+            return key
         }
     }
 
