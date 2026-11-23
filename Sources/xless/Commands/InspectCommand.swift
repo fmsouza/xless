@@ -45,19 +45,31 @@ struct InspectCommand: AsyncParsableCommand {
         let (overlay, sourceRoot, workRoot) = try ReactNativeOverlay.load(from: url, sourceOverride: source)
         let resolved = try ReactNativeProject.resolve(overlay: overlay, source: sourceRoot, work: workRoot)
         // The next build number is a read-only App Store Connect query, made only when credentials are present.
-        var nextBuild: String? = nil
-        if overlay.build == "dated", (try? ASCCredentials.fromSecrets(Secrets(), stage: .config)) != nil {
-            do {
-                nextBuild = try await withStage(.config) {
-                    try await DatedBuildNumber.compute(version: resolved.config.version, bundleID: resolved.config.bundleID, secrets: Secrets())
-                }
-            } catch let e as XlessError {
-                nextBuild = "(App Store Connect query failed: \(e.cause))"
-            }
+        let nextBuild = await InspectNextBuild.query(dated: overlay.build == "dated", team: resolved.config.teamID) { secrets in
+            try await DatedBuildNumber.compute(version: resolved.config.version, bundleID: resolved.config.bundleID, secrets: secrets)
         }
         print(ReactNativeInspectReport.make(resolved: resolved, overlay: overlay,
                                             contract: ReactNativeContract.detect(appDir: overlay.appDir, source: sourceRoot, work: workRoot),
                                             native: ReactNativeInspectReport.native(overlay: overlay, work: workRoot), nextBuild: nextBuild),
               terminator: "")
+    }
+}
+
+/// `inspect`'s next build number: a read-only App Store Connect query, made only for a dated build and only when the
+/// project's team has credentials (the store's lookups prefer that team, like every stage of a run); a failed query is
+/// reported in its place.
+enum InspectNextBuild {
+    static func query(dated: Bool, team: String, secrets: Secrets = Secrets(),
+                      compute: @escaping (Secrets) async throws -> String) async -> String? {
+        guard dated else { return nil }
+        let secrets = secrets.preferring(team: team)
+        guard (try? ASCCredentials.fromSecrets(secrets, stage: .config)) != nil else { return nil }
+        do {
+            return try await withStage(.config) { try await compute(secrets) }
+        } catch let e as XlessError {
+            return "(App Store Connect query failed: \(e.cause))"
+        } catch {
+            return "(App Store Connect query failed: \(error))"
+        }
     }
 }
