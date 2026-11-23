@@ -12,15 +12,15 @@ import XlessCore
 //     <locale>/                text files (LocaleListing), screenshots/<display type>/, previews/<preview type>/
 //
 // Values are App Store Connect's own spellings (IOS, AFTER_APPROVAL, APP_IPHONE_67…), so nothing is translated between
-// the files and the API. `store pull` writes the directory, `store validate` checks it, `store push` (#94–#97) sends it.
+// the files and the API. `store pull` writes the directory, `store validate` checks it, `store push` sends it
+// (App Privacy, `privacy:`, through the Apple ID web session).
 
 /// The whole manifest: `app.yml` and every locale directory.
 public struct StoreManifest: Sendable, Equatable {
     public var app: AppYAML
     /// Locale (as the directory is spelled) → its listing.
     public var locales: [String: LocaleListing]
-    /// Top-level `app.yml` keys xless does not model (e.g. `privacy`, #97), kept as YAML text in file order; `pull`
-    /// writes them back unchanged.
+    /// Top-level `app.yml` keys xless does not model, kept as YAML text in file order; `pull` writes them back unchanged.
     public var extras: [(key: String, yaml: String)]
 
     public init(app: AppYAML = AppYAML(), locales: [String: LocaleListing] = [:], extras: [(key: String, yaml: String)] = []) {
@@ -225,6 +225,33 @@ public struct AppYAML: Codable, Sendable, Equatable {
         }
     }
 
+    /// The App Privacy answers (what data the app collects, what for, linked to the user or not, used to track or not).
+    /// App Store Connect keeps them per app, outside its API: `xless store privacy pull|push` and `store push` read and
+    /// send them through the Apple ID web session.
+    public struct Privacy: Codable, Sendable, Equatable {
+        /// One kind of data the app collects.
+        public struct DataUsage: Codable, Sendable, Equatable {
+            /// Apple's category ID: EMAIL_ADDRESS, PRECISE_LOCATION, CRASH_DATA…
+            public var category: String
+            /// Apple's purpose IDs: APP_FUNCTIONALITY, ANALYTICS…
+            public var purposes: [String]?
+            /// The data is linked to the user's identity.
+            public var linkedToYou: Bool?
+            /// The data is used to track the user.
+            public var tracking: Bool?
+
+            public init(category: String, purposes: [String]? = nil, linkedToYou: Bool? = nil, tracking: Bool? = nil) {
+                self.category = category; self.purposes = purposes; self.linkedToYou = linkedToYou; self.tracking = tracking
+            }
+        }
+
+        /// false: "Data Not Collected".
+        public var collectsData: Bool?
+        public var data: [DataUsage]?
+
+        public init(collectsData: Bool? = nil, data: [DataUsage]? = nil) { self.collectsData = collectsData; self.data = data }
+    }
+
     public struct Availability: Codable, Sendable, Equatable {
         public var territories: StoreTerritories?
         public var newTerritories: Bool?
@@ -253,6 +280,7 @@ public struct AppYAML: Codable, Sendable, Equatable {
     public var eula: EULA?
     public var pricing: Pricing?
     public var availability: Availability?
+    public var privacy: Privacy?
     /// App preview (path relative to the manifest directory) → the frame shown as its poster, `HH:MM:SS:FF`.
     public var previewFrames: SortedMap<String>?
 
@@ -261,9 +289,7 @@ public struct AppYAML: Codable, Sendable, Equatable {
     /// The keys `AppYAML` models, in the order `pull` writes them.
     public static let keys = ["bundleID", "sku", "platform", "primaryLocale", "version", "copyright", "contentRights", "categories",
                               "ageRating", "release", "review", "encryption", "encryptionDocument", "accessibility", "eula", "pricing",
-                              "availability", "previewFrames"]
-    /// Keys another part of xless owns (kept by `pull`, not reported as unknown).
-    public static let reservedKeys = ["privacy"]
+                              "availability", "privacy", "previewFrames"]
 }
 
 /// A string-keyed map written with its keys sorted, so a pulled `app.yml` is stable from one pull to the next.

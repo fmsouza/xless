@@ -90,11 +90,13 @@ public struct StoreChange: Sendable, Equatable {
     public var replans: Bool
     /// Files to upload (and the set's order and deletions), done after `requests`.
     public var media: StoreMediaWork?
+    /// App Privacy requests, sent through the Apple ID web session (`StorePrivacy`) instead of `requests`.
+    public var privacy: [PrivacyStep]?
 
     public init(_ action: Action, _ part: StorePushPart, _ subject: String, fields: [StoreFieldChange] = [], requests: [StoreRequest], replans: Bool = false,
-                media: StoreMediaWork? = nil) {
+                media: StoreMediaWork? = nil, privacy: [PrivacyStep]? = nil) {
         self.action = action; self.part = part; self.subject = subject; self.fields = fields; self.requests = requests; self.replans = replans
-        self.media = media
+        self.media = media; self.privacy = privacy
     }
 
     public var text: String {
@@ -105,7 +107,7 @@ public struct StoreChange: Sendable, Equatable {
     }
 }
 
-/// The parts of the listing `store push` sends, in the order it sends them (#97 adds privacy).
+/// The parts of the listing `store push` sends, in the order it sends them.
 public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
     /// Text and the version: primary locale, categories, the app information and version localizations, the version.
     case text
@@ -115,6 +117,8 @@ public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
     case declarations
     /// The price schedule and the territories the app is available in (app-level: no version needed).
     case pricing
+    /// The App Privacy answers (app-level, through the Apple ID web session), published once sent.
+    case privacy
     /// Screenshots and app previews, per locale and display type.
     case media
 
@@ -142,7 +146,9 @@ public struct StorePlan: Sendable, Equatable {
 
     public init(changes: [StoreChange] = [], notes: [String] = []) { self.changes = changes; self.notes = notes }
 
-    public var deletes: [StoreChange] { changes.filter { $0.action == .delete } }
+    /// What goes from App Store Connect for good (asked first). App Privacy answers are not among them: removing a
+    /// category changes the declaration, as editing a text does.
+    public var deletes: [StoreChange] { changes.filter { $0.action == .delete && $0.part != .privacy } }
 
     /// The changes, one per line (indented by two spaces), then the summary.
     public var text: String {

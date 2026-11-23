@@ -75,10 +75,13 @@ public struct StorePush: Sendable {
     }
 
     public let asc: StoreASC
+    /// App Privacy through the Apple ID web session; nil when this push has none (the part is then only noted).
+    public let privacy: StorePrivacy?
     public let say: @Sendable (String) -> Void
 
-    public init(resources: ASCResources, say: @escaping @Sendable (String) -> Void = { _ in }) {
+    public init(resources: ASCResources, privacy: (any PrivacyRemote)? = nil, say: @escaping @Sendable (String) -> Void = { _ in }) {
         asc = StoreASC(resources: resources, say: say)
+        self.privacy = privacy.map(StorePrivacy.init)
         self.say = say
     }
 
@@ -166,8 +169,8 @@ public struct StorePush: Sendable {
     public func plan(app: ASCApp, manifest: StoreManifest, dir: URL, options: Options = Options()) async throws -> (StorePlan, Report) {
         let target = try await target(app: app, manifest: manifest)
         var context = PushContext(push: self, manifest: manifest, dir: dir, target: target, options: options)
-        // Pricing is the app's, not the version's: it needs no version.
-        if target.creating, !options.parts.contains(.text), options.parts.contains(where: { $0 != .text && $0 != .pricing }) {
+        // Pricing and App Privacy are the app's, not the version's: they need no version.
+        if target.creating, !options.parts.contains(.text), options.parts.contains(where: { ![.text, .pricing, .privacy].contains($0) }) {
             throw XlessError(.account, "App Store Connect has no \(target.platform) version \(target.versionString) yet, and only the text part creates it",
                              fix: "push the text part too (drop --only, or add text to it)")
         }
@@ -177,6 +180,7 @@ public struct StorePush: Sendable {
             case .review: try await context.planReview()
             case .declarations: try await context.planDeclarations()
             case .pricing: try await context.planPricing()
+            case .privacy: try await context.planPrivacy()
             case .media: try await context.planMedia()
             }
         }
@@ -206,7 +210,14 @@ public struct StorePush: Sendable {
                         result.notes.append(note)
                     }
                 }
-                do { try await sender.apply(change) } catch {
+                do {
+                    if change.privacy != nil {
+                        guard let privacy else { throw XlessError(.account, "App Privacy needs the Apple ID web session", fix: "this is a bug in xless; please report it") }
+                        try await privacy.apply(change, app: app.id)
+                    } else {
+                        try await sender.apply(change)
+                    }
+                } catch {
                     let n = result.sent.count
                     say("note: \(n) of \(total) change\(total == 1 ? "" : "s") \(n == 1 ? "was" : "were") sent before this failure; re-run `xless store push` to send the rest (it sends only what still differs)")
                     throw error
@@ -274,6 +285,16 @@ struct PushContext {
     var name: String { dir.lastPathComponent }
 
     mutating func add(_ change: StoreChange) { plan.changes.append(change) }
+
+    /// The `privacy` part: app.yml's App Privacy answers against App Store Connect's (web session), then published.
+    mutating func planPrivacy() async throws {
+        guard let wanted = app.privacy else { return }
+        guard let privacy = push.privacy else {
+            note("privacy is not pushed: App Privacy needs the Apple ID web session (`xless store privacy push`, or keep a session first with `xless auth login --keep 30m`)")
+            return
+        }
+        for change in try await privacy.plan(wanted, app: target.app.id, appName: target.app.bundleID) { add(change) }
+    }
     mutating func note(_ text: String) { plan.notes.append(text) }
 
     /// Refuses a change to a version App Store Connect no longer lets anyone edit.

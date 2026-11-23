@@ -78,6 +78,8 @@ public struct StorePull: Sendable {
         a.version = version.attributes.versionString
         a.copyright = version.attributes.copyright
         a.contentRights = app.attributes.contentRightsDeclaration
+        // App Privacy is read with the Apple ID web session (`store privacy pull`), never with the API key: kept as is.
+        a.privacy = old?.privacy
 
         // App info: the live one for a live version, else the one being edited.
         let infos = try await asc.appInfos(of: app.id)

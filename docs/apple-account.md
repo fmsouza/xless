@@ -546,12 +546,16 @@ xless store pull --app com.example.app    # the app's listing into ./appstore
 xless store validate                      # offline checks of ./appstore
 xless store push --dry-run                # what differs at App Store Connect
 xless store push                          # send it
+xless store privacy pull                  # App Privacy answers into app.yml (web session)
+xless store privacy push                  # send them and publish (web session)
 ```
 
 The App Store listing (text per locale, screenshots, previews, categories, age rating, App Review contact, licence
-agreement, price and availability) lives in an `appstore/` directory reviewed like code: its format, `pull`,
-`validate` and `push` are in [appstore-manifest.md](appstore-manifest.md). `pull` and `push` use the API key only;
-`pull` never reads the demo account's password, and `push` sends it from the secret store only when it must.
+agreement, price and availability, App Privacy) lives in an `appstore/` directory reviewed like code: its format,
+`pull`, `validate` and `push` are in [appstore-manifest.md](appstore-manifest.md). `pull` and `push` use the API key,
+except App Privacy, which has no API: `store privacy pull|push`, and `push` when `app.yml` has `privacy:`, use the
+Apple ID web session ([App Privacy](appstore-manifest.md#app-privacy-xless-store-privacy)). `pull` never reads the
+demo account's password, and `push` sends it from the secret store only when it must.
 
 ## JSON output
 

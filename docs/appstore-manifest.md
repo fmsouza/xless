@@ -1,11 +1,12 @@
 # The App Store listing: `appstore/`
 
 An app's App Store listing (its text in every language, screenshots, previews, categories, age rating, App Review
-contact, licence agreement, price and availability) lives in an `appstore/` directory next to the project, reviewed
-like code, the way fastlane's `deliver` keeps it. [`xless store pull`](#xless-store-pull) writes it from an app that
-already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple;
+contact, licence agreement, price and availability, App Privacy) lives in an `appstore/` directory next to the
+project, reviewed like code, the way fastlane's `deliver` keeps it. [`xless store pull`](#xless-store-pull) writes it
+from an app that already exists; [`xless store validate`](#xless-store-validate) checks it without contacting Apple;
 [`xless store push`](#xless-store-push) sends what differs, screenshots, previews, price and availability included.
-App Privacy comes next in [M7](https://github.com/fmsouza/xless/issues/80).
+App Privacy has no App Store Connect API: [`xless store privacy`](#app-privacy-xless-store-privacy) pulls and pushes
+it through the Apple ID web session.
 
 ```text
 appstore/
@@ -121,7 +122,13 @@ availability:
   newTerritories: true               # add new App Store territories automatically
 previewFrames:                       # a preview's poster frame (HH:MM:SS:FF), by path
   en-US/previews/IPHONE_67/01-intro.mov: "00:00:05:00"
-privacy: …                           # App Privacy (#97); kept as it is by pull
+privacy:                             # App Privacy (`xless store privacy pull` writes it)
+  collectsData: true                 # false: "Data Not Collected" (and no data:)
+  data:
+    - category: EMAIL_ADDRESS        # Apple's category IDs
+      purposes: [APP_FUNCTIONALITY]  # Apple's purpose IDs
+      linkedToYou: true              # linked to the user's identity
+      tracking: false                # used to track the user
 ```
 
 `ageRating`, `encryption` and `accessibility` are written with Apple's attribute names as they are, so questions Apple
@@ -173,8 +180,9 @@ a part the key's role may not read keeps the value `app.yml` already had, with a
   `media.lock`, except files the lock shows are the local original of the same upload, which are kept. Media still
   processing, and previews App Store Connect only streams, are listed as not downloaded.
 - **All at once**: the new directory is built beside the old one and swapped in when everything is read, so a failure
-  leaves `appstore/` as it was. Files the format does not own (a README, `iap/`) and `app.yml` keys xless does not
-  manage (`privacy`) are carried over. It is a pull: the listing's text and media become App Store Connect's, and a
+  leaves `appstore/` as it was. Files the format does not own (a README, `iap/`), `app.yml` keys xless does not
+  know and the App Privacy answers (`privacy`, read only by [`store privacy pull`](#app-privacy-xless-store-privacy))
+  are carried over. It is a pull: the listing's text and media become App Store Connect's, and a
   local screenshot never uploaded is not kept (a note names it).
 - **Refusals**: `pull` does not replace a directory that is not a manifest (no `app.yml`, not empty), nor one whose
   `app.yml` cannot be read (its keys would be lost): fix it first (`xless store validate`).
@@ -230,6 +238,7 @@ xless store push                           # send it
 xless store push --only text,review        # some parts only
 xless store push --only media              # screenshots and previews only
 xless store push --only pricing            # price schedule and availability only
+xless store push --only privacy            # App Privacy only (Apple ID web session)
 xless store push --prune                   # also delete locales, media sets and files the directory does not have
 ```
 
@@ -290,6 +299,8 @@ The parts, in the order they are sent (`--only` chooses):
     as a deletion (`- availability in CAN`) and asked first (or `--yes`). App Store Connect's API sets `newTerritories`
     only when the availability is created: a different value later is a note, not a change. A territory App Store
     Connect does not list for the app stops the push.
+- **`privacy`**: the App Privacy answers, through the Apple ID web session, then published; see
+  [App Privacy](#app-privacy-xless-store-privacy). Like pricing, it needs no version.
 - **`media`**: per locale and display (or preview) type, the screenshot and preview sets: created when App Store
   Connect has none (in a locale the `text` part creates, too), new and changed files uploaded, the set put in the
   directory's order, and poster frames (`previewFrames`) set.
@@ -320,7 +331,8 @@ What `push` leaves alone:
   not: reported and kept (after the directory's files), and deleted with `--prune`. A set that would then hold more than
   Apple allows (10 screenshots, 3 previews) stops the push before anything is sent. An upload `pull` could not download
   (`media.lock` without `md5`) is part of the directory and stays where it is;
-- App Privacy, which a later version of `push` sends.
+- App Privacy when `app.yml` has no `privacy:`; with one, when no Apple ID session is kept and there is no terminal
+  to sign in on (CI): the part is skipped with a note (an error with `--only privacy`) and the rest is pushed.
 
 **The demo account's password** comes from the secret `review.demoAccount.passwordSecret` names: the secret store's
 entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.md)). App Store Connect never gives it
@@ -334,3 +346,40 @@ Connect's answer repeats it.
 `--json` prints `{"appID", "bundleID", "platform", "version", "versionState", "dryRun", "applied", "changes":
 [{"action", "part", "subject", "fields": [{"name", "from", "to", "secret"}]}], "notes"}` (`secret` names the secret a
 field's value comes from; the value itself is never there). Errors are `[account]` errors, exit code 20.
+
+## App Privacy: `xless store privacy`
+
+```sh
+xless store privacy pull --app com.example.app   # App Store Connect's answers into app.yml's privacy:
+xless store privacy push --dry-run               # what differs
+xless store privacy push                         # send it, then publish
+```
+
+App Privacy (what data the app collects, what for, whether it is linked to the user, whether it is used to track
+them) must be answered and published before an app can be submitted, and the App Store Connect API has no App Privacy.
+These commands use the [Apple ID web session](apple-account.md#the-apple-id-web-session) (a session kept by
+`xless auth login --keep`, else a sign-in on the terminal), as App Store Connect's own App Privacy page does; so does
+the `privacy` part of [`store push`](#xless-store-push). They are undocumented by Apple (fastlane and the App Store
+Connect CLI use the same requests).
+
+`app.yml` holds one entry per kind of data, with Apple's IDs: categories such as `NAME`, `EMAIL_ADDRESS`,
+`PHONE_NUMBER`, `PRECISE_LOCATION`, `COARSE_LOCATION`, `CONTACTS`, `PHOTOS_OR_VIDEOS`, `USER_ID`, `DEVICE_ID`,
+`PURCHASE_HISTORY`, `PRODUCT_INTERACTION`, `ADVERTISING_DATA`, `CRASH_DATA`, `PERFORMANCE_DATA`, `HEALTH`, `FITNESS`
+and the others App Store Connect lists; purposes `THIRD_PARTY_ADVERTISING`, `DEVELOPERS_ADVERTISING`, `ANALYTICS`,
+`PRODUCT_PERSONALIZATION`, `APP_FUNCTIONALITY`, `OTHER_PURPOSES`. Each entry needs `purposes`, `linkedToYou` and
+`tracking`; a category is listed once. `validate` checks the section (an ID it does not know is a warning: Apple adds
+some); `push` checks every ID against App Store Connect's own lists before sending anything.
+
+- **`pull`** rewrites `app.yml` only (creating the directory, and an `app.yml` with the bundle ID, when there is none);
+  the rest of the directory is untouched. An app whose questions were never answered leaves `app.yml` as it is. It
+  says when App Store Connect's answers are not published, and leaves out (with a note) answers it cannot read.
+- **`push`** checks the section, compares it with App Store Connect's answers and prints the plan, one line per
+  category; `--dry-run` stops there. App Store Connect keeps one answer per category, purpose and protection (linked,
+  not linked, tracking); xless does not edit one in place: only the answers that differ are deleted and created again (a category's new
+  answers before its old ones go, except one a new answer contradicts, linked ↔ not linked, which goes first). Switching to or from `collectsData: false` deletes the old answers first: App
+  Store Connect refuses "Data Not Collected" next to collected data. The answers are then published (also when they
+  already matched but were not published). Removing a category is not a deletion that asks: it changes the
+  declaration, as editing a text does. If a request fails, re-run: it sends only what still differs.
+
+`--json` prints `{"appID", "app", "published", "privacy", "notes"}` for `pull` and `{"appID", "app", "dryRun",
+"applied", "changes", "notes"}` for `push`.

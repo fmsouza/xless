@@ -73,11 +73,9 @@ public enum ManifestReader {
         for (key, value) in mapping {
             let k = key.string ?? "\(key)"
             if AppYAML.keys.contains(k) { continue }
-            if !AppYAML.reservedKeys.contains(k) {
-                let near = AppYAML.keys.first { $0.lowercased() == k.lowercased() }
-                issues.append(StoreIssue(display, "unknown key `\(k)`", fix: near.map { "did you mean `\($0)`?" } ?? "remove it; the keys are listed in docs/appstore-manifest.md",
-                                         severity: .warning))
-            }
+            let near = AppYAML.keys.first { $0.lowercased() == k.lowercased() }
+            issues.append(StoreIssue(display, "unknown key `\(k)`", fix: near.map { "did you mean `\($0)`?" } ?? "remove it; the keys are listed in docs/appstore-manifest.md",
+                                     severity: .warning))
             let single = Node([(key, value)], .implicit, .block)
             extras.append((k, (try? Yams.serialize(node: single, width: -1, allowUnicode: true)) ?? ""))
         }

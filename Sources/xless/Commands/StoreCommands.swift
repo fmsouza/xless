@@ -3,6 +3,7 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+import XlessAppleID
 import XlessASC
 import XlessCore
 import XlessStore
@@ -13,15 +14,17 @@ struct StoreCommand: AsyncParsableCommand {
         abstract: "Keep the App Store listing in an appstore/ directory: pull it from App Store Connect, validate it, push it back.",
         discussion: """
         The listing (text per locale, screenshots, previews, categories, age rating, review contact, licence agreement, \
-        price and availability) lives in appstore/ next to the project, reviewed like code: docs/appstore-manifest.md. \
-        pull reads an existing app's listing with the App Store Connect API key; validate checks the directory offline; \
-        push sends what differs.
+        price and availability, App Privacy) lives in appstore/ next to the project, reviewed like code: \
+        docs/appstore-manifest.md. pull reads an existing app's listing with the App Store Connect API key; validate \
+        checks the directory offline; push sends what differs. App Privacy has no API: `store privacy pull` reads it with \
+        the Apple ID web session, and push sends it the same way.
 
           xless store pull --app com.example.app
+          xless store privacy pull
           xless store validate
           xless store push --dry-run
         """,
-        subcommands: [StorePullCommand.self, StoreValidateCommand.self, StorePushCommand.self])
+        subcommands: [StorePullCommand.self, StoreValidateCommand.self, StorePushCommand.self, StorePrivacyCommand.self])
 }
 
 /// `--dir` shared by the store commands.
@@ -66,7 +69,8 @@ struct StorePullCommand: AsyncParsableCommand {
         to choose); the platform is the manifest's, else the only one the app has (--platform to choose).
 
         The directory is replaced as a whole once everything is read, so a failure leaves it as it was. Files the format \
-        does not own (a README, notes) and app.yml keys xless does not manage (privacy) are kept. Screenshots are \
+        does not own (a README, notes), unknown app.yml keys and the App Privacy answers (privacy:, which `xless store \
+        privacy pull` writes) are kept. Screenshots are \
         downloaded from App Store Connect, except those media.lock records as the local original of the same upload.
         """)
 
@@ -198,8 +202,14 @@ struct StorePushCommand: AsyncParsableCommand {
         promotional text, support and marketing URLs), review (App Review contact, notes, demo account and \
         attachments), declarations (age rating, content rights, licence agreement, export compliance and its \
         document, accessibility), pricing (the price schedule: base territory and price, manual prices in other \
-        territories, scheduled changes; and the territories the app is available in; it needs no version), media (per \
-        locale and display type, the screenshot and preview sets).
+        territories, scheduled changes; and the territories the app is available in; it needs no version), privacy \
+        (the App Privacy answers, then published; it needs no version), media (per locale and display type, the \
+        screenshot and preview sets).
+
+        App Privacy has no App Store Connect API: when app.yml has privacy:, push uses the Apple ID web session for it \
+        (a session kept by `xless auth login --keep`, else a sign-in on the terminal). Without either, the privacy part \
+        is skipped with a note (an error with --only privacy) and the rest is pushed with the API key; `xless store \
+        privacy push` sends it alone. Only the answers that differ are deleted and created again.
 
         Prices are customer prices (`free`, "0.99"): each must be one of the app's price points in its territory \
         (`xless apps price-points`), else push stops before sending anything and names the nearest ones. A changed \
@@ -223,7 +233,7 @@ struct StorePushCommand: AsyncParsableCommand {
 
     @OptionGroup var directory: StoreDirOption
     @Flag(help: "Print the plan and stop: nothing is sent.") var dryRun = false
-    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, pricing, media (comma-separated, or repeated).", valueName: "parts"))
+    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations, pricing, privacy, media (comma-separated, or repeated).", valueName: "parts"))
     var only: [String] = []
     @Flag(help: "Delete the localizations, media sets and files App Store Connect has and the directory does not (never the primary locale).")
     var prune = false
@@ -248,8 +258,21 @@ struct StorePushCommand: AsyncParsableCommand {
         try await AccountSession.run {
             let (manifest, bundleID) = try StorePushCLI.check(dir: dir, say: StorePushCLI.standardError)
             let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
-            let cli = StorePushCLI(client: session.client, secrets: session.secrets, json: output.json, say: StorePushCLI.standardError)
-            print(try await cli.run(manifest: manifest, bundleID: bundleID, dir: dir, options: options, dryRun: dryRun, yes: confirmation.yes), terminator: "")
+            // App Privacy has no API: it goes through the Apple ID web session, opened only when app.yml has answers.
+            var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
+            if try StorePrivacyCLI.storePushNeedsWeb(manifest: manifest, parts: options.parts, explicit: !only.isEmpty,
+                                                     kept: AppleWebCLI.cache.info() != nil, terminal: (try? AppleWebCLI.prompter()) != nil) {
+                web = try await StorePrivacyCLI.webForStorePush(explicit: !only.isEmpty, say: StorePushCLI.standardError) {
+                    let (s, t, _) = try await APIKeyWebCLI.open(team: session.team, verbose: trace.verbose)
+                    return (session: s, transport: t)
+                }
+            }
+            defer { web?.transport.invalidate() }
+            let cli = StorePushCLI(client: session.client, secrets: session.secrets, privacy: web.map { ASCWebPrivacy(asc: $0.session.asc) },
+                                   json: output.json, say: StorePushCLI.standardError)
+            let text = try await cli.run(manifest: manifest, bundleID: bundleID, dir: dir, options: options, dryRun: dryRun, yes: confirmation.yes)
+            if let web { await web.session.end() }
+            print(text, terminator: "")
         }
     }
 }
@@ -259,6 +282,8 @@ struct StorePushCommand: AsyncParsableCommand {
 struct StorePushCLI {
     let client: ASCClient
     let secrets: Secrets
+    /// App Privacy through the Apple ID web session; nil: the privacy part is only noted.
+    var privacy: (any PrivacyRemote)? = nil
     let json: Bool
     var terminal: () -> (any Confirming)? = { try? TerminalPrompter.forAccount() }
     let say: @Sendable (String) -> Void
@@ -311,7 +336,7 @@ struct StorePushCLI {
     func run(manifest: StoreManifest, bundleID: String, dir: URL, options: StorePush.Options, dryRun: Bool, yes: Bool) async throws -> String {
         let resources = ASCResources(client: client)
         let app = try await ASCApps(resources: resources).resolve(bundleID)
-        let push = StorePush(resources: resources, say: say)
+        let push = StorePush(resources: resources, privacy: privacy, say: say)
         var (plan, report) = try await push.plan(app: app, manifest: manifest, dir: dir, options: options)
         for note in plan.notes { say("note: \(note)") }
         if dryRun || plan.changes.isEmpty {
