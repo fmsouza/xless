@@ -107,8 +107,10 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
 
     func validate() throws {
         do {
-            _ = try BundleIdentifier.validate(identifier)
-            if let name { try PortalName.validate(name) }
+            let id = try BundleIdentifier.validate(identifier)
+            if let name { try PortalName.validate(name) } else if PortalName.from(identifier: id).isEmpty {
+                throw IdentifierInputError("\(id) has no letters or digits to name it after: give --name")
+            }
         } catch let e as IdentifierInputError { throw ValidationError(e.description) }
     }
 

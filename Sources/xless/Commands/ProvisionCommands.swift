@@ -87,7 +87,40 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
     @OptionGroup var confirmation: YesOption
     @OptionGroup var trace: VerboseOption
 
-    struct Applied: Encodable { var plan: ProvisionPlan; var done: [ProvisionDone] }
+    /// The `--json` document, also printed when apply fails or is blocked (`failed` null when blocked or done; `left`:
+    /// the steps not attempted). `drift`: what applying found that the plan did not show.
+    struct Applied: Encodable {
+        var plan: ProvisionPlan
+        var done: [ProvisionDone] = []
+        var drift: [ProvisionDrift] = []
+        var failed: ProvisionApplyFailure.Failed?
+        var left: [ProvisionStep] = []
+
+        enum CodingKeys: String, CodingKey { case plan, done, drift, failed, left }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(plan, forKey: .plan); try c.encode(done, forKey: .done); try c.encode(drift, forKey: .drift)
+            try c.encode(failed, forKey: .failed); try c.encode(left, forKey: .left)
+        }
+
+        init(plan: ProvisionPlan, applied: ProvisionApplied = ProvisionApplied()) { self.plan = plan; done = applied.done; drift = applied.drift }
+        init(plan: ProvisionPlan, failure: ProvisionApplyFailure) {
+            self.init(plan: plan, applied: failure.applied)
+            failed = failure.failed; left = failure.left
+        }
+    }
+
+    /// What apply prints on standard output once it has run (or stopped): `--json`, the `Applied` document; else the
+    /// drift found while applying and, when it went through, `applied N steps`.
+    static func output(plan: ProvisionPlan, applied: ProvisionApplied, json: Bool) throws -> String {
+        let n = applied.done.count
+        return json ? try ASCOutput.json(Applied(plan: plan, applied: applied)) + "\n"
+            : ProvisionPlan.driftText(applied.drift, heading: "Drift found while applying") + "applied \(n) step\(n == 1 ? "" : "s")\n"
+    }
+
+    static func output(plan: ProvisionPlan, failure: ProvisionApplyFailure, json: Bool) throws -> String {
+        json ? try ASCOutput.json(Applied(plan: plan, failure: failure)) + "\n" : ProvisionPlan.driftText(failure.applied.drift, heading: "Drift found while applying")
+    }
 
     func run() async throws {
         try await AccountSession.run {
@@ -115,9 +148,13 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
                 plan = try await planner.plan()
             }
             if !output.json { print(plan.text, terminator: "") }
-            try plan.requireUnblocked()
+            do { try plan.requireUnblocked() } catch {
+                let failure = ProvisionApplyFailure(applied: ProvisionApplied(), failed: nil, left: plan.steps, error: XlessError.wrapping(error, stage: .account))
+                if output.json { print(try Self.output(plan: plan, failure: failure, json: true), terminator: "") }
+                throw failure.error
+            }
             guard !plan.steps.isEmpty else {
-                if output.json { print(try ASCOutput.json(Applied(plan: plan, done: []))) }
+                if output.json { print(try Self.output(plan: plan, applied: ProvisionApplied(), json: true), terminator: "") }
                 return
             }
             let question = "Apply these \(plan.steps.count) step\(plan.steps.count == 1 ? "" : "s") to team \(plan.team)'s account? [y/N] "
@@ -125,10 +162,16 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
                 AppleWebCLI.say("cancelled; nothing was sent")
                 return
             }
-            let done = try await opened.applier(web: { ProvisionWebSide(session: try await signIn()) }).apply(plan)
+            let applied: ProvisionApplied
+            do {
+                applied = try await opened.applier(web: { ProvisionWebSide(session: try await signIn()) }).apply(plan)
+            } catch let failure as ProvisionApplyFailure {
+                // The same exit code as without --json; standard output says what was done, what failed and what is left.
+                print(try Self.output(plan: plan, failure: failure, json: output.json), terminator: "")
+                throw failure.error
+            }
             if let session = held.session { await session.end() }
-            print(output.json ? try ASCOutput.json(Applied(plan: plan, done: done)) : "applied \(done.count) step\(done.count == 1 ? "" : "s")\n",
-                  terminator: output.json ? "\n" : "")
+            print(try Self.output(plan: plan, applied: applied, json: output.json), terminator: "")
         }
     }
 }

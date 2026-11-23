@@ -22,6 +22,12 @@ public struct StorePush: Sendable {
             self.parts = parts; self.prune = prune; self.resendDemoAccount = resendDemoAccount; self.today = today
             self.holdDeletes = holdDeletes
         }
+
+        /// What `xless provision` pushes: every part but App Privacy (planned on its own, through the web session),
+        /// products included, and nothing that deletes (held back and reported as drift).
+        public static func provision(today: Date = Date()) -> Options {
+            Options(parts: StorePushPart.allCases.filter { $0 != .privacy }, today: today, holdDeletes: true)
+        }
     }
 
     /// What `push` prints (`--json`: this document).
