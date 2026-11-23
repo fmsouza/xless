@@ -158,8 +158,9 @@ Other things worth knowing:
 - Loose `.dylib` files are rejected at `finalize`; xless does not wrap them as frameworks.
 - `finalize` refuses a Mach-O image whose LINKEDIT tables `dyld` would reject as misaligned (the app would crash at
   launch); `xless inspect` lists them per binary (`linkeditProblems`).
-- The App Store Connect app record cannot be created through the API; create it by hand after the bundle ID is
-  registered ([bootstrap.md](bootstrap.md) steps 4 and 5).
+- The App Store Connect API cannot create the app record: `xless apps create` does it through the Apple ID web session
+  (undocumented, so it may break when Apple changes its pages), or create it by hand after the bundle ID is registered
+  ([bootstrap.md](bootstrap.md) steps 4 and 5).
 
 ## Known gaps
 

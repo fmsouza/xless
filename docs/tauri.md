@@ -87,10 +87,10 @@ With `build: dated`, `prepare` and `build` ask App Store Connect for the builds 
 
 ## Creating the App Store Connect app record
 
-Same as for any app ([bootstrap.md](bootstrap.md) steps 4 and 5); the API cannot create it.
+Same as for any app ([bootstrap.md](bootstrap.md) steps 4 and 5).
 
-1. Register the bundle ID from the overlay (`bundleID`) at developer.apple.com, or run `xless ship --config <overlay>` once: `sign` registers it, and the run stops at `upload` with "no app record".
-2. App Store Connect, My Apps, **+**, New App. Choose that bundle ID, iOS, and a name.
+1. Register the bundle ID from the overlay (`bundleID`) with `xless bundle-ids create <bundleID>`, or run `xless ship --config <overlay>` once: `sign` registers it, and the run stops at `upload` with "no app record".
+2. Create the record with `xless apps create --bundle-id <bundleID> --name "<name>" --sku <SKU> --locale en-US` ([`xless apps`](apple-account.md#xless-apps); Apple ID sign-in), or in App Store Connect (Apps, **+**, New App: that bundle ID, iOS, and a name).
 3. Add your testers to the TestFlight group named in `testflight.groups` (App Store Connect users, for an internal group), then resume with `xless upload --config <overlay>`, or run the command again.
 
 Try a new overlay against a separate test app record first. A build number uploaded to a record cannot be reused or lowered.

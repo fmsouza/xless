@@ -1,0 +1,198 @@
+import Foundation
+import XlessAppleID
+import XlessASC
+import XlessCore
+
+// What the `xless apps` commands do once their arguments are valid (docs/apple-account.md#xless-apps): reading and
+// updating app records with the API key, and creating one through the Apple ID web session.
+
+/// An app record as `apps create` reports it, whichever interface found or made it.
+struct AppSummary: Codable, Equatable {
+    var id: String
+    var name: String?
+    var bundleId: String
+    var sku: String?
+    var primaryLocale: String?
+
+    init(id: String, name: String?, bundleId: String, sku: String?, primaryLocale: String?) {
+        self.id = id; self.name = name; self.bundleId = bundleId; self.sku = sku; self.primaryLocale = primaryLocale
+    }
+
+    init(_ app: ASCApp) {
+        self.init(id: app.id, name: app.attributes.name, bundleId: app.bundleID, sku: app.attributes.sku, primaryLocale: app.attributes.primaryLocale)
+    }
+
+    init(_ app: WebApp) {
+        self.init(id: app.id, name: app.name, bundleId: app.bundleID, sku: app.sku, primaryLocale: app.primaryLocale)
+    }
+}
+
+/// The documented API's part of `apps create` (the API key), when a key resolves.
+protocol AppCreationAPI {
+    func findApp(bundleID: String) async throws -> AppSummary?
+    func hasBundleID(_ identifier: String) async throws -> Bool
+    /// Registers the identifier as a universal bundle ID, as the sign stage does.
+    func registerBundleID(_ identifier: String) async throws
+}
+
+/// The web session's part of `apps create`: the create itself, and the lookups when no API key resolves.
+protocol AppCreationWeb {
+    func findApp(bundleID: String) async throws -> AppSummary?
+    /// Throws when the team has no such bundle ID (the developer portal's error says how to register it).
+    func requireBundleID(_ identifier: String) async throws
+    func create(_ request: AppCreateRequest) async -> AppCreateAnswer
+}
+
+struct KeyAppCreationAPI: AppCreationAPI {
+    let apps: ASCApps
+    let bundleIDs: ASCBundleIDs
+
+    init(resources: ASCResources) { apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources) }
+
+    func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
+    func hasBundleID(_ identifier: String) async throws -> Bool { try await bundleIDs.find(identifier: identifier) != nil }
+    func registerBundleID(_ identifier: String) async throws {
+        _ = try await bundleIDs.create(identifier: identifier, name: PortalName.from(identifier: identifier), platform: .universal)
+    }
+}
+
+struct WebAppCreation: AppCreationWeb {
+    let apps: ASCWebApps
+    let portal: PortalBundleIDs
+
+    func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
+    func requireBundleID(_ identifier: String) async throws { _ = try await portal.resolve(identifier) }
+    func create(_ request: AppCreateRequest) async -> AppCreateAnswer { await apps.create(request) }
+}
+
+/// What `apps create` did: the app it created, or the one that already had the bundle ID.
+struct AppCreated: Encodable {
+    var created: [AppSummary]
+    var existing: [AppSummary]
+
+    var text: String {
+        if let app = created.first {
+            return "created app \(app.name ?? "") (\(app.id)) for \(app.bundleId)\(app.sku.map { ", SKU \($0)" } ?? "")\n"
+        }
+        guard let app = existing.first else { return "" }
+        return "\(app.bundleId) already has an app record: \(app.name ?? "") (\(app.id))\(app.sku.map { ", SKU \($0)" } ?? ""); nothing was sent\n"
+    }
+}
+
+/// `apps create`, in order: an app that already has the bundle ID is reported (nothing is sent); the bundle ID must be
+/// registered (with the API key, xless offers to register it); then one create request through the web session. When
+/// its outcome is unclear, the app is looked up by bundle ID before anything is said.
+struct AppCreation {
+    /// nil when no API key resolves: the lookups go through the web session.
+    var api: (any AppCreationAPI)?
+    /// Signs in (once, when first needed).
+    var web: () async throws -> any AppCreationWeb
+    var confirm: (_ question: String, _ action: String) throws -> Bool
+    var say: (String) -> Void
+
+    /// nil when the user declined to register the bundle ID (nothing was sent).
+    func run(_ request: AppCreateRequest) async throws -> AppCreated? {
+        let bundle = request.bundleID
+        if let api {
+            if let existing = try await api.findApp(bundleID: bundle) { return reportExisting(existing, request) }
+            if !(try await api.hasBundleID(bundle)) {
+                let question = "Bundle ID \(bundle) is not registered on this team, and an app needs one. Register it now (universal, named \"\(PortalName.from(identifier: bundle))\")?"
+                guard try confirm(question, "registering bundle ID \(bundle)") else {
+                    say("cancelled; nothing was sent")
+                    return nil
+                }
+                try await api.registerBundleID(bundle)
+                say("registered bundle ID \(bundle)")
+            }
+        }
+        let web = try await web()
+        if api == nil {
+            if let existing = try await web.findApp(bundleID: bundle) { return reportExisting(existing, request) }
+            try await web.requireBundleID(bundle)
+        }
+        switch await web.create(request) {
+        case .created(let app):
+            return AppCreated(created: [AppSummary(app)], existing: [])
+        case .refused(_, let error):
+            throw error
+        case .ambiguous(let why):
+            let found: AppSummary?
+            do { found = try await web.findApp(bundleID: bundle) } catch {
+                throw XlessError(.account, "\(why), and xless could not check whether the app for \(bundle) was created",
+                                 fix: "check with `xless apps show \(bundle)` (or App Store Connect > Apps) before re-running; re-running when the app exists only reports it")
+            }
+            guard let found else {
+                throw XlessError(.account, "\(why), and App Store Connect has no app for \(bundle): nothing was created",
+                                 fix: "re-run the same `xless apps create`")
+            }
+            say("note: \(why), but the app for \(bundle) exists")
+            return AppCreated(created: [found], existing: [])
+        }
+    }
+
+    private func reportExisting(_ app: AppSummary, _ request: AppCreateRequest) -> AppCreated {
+        var differences: [String] = []
+        if let name = app.name, name != request.name { differences.append("its name is \"\(name)\"") }
+        if let sku = app.sku, sku != request.sku { differences.append("its SKU is \(sku)") }
+        if let locale = app.primaryLocale, locale != request.primaryLocale { differences.append("its primary locale is \(locale)") }
+        if !differences.isEmpty {
+            say("note: the existing app is kept as it is: \(differences.joined(separator: ", ")) (`xless apps update` changes the primary locale)")
+        }
+        return AppCreated(created: [], existing: [app])
+    }
+}
+
+/// `apps list | show | update`, on the API key; returns what goes to standard output and says notes on standard error.
+struct AppCLI {
+    let apps: ASCApps
+    var json = false
+    var say: (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+
+    func with(json: Bool) -> AppCLI { var copy = self; copy.json = json; return copy }
+
+    func list() async throws -> String {
+        let list = try await apps.list()
+        if json { return try ASCOutput.json(["data": list]) }
+        if list.isEmpty { return "the API key sees no app (create one with `xless apps create`)\n" }
+        return TextTable(["ID", "NAME", "BUNDLE ID", "SKU", "PRIMARY LOCALE"], list.map {
+            [$0.id, $0.name, $0.bundleID, $0.attributes.sku ?? "", $0.attributes.primaryLocale ?? ""]
+        }).rendered
+    }
+
+    struct Shown: Encodable { var data: ASCApp; var appInfos: [ASCAppInfo]; var appStoreVersions: [ASCAppStoreVersion] }
+
+    func show(_ argument: String) async throws -> String {
+        let app = try await apps.resolve(argument)
+        let infos = try await apps.infos(of: app.id)
+        let versions = try await apps.versions(of: app.id)
+        if json { return try ASCOutput.json(Shown(data: app, appInfos: infos, appStoreVersions: versions)) }
+        let rights = app.attributes.contentRightsDeclaration.map { AppContentRights(rawValue: $0)?.argument ?? $0 } ?? "not declared"
+        var out = TextTable(["ID", app.id], [["NAME", app.name], ["BUNDLE ID", app.bundleID], ["SKU", app.attributes.sku ?? ""],
+                                              ["PRIMARY LOCALE", app.attributes.primaryLocale ?? ""], ["CONTENT RIGHTS", rights]]).rendered
+        out += "\n" + (infos.isEmpty ? "no app info\n" : TextTable(["APP INFO", "STATE", "AGE RATING"], infos.map {
+            [$0.id, $0.attributes.state ?? $0.attributes.appStoreState ?? "", $0.attributes.appStoreAgeRating ?? ""]
+        }).rendered)
+        out += "\n" + (versions.isEmpty ? "no App Store version\n" : TextTable(["VERSION ID", "PLATFORM", "VERSION", "STATE", "CREATED"], versions.map {
+            [$0.id, AppPlatform.display($0.attributes.platform), $0.attributes.versionString ?? "",
+             $0.attributes.appVersionState ?? $0.attributes.appStoreState ?? "", $0.attributes.createdDate ?? ""]
+        }).rendered)
+        return out
+    }
+
+    func update(_ argument: String, primaryLocale: String?, contentRights: AppContentRights?, bundleID: String?) async throws -> String {
+        let app = try await apps.resolve(argument)
+        guard let updated = try await apps.update(app, primaryLocale: primaryLocale, contentRights: contentRights, bundleID: bundleID) else {
+            if json { return try ASCOutput.json(app) }
+            return "\(app.name) (\(app.id)) already has these values; nothing was sent\n"
+        }
+        if json { return try ASCOutput.json(updated) }
+        var changes: [String] = []
+        func change(_ label: String, _ old: String?, _ new: String?) {
+            if let new, new != old { changes.append("\(label) \(old ?? "none") → \(new)") }
+        }
+        change("primary locale", app.attributes.primaryLocale, primaryLocale)
+        change("content rights", app.attributes.contentRightsDeclaration.map { AppContentRights(rawValue: $0)?.argument ?? $0 }, contentRights?.argument)
+        change("bundle ID", app.bundleID, bundleID)
+        return "updated \(app.name) (\(app.id)): \(changes.joined(separator: ", "))\n"
+    }
+}

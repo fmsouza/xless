@@ -146,12 +146,16 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
                     LinkedListCommand<AppGroupKind>.self, LinkedCreateCommand<AppGroupKind>.self, LinkedAssignCommand<AppGroupKind>.self,
                     LinkedUnassignCommand<AppGroupKind>.self, LinkedListCommand<CloudContainerKind>.self, LinkedCreateCommand<CloudContainerKind>.self,
                     LinkedAssignCommand<CloudContainerKind>.self, LinkedUnassignCommand<CloudContainerKind>.self,
-                    KeysCommand.self, KeysListCommand.self, KeysShowCommand.self, KeysCreateCommand.self, KeysRevokeCommand.self] as [any ParsableCommand.Type] {
+                    KeysCommand.self, KeysListCommand.self, KeysShowCommand.self, KeysCreateCommand.self, KeysRevokeCommand.self,
+                    AppsCreateCommand.self] as [any ParsableCommand.Type] {
         let help = command.helpMessage(columns: 10_000)
         #expect(help.contains("Uses the Apple ID web session, not the App Store Connect API"), "\(command)")
     }
     #expect(!AuthStatusCommand.helpMessage(columns: 10_000).contains("Uses the Apple ID web session"))
     #expect(!AuthAPIKeyImportCommand.helpMessage(columns: 10_000).contains("Uses the Apple ID web session"))
+    for command in [AppsListCommand.self, AppsShowCommand.self, AppsUpdateCommand.self] as [any ParsableCommand.Type] {
+        #expect(!command.helpMessage(columns: 10_000).contains("Uses the Apple ID web session"), "\(command)")
+    }
 }
 
 @Test func theAppleAccountGroupListsAuthAndTeam() {

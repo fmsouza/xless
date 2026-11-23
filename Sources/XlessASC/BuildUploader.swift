@@ -59,7 +59,7 @@ public struct BuildUploader: Sendable {
             try await client.get("/v1/apps", query: [("filter[bundleId]", bundleID)])
         }
         guard let app = apps.data.first(where: { $0.attributes.bundleId == bundleID }) else {
-            throw XlessError(.upload, "no app record for \(bundleID)", fix: "create the app in App Store Connect (My Apps → +) — the API cannot create app records")
+            throw XlessError(.upload, "no app record for \(bundleID)", fix: "create it with `xless apps create --bundle-id \(bundleID) --name <name> --sku <sku> --locale <locale>` (Apple ID sign-in: the API cannot create app records), or in App Store Connect (Apps → +)")
         }
 
         struct UploadRels: Codable, Sendable { var app: ASCToOne }

@@ -11,10 +11,10 @@ Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows 
 in the secret store, [`xless profiles`](#xless-profiles), which creates, downloads, renews and deletes provisioning
 profiles of every type, [`xless app-groups` and `xless icloud-containers`](#xless-app-groups-and-xless-icloud-containers),
 which register app groups and iCloud containers and assign them to bundle IDs, [`xless keys`](#xless-keys), which
-creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with their `.p8` in the secret store, and
-[`xless api`](#xless-api), which
-calls any documented App Store Connect endpoint. More
-commands (apps, TestFlight, releases) follow the conventions on this page.
+creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with their `.p8` in the secret store,
+[`xless apps`](#xless-apps), which lists, shows, updates and creates app records, and [`xless api`](#xless-api), which
+calls any documented App Store Connect endpoint. More commands (the listing, TestFlight, releases) follow the
+conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -477,6 +477,51 @@ question.
 With `--json`, `list` prints `{"data": [{"id", "name", "services", "bundleIDs", "canDownload", "canRevoke",
 "storeEntries"}]}` (services as `--service` names, unknown ones by Apple's service ID), `show` one such object, and
 `create` `{"keyID", "name", "services", "bundleIDs", "musicIDs", "team", "entry"}`.
+
+## `xless apps`
+
+```sh
+xless apps list                                   # app ID, name, bundle ID, SKU, primary locale
+xless apps show com.example.app                   # the record, its app infos and its App Store versions with their states
+xless apps create --bundle-id com.example.app --name "Example" --sku EXAMPLE1 --locale en-US
+xless apps create --bundle-id com.example.app --name "Example" --sku EXAMPLE1 --locale en-US --platform ios --platform macos
+xless apps update com.example.app --content-rights does-not-use-third-party-content
+xless apps update 1234567890 --primary-locale de-DE
+```
+
+An app is named by its app ID (the digits App Store Connect shows as "Apple ID", from `list`) or its bundle identifier.
+`list`, `show` and `update` use the API key (`/v1/apps`; App Manager is enough). `update` sends only the values that
+differ from the app's (`PATCH /v1/apps/{id}`), and nothing when none does: `--primary-locale` (App Store Connect's
+locales, any case: `en-US`, `de-DE`, `ja`, `zh-Hans`…), `--content-rights` (`uses-third-party-content` or
+`does-not-use-third-party-content`, which App Review asks for) and `--bundle-id` (accepted by Apple only until the first
+build is uploaded).
+
+The API cannot create an app record, so `create` uses the [Apple ID web session](#the-apple-id-web-session)
+(`POST /iris/v1/apps`, the document App Store Connect's New App dialog sends, as fastlane and the App Store Connect CLI
+do). The Apple ID needs the Account Holder, Admin or App Manager role. In one process:
+
+1. Every value is checked before anything is sent: the bundle identifier (explicit, no wildcard), the name (2 to 30
+   characters), the SKU (letters, digits, `-`, `.` and `_`, not starting with one of those three), the locale, the
+   platforms (`--platform ios|macos`, repeatable, default `ios`) and `--app-version` (the first App Store version,
+   default `1.0`). `--company-name` (the seller name) is only asked for a team's first app.
+2. With an API key for the team, the app is looked up by bundle ID: **an app that already has the bundle ID is reported
+   and reused**, nothing is sent and no sign-in happens (a note says when its name, SKU or locale differ from the ones
+   given). The bundle ID must be registered; when it is not, `create` offers to register it (universal, as `sign`
+   does; `--yes` without a terminal). Without an API key, both checks go through the web session and an unregistered
+   bundle ID is an error that says to run [`xless bundle-ids create`](#xless-bundle-ids).
+3. It signs in and sends **one** create request, never retried: the app, its name in the primary locale, and a first
+   App Store version with a localization per platform. A refusal is reported as Apple worded it: a name already used on
+   the App Store (names are unique across the store) asks for another `--name`, a SKU already used by the team for
+   another `--sku`.
+4. When the answer is unclear (no answer, a server error, a body xless cannot read), it looks the app up by bundle ID
+   before saying anything: found, it is reported as created; not found, the error says nothing was created and the
+   same command can be re-run.
+
+After that, everything else about the app goes through the API key: `xless apps show` sees it at once.
+
+With `--json`, `list` prints `{"data": [apps]}`, `show` `{"data": app, "appInfos": [...], "appStoreVersions": [...]}`
+(App Store Connect's resources), `update` the app, and `create` `{"created": [app], "existing": [app]}`, each app as
+`{"id", "name", "bundleId", "sku", "primaryLocale"}`.
 
 ## JSON output
 
