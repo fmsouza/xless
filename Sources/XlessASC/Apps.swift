@@ -37,6 +37,7 @@ public struct ASCAppStoreVersionAttributes: ASCAttributes, Equatable {
     public var appVersionState: String?
     public var appStoreState: String?
     public var releaseType: String?
+    public var earliestReleaseDate: String?
     public var createdDate: String?
     public init() {}
 }

@@ -13,7 +13,7 @@ build. The pages below go further.
 - [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, and how the
   pipeline reads it.
 - [apple-account.md](apple-account.md): the Apple account commands (`xless auth`, `xless team`, `xless devices`,
-  `xless bundle-ids`, `xless merchant-ids`, `xless certs`, `xless api`, and the shared `--team`, `--json`, `--yes`, `--verbose`), the
+  `xless bundle-ids`, `xless merchant-ids`, `xless certs`, `xless release`, `xless api`, and the shared `--team`, `--json`, `--yes`, `--verbose`), the
   Apple ID web session, their JSON output, rate limits and `[account]` errors (exit code 20).
 - [appstore-manifest.md](appstore-manifest.md): the App Store listing as an `appstore/` directory, `xless store pull`,
   `xless store validate` and `xless store push`.
