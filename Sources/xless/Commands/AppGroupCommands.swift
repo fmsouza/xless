@@ -328,8 +328,8 @@ struct LinkedIdentifierCLI {
         let (all, wanted) = try await resolve(items)
         let bundle = try await portal.bundle(argument)
         let state = try await portal.linked(of: bundle)
-        if kind == .cloudContainer, !state.present {
-            throw XlessError(.account, "\(bundle.identifier) does not have the iCloud capability, so no iCloud container can be assigned to it; nothing was sent",
+        if kind == .cloudContainer, !state.present || !state.enabled {
+            throw XlessError(.account, "\(bundle.identifier) does not have the iCloud capability enabled, so no iCloud container can be assigned to it; nothing was sent",
                              fix: "enable it first with `xless bundle-ids capabilities \(bundle.identifier) enable ICLOUD` (or let `xless sign` enable it), then re-run")
         }
         let adding = wanted.filter { !state.ids.contains($0.id) }
@@ -340,7 +340,9 @@ struct LinkedIdentifierCLI {
             return "\(list(unchanged)) \(unchanged.count == 1 ? "is" : "are") already assigned to \(bundle.identifier); nothing was sent\n"
         }
         let after = try await portal.setLinked(state.ids + adding.map(\.id), enabled: true, on: bundle)
-        let done = "assigned \(list(adding.isEmpty ? wanted : adding)) to \(bundle.identifier)"
+        // Nothing to add: the capability lists them already but is disabled, and this run enables it.
+        let done = adding.isEmpty ? "enabled \(kind.capabilityName) on \(bundle.identifier), which lists \(list(wanted))"
+            : "assigned \(list(adding)) to \(bundle.identifier)"
         let profiles = try await regenerate(bundle.identifier, yes: yes, done: done)
         return try report(done, bundle: bundle, changed: adding.isEmpty ? wanted : adding, unchanged: adding.isEmpty ? [] : unchanged,
                           linked: after.ids, all: all, profiles: profiles)
@@ -414,12 +416,25 @@ struct LinkedIdentifierCLI {
             say("profiles not regenerated: \(listed); regenerate them with `xless profiles renew <id>`")
             return []
         }
+        // Every profile is tried: one that cannot be made again (no unexpired certificate left…) is left as it is with a
+        // note, and a failure after a delete is reported at the end with what was regenerated before it.
         var out: [ProfileCreated] = []
+        var failures: [XlessError] = []
         for p in profiles {
             do { out.append(try await regen.renew(p.id)) } catch {
                 let e = XlessError.wrapping(error, stage: .account)
-                throw XlessError(.account, "\(done), but regenerating profile \(p.name) (\(p.id)) failed: \(e.cause)", fix: e.fix)
+                if e.cause.contains("nothing was sent") {
+                    say("note: profile \(p.name) (\(p.id)) was not regenerated: \(e.cause) — \(e.fix)")
+                } else {
+                    failures.append(XlessError(.account, "profile \(p.name) (\(p.id)): \(e.cause)", fix: e.fix))
+                }
             }
+        }
+        guard failures.isEmpty else {
+            let regenerated = out.map { "\($0.replaced ?? "?") → \($0.profile.id)" }
+            throw XlessError(.account, "\(done)\(regenerated.isEmpty ? "" : " and regenerated profiles \(regenerated.joined(separator: ", "))"), but regenerating failed for "
+                                 + failures.map(\.cause).joined(separator: "; "),
+                             fix: failures.map(\.fix).joined(separator: "; "))
         }
         return out
     }

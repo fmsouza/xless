@@ -40,6 +40,8 @@ private final class FakePortal: LinkedIdentifierPortal, @unchecked Sendable {
 
 private final class FakeRegeneration: ProfileRegenerating, @unchecked Sendable {
     var renewed: [String] = []
+    /// Profile ID → the error its renewal throws.
+    var failures: [String: XlessError] = [:]
     let profiles: [ASCProfile]
     init(_ ids: [String]) {
         profiles = ids.map { id in
@@ -48,6 +50,7 @@ private final class FakeRegeneration: ProfileRegenerating, @unchecked Sendable {
     }
     func profiles(of identifier: String) async throws -> [ASCProfile] { profiles }
     func renew(_ id: String) async throws -> ProfileCreated {
+        if let e = failures[id] { throw e }
         renewed.append(id)
         let p = try JSONDecoder().decode(ASCProfile.self, from: Data(#"{"type":"profiles","id":"NEW\#(id)","attributes":{"name":"xless com.example.app IOS_APP_STORE","profileType":"IOS_APP_STORE"}}"#.utf8))
         return ProfileCreated(profile: p, bundleId: "com.example.app", certificates: ["C1"], devices: [], replaced: id)
@@ -182,4 +185,36 @@ private func cli(_ portal: FakePortal, kind: PortalLinkedKind = .appGroup, regen
 @Test func theAppleAccountGroupListsAppGroupsAndContainers() {
     let help = Xless.helpMessage()
     #expect(help.contains("app-groups") && help.contains("icloud-containers"))
+}
+
+@Test func everyProfileIsTriedAndAFailureSaysWhatWasRegenerated() async throws {
+    let portal = FakePortal()
+    let regen = FakeRegeneration(["P1", "P2", "P3"])
+    regen.failures = ["P1": XlessError(.account, "profile p (P1) has no unexpired certificate left, so it cannot be created again as it is; nothing was sent", fix: "create a new one"),
+                      "P3": XlessError(.account, "profile p (P3) was deleted, but creating it again failed: boom", fix: "create it again with: xless profiles create …")]
+    let said = Said()
+    do { _ = try await cli(portal, regen: regen, said: said).assign(bundle: "B1", items: ["G2"], yes: true); Issue.record("expected an error") }
+    catch let e as XlessError {
+        #expect(e.cause.hasPrefix("assigned group.com.example.other to com.example.app and regenerated profiles P2 → NEWP2, but regenerating failed for profile xless com.example.app IOS_APP_STORE (P3): profile p (P3) was deleted"))
+        #expect(e.fix.contains("xless profiles create"))
+    }
+    #expect(regen.renewed == ["P2"])
+    #expect(said.lines.contains { $0.hasPrefix("note: profile xless com.example.app IOS_APP_STORE (P1) was not regenerated") })
+}
+
+@Test func aContainerNeedsTheICloudCapabilityEnabled() async throws {
+    let portal = FakePortal()
+    portal.items = [PortalIdentifier(id: "C1", identifier: "iCloud.com.example.app", name: "App", hidden: false)]
+    portal.state = LinkedState(present: true, enabled: false, ids: [])
+    do { _ = try await cli(portal, kind: .cloudContainer).assign(bundle: "B1", items: ["C1"], yes: true); Issue.record("expected an error") }
+    catch let e as XlessError { #expect(e.cause.contains("does not have the iCloud capability enabled")) }
+    #expect(portal.writes.isEmpty)
+}
+
+@Test func enablingADisabledAppGroupsCapabilitySaysSo() async throws {
+    let portal = FakePortal()
+    portal.state = LinkedState(present: true, enabled: false, ids: ["G1"])
+    let out = try await cli(portal, regen: nil).assign(bundle: "B1", items: ["G1"], yes: true)
+    #expect(out.hasPrefix("enabled App Groups on com.example.app, which lists group.com.example.shared"))
+    #expect(portal.writes.count == 1 && portal.writes[0].enabled)
 }

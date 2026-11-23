@@ -79,6 +79,10 @@ public struct PortalBundleIDs: Sendable {
             throw AppleWebFailure.malformed(.developerPortal, method: "GET", path: "/services-account/v1/bundleIds", what: "no list of bundle IDs", page: Self.page)
         }
         guard let bundle = list.compactMap(Self.bundleID).first(where: { $0.identifier == text }) else {
+            if let next = (object["links"] as? [String: Any])?["next"] as? String, !next.isEmpty {
+                throw XlessError(.account, "more than 200 bundle IDs match \(text) and \(text) itself is not among the first 200",
+                                 fix: "name the bundle ID by its ID (`xless bundle-ids list`)")
+            }
             throw XlessError(.account, "the team has no bundle ID \(text)", fix: "register it with `xless bundle-ids create \(text)`, or check `xless bundle-ids list`")
         }
         return bundle
@@ -142,7 +146,7 @@ public struct PortalBundleIDs: Sendable {
         }
         let after = try Self.state(document: try await self.document(bundle), kind: kind, bundle: bundle.identifier)
         guard Self.matches(after, ids: ids, enabled: enabled) else {
-            throw XlessError(.account, "the developer portal accepted the change to \(bundle.identifier), but its \(kind.capabilityName) capability now lists \(after.ids.isEmpty ? "nothing" : after.ids.joined(separator: ", ")) instead of \(ids.isEmpty ? "nothing" : ids.joined(separator: ", "))",
+            throw XlessError(.account, "the developer portal accepted the change to \(bundle.identifier), but its \(kind.capabilityName) capability now lists \(after.ids.isEmpty ? "nothing" : after.ids.joined(separator: ", ")) instead of \(ids.isEmpty ? "nothing" : ids.joined(separator: ", "))\(enabled && !after.enabled ? " and is not enabled" : "")",
                              fix: "check it with `xless \(kind.command) assign` again or at \(kind.page) (\(AppleWebFailure.undocumented))")
         }
         return after
@@ -241,6 +245,7 @@ public struct PortalBundleIDs: Sendable {
         if let i = capabilities.firstIndex(where: { capabilityType($0) == kind.capability }) {
             var attributes = capabilities[i]["attributes"] as? [String: Any] ?? [:]
             attributes["enabled"] = enabled
+            if attributes["settings"] == nil || attributes["settings"] is NSNull { attributes["settings"] = [Any]() }
             var relationships = capabilities[i]["relationships"] as? [String: Any] ?? [:]
             relationships[kind.relationship] = linked
             capabilities[i]["attributes"] = attributes
@@ -253,11 +258,14 @@ public struct PortalBundleIDs: Sendable {
             throw XlessError(.account, "\(bundle) does not have the \(kind.capabilityName) capability, so no \(kind.noun) can be assigned to it; nothing was sent",
                              fix: "enable it first with `xless bundle-ids capabilities \(bundle) enable \(kind.capability)` (or let `xless sign` enable it), then re-run")
         }
-        for i in capabilities.indices {
-            let attributes = capabilities[i]["attributes"] as? [String: Any] ?? [:]
-            var writable: [String: Any] = ["settings": attributes["settings"] ?? [Any]()]
-            if let e = attributes["enabled"] { writable["enabled"] = e }
-            capabilities[i]["attributes"] = writable
+        // Each capability as App Store Connect CLI sends it back: its id, type, relationships, and only the writable
+        // attributes it has (`enabled`, `settings`).
+        capabilities = capabilities.map { capability in
+            var out = capability.filter { ["id", "type", "attributes", "relationships"].contains($0.key) }
+            if let attributes = capability["attributes"] as? [String: Any] {
+                out["attributes"] = attributes.filter { $0.key == "enabled" || $0.key == "settings" }
+            }
+            return out
         }
         var attributes = (resource["attributes"] as? [String: Any] ?? [:]).filter { !$0.key.hasPrefix("~permissions") && $0.key != "permissions" }
         attributes["teamId"] = teamID

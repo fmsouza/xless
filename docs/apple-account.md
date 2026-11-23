@@ -408,20 +408,22 @@ The App Store Connect API can neither create nor assign app groups and iCloud co
 [Apple ID web session](#the-apple-id-web-session) on the developer portal: iCloud containers through
 `services-account/v1/cloudContainers`, app groups through the portal's `listApplicationGroups.action` and
 `addApplicationGroup.action`, and assignment by updating the bundle ID (`services-account/v1/bundleIds/{id}`) so that
-only its App Groups (or iCloud) capability changes and every other capability stays as it is. When Apple answers a v1
-call as if it did not exist (400, 404, 405, 415, 422), the matching older `….action` post fastlane uses is tried
-instead. Every assignment is checked by reading the bundle ID again.
+only its App Groups (or iCloud) capability changes and every other capability stays as it is. When Apple answers the
+container listing, the container creation or the bundle ID update as if it did not exist (400, 404, 405, 415, 422),
+the matching older `….action` post fastlane uses is tried instead; nothing else is retried another way. Every
+assignment is checked by reading the bundle ID again.
 
 - A group or container is named by its identifier (`group.` or `iCloud.`, then reverse-DNS) or by its ID from `list`;
   a bundle ID by its identifier or ID. Registering an identifier the team has already sends nothing. Apple cannot
   delete an iCloud container.
 - `assign` keeps what the bundle ID has and adds the rest; App Groups is enabled on the bundle ID if needed. A
-  container needs the bundle ID's iCloud capability first (`xless bundle-ids capabilities <bundle-id> enable ICLOUD`,
+  container needs the bundle ID's iCloud capability enabled first (`xless bundle-ids capabilities <bundle-id> enable ICLOUD`,
   which `sign` also does). `unassign` asks first and leaves the capability enabled.
 - A provisioning profile lists the groups and containers of the moment it was made, so after a change xless
   regenerates the bundle ID's profiles through the API key ([`xless profiles renew`](#xless-profiles); it asks first,
   or `--yes`). Without an API key, or without a terminal and `--yes`, it says which profiles to renew; `sign`
-  regenerates its own.
+  regenerates its own. A profile that cannot be made again as it is (no unexpired certificate left) is left with a
+  note.
 
 With `--json`, `list` prints `{"data": [{"id", "identifier", "name", "prefix", …}]}`, `create`
 `{"registered": [...], "existing": [...]}`, and `assign` / `unassign` `{"bundleId", "changed", "unchanged", "linked",

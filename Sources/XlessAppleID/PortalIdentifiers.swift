@@ -159,8 +159,9 @@ public enum PortalIdentifiers {
                 }
                 if !items.contains(where: { $0.id == i.id }) { items.append(i) }
             }
-            let total = (object["totalRecords"] as? NSNumber)?.intValue ?? 0
-            if list.isEmpty || items.count >= total { return items }
+            // Without a total, a short page is the last one.
+            let total = (object["totalRecords"] as? NSNumber)?.intValue
+            if list.isEmpty || (total.map { items.count >= $0 } ?? (list.count < pageSize)) { return items }
         }
         throw AppleWebFailure.malformed(.developerPortal, method: "POST", path: PortalWebClient.display(path), what: "more than \(maxPages) pages", page: page)
     }

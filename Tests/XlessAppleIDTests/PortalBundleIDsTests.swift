@@ -86,6 +86,22 @@ final class PortalBundleIDsTests: XCTestCase {
                        [["type": "appGroups", "id": "GRP1"], ["type": "appGroups", "id": "GRP2"]])
     }
 
+    func testTheICloudPatchChangesOnlyTheContainersAndKeepsItsSetting() throws {
+        let raw = try PortalBundleIDs.patchBody(document: bundleDocument(groups: ["GRP1"], containers: ["C1"]), kind: .cloudContainer,
+                                                ids: ["C1", "C2"], enabled: true, teamID: "ABCDE12345", bundle: "com.example.app")
+        let text = String(decoding: raw, as: UTF8.self)
+        // Booleans read from Apple's JSON go back as JSON booleans, not numbers.
+        XCTAssertTrue(text.contains(#""enabled":true"#), text)
+        XCTAssertFalse(text.contains(#""enabled":1"#), text)
+        let caps = capabilities(try json(raw))
+        let icloud = try XCTUnwrap(capability(caps, "ICLOUD"))
+        XCTAssertEqual((((icloud["relationships"] as? [String: Any])?["cloudContainers"] as? [String: Any])?["data"] as? [[String: String]]),
+                       [["type": "cloudContainers", "id": "C1"], ["type": "cloudContainers", "id": "C2"]])
+        XCTAssertEqual(((icloud["attributes"] as? [String: Any])?["settings"] as? [[String: Any]])?.first?["key"] as? String, "ICLOUD_VERSION")
+        let groups = try XCTUnwrap(capability(caps, "APP_GROUPS"))
+        XCTAssertEqual((((groups["relationships"] as? [String: Any])?["appGroups"] as? [String: Any])?["data"] as? [[String: Any]])?.count, 1)
+    }
+
     func testAMissingAppGroupsCapabilityIsAddedButAMissingICloudOneIsRefused() throws {
         let body = try json(PortalBundleIDs.patchBody(document: bundleDocument(groups: nil), kind: .appGroup, ids: ["GRP9"], enabled: true,
                                                       teamID: "ABCDE12345", bundle: "com.example.app"))
@@ -172,6 +188,51 @@ final class PortalBundleIDsTests: XCTestCase {
         let post = try XCTUnwrap(mock.requests.first { $0.url!.lastPathComponent == "assignApplicationGroupToAppId.action" })
         XCTAssertEqual(formFields(post).map(\.0), ["appIdId", "displayId", "applicationGroups", "applicationGroups", "teamId"])
         XCTAssertEqual(formValue(post, "appIdId"), "B1")
+    }
+
+    func testResolvesABundleIDByItsID() async throws {
+        let (portal, mock) = makePortal { _ in .json(200, ["data": ["type": "bundleIds", "id": "B1", "attributes": ["identifier": "com.example.app", "name": "Example", "platform": "IOS"]]]) }
+        let resolved = try await PortalBundleIDs(portal: portal).resolve("B1")
+        XCTAssertEqual(resolved, bundle)
+        XCTAssertEqual(mock.requests.first?.url?.absoluteString, "https://developer.apple.com/services-account/v1/bundleIds/B1")
+    }
+
+    func testAssignsContainersThroughTheActionPostWhenThePatchIsRefusedAsAbsent() async throws {
+        let doc = Box(bundleDocument(groups: nil, containers: ["C1"]))
+        let (portal, mock) = makePortal { r in
+            if r.url!.lastPathComponent == "listProvisioningProfiles.action" { return .json(200, ["resultCode": 0], headers: ["csrf": "t", "csrf_ts": "1"]) }
+            if r.url!.lastPathComponent == "assignCloudContainerToAppId.action" {
+                doc.value = bundleDocument(groups: nil, containers: formFields(r).filter { $0.0 == "cloudContainers" }.map(\.1))
+                return .json(200, ["resultCode": 0])
+            }
+            if r.httpMethod == "PATCH" { return .json(405, [:]) }
+            return .json(200, doc.value)
+        }
+        let after = try await PortalBundleIDs(portal: portal).setLinked(.cloudContainer, ids: ["C1", "C2"], enabled: true, on: bundle)
+        XCTAssertEqual(after.ids, ["C1", "C2"])
+        let post = try XCTUnwrap(mock.requests.first { $0.url!.lastPathComponent == "assignCloudContainerToAppId.action" })
+        XCTAssertEqual(formFields(post).map(\.0), ["appIdId", "cloudContainers", "cloudContainers", "teamId"])
+    }
+
+    func testAServerErrorIsSettledByReadingTheBundleIDAgain() async throws {
+        let applied = Box(false)
+        let (portal, mock) = makePortal { r in
+            if r.url!.lastPathComponent == "listProvisioningProfiles.action" { return .json(200, ["resultCode": 0], headers: ["csrf": "t", "csrf_ts": "1"]) }
+            if r.httpMethod == "PATCH" { applied.value = true; return .json(502, [:]) }
+            return .json(200, bundleDocument(groups: applied.value ? ["GRP1", "GRP2"] : ["GRP1"]))
+        }
+        let after = try await PortalBundleIDs(portal: portal).setLinked(.appGroup, ids: ["GRP1", "GRP2"], enabled: true, on: bundle)
+        XCTAssertEqual(after.ids, ["GRP1", "GRP2"])
+        XCTAssertEqual(mock.requests.filter { $0.httpMethod == "PATCH" }.count, 1)
+        XCTAssertFalse(mock.requests.contains { $0.url!.lastPathComponent.hasSuffix("ToAppId.action") })
+
+        let (unchanged, _) = makePortal { r in
+            if r.url!.lastPathComponent == "listProvisioningProfiles.action" { return .json(200, ["resultCode": 0], headers: ["csrf": "t", "csrf_ts": "1"]) }
+            if r.httpMethod == "PATCH" { return .json(503, [:]) }
+            return .json(200, bundleDocument(groups: ["GRP1"]))
+        }
+        do { _ = try await PortalBundleIDs(portal: unchanged).setLinked(.appGroup, ids: ["GRP1", "GRP2"], enabled: true, on: bundle); XCTFail("expected an error") }
+        catch let e as XlessError { XCTAssertTrue(e.cause.contains("HTTP 503 to PATCH"), e.cause) }
     }
 
     func testAPatchThatDidNotTakeIsAnError() async {

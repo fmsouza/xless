@@ -79,6 +79,13 @@ final class PortalIdentifiersTests: XCTestCase {
         XCTAssertEqual(formValue(mock.requests[0], "sort"), "name=asc")
     }
 
+    func testAListingWithoutATotalStopsAtAShortPage() async throws {
+        let (portal, mock) = makePortal { _ in .json(200, ["resultCode": 0, "applicationGroupList": [PortalFixtures.appGroup("A1", "group.a")]]) }
+        let groups = try await PortalAppGroups(portal: portal).list()
+        XCTAssertEqual(groups.map(\.id), ["A1"])
+        XCTAssertEqual(mock.requests.count, 1)
+    }
+
     func testCreatesAnAppGroupOnceAndReportsOneThatExists() async throws {
         let (portal, mock) = makePortal { r in
             switch r.url!.lastPathComponent {
