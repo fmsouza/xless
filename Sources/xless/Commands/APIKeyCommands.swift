@@ -254,7 +254,7 @@ struct AuthAPIKeyRevokeCommand: AsyncParsableCommand {
                 print("API key \(keyID) was already revoked")
             }
             await session.end()
-            let removed = try APIKeyStore.removeKeys(id: keyID, from: try APIKeyWebCLI.store())
+            let removed = try APIKeyStore.removeRevoked(id: keyID, from: try APIKeyWebCLI.store())
             print(removed.isEmpty ? "the secret store held no entry for it" : "removed \(removed.joined(separator: ", ")) from the secret store")
         }
     }

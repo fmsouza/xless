@@ -126,7 +126,8 @@ error that says so.
 
 ## Staying unlocked
 
-By default each command that needs the store asks the passphrase, and forgets the unlocked store when it exits.
+By default each command that needs the store asks the passphrase once, however many keys it reads and writes (the App
+Store Connect API key and a new certificate's key, say), and forgets the unlocked store when it exits.
 `--remember <duration>` (on `unlock`, `init`, `import` and `export`; at most `1h`) keeps it unlocked in the Linux kernel
 keyring instead: later commands in the same login session (the same terminal and its children) read the store without
 asking, until the time runs out or `xless secrets lock`. Other users, other login sessions of yours, and the tools
@@ -265,7 +266,9 @@ An xless older than a store's `minimumReaderVersion` still reads the entries it 
 (`import`, `rm`, `passwd`, and the account commands that store keys), before asking anything or creating anything at
 Apple, with an error that says to upgrade xless (`[config]`, exit 10 from `xless secrets`; `[account]`, exit 20 from
 the account commands); the file is left as it was. Fields it does not know are written back unchanged whenever it does
-change the file. Releases before format 2 do not open a format-2 store at all ("the secret store is format version 2;
+change the file. A key revoked (or a webhook deleted) at Apple before that refusal stays revoked: `xless auth api-key
+revoke`, `xless keys revoke`, `xless webhooks delete` and `xless certs revoke` say so, and that the entry is removed with
+`xless secrets rm` once xless is upgraded. Releases before format 2 do not open a format-2 store at all ("the secret store is format version 2;
 this xless reads version 1"): after an upgrade has moved the store, going back to such a release means restoring a
 copy of the old file.
 

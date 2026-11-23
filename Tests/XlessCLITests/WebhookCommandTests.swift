@@ -136,3 +136,15 @@ private func cli(_ t: FakeTransport, vault: HookVault?, json: Bool = false, term
     #expect(out == "deleted webhook W1 \"hooks.example.com\"; removed its secret from the store (XLESS_WEBHOOK_SECRET.W1@ABCDE12345)\n")
     #expect(try vault.read().entries.map(\.name) == ["XLESS_WEBHOOK_SECRET.W10"])
 }
+
+@Test func aDeletedWebhookWhoseSecretANewerStoreKeepsSaysToUpgrade() async throws {
+    let vault = try HookVault(entries: ["XLESS_WEBHOOK_SECRET.W1@ABCDE12345"]); defer { vault.cleanup() }
+    let said = Said()
+    var c = cli(FakeTransport([(200, #"{"data":\#(hook("W1"))}"#), (204, "")]), vault: vault, said: said)
+    c.removeEntries = { _ in throw VaultError(.newerFormat, "the secret store was written by a newer xless", fix: "upgrade xless (run the install line again: README.md#install); the store is unchanged") }
+    let out = try await c.delete("W1", yes: true)
+    #expect(out == "deleted webhook W1 \"hooks.example.com\"\n")
+    #expect(said.lines.count == 1)
+    #expect(said.lines[0].contains("the webhook is deleted at Apple already;") && said.lines[0].contains("upgrade xless")
+            && said.lines[0].contains("XLESS_WEBHOOK_SECRET.W1@ABCDE12345"))
+}

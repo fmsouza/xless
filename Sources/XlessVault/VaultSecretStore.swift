@@ -68,6 +68,12 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
         }
     }
 
+    /// Drops the data key this process holds (its memory is zeroed as it is released); the next value asks again (or
+    /// takes the unlock cache's). `main` calls it before the process ends, so the key does not outlive the command.
+    public func forget() {
+        lock.withLock { dataKey = nil }
+    }
+
     /// The data key of `file` without asking: the one this process unlocked, else a valid one in the unlock cache.
     func heldKey(for file: VaultFile) -> SymmetricKey? {
         SecretScope.enter()

@@ -22,14 +22,14 @@ private struct CertVault {
     let file: VaultFile
     let key: SymmetricKey
 
-    init(entries: [(String, VaultEntry.Metadata)] = []) throws {
+    init(entries: [(String, VaultEntry.Metadata)] = [], secrets: [String: String] = [:]) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-certs-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         store = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
         var (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"),
                                                    kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
         for (name, meta) in entries {
-            file.entries.append(try VaultCrypto.seal(name: name, kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: "x"), dataKey: key))
+            file.entries.append(try VaultCrypto.seal(name: name, kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: secrets[name] ?? "x"), dataKey: key))
         }
         try store.create(file)
         self.file = file
@@ -57,10 +57,12 @@ private struct FakeCertificates: CertificateAPI {
     var create: @Sendable (CertificateType, String) throws -> ASCCertificate
     /// Checked when the POST is sent (the key must be in the store by then).
     var atPost: @Sendable () -> Void = {}
+    /// What the listing answers when it changes after the POST (a certificate made by a request whose answer was lost).
+    var listed: (@Sendable () -> [ASCCertificate])? = nil
 
     func list(types: [CertificateType], withContent: Bool) async throws -> [ASCCertificate] {
-        journal.add("list \(types.map(\.rawValue).joined(separator: ","))")
-        return existing
+        journal.add("list \(types.map(\.rawValue).joined(separator: ","))\(withContent ? " +content" : "")")
+        return listed?() ?? existing
     }
 
     func create(type: CertificateType, csrPEM: String, relatedID: String?) async throws -> ASCCertificate {
@@ -185,6 +187,64 @@ private func accountError(_ body: () async throws -> Void) async -> XlessError? 
     }
 }
 
+/// Holds what a scripted App Store Connect made.
+private final class Made: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _certificates: [ASCCertificate] = []
+    var certificates: [ASCCertificate] { lock.withLock { _certificates } }
+    func add(_ c: ASCCertificate) { lock.withLock { _certificates.append(c) } }
+}
+
+@Test func anAmbiguousCreateWhoseCertificateExistsIsRecordedWithItsKey() async throws {
+    let vault = try CertVault()
+    defer { vault.cleanup() }
+    let journal = Journal()
+    let made = Made()
+    let said = Said()
+    // Another key's certificate is listed too; only the one for the new key is taken.
+    let other = resource("C0", der: try issue(try SigningKey.generate().csrPEM(commonName: "other")))
+    let api = FakeCertificates(journal: journal, create: { _, csr in
+        made.add(resource("C7", der: try issue(csr)))
+        throw URLError(.networkConnectionLost)
+    }, listed: { [other] + made.certificates })
+    var creation = CertificateCreation(api: api)
+    creation.say = { said.lines.append($0) }
+    let created = try await creation.run(type: .distribution, relatedID: nil, entry: "XLESS_DIST_KEY@\(team)", team: team, keys: { vault.keys })
+    #expect(created.certificate.id == "C7" && created.entry == "XLESS_DIST_KEY@\(team)")
+    #expect(try vault.read().entry(named: "XLESS_DIST_KEY@\(team)")?.metadata.certificateID == "C7")
+    #expect(journal.events == ["POST DISTRIBUTION", "list DISTRIBUTION +content"])
+    #expect(said.lines.contains { $0.contains("lists certificate C7 for this key: it was created") })
+}
+
+@Test func anAmbiguousCreateWithNoCertificateListedStaysAmbiguousAndPointsAtLink() async throws {
+    let vault = try CertVault()
+    defer { vault.cleanup() }
+    let journal = Journal()
+    let other = resource("C0", der: try issue(try SigningKey.generate().csrPEM(commonName: "other")))
+    let api = FakeCertificates(journal: journal, existing: [other], create: { _, _ in throw ASCError(status: 500, items: []) })
+    let e = await accountError {
+        _ = try await CertificateCreation(api: api).run(type: .distribution, relatedID: nil, entry: "XLESS_DIST_KEY", team: nil, keys: { vault.keys })
+    }
+    #expect(e?.isAmbiguousCertificateCreation == true)
+    #expect(e?.fix.contains("`xless certs link` records it with its certificate") == true)
+    #expect(try vault.read().entry(named: "XLESS_DIST_KEY")?.metadata.certificateID == nil)
+}
+
+@Test func anAmbiguousCSRCreateWhoseCertificateExistsSucceeds() async throws {
+    let made = Made()
+    let csr = try SigningKey.generate().csrPEM(commonName: "hsm")
+    let api = FakeCertificates(journal: Journal(), create: { _, csr in
+        made.add(resource("C8", der: try issue(csr)))
+        throw ASCError(status: 502, items: [])
+    }, listed: { made.certificates })
+    let created = try await CertificateCreation(api: api).run(type: .distribution, relatedID: nil, csrPEM: csr)
+    #expect(created.certificate.id == "C8" && created.entry == nil && created.team == team)
+    // Nothing listed: still ambiguous.
+    let none = FakeCertificates(journal: Journal(), create: { _, _ in throw URLError(.timedOut) })
+    let e = await accountError { _ = try await CertificateCreation(api: none).run(type: .distribution, relatedID: nil, csrPEM: csr) }
+    #expect(e?.isAmbiguousCertificateCreation == true)
+}
+
 @Test func theDeveloperIDCapIsCheckedBeforeAKeyIsMade() async throws {
     let journal = Journal()
     let five = (1...5).map { resource("D\($0)", type: $0 % 2 == 0 ? "DEVELOPER_ID_APPLICATION" : "DEVELOPER_ID_APPLICATION_G2") }
@@ -232,7 +292,7 @@ private func accountError(_ body: () async throws -> Void) async -> XlessError? 
         return resource("C9", type: type.rawValue, der: try issue(sent))
     })
     let created = try await CertificateCreation(api: api).run(type: .applePayMerchantIdentity, relatedID: "M1", csrPEM: csr)
-    #expect(journal.events == ["POST APPLE_PAY_MERCHANT_IDENTITY M1"])
+    #expect(journal.events == ["list ", "POST APPLE_PAY_MERCHANT_IDENTITY M1"])
     #expect(created.entry == nil && created.text.contains("xless certs download C9"))
     let ambiguous = await accountError {
         _ = try await CertificateCreation(api: FakeCertificates(journal: Journal(), create: { _, _ in throw URLError(.networkConnectionLost) }))
@@ -433,4 +493,130 @@ private func listing(_ items: [String]) -> String { #"{"data":[\#(items.joined(s
     }
     #expect(e?.cause.hasPrefix("xless could not ask App Store Connect for the Apple Development certificate (cannot build the token)") == true)
     #expect(try vault.read().entries.isEmpty)
+}
+
+// MARK: - Linking keys to certificates by public key
+
+/// Answers the passphrase and counts how often it was asked.
+private final class CountedPassphrase: PassphrasePrompter, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _asked = 0
+    var asked: Int { lock.withLock { _asked } }
+    func askSecret(_ prompt: String) throws -> SecretBytes { lock.withLock { _asked += 1 }; return SecretBytes(utf8: "correct horse battery") }
+    func ask(_ prompt: String) throws -> String { try askSecret(prompt).utf8String() }
+    func say(_ line: String) {}
+}
+
+@Test func aCSRCertificateIsRecordedWithItsStoredKeyFoundBeforeTheRequest() async throws {
+    let key = try SigningKey.generate()
+    let vault = try CertVault(entries: [("JUNK", .init()), ("XLESS_DIST_KEY", .init(created: Date(timeIntervalSince1970: 1_800_000_000))),
+                                        ("XLESS_DEVID_KEY@ZZZZZ99999", .init(teamID: "ZZZZZ99999")), ("LINKED", .init(certificateID: "C0"))],
+                              secrets: ["XLESS_DIST_KEY": key.pem])
+    defer { vault.cleanup() }
+    // Another team's key, and a key whose certificate is still listed, are not even candidates; without a team, only the
+    // keys of no team are.
+    #expect(CertificateKeyLink.candidates(in: try vault.read(), known: ["C0"], team: team).map(\.name) == ["JUNK", "XLESS_DIST_KEY"])
+    #expect(CertificateKeyLink.candidates(in: try vault.read(), known: [], team: nil).map(\.name) == ["JUNK", "XLESS_DIST_KEY", "LINKED"])
+    let prompter = CountedPassphrase()
+    let store = VaultSecretStore(store: vault.store, cache: nil, prompter: { prompter })
+    let journal = Journal()
+    let api = FakeCertificates(journal: journal, existing: [resource("C0")], create: { _, csr in resource("C9", der: try issue(csr)) },
+                               atPost: { journal.add("asked=\(prompter.asked)") })
+    var creation = CertificateCreation(api: api)
+    creation.link = CertificateKeyLink(store: store, team: team)
+    let created = try await creation.run(type: .distribution, relatedID: nil, csrPEM: try key.csrPEM(commonName: "hsm"))
+    // The passphrase was asked once, before the request.
+    #expect(journal.events == ["list ", "POST DISTRIBUTION", "asked=1"])
+    #expect(prompter.asked == 1)
+    #expect(created.entry == "XLESS_DIST_KEY" && created.matched)
+    let file = try vault.read()
+    #expect(file.entry(named: "XLESS_DIST_KEY")?.metadata == VaultEntry.Metadata(
+        teamID: team, certificateID: "C9", created: Date(timeIntervalSince1970: 1_800_000_000), expires: Date(timeIntervalSince1970: 1_900_000_000),
+        certificateType: "DISTRIBUTION"))
+    #expect(try vault.secret("XLESS_DIST_KEY") == key.pem)
+    #expect(file.entry(named: "JUNK")?.metadata == VaultEntry.Metadata())
+    #expect(file.entry(named: "XLESS_DEVID_KEY@ZZZZZ99999")?.metadata.certificateID == nil)
+    #expect(created.text.contains("its private key is in the secret store as XLESS_DIST_KEY (matched by its public key)"))
+    #expect(!(try ASCOutput.json(created)).contains("matched"))
+}
+
+@Test func aCSRWhoseKeyIsNotThereAsksNothingOrOnlyNotes() async throws {
+    let csr = try SigningKey.generate().csrPEM(commonName: "hsm")
+    let api = FakeCertificates(journal: Journal(), existing: [resource("C0")], create: { _, csr in resource("C9", der: try issue(csr)) })
+    // Every key linked to a listed certificate: nothing is opened.
+    let linked = try CertVault(entries: [("LINKED", .init(certificateID: "C0"))])
+    defer { linked.cleanup() }
+    let prompter = CountedPassphrase()
+    var creation = CertificateCreation(api: api)
+    creation.link = CertificateKeyLink(store: VaultSecretStore(store: linked.store, cache: nil, prompter: { prompter }), team: team)
+    #expect(try await creation.run(type: .distribution, relatedID: nil, csrPEM: csr).entry == nil)
+    #expect(prompter.asked == 0)
+    // An ECC CSR (Apple Pay processing): the store keeps RSA keys only, so it is not looked at.
+    let unlinked = try CertVault(entries: [("XLESS_DIST_KEY", .init())])
+    defer { unlinked.cleanup() }
+    let ecc = try CertificateSigningRequest(version: .v1, subject: try DistinguishedName { CommonName("pay") }, privateKey: .init(P256.Signing.PrivateKey()),
+                                            attributes: .init(), signatureAlgorithm: .ecdsaWithSHA256).serializeAsPEM().pemString
+    creation.link = CertificateKeyLink(store: VaultSecretStore(store: unlinked.store, cache: nil, prompter: { prompter }), team: team)
+    #expect(try await creation.run(type: .applePay, relatedID: "M1", csrPEM: ecc).entry == nil)
+    #expect(prompter.asked == 0)
+    // A store that cannot be unlocked (no terminal): a note, and the certificate is still made.
+    let said = Said()
+    creation.link = CertificateKeyLink(store: VaultSecretStore(store: unlinked.store, cache: nil, prompter: { nil }), team: team)
+    creation.say = { said.lines.append($0) }
+    #expect(try await creation.run(type: .distribution, relatedID: nil, csrPEM: csr).certificate.id == "C9")
+    #expect(said.lines.count == 1 && said.lines[0].contains("`xless certs link` records the certificate with it later"))
+}
+
+@Test func aReusedCSRsOldCertificateIsNotTakenForTheNewOne() async throws {
+    let csr = try SigningKey.generate().csrPEM(commonName: "reused")
+    let old = resource("OLD", der: try issue(csr, notAfter: Date(timeIntervalSince1970: 1_750_000_000)))
+    let made = Made()
+    // The request fails and made nothing: the old certificate for the same key does not count.
+    let nothing = FakeCertificates(journal: Journal(), existing: [old], create: { _, _ in throw ASCError(status: 503, items: []) })
+    let e = await accountError { _ = try await CertificateCreation(api: nothing).run(type: .distribution, relatedID: nil, csrPEM: csr) }
+    #expect(e?.isAmbiguousCertificateCreation == true)
+    // It made one: that one is taken.
+    let api = FakeCertificates(journal: Journal(), create: { _, csr in
+        made.add(resource("NEW", der: try issue(csr)))
+        throw ASCError(status: 503, items: [])
+    }, listed: { [old] + made.certificates })
+    #expect(try await CertificateCreation(api: api).run(type: .distribution, relatedID: nil, csrPEM: csr).certificate.id == "NEW")
+}
+
+@Test func certsLinkRecordsEveryMatchAndNamesTheKeysNoCertificateMatches() async throws {
+    let dist = try SigningKey.generate(), devid = try SigningKey.generate()
+    let vault = try CertVault(entries: [("XLESS_DIST_KEY", .init()), ("XLESS_DEVID_KEY", .init(certificateID: "GONE")), ("ORPHAN", .init())],
+                              secrets: ["XLESS_DIST_KEY": dist.pem, "XLESS_DEVID_KEY": devid.pem, "ORPHAN": try SigningKey.generate().pem])
+    defer { vault.cleanup() }
+    func content(_ key: SigningKey, until: Date) throws -> String { try issue(try key.csrPEM(commonName: "x"), notAfter: until).base64EncodedString() }
+    // Two certificates for the distribution key: the later one is recorded.
+    let list = listing([
+        certJSON("D1", expires: "2027-01-01T00:00:00.000+0000", content: try content(dist, until: Date(timeIntervalSince1970: 1_798_761_600))),
+        certJSON("D2", expires: "2028-01-01T00:00:00.000+0000", content: try content(dist, until: Date(timeIntervalSince1970: 1_830_297_600))),
+        certJSON("V1", type: "DEVELOPER_ID_APPLICATION_G2", expires: "2028-01-01T00:00:00.000+0000", content: try content(devid, until: Date(timeIntervalSince1970: 1_830_297_600))),
+    ])
+    let t = FakeTransport([(200, list)])
+    let out = try await cli(t).link(store: vault.store.secretStore, team: team)
+    #expect(t.requests[0].url!.query!.contains("certificateContent"))
+    #expect(out == """
+    linked XLESS_DIST_KEY to Apple Distribution certificate D2, expires 2028-01-01
+    linked XLESS_DEVID_KEY to Developer ID Application certificate V1, expires 2028-01-01
+    no certificate of the team matches ORPHAN: if its certificate is gone, remove it with `xless secrets rm ORPHAN`
+
+    """)
+    let file = try vault.read()
+    #expect(file.entry(named: "XLESS_DIST_KEY")?.metadata.certificateID == "D2")
+    #expect(file.entry(named: "XLESS_DEVID_KEY")?.metadata.certificateType == "DEVELOPER_ID_APPLICATION_G2")
+    #expect(file.entry(named: "XLESS_DIST_KEY")?.metadata.teamID == team)
+    // Without a selected team, the certificates' own team is used: another team's key is not opened nor called unmatched.
+    let other = try CertVault(entries: [("XLESS_DIST_KEY@ZZZZZ99999", .init(teamID: "ZZZZZ99999")), ("SPARE", .init())],
+                              secrets: ["SPARE": try SigningKey.generate().pem])
+    defer { other.cleanup() }
+    let teamless = try await cli(FakeTransport([(200, list)])).link(store: other.store.secretStore, team: nil)
+    #expect(teamless == "no certificate of the team matches SPARE: if its certificate is gone, remove it with `xless secrets rm SPARE`\n")
+    // Run again: nothing left but the orphan.
+    let again = try await cli(FakeTransport([(200, list)]), json: true).link(store: vault.store.secretStore, team: team)
+    struct Outcome: Decodable { let linked: [[String: String]]; let unmatched: [String] }
+    let decoded = try JSONDecoder().decode(Outcome.self, from: Data(again.utf8))
+    #expect(decoded.linked.isEmpty && decoded.unmatched == ["ORPHAN"])
 }

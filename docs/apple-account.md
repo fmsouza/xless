@@ -337,6 +337,7 @@ xless certs create --type pass-type-id --pass-type-id pass.com.example.ticket
 xless certs show 8U3T4X5YZA
 xless certs download 8U3T4X5YZA --out distribution.cer        # DER, mode 0644, never overwrites
 xless certs revoke 8U3T4X5YZA                                 # asks first, naming the profiles that stop working
+xless certs link                                              # records each stored key's certificate, by public key
 ```
 
 They use the API key (`/v1/certificates`); creating and revoking need the Admin role, and Developer ID certificates the
@@ -356,12 +357,19 @@ three certificates `sign` uses, `XLESS_<TYPE>_KEY` otherwise, with `@<TEAM_ID>` 
 chooses another. xless refuses up front when the store already has a key the `sign` stage would read for that team
 (also for a `--name` such as `XLESS_DIST_KEY@<TEAM_ID>`). The
 create request is sent once, never retried. A definite refusal (a 4xx other than 429) removes the key again; any other
-failure may have created the certificate, so the key is kept and the error says to check `xless certs list`. Once the
+failure may have created the certificate, so xless lists the certificates of the type: one issued for the new key
+means the request went through, and it is recorded like any other; otherwise the key is kept and the error says to
+check `xless certs list`, and `xless certs link` records the certificate with it if one shows up later. Once the
 certificate exists, its ID, type and expiry (and the team, read from the certificate when none was selected) are
-recorded with the key. `sign` finds the key through the store and matches it to its certificate by public key.
+recorded with the key. `sign` finds the key through the store and matches it to its certificate by public key. The
+command asks the store's passphrase once, also when the API key itself comes from the store.
 
 `create --csr <file>` (PEM or DER) is for keys that live elsewhere (an HSM, another machine): xless checks the CSR and
-sends it, and nothing secret touches it. Apple Pay payment processing (`apple-pay`) needs an ECC P-256 key, usually made
+sends it, and nothing secret touches it. If the CSR was made from an RSA key the store holds without a live
+certificate (`xless sign bootstrap --csr-only`, then `xless secrets import`), xless finds that key by its public key
+before the request (asking the passphrase then, only when the store has such keys of the team) and records the new
+certificate with it; without a terminal, a note says to run `xless certs link` later. A failed request that may have
+gone through is settled the same way as above, counting only a certificate that was not there before it. Apple Pay payment processing (`apple-pay`) needs an ECC P-256 key, usually made
 by the payment provider, so it always takes `--csr`. Apple Pay certificates need `--merchant-id` (an identifier or
 ID, see [`xless merchant-ids`](#xless-merchant-ids)), Wallet pass certificates `--pass-type-id` (an identifier
 `pass.…` or ID).
@@ -372,15 +380,23 @@ certificates](https://developer.apple.com/help/account/certificates/create-devel
 overview](https://developer.apple.com/help/account/certificates/certificates-overview/) gives no number for the other
 types; App Store Connect refuses one too many itself (HTTP 409), and the error points to `xless certs revoke`.
 
-`revoke` lists the profiles that contain the certificate (they become invalid), warns that apps signed with a
-Developer ID certificate can no longer be installed, and asks (or needs `--yes`). It leaves the store entry holding the
-private key in place and names it (`xless secrets rm <name>`). `xless sign bootstrap --type
+`revoke` lists the profiles that contain the certificate (they become invalid; every profile and every certificate of
+each is read, also beyond the 50 a profile listing carries), warns that apps signed with a Developer ID certificate can
+no longer be installed, and asks (or needs `--yes`). It leaves the store entry holding the private key in place and
+names it (`xless secrets rm <name>`; with a store a newer xless wrote, upgrade xless first).
+
+`link` matches the store's signing keys that have no certificate recorded (imported keys, a key kept after a create
+whose answer was lost, a CSR's key), or whose recorded certificate is gone, with the team's certificates by public key,
+and records the match (certificate ID, type, expiry, team) so `list` and `show` name the key. It asks the passphrase
+only when there is such a key, never opens another team's keys (without `--team`, the team the certificates are for;
+keys recorded for no team are always looked at), and names the keys no certificate matches. `xless sign bootstrap --type
 distribution|developer-id|installer` is `create` for the three certificates `sign` uses, with its own `--allow-new`
 check ([bootstrap.md](bootstrap.md#how-sign-bootstrap-behaves)); `--out <file>` keeps its file behaviour.
 
 With `--json`, `list` prints `{"data": [certificates]}`, `show` the certificate, `create`
-`{"certificate": certificate, "entry": store entry or absent, "team": team ID or absent}` and `revoke`
-`{"revoked", "certificateType", "profiles", "storeEntries"}`.
+`{"certificate": certificate, "entry": store entry or absent, "team": team ID or absent}`, `revoke`
+`{"revoked", "certificateType", "profiles", "storeEntries"}` and `link` `{"linked": [{"entry", "certificate"}],
+"unmatched": [entry names]}`.
 
 ## `xless profiles`
 
