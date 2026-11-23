@@ -362,18 +362,30 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
 
 // MARK: a credential helper that cannot keep a key (#141)
 
-/// A credential helper that lists nothing and fails every `store`; removed by `cleanup()`.
+/// A credential helper that lists nothing and fails every `store` (or runs `script`); removed by `cleanup()`.
 struct BrokenHelper {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-broken-helper-\(UUID().uuidString)")
     let store: HelperSecretStore
 
-    init() throws {
+    static let failsEveryStore = "cat >/dev/null\ncase \"$1\" in list) echo '{}' ;; *) echo 'keyring is locked' >&2; exit 1 ;; esac\n"
+    /// Passes the test write (keeps `xless-helper-probe.*` in $HOME/probe), fails the real one.
+    static let failsTheRealStore = #"""
+    case "$1" in
+    list) cat >/dev/null; echo '{}' ;;
+    store) in=$(cat); case "$in" in *'"ServerURL":"xless:xless-helper-probe.'*) printf '%s' "$in" > "$HOME/probe" ;; *) echo 'keyring is locked' >&2; exit 1 ;; esac ;;
+    get) cat >/dev/null; cat "$HOME/probe" ;;
+    erase) cat >/dev/null; rm -f "$HOME/probe" ;;
+    esac
+
+    """#
+
+    init(script: String = BrokenHelper.failsEveryStore) throws {
         let bin = root.appendingPathComponent("bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
-        let script = bin.appendingPathComponent("xless-credential-broken")
-        try Data("#!/bin/sh\ncat >/dev/null\ncase \"$1\" in list) echo '{}' ;; *) echo 'keyring is locked' >&2; exit 1 ;; esac\n".utf8).write(to: script)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let file = bin.appendingPathComponent("xless-credential-broken")
+        try Data("#!/bin/sh\n\(script)".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         store = HelperSecretStore(helper: try CredentialHelper.find(name: "broken", env: ["PATH": "\(bin.path):/usr/bin:/bin", "HOME": root.path]))
     }
 
@@ -393,4 +405,26 @@ struct BrokenHelper {
     let vault = ProvisionVault(store: helper.store, env: [:])
     let a = #expect(throws: XlessError.self) { try vault.unlock(try vault.existing(), reason: "storing the new APNs key") }
     #expect(a?.stage == .account && a?.cause.contains("test write") == true)
+}
+
+@Test func aKeyTheHelperFailsToKeepAfterPassingItsTestWriteIsRescued() async throws {
+    let helper = try BrokenHelper(script: BrokenHelper.failsTheRealStore)
+    defer { helper.cleanup() }
+    let runtime = helper.root.appendingPathComponent("runtime")
+    try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    // The test write passes (and leaves nothing behind), so the key is created...
+    let keys = try APIKeyWebCLI.unlocked(store: helper.store, reason: "storing the new API key") { APIKeyStore(store: $0, catalogID: $1.id) }
+    #expect(!FileManager.default.fileExists(atPath: helper.root.appendingPathComponent("probe").path))
+    let journal = Journal()
+    let c = APIKeyCreation(web: FakeWeb(journal: journal, download: { SecretBytes(utf8: pem) }), vault: keys, verify: { _ in journal.add("verify") },
+                           rescue: KeyRescue(env: ["XDG_RUNTIME_DIR": runtime.path], ask: { _ in nil }))
+    let e = await accountError { _ = try await run(c) }
+    #expect(journal.events.first?.hasPrefix("create") == true)
+    // ...and when the helper then fails the real write, the key is saved for `xless secrets import`, not lost.
+    let path = runtime.appendingPathComponent("xless-rescued-AuthKey_2X9R4HXF34.p8").path
+    #expect(String(decoding: FileManager.default.contents(atPath: path) ?? Data(), as: UTF8.self) == pem)
+    #expect((try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) == 0o600)
+    #expect(e?.cause.contains("the secret store could not keep it (xless-credential-broken store failed") == true, "\(e?.cause ?? "")")
+    #expect(e?.fix.contains("`xless secrets import ASC_KEY_P8@\(team) --file \(path) --kind asc-api-key") == true, "\(e?.fix ?? "")")
+    #expect(!journal.events.contains("verify"))
 }

@@ -38,6 +38,7 @@ struct KeyRescue: Sendable {
         var notes: [String] = []
         if let dir = runtimeDirectory(&notes) {
             let base = "xless-rescued-AuthKey_\(keyID.filter { $0.isASCII && ($0.isLetter || $0.isNumber) })"
+            var taken = true
             for n in 1...50 {
                 let path = "\(dir)/\(base)\(n == 1 ? "" : ".\(n)").p8"
                 switch Self.create(secret, at: path) {
@@ -45,8 +46,10 @@ struct KeyRescue: Sendable {
                 case .exists: continue
                 case .failed(let why): notes.append("cannot write \(path): \(why)")
                 }
+                taken = false
                 break
             }
+            if taken { notes.append("\(dir) already has 50 files \(base)*.p8") }
         }
         var prompt = "The secret store could not keep the private key of \(keyID), which Apple offers once. Path of a new file to save it to (mode 0600; Enter to give up): "
         while let answer = ask(prompt) {
@@ -108,9 +111,9 @@ struct KeyRescue: Sendable {
                 return true
             }
         }
-        ok = ok && fsync(fd) == 0
-        let why = String(cString: strerror(errno))
-        ok = close(fd) == 0 && ok
+        var why = ok ? "" : String(cString: strerror(errno))
+        if ok, fsync(fd) != 0 { ok = false; why = String(cString: strerror(errno)) }
+        if close(fd) != 0, ok { ok = false; why = String(cString: strerror(errno)) }
         guard ok else {
             unlink(path)
             return .failed(why)

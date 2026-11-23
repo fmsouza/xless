@@ -69,7 +69,8 @@ public enum SecretEnvironment {
         return nil
     }
 
-    /// Variables of the system, the shell and its tools, and scripts/testflight.sh's globals (a test keeps those in step).
+    /// Variables of the system, the shell, the build toolchains, and scripts/testflight.sh's globals (a test keeps those
+    /// in step).
     static let reservedVariables: Set<String> = [
         // POSIX and the shells
         "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "TERMINFO", "COLUMNS", "LINES", "TZ", "TMPDIR",
@@ -79,6 +80,8 @@ public enum SecretEnvironment {
         "HISTSIZE", "HISTCONTROL", "LANG", "LANGUAGE", "NLSPATH", "POSIXLY_CORRECT", "DISPLAY", "XAUTHORITY", "EDITOR",
         "VISUAL", "PAGER", "BROWSER", "MANPATH", "INFOPATH", "GNUPGHOME", "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS",
         "SDKROOT", "DEVELOPER_DIR", "NO_PROXY", "ALL_PROXY", "CI",
+        // the toolchains of the Rust, Tauri and React Native builds
+        "RUSTFLAGS", "RUSTDOCFLAGS", "JAVA_HOME", "JAVA_OPTS",
         // scripts/testflight.sh
         "ALLOW_DISK", "ARGS", "CARGO", "CONFIG", "DESTINATION", "ENV_FILE", "NAME", "OVERLAY", "PLATFORM", "PROJECT", "SIM",
         "SOURCE", "SOURCE_MOUNT", "SOURCE_SUB", "TEAM", "XCODE_PIN", "XCODE_TAG", "XCODE_VERSION",
@@ -86,7 +89,8 @@ public enum SecretEnvironment {
 
     static let reservedPrefixes = [
         "LC_", "LD_", "DYLD_", "XDG_", "BASH_", "SSH_", "SUDO_", "DOCKER_", "GIT_", "GPG_", "PASSWORD_STORE_", "DBUS_",
-        "WAYLAND_", "MALLOC_", "SWIFT_", "HTTP_", "HTTPS_",
+        "WAYLAND_", "MALLOC_", "SWIFT_", "HTTP_", "HTTPS_", "CARGO_", "RUSTUP_", "RUSTC", "ANDROID_", "GRADLE_", "NODE_",
+        "NPM_CONFIG_", "PYTHON",
     ]
 
     /// Whether a command-line option or argument named `name` (`--api-key`, `password`, `privateKey`) would carry a

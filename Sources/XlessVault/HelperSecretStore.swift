@@ -86,8 +86,9 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
     /// per process: a helper that cannot keep a secret is found before Apple creates a key it offers only once.
     public func probeWrites(reason: String) throws {
         if lock.withLock({ probed }) { return }
-        let name = Self.probePrefix + Self.randomHex(8)
-        let value = SecretBytes(utf8: Self.randomHex(16))
+        // Shaped like what is stored for real: `NAME@TEAMID`, a multi-line PEM of a few hundred bytes.
+        let name = Self.probePrefix + Self.randomHex(8) + "@XLESSPROBE"
+        let value = SecretBytes(utf8: "-----BEGIN XLESS PROBE-----\n" + (0..<4).map { _ in Self.randomHex(32) }.joined(separator: "\n") + "\n-----END XLESS PROBE-----\n")
         defer { value.wipe() }
         func failed(_ what: String, fix: String) -> VaultError {
             VaultError(.helper, "\(helper.command) failed xless's test write (store, read back and erase a throwaway entry) before \(reason): \(what)",

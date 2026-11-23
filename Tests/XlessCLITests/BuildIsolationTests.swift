@@ -77,7 +77,7 @@ private struct TeamStore: SecretFallback {
     let source = dir.appendingPathComponent("app")
     try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
-    let name = "CARGO_REVIEW_PW_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+    let name = "MY_CARGO_REVIEW_PW_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
     let overlay = dir.appendingPathComponent("app.yml")
     try """
     type: cargo

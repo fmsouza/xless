@@ -193,10 +193,19 @@ struct SecretsImportCommand: ParsableCommand {
     @OptionGroup var options: RememberOption
 
     func validate() throws {
+        let kind = kind ?? VaultImport.inferredKind(for: name)
         if let role {
+            guard kind == .ascAPIKey else { throw ValidationError("--role is an App Store Connect API key's (--kind asc-api-key)") }
+            guard !role.trimmingCharacters(in: .whitespaces).isEmpty else { throw ValidationError("--role is empty") }
             do { _ = try APIKeyRoles.parse(role.split(separator: ",").map(String.init)) } catch let e as XlessError { throw ValidationError("\(e.cause); \(e.fix)") }
         }
-        if let services { _ = try AuthKeyServiceArgument.parse([services]) }
+        if let services {
+            guard kind == .authKey else { throw ValidationError("--services is an auth key's (--kind auth-key)") }
+            guard services.split(separator: ",").allSatisfy({ AuthKeyService(argument: $0.trimmingCharacters(in: .whitespaces)) != nil }),
+                  !services.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw ValidationError("--services \(services) is not a list of auth key services: use \(AuthKeyServiceArgument.names), comma-separated")
+            }
+        }
     }
 
     func run() throws {

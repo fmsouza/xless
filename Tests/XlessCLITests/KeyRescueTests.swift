@@ -85,10 +85,14 @@ private func mode(_ path: String) throws -> Int { try #require(try FileManager.d
 @Test func secretsImportTakesTheRoleAndServicesARescueCarries() throws {
     let api = try SecretsImportCommand.parse(["ASC_KEY_P8@ABCDE12345", "--file", "k.p8", "--kind", "asc-api-key", "--role", "admin,FINANCE"])
     #expect(api.role == "admin,FINANCE")
-    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--role", "BOSS"]) }
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--kind", "asc-api-key", "--role", "BOSS"]) }
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--kind", "asc-api-key", "--role", ""]) }
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--kind", "password", "--role", "ADMIN"]) }
     let auth = try SecretsImportCommand.parse(["XLESS_AUTH_KEY@ABCDE12345", "--file", "k.p8", "--kind", "auth-key", "--services", "apns,siwa"])
     #expect(auth.services == "apns,siwa")
-    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--services", "maps"]) }
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--kind", "auth-key", "--services", "maps"]) }
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["X", "--file", "k.p8", "--kind", "auth-key", "--services", ""]) }
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["ASC_KEY_P8", "--file", "k.p8", "--services", "apns"]) }
 }
 
 /// Scripted terminal answers, recording each prompt.
