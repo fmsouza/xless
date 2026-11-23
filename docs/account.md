@@ -92,13 +92,12 @@ it again. Details: [`xless provision`](apple-account.md#xless-provision).
 **5. Build and ship.** Install the SDK once (`xless setup --xcode Xcode_27.xip`, [README](../README.md#set-up)), then:
 
 ```sh
-xless secrets lock; xless auth logout   # see below
 xless run .                             # build, sign, upload, deliver to the TestFlight groups of xless.yml
 ```
 
-Before a native build, drop what is kept: `xless secrets lock` and `xless auth logout`. The build runs the project's
-SwiftPM plugins and macros as you, in your login session, where they could read a remembered unlock or a kept Apple
-ID session ([security.md](security.md#the-build-and-your-secrets)). The keys come from the store: one passphrase per run, nothing in a secrets file
+The build runs the project's SwiftPM plugins and macros as you, but in an empty session keyring and without the
+secret variables: a remembered unlock or a kept Apple ID session is out of their reach
+([security.md](security.md#the-build-and-your-secrets)). The keys come from the store: one passphrase per run, nothing in a secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)). For CI, export what it needs once
 (`xless secrets export ASC_KEY_P8@ABCDE12345 --out key.p8`, and the same for `XLESS_DIST_KEY@…`), put the contents into
 the CI's secret store, and delete the files ([CI](signing-and-testflight.md#continuous-integration)).

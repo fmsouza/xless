@@ -90,8 +90,10 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   one process: one passphrase. With `--config`, steps 1 and 3 are two processes on either side of the build, and each
   asks it: nothing unlocked stays in a process while the build code runs. The build step runs with
   `XLESS_NO_SECRET_STORE=1`: its xless never opens the store, and it leaves the session keyring, so the build code it
-  runs cannot reach a remembered unlock. This keeps xless itself from handing out a secret there; it is no sandbox:
-  code that runs on your machine as you can read your files, which is why the overlays build in Docker.
+  runs cannot reach a remembered unlock. (Every tool any xless runs, in a project directory's single process too,
+  starts in an empty session keyring with `XLESS_NO_SECRET_STORE=1`:
+  [security.md](security.md#the-build-and-your-secrets).) This keeps xless itself from handing out a secret there; it
+  is no sandbox: code that runs on your machine as you can read your files, which is why the overlays build in Docker.
 - **With `--docker`**, the store is not in any container. Before the first step, the xless on your machine (asking the
   passphrase once) writes the secrets each container needs into a fresh `$XDG_RUNTIME_DIR/xless/<random>/` (a tmpfs on
   systemd hosts: never on disk), one directory per container (step 1 gets the App Store Connect key; step 3, or the
@@ -115,8 +117,8 @@ error that says so.
 By default each command that needs the store asks the passphrase, and forgets the unlocked store when it exits.
 `--remember <duration>` (on `unlock`, `init`, `import` and `export`; at most `1h`) keeps it unlocked in the Linux kernel
 keyring instead: later commands in the same login session (the same terminal and its children) read the store without
-asking, until the time runs out or `xless secrets lock`. Other users, and other login sessions of yours, cannot read the
-cached key. macOS has no kernel keyring, and containers often block it; there `--remember` is refused.
+asking, until the time runs out or `xless secrets lock`. Other users, other login sessions of yours, and the tools
+xless runs (the build's plugins and scripts start in an empty keyring) cannot read the cached key. macOS has no kernel keyring, and containers often block it; there `--remember` is refused.
 
 ## Keeping the secrets in your keyring or pass (credential helpers)
 
