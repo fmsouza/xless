@@ -15,8 +15,17 @@ public enum CertificateKind: String, Sendable, CaseIterable {
         }
     }
     public var createType: String { ascTypes[0] }
-    /// Apple's per-team limits (developer.apple.com/support/certificates; plan values; not confirmed against Apple docs as of 2026-10-13).
-    public var cap: Int { self == .developerID ? 5 : 3 }
+    /// Apple's documented per-team limit (`CertificateType.cap`: five Developer ID Application certificates); nil where
+    /// Apple documents none, and App Store Connect refuses a certificate too many itself.
+    public var cap: Int? { certificateType.cap }
+    /// The API type `bootstrap` creates.
+    public var certificateType: CertificateType {
+        switch self {
+        case .distribution: .distribution
+        case .developerID: .developerIDApplicationG2
+        case .installer: .macInstallerDistribution
+        }
+    }
     public var secretName: String {
         switch self {
         case .distribution: "XLESS_DIST_KEY"
@@ -62,13 +71,13 @@ public struct CertificateService: Sendable {
     /// Creates a certificate for `key`. The POST is attempted exactly once (a retry could burn a second slot).
     public func bootstrap(kind: CertificateKind, allowNew: Bool, key: SigningKey) async throws -> ASCResource<CertificateAttributes> {
         let existing = try await list(kind)
-        if existing.count >= kind.cap {
-            throw XlessError(.sign, "team already has \(existing.count) \(kind.rawValue) certificates (Apple limit \(kind.cap))",
-                             fix: "revoke an unused one at developer.apple.com/account/resources/certificates")
+        if let cap = kind.cap, existing.count >= cap {
+            throw XlessError(.sign, "team already has \(existing.count) \(kind.rawValue) certificates (Apple limit \(cap))",
+                             fix: "revoke an unused one (`xless certs list --type \(kind.certificateType.argument)`, `xless certs revoke <id>`)")
         }
         if !existing.isEmpty, !allowNew {
             throw XlessError(.sign, "team already has \(existing.count) \(kind.rawValue) certificate(s); their private keys cannot be downloaded",
-                             fix: "reuse the key you already stored, or pass --allow-new to create another (uses one of \(kind.cap) slots)")
+                             fix: "reuse the key you already stored, or pass --allow-new to create another\(kind.cap.map { " (uses one of \($0) slots)" } ?? "")")
         }
         struct Attrs: Codable, Sendable { var csrContent: String; var certificateType: String }
         let body = ASCCreate<Attrs, ASCNoRelationships>(type: "certificates",
@@ -78,23 +87,18 @@ public struct CertificateService: Sendable {
             return doc.data
         } catch let e as ASCError where e.status == 403 {
             throw XlessError(.sign, "App Store Connect refused to create a \(kind.rawValue) certificate (\(e))",
-                             fix: "Developer ID certificates may require the Account Holder: run `xless sign bootstrap --type \(kind.rawValue) --csr-only`, upload the CSR at developer.apple.com, then store the key")
+                             fix: "Developer ID certificates need the Account Holder: have them run `xless sign bootstrap --type \(kind.rawValue)`, or run `xless sign bootstrap --type \(kind.rawValue) --csr-only --out <key file>` and have them create it with `xless certs create --type \(kind.certificateType.argument) --csr <key file>.csr`")
         } catch where Self.isAmbiguous(error) {
             let now = (try? await list(kind).count).map(String.init) ?? "unknown"
             throw XlessError(.sign, "\(Self.ambiguousMarker): the create request failed (\(error)) and may or may not have succeeded; team now has \(now) \(kind.rawValue) certificate(s) (was \(existing.count))",
-                             fix: "check developer.apple.com/account/resources/certificates before retrying with --allow-new; the key file was kept in case the certificate exists")
+                             fix: "check `xless certs list --type \(kind.certificateType.argument)` before retrying with --allow-new; the key was kept in case the certificate exists")
         }
     }
 
     static let ambiguousMarker = "certificate creation is ambiguous"
 
-    /// After the create POST was sent, only a definite App Store Connect refusal (4xx other than 429) proves no
-    /// certificate was made. Transport errors, 429/5xx, an undecodable 2xx body or cancellation are all ambiguous.
-    /// (`XlessError` comes from xless itself before anything was sent, e.g. building the JWT.)
-    static func isAmbiguous(_ error: Error) -> Bool {
-        if let e = error as? ASCError { return !(400..<500).contains(e.status) || e.status == 429 }
-        return !(error is XlessError)
-    }
+    /// `ASCCertificates.isAmbiguous`: whether a failed create POST may have made the certificate.
+    static func isAmbiguous(_ error: Error) -> Bool { ASCCertificates.isAmbiguous(error) }
 }
 
 extension XlessError {
