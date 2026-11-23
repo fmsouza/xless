@@ -1,5 +1,6 @@
 import Foundation
 import XlessASC
+import XlessCore
 
 /// `xless store validate`: what App Store Connect would refuse, found offline (no network, no Apple tool).
 ///
@@ -13,6 +14,15 @@ public enum ManifestValidator {
     public static let platforms = ["IOS", "MAC_OS", "TV_OS", "VISION_OS"]
     public static let releaseTypes = ["MANUAL", "AFTER_APPROVAL", "SCHEDULED"]
     public static let deviceFamilies = ["IPHONE", "IPAD", "MAC", "APPLE_TV", "APPLE_WATCH", "VISION"]
+
+    /// Whether a `passwordSecret` names one of xless's other secrets, or something named like a key or token: `store push`
+    /// would send its value to App Store Connect as the demo password, where App Review (and the app's team) can read it.
+    public static func isReservedSecret(_ name: String) -> Bool {
+        let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
+        if base == "XLESS_DEMO_PASSWORD" { return false }
+        if SecretEnvironment.isSecret(base) || base.hasPrefix("ASC_") { return true }
+        return ["_KEY", "_TOKEN", "_P8", "_PEM", "_SECRET"].contains { base.hasSuffix($0) || base.hasSuffix($0 + "_FILE") }
+    }
 
     /// - Parameters:
     ///   - dir: the manifest directory (its name starts every issue's path).
@@ -152,6 +162,9 @@ public enum ManifestValidator {
             if let secret = demo.passwordSecret, !Self.isSecretName(secret) {
                 error(appPath, "review.demoAccount.passwordSecret \(secret) is not a secret name",
                       "name the secret-store entry (or environment variable) that holds the password, e.g. XLESS_DEMO_PASSWORD; never the password itself")
+            } else if let secret = demo.passwordSecret, ManifestValidator.isReservedSecret(secret) {
+                error(appPath, "review.demoAccount.passwordSecret \(secret) names a key or token, not a password",
+                      "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD (`xless secrets import XLESS_DEMO_PASSWORD --file <file> --kind password`)")
             }
             if demo.required == true {
                 if demo.name?.isEmpty ?? true { missing(appPath, "review.demoAccount.required without review.demoAccount.name", "add the demo account's user name") }

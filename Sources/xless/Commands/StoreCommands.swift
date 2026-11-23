@@ -10,16 +10,18 @@ import XlessStore
 struct StoreCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "store",
-        abstract: "Keep the App Store listing in an appstore/ directory: pull it from App Store Connect, validate it.",
+        abstract: "Keep the App Store listing in an appstore/ directory: pull it from App Store Connect, validate it, push it back.",
         discussion: """
         The listing (text per locale, screenshots, previews, categories, age rating, review contact, licence agreement, \
         price and availability) lives in appstore/ next to the project, reviewed like code: docs/appstore-manifest.md. \
-        pull reads an existing app's listing with the App Store Connect API key; validate checks the directory offline.
+        pull reads an existing app's listing with the App Store Connect API key; validate checks the directory offline; \
+        push sends what differs.
 
           xless store pull --app com.example.app
           xless store validate
+          xless store push --dry-run
         """,
-        subcommands: [StorePullCommand.self, StoreValidateCommand.self])
+        subcommands: [StorePullCommand.self, StoreValidateCommand.self, StorePushCommand.self])
 }
 
 /// `--dir` shared by the store commands.
@@ -178,5 +180,143 @@ enum StoreValidation {
             ? "\(dir.lastPathComponent)/ is valid\(warnings == 0 ? "" : " (\(plural(warnings, "warning")))")\n"
             : "\(dir.lastPathComponent)/: \(plural(errors, "error"))\(warnings == 0 ? "" : ", \(plural(warnings, "warning"))")\n"
         return (errors == 0 ? summary : "", lines + (errors == 0 ? "" : summary), errors > 0)
+    }
+}
+
+struct StorePushCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "push",
+        abstract: "Make App Store Connect's listing match the appstore/ directory, sending only what differs.",
+        discussion: """
+        Checks the directory (as `store validate --draft`), reads the listing with the App Store Connect API key, prints \
+        the plan (+ create, ~ update, - delete) and sends it; --dry-run stops after the plan. A push that finds nothing \
+        to change sends nothing.
+
+        Parts, in this order (--only text,review,… to choose): text (the version: created when App Store Connect has \
+        none for app.yml's version, version string, copyright, release type and date, phased release; the primary \
+        locale; categories; per locale name, subtitle, privacy URLs and text, description, keywords, what's new, \
+        promotional text, support and marketing URLs), review (App Review contact, notes and demo account), \
+        declarations (age rating, content rights, licence agreement, export compliance, accessibility).
+
+        app.yml keys that are absent are left as App Store Connect has them; in a locale directory, a missing text file \
+        clears the field. Locales App Store Connect has and the directory does not are reported; --prune deletes them. \
+        Deleting anything asks first (or needs --yes).
+
+        The demo account's password comes from the secret app.yml's review.demoAccount.passwordSecret names (secret \
+        store, NAME or NAME_FILE). App Store Connect never gives it back, so it is sent only when the review details \
+        are created, when the demo account becomes required or changes name, or with --resend-demo-account; it is never \
+        printed, traced or written.
+        """)
+
+    @OptionGroup var directory: StoreDirOption
+    @Flag(help: "Print the plan and stop: nothing is sent.") var dryRun = false
+    @Option(help: ArgumentHelp("Push only these parts: text, review, declarations (comma-separated, or repeated).", valueName: "parts"))
+    var only: [String] = []
+    @Flag(help: "Delete the localizations App Store Connect has and the directory does not (never the primary locale).") var prune = false
+    @Flag(help: "Send the demo account's name and password even if they look unchanged (after changing the password).")
+    var resendDemoAccount = false
+    @OptionGroup var team: TeamOption
+    @OptionGroup var output: JSONOption
+    @OptionGroup var confirmation: YesOption
+    @OptionGroup var trace: VerboseOption
+
+    func validate() throws {
+        do { _ = try StorePushPart.parse(only) } catch let e as XlessError { throw ValidationError("\(e.cause): \(e.fix)") }
+    }
+
+    var options: StorePush.Options {
+        StorePush.Options(parts: only.isEmpty ? StorePushPart.allCases : ((try? StorePushPart.parse(only)) ?? []), prune: prune,
+                          resendDemoAccount: resendDemoAccount)
+    }
+
+    func run() async throws {
+        let dir = directory.url
+        try await AccountSession.run {
+            let (manifest, bundleID) = try StorePushCLI.check(dir: dir, say: StorePushCLI.standardError)
+            let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
+            let cli = StorePushCLI(client: session.client, secrets: session.secrets, json: output.json, say: StorePushCLI.standardError)
+            print(try await cli.run(manifest: manifest, bundleID: bundleID, dir: dir, options: options, dryRun: dryRun, yes: confirmation.yes), terminator: "")
+        }
+    }
+}
+
+/// `store push`'s sequence, testable: the manifest checked before anything is read from Apple, the plan printed, the
+/// deletions confirmed, the changes sent.
+struct StorePushCLI {
+    let client: ASCClient
+    let secrets: Secrets
+    let json: Bool
+    var terminal: () -> (any Confirming)? = { try? TerminalPrompter.forAccount() }
+    let say: @Sendable (String) -> Void
+
+    static let standardError: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+
+    /// The manifest and its app's bundle ID; its errors (as `store validate --draft` finds them) stop the push with
+    /// nothing read or sent.
+    static func check(dir: URL, say: (String) -> Void) throws -> (StoreManifest, String) {
+        let read = ManifestReader.read(dir)
+        let inherited = read.manifest.app.bundleID == nil ? StorePlatform.inheritedBundleID(manifestDir: dir, platform: read.manifest.app.platform) : nil
+        let exists = FileManager.default.fileExists(atPath: dir.path)
+        let found = read.issues + (!exists ? [] : ManifestValidator.validate(read.manifest, at: dir, draft: true, inheritedBundleID: inherited, checkApp: read.appReadable))
+        let errors = found.filter { $0.severity == .error }
+        for issue in errors { say("error: \(issue)") }
+        guard errors.isEmpty else {
+            throw XlessError(.account, "\(dir.lastPathComponent)/ has \(errors.count) error\(errors.count == 1 ? "" : "s"); nothing was sent",
+                             fix: "fix \(errors.count == 1 ? "it" : "them") (`xless store validate --draft` lists them), then re-run")
+        }
+        guard let bundleID = read.manifest.app.bundleID ?? inherited else {
+            throw XlessError(.account, "no app to push to: no bundleID in \(dir.lastPathComponent)/app.yml and no xless.yml next to it", fix: "add `bundleID: com.example.app` to app.yml")
+        }
+        return (read.manifest, bundleID)
+    }
+
+    /// The demo account's password, from the secret `name` (store, NAME or NAME_FILE), without a file's final line break.
+    static func demoPassword(_ name: String, secrets: Secrets) throws -> String {
+        guard !ManifestValidator.isReservedSecret(name) else {
+            throw XlessError(.account, "\(name) names a key or token, not the demo account's password; nothing was sent", fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD")
+        }
+        guard var value = try secrets.optional(name, stage: .account) else {
+            throw XlessError(.account, "missing secret \(name), the demo account's password (app.yml's review.demoAccount.passwordSecret); nothing was sent",
+                             fix: "store it: `xless secrets import \(name) --file <file> --kind password` (or set \(name) or \(name)_FILE)")
+        }
+        while value.hasSuffix("\n") || value.hasSuffix("\r") { value.removeLast() }
+        guard !value.isEmpty else {
+            throw XlessError(.account, "the secret \(name) (the demo account's password) is empty; nothing was sent", fix: "store the password in it")
+        }
+        return value
+    }
+
+    /// Whether the plan may go ahead: deletions need a yes (or --yes).
+    func confirmDeletes(_ plan: StorePlan, yes: Bool) throws -> Bool {
+        let deletes = plan.deletes
+        guard !deletes.isEmpty else { return true }
+        let what = deletes.map(\.subject).joined(separator: ", ")
+        return try AccountConfirm.confirm("Delete \(what) on App Store Connect? [y/N] ", action: "deleting \(what)", yes: yes, terminal: terminal)
+    }
+
+    func run(manifest: StoreManifest, bundleID: String, dir: URL, options: StorePush.Options, dryRun: Bool, yes: Bool) async throws -> String {
+        let resources = ASCResources(client: client)
+        let app = try await ASCApps(resources: resources).resolve(bundleID)
+        let push = StorePush(resources: resources, say: say)
+        var (plan, report) = try await push.plan(app: app, manifest: manifest, dir: dir, options: options)
+        for note in plan.notes { say("note: \(note)") }
+        if dryRun || plan.changes.isEmpty {
+            return json ? try ASCOutput.json(report) : report.planText + (dryRun && !plan.changes.isEmpty ? "dry run: nothing was sent\n" : "")
+        }
+        if !json { print(report.planText, terminator: "") }
+        guard try confirmDeletes(plan, yes: yes) else {
+            say("cancelled; nothing was sent")
+            return json ? try ASCOutput.json(report) : ""
+        }
+        let secrets = self.secrets
+        let sender = StoreSender(client: client, secret: { try Self.demoPassword($0, secrets: secrets) })
+        let json = self.json, say = self.say
+        let result = try await push.apply(plan, app: app, manifest: manifest, dir: dir, options: options, sender: sender, show: { next in
+            // Once the new version exists, the rest is planned again against it: shown before it is sent.
+            for note in next.notes { say("note: \(note)") }
+            if !json { print("planned again against the new version:\n" + next.text, terminator: "") }
+        }, confirm: { try confirmDeletes($0, yes: yes) })
+        report.record(result)
+        return json ? try ASCOutput.json(report) : "sent \(report.applied) change\(report.applied == 1 ? "" : "s") to App Store Connect\n"
     }
 }

@@ -275,6 +275,8 @@ public struct LocaleListing: Sendable, Equatable {
     public var subtitle: String?
     public var privacyURL: String?
     public var privacyChoicesURL: String?
+    /// The privacy policy as text (tvOS apps, which cannot open a URL).
+    public var privacyPolicyText: String?
     public var description: String?
     public var keywords: String?
     public var promotionalText: String?
@@ -285,9 +287,10 @@ public struct LocaleListing: Sendable, Equatable {
     public var previews: [MediaSet]
 
     public init(name: String? = nil, subtitle: String? = nil, privacyURL: String? = nil, privacyChoicesURL: String? = nil,
-                description: String? = nil, keywords: String? = nil, promotionalText: String? = nil, whatsNew: String? = nil,
+                privacyPolicyText: String? = nil, description: String? = nil, keywords: String? = nil, promotionalText: String? = nil, whatsNew: String? = nil,
                 supportURL: String? = nil, marketingURL: String? = nil, screenshots: [MediaSet] = [], previews: [MediaSet] = []) {
         self.name = name; self.subtitle = subtitle; self.privacyURL = privacyURL; self.privacyChoicesURL = privacyChoicesURL
+        self.privacyPolicyText = privacyPolicyText
         self.description = description; self.keywords = keywords; self.promotionalText = promotionalText; self.whatsNew = whatsNew
         self.supportURL = supportURL; self.marketingURL = marketingURL; self.screenshots = screenshots; self.previews = previews
     }
@@ -295,6 +298,7 @@ public struct LocaleListing: Sendable, Equatable {
     /// The text fields: file name → key path. App info fields first, then the version's.
     public static var textFields: [(file: String, field: WritableKeyPath<LocaleListing, String?>)] { [
         ("name.txt", \.name), ("subtitle.txt", \.subtitle), ("privacy_url.txt", \.privacyURL), ("privacy_choices_url.txt", \.privacyChoicesURL),
+        ("privacy_policy_text.txt", \.privacyPolicyText),
         ("description.txt", \.description), ("keywords.txt", \.keywords), ("promotional_text.txt", \.promotionalText),
         ("whats_new.txt", \.whatsNew), ("support_url.txt", \.supportURL), ("marketing_url.txt", \.marketingURL),
     ] }

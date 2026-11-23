@@ -40,6 +40,7 @@ import Testing
     #expect(VaultImport.inferredKind(for: "ASC_KEY_P8") == .ascAPIKey)
     #expect(VaultImport.inferredKind(for: "ASC_KEY_P8@TEAMA") == .ascAPIKey)
     #expect(VaultImport.inferredKind(for: "XLESS_DEVID_KEY") == .signingKey)
+    #expect(VaultImport.inferredKind(for: "XLESS_DEMO_PASSWORD") == .password)
     #expect(VaultImport.inferredKind(for: "something") == .generic)
     #expect(VaultImport.keyID(fromFileName: "AuthKey_ABC123DEFG.p8") == "ABC123DEFG")
     #expect(VaultImport.keyID(fromFileName: "key.p8") == nil)

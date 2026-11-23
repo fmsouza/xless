@@ -14,6 +14,7 @@ public enum SecretEnvironment {
         Entry(name: "XLESS_DIST_KEY", purpose: "Apple Distribution signing key (PEM)"),
         Entry(name: "XLESS_DEVID_KEY", purpose: "Developer ID Application signing key (PEM)"),
         Entry(name: "XLESS_INSTALLER_KEY", purpose: "Mac Installer Distribution signing key (PEM)"),
+        Entry(name: "XLESS_DEMO_PASSWORD", purpose: "App Review demo account password (`store push`, app.yml's review.demoAccount.passwordSecret)"),
     ]
 
     /// Every entry's name and its `_FILE` variant.

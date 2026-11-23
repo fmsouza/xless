@@ -8,10 +8,13 @@ import XlessASC
 import XlessCore
 @testable import XlessStore
 
-/// App Store Connect by path: each request gets the body registered for its path (404 when none), and is recorded.
+/// App Store Connect by path: each request gets the body registered for "METHOD path", else (a GET) for its path (404
+/// when none), and is recorded. An unregistered write answers 201 with a created resource `NEW<n>`. `onRequest` sees
+/// each request first and may change the routes (App Store Connect's state after a write).
 final class RoutedTransport: HTTPTransport, @unchecked Sendable {
     var routes: [String: (Int, String)]
     var requests: [URLRequest] = []
+    var onRequest: ((URLRequest, RoutedTransport) -> Void)?
     private let lock = NSLock()
 
     init(_ routes: [String: (Int, String)]) { self.routes = routes }
@@ -19,7 +22,11 @@ final class RoutedTransport: HTTPTransport, @unchecked Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (status, body) = lock.withLock {
             requests.append(request)
-            return routes[request.url!.path] ?? (404, #"{"errors":[{"status":"404","code":"NOT_FOUND","title":"not found"}]}"#)
+            onRequest?(request, self)
+            let method = request.httpMethod ?? "GET", path = request.url!.path
+            if let route = routes["\(method) \(path)"] { return route }
+            if method != "GET" { return (201, #"{"data":{"type":"x","id":"NEW\#(requests.count)"}}"#) }
+            return routes[path] ?? (404, #"{"errors":[{"status":"404","code":"NOT_FOUND","title":"not found"}]}"#)
         }
         return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
@@ -45,10 +52,10 @@ final class FakeCDN: @unchecked Sendable {
 
 let storeCreds = ASCCredentials(keyID: "KEY123", issuerID: "iss-1", privateKeyPEM: P256.Signing.PrivateKey().pemRepresentation)
 
-private func list(_ items: [String], included: [String] = []) -> String {
+func list(_ items: [String], included: [String] = []) -> String {
     #"{"data":[\#(items.joined(separator: ","))]\#(included.isEmpty ? "" : #","included":[\#(included.joined(separator: ","))]"#),"links":{"self":"x"}}"#
 }
-private func single(_ item: String?) -> String { #"{"data":\#(item ?? "null"),"links":{"self":"x"}}"# }
+func single(_ item: String?) -> String { #"{"data":\#(item ?? "null"),"links":{"self":"x"}}"# }
 
 let homePNG = pngHeader(1320, 2868)
 let homeTemplate = "https://is1-ssl.mzstatic.com/image/thumb/a/home.png/{w}x{h}bb.{f}"
@@ -121,12 +128,12 @@ final class Notes: @unchecked Sendable {
     func say(_ s: String) { lines.append(s) }
 }
 
-private func puller(_ t: RoutedTransport, _ cdn: FakeCDN, _ notes: Notes = Notes()) -> StorePull {
+func puller(_ t: RoutedTransport, _ cdn: FakeCDN, _ notes: Notes = Notes()) -> StorePull {
     StorePull(resources: ASCResources(client: ASCClient(credentials: storeCreds, transport: t, sleep: { _ in })),
               download: { try await cdn.download($0) }, say: { notes.say($0) })
 }
 
-private let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
+let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
 
 @Test func pullWritesTheWholeListing() async throws {
     let root = try tempDir()

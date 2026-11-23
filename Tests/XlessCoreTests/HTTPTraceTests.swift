@@ -115,3 +115,12 @@ func expectNoFakeSecret(_ text: String, sourceLocation: SourceLocation = #_sourc
     log.trace.failure(url: URL(string: "https://store.apple.com/u?sig=FAKE-SIG"), error: URLError(.timedOut))
     #expect(log.text == "! https://store.apple.com/u?<redacted> failed: URLError -1001")
 }
+
+@Test func hiddenValuesAreHiddenInAnyFieldEvenJSONEscaped() {
+    HTTPTrace.hide("hide-me\"now/7")
+    let log = TraceLog()
+    let body = Data(#"{"errors":[{"detail":"could not use hide-me\"now/7 here"}],"note":"hide-me\"now/7"}"#.utf8)
+    log.trace.response(status: 409, url: URL(string: "https://api.appstoreconnect.apple.com/v1/x"), headers: ["Content-Type": "application/json"], body: body)
+    #expect(!log.text.contains("hide-me"))
+    #expect(log.text.contains("could not use <redacted> here"))
+}
