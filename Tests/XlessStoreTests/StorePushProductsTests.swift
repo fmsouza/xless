@@ -246,3 +246,71 @@ private let monthlyPriced = monthlyYAML.replacingOccurrences(of: "  price: \"4.9
     #expect(plan.changes.isEmpty && plan.notes.isEmpty)
     #expect(!t.requests.contains { $0.url!.path.contains("inAppPurchase") || $0.url!.path.contains("subscription") })
 }
+
+private let coinsShotTemplate = "https://is1-ssl.mzstatic.com/image/thumb/b/coins.png/{w}x{h}bb.{f}"
+private let coinsShotURL = "https://is1-ssl.mzstatic.com/image/thumb/b/coins.png/1242x2208bb.png"
+
+/// The app with both products, the in-app purchase's App Review screenshot included.
+private func withProducts() -> [String: (Int, String)] {
+    var routes = withMonthly()
+    for (key, value) in withCoins() where key.contains("nAppPurchase") { routes[key] = value }
+    routes["/v2/inAppPurchases/IAP2/inAppPurchaseLocalizations"] = (200, list([]))
+    routes["/v2/inAppPurchases/IAP1/appStoreReviewScreenshot"] = (200, single(#"{"type":"inAppPurchaseAppStoreReviewScreenshots","id":"RS1","attributes":{"fileName":"coins.png","sourceFileChecksum":"apple-coins","imageAsset":{"templateUrl":"\#(coinsShotTemplate)","width":1242,"height":2208},"assetDeliveryState":{"state":"COMPLETE"}}}"#))
+    return routes
+}
+
+@Test func pullWritesTheProductsAndPushingThemBackSendsNothing() async throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("appstore")
+    let cdn = FakeCDN(introStream.merging([homeURL: homePNG, coinsShotURL: pngHeader(1242, 2208)]) { $1 })
+    let report = try await puller(RoutedTransport(withProducts()), cdn).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    #expect(report.inAppPurchases == 2 && report.subscriptions == 1)
+    #expect(report.text.contains("  2 in-app purchases, 1 subscription\n"))
+    #expect(read("iap/com.example.coins100.yml", in: dir) == """
+        # Written by `xless store pull` (docs/appstore-manifest.md#in-app-purchases-and-subscriptions); values are App Store Connect's.
+        type: CONSUMABLE
+        referenceName: Coins
+        familySharable: false
+        reviewNote: Buy it from the Store tab.
+        reviewScreenshot: iap/com.example.coins100.png
+        pricing:
+          baseTerritory: USA
+          price: '0.99'
+        availability:
+          territories:
+          - CAN
+          - USA
+          newTerritories: true
+        localizations:
+          en-US:
+            name: 100 Coins
+            description: Coins.
+          fr-FR:
+            name: 100 pièces
+
+        """)
+    #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("iap/com.example.coins100.png").path))
+    #expect(MediaLock.read(dir).files["iap/com.example.coins100.png"]?.appleChecksum == "apple-coins")
+    #expect(read("subscriptions/premium/group.yml", in: dir)?.contains("referenceName: Premium\nlocalizations:\n  en-US:\n    name: Premium\n    customAppName: Example\n") == true)
+    let monthly = try #require(read("subscriptions/premium/com.example.monthly.yml", in: dir))
+    #expect(monthly.contains("pricing:\n  baseTerritory: USA\n  price: '4.99'\n  territories:\n    GBR: '3.99'\n"), "CAN is Apple's equivalent: not listed")
+    #expect(monthly.contains("period: ONE_MONTH\ngroupLevel: 1\n"))
+    let read = ManifestReader.read(dir)
+    #expect(read.issues.filter { $0.severity == .error }.isEmpty, "\(read.issues)")
+
+    let t = RoutedTransport(withProducts())
+    let (plan, _) = try await push(t).plan(app: fakeASCApp, manifest: read.manifest, dir: dir, options: productParts)
+    #expect(plan.changes.isEmpty, "\(plan.changes.map(\.text))")
+}
+
+@Test func productsTheKeyMayNotReadKeepTheirFiles() async throws {
+    let (root, dir) = try await pulledWith(["iap/com.example.coins100.yml": coinsYAML])
+    defer { try? FileManager.default.removeItem(at: root) }
+    try write(pngHeader(1242, 2208), "iap/com.example.coins100.png", in: dir)
+    var routes = fakeApp()
+    routes["/v1/apps/123/inAppPurchasesV2"] = (403, #"{"errors":[{"status":"403","code":"FORBIDDEN_ERROR","title":"no"}]}"#)
+    _ = try await puller(RoutedTransport(routes), FakeCDN(introStream.merging([homeURL: homePNG]) { $1 })).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    #expect(ManifestReader.read(dir).manifest.products.iaps["com.example.coins100"]?.referenceName == "100 Coins")
+    #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("iap/com.example.coins100.png").path))
+}
