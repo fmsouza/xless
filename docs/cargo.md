@@ -115,6 +115,7 @@ Platform block keys (the same in `ios` and `macos`):
 | `icon` | macOS only: a ready `.icns`. iOS refuses it. Setting both `icon` and `assets` on macOS is refused. |
 | `architectures` | macOS only: the architectures to build, `arm64` and/or `x86_64`. Default `[arm64, x86_64]`, a universal app. iOS refuses it. See [architectures](#architectures). |
 | `entitlements` | A plist of entitlements for the signature. In the source root only. |
+| `extensions` | iOS only: app extensions the app embeds, each `{path, bundleID, entitlements}` (entitlements in the source root only), as in [xless.yml](xless-yml.md#app-extensions). The cargo build embeds none itself; the list lets `xless provision` and `sign` provision and sign extensions placed in the app otherwise. |
 | `resources` | A list of `{ from, to }` copies into the bundle: see [resources](#resources). |
 
 ### The version

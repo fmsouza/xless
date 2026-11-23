@@ -41,6 +41,32 @@ infoPlist: Resources/Info.plist
 | `entitlements` | path | no | Entitlements plist, relative to the project. Managed and security-sensitive entitlements are gated against the provisioning profile. `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` become `<teamID>.`; on iOS the values of `keychain-access-groups`, `com.apple.security.application-groups` and `com.apple.developer.associated-domains` must be ones the profile allows, and `aps-environment` takes the profile's value, as Xcode signs. |
 | `distribution` | `app-store` or `developer-id` | no | Defaults: iOS `app-store`, macOS `developer-id`. |
 | `bundleID` | string | no | Overrides the top-level `bundleID` for this platform. Same format rule. |
+| `extensions` | list | no | iOS only. The app extensions the app embeds: see [App extensions](#app-extensions). |
+
+## App extensions
+
+An iOS app that embeds app extensions declares each one under `platforms.ios.extensions`:
+
+```yaml
+platforms:
+  ios:
+    minimumOS: "17.0"
+    product: Example
+    entitlements: App.entitlements
+    extensions:
+      - path: PlugIns/Widget.appex          # where it is in the app (PlugIns/ or Extensions/)
+        bundleID: com.example.app.widget    # under the app's bundle ID
+        entitlements: Widget.entitlements   # optional, relative to the project like the app's
+```
+
+[`xless provision`](apple-account.md#xless-provision) registers each extension's bundle ID, enables the capabilities its
+entitlements need, creates and assigns its app groups and iCloud containers and makes its profile, before the first
+build. `sign` signs each extension with its own profile and its declared entitlements (prefixes expanded, as for the
+app); with extensions declared, the built app must hold exactly those (path and `CFBundleIdentifier`), else `[sign]`
+refuses before App Store Connect is called. Without `extensions`, an extension found in the app is signed with its own
+profile and no entitlements, as before. A path that is not `PlugIns/<Name>.appex` or `Extensions/<Name>.appex`, a
+bundle ID outside the app's, a duplicate, or `extensions` under `macos` is a `[config]` error. The same list goes under
+`ios:` in a [Tauri](tauri.md) or [cargo](cargo.md) overlay.
 
 ## `testflight`
 

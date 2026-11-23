@@ -66,6 +66,7 @@ Relative paths in the overlay (`source`, `privacyManifest`) resolve against the 
 | `version` | `tauri` (default): `CFBundleShortVersionString` comes from `tauri.conf.json`. Or an explicit version. |
 | `build` | `dated` (default): `CFBundleVersion` is `<version>.<YYYYMMDDNN>`, chosen above every build of that version already in App Store Connect (see [build numbers](#build-numbers)). Or an explicit build number. |
 | `ios.product`, `ios.minimumOS`, `ios.entitlements` | Overrides for the product name, minimum iOS version and entitlements file. |
+| `ios.extensions` | App extensions the iOS app embeds, each `{path, bundleID, entitlements}` (entitlements relative to the source, like `ios.entitlements`), as in [xless.yml](xless-yml.md#app-extensions): `xless provision` registers and provisions them, `sign` signs each with its entitlements. |
 | `assets` | An asset catalog (`.xcassets`) to use instead of the one in `project.yml`. |
 | `launchStoryboard` | A launch storyboard to use instead of the one in `project.yml`. |
 | `infoPlist` | iOS only. A plist file in the work copy used in place of the target's own Info.plist as the source of the keys merged into the generated one. The macOS build never reads it (it holds Xcode placeholders such as `$(EXECUTABLE_NAME)`); use `macos.infoPlist`. |

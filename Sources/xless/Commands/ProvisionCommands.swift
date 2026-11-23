@@ -12,8 +12,8 @@ struct ProvisionCommand: AsyncParsableCommand {
         abstract: "Set up everything the project needs on the Apple account, declared by xless.yml (or the overlay) and appstore/.",
         discussion: """
         Reads xless.yml (--project) or an overlay (--config): the team, the bundle ID of each platform, the \
-        entitlements of the apps (a React Native app's from its last build), the distribution lanes and the TestFlight \
-        groups; and appstore/ (--dir) when it exists. In dependency order: bundle IDs; the capabilities the \
+        entitlements of the apps and of the app extensions they declare (platforms.ios.extensions; a React Native \
+        app's from its last build), the distribution lanes and the TestFlight groups; and appstore/ (--dir) when it exists. In dependency order: bundle IDs; the capabilities the \
         entitlements need; app groups and iCloud containers and their assignment; a certificate for each lane (a \
         stored key whose certificate exists is reused); an APNs key when the app uses push notifications and none is \
         stored; the profiles; the app record; the listing (text, media, price, availability); App Privacy; the \
@@ -78,7 +78,7 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "apply",
         abstract: "Do what `provision plan` shows, in dependency order; never deletes or revokes anything.",
-        discussion: "Asks before it starts (or --yes). " + AppleWebHelp.note)
+        discussion: "Asks before it starts (or --yes). With --json, one document whether it succeeds or fails (same exit code): the plan, done, drift (found while applying), failed (the step that stopped it, or null) and left (the steps not attempted). " + AppleWebHelp.note)
 
     @OptionGroup var inputs: ProvisionInputOptions
     @Option(help: ArgumentHelp("The seller name shown on the App Store, when the app record is the team's first app.", valueName: "company"))

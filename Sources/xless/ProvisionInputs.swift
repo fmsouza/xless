@@ -9,7 +9,8 @@ import XlessTauri
 // What `xless provision` reads before it asks Apple anything: the bundles the project signs (and their entitlements),
 // the distribution lanes, the TestFlight groups and the `appstore/` manifest (docs/apple-account.md#xless-provision).
 
-/// One bundle signed for one lane: the app of a platform, or (React Native, from the build's record) an app extension.
+/// One bundle signed for one lane: the app of a platform, or an app extension (React Native: from the build's record;
+/// xless.yml, Tauri, cargo: declared under `platforms.ios.extensions` / `ios.extensions`).
 struct ProvisionTarget: @unchecked Sendable {
     var platform: Platform
     var distribution: Distribution
