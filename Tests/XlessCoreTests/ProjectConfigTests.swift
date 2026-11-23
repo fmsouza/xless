@@ -213,3 +213,45 @@ func datedBuildSchemeRejectsBadBuild(build: String) {
 @Test func fixedBuildSchemeRejectsDatedBuild() {
     #expect(throws: XlessError.self) { try ProjectConfig.parse(yaml: validYAML, buildOverride: "1.0.0.2026101501") }
 }
+
+// MARK: - App extensions (#143)
+
+private func withExtensions(_ list: String, platform: String = "ios") -> String {
+    """
+    bundleID: com.example.app
+    teamID: ABCDE12345
+    version: 1.0.0
+    build: 1
+    platforms:
+      \(platform):
+        minimumOS: "17.0"
+        product: App
+        extensions:
+    \(list)
+    """
+}
+
+@Test func iosExtensionsAreDeclaredWithTheirBundleIDsAndEntitlements() throws {
+    let c = try ProjectConfig.parse(yaml: withExtensions("""
+          - { path: PlugIns/Widget.appex, bundleID: com.example.app.widget, entitlements: Widget.entitlements }
+          - { path: Extensions/Share.appex, bundleID: com.example.app.share }
+    """))
+    #expect(try c.platform(.ios).extensions == [ExtensionConfig(path: "PlugIns/Widget.appex", bundleID: "com.example.app.widget", entitlements: "Widget.entitlements"),
+                                                ExtensionConfig(path: "Extensions/Share.appex", bundleID: "com.example.app.share")])
+    #expect(try ProjectConfig.parse(yaml: validYAML).platform(.ios).extensions.isEmpty)
+}
+
+@Test(arguments: [
+    ("      - { path: Widget.appex, bundleID: com.example.app.widget }", "ios", "is not an app extension in the app"),
+    ("      - { path: PlugIns/Wid:get.appex, bundleID: com.example.app.widget }", "ios", "is not an app extension in the app"),
+    ("      - { path: PlugIns/Widget.appex, bundleID: com.other.widget }", "ios", "is not under the app's com.example.app"),
+    ("      - { path: PlugIns/A.appex, bundleID: com.example.app.a }\n      - { path: PlugIns/A.appex, bundleID: com.example.app.b }", "ios", "lists PlugIns/A.appex twice"),
+    ("      - { path: PlugIns/A.appex, bundleID: com.example.app.a }\n      - { path: PlugIns/B.appex, bundleID: com.example.app.a }", "ios", "gives com.example.app.a to two extensions"),
+    ("      - { path: PlugIns/A.appex, bundleID: com.example.app.a }", "macos", "only an iOS app's extensions"),
+])
+func badExtensionsAreConfigErrors(list: String, platform: String, needle: String) {
+    #expect { _ = try ProjectConfig.parse(yaml: withExtensions(list, platform: platform)) } throws: {
+        guard let e = $0 as? XlessError else { return false }
+        return e.stage == .config && e.cause.contains(needle) && e.cause.contains("platforms.\(platform).extensions")
+    }
+}

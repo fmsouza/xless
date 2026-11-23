@@ -7,6 +7,8 @@ public struct OverlayIOS: Sendable, Equatable, Decodable {
     public var product: String?
     public var minimumOS: String?
     public var entitlements: String?
+    /// The app extensions the app embeds (entitlements relative to the source, like `entitlements`).
+    public var extensions: [ExtensionConfig]?
 }
 
 /// macOS-specific overrides in an overlay's `macos:` block.
@@ -149,6 +151,7 @@ extension TauriOverlay {
             }
         }
         if let pin = raw.xcode { try XcodePin.validate(pin, file: "overlay \(name)") }
+        try ExtensionConfig.validate(raw.ios?.extensions ?? [], platform: .ios, appBundleID: raw.bundleID, key: "overlay \(name): ios.extensions")
         let version = raw.version?.value
         return TauriOverlay(
             name: name, source: raw.source, tauriDir: raw.tauri?.dir ?? "src-tauri", features: raw.tauri?.features ?? [],

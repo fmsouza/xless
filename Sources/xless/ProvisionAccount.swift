@@ -82,11 +82,20 @@ struct ProvisionListingPlan: Sendable, Equatable {
     var notes: [String]
 }
 
+/// What a push of the listing sent, and what it held back once planned again against what App Store Connect then had
+/// (a new version Apple filled from the previous one): the subjects of the changes that would delete or replace.
+struct ProvisionListingApplied: Sendable, Equatable {
+    var sent: Int
+    var held: [String] = []
+    /// That plan's notes (a localization App Store Connect has and the manifest lacks, kept).
+    var notes: [String] = []
+}
+
 /// The `appstore/` listing (`xless store push`, with nothing that deletes).
 protocol ProvisionListing: Sendable {
     func plan(appID: String) async throws -> ProvisionListingPlan
-    /// Pushes what differs; the number of changes sent.
-    func apply(appID: String) async throws -> Int
+    /// Pushes what differs (planning again after it creates a version or a product).
+    func apply(appID: String) async throws -> ProvisionListingApplied
 }
 
 /// The secret store and the environment: which signing and auth keys exist (no passphrase), their values when needed
@@ -135,7 +144,7 @@ struct APIProvisionAccount: ProvisionAccount {
     func bundleID(_ identifier: String) async throws -> String? { try await bundleIDs.find(identifier: identifier)?.id }
 
     func register(bundleID identifier: String) async throws -> String {
-        try await bundleIDs.create(identifier: identifier, name: PortalName.from(identifier: identifier), platform: .universal).bundleID.id
+        try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal).bundleID.id
     }
 
     func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability] {
@@ -198,7 +207,7 @@ struct StorePushListing: ProvisionListing {
     let secrets: Secrets
     let say: @Sendable (String) -> Void
 
-    var options: StorePush.Options { StorePush.Options(parts: StorePushPart.allCases.filter { $0 != .privacy }, holdDeletes: true) }
+    var options: StorePush.Options { .provision() }
 
     func plan(appID: String) async throws -> ProvisionListingPlan {
         let resources = ASCResources(client: client)
@@ -207,14 +216,17 @@ struct StorePushListing: ProvisionListing {
         return ProvisionListingPlan(changes: plan.changes.map(\.text), held: plan.held.map(\.subject), notes: plan.notes)
     }
 
-    func apply(appID: String) async throws -> Int {
+    func apply(appID: String) async throws -> ProvisionListingApplied {
         let resources = ASCResources(client: client)
         let app = try await ASCApps(resources: resources).get(id: appID)
         let push = StorePush(resources: resources, say: say)
         let (plan, _) = try await push.plan(app: app, manifest: manifest, dir: dir, options: options)
         let secrets = self.secrets
         let sender = StoreSender(client: client, secret: { try StorePushCLI.demoPassword($0, secrets: secrets) })
-        return try await push.apply(plan, app: app, manifest: manifest, dir: dir, options: options, sender: sender).sent.count
+        let applied = try await push.apply(plan, app: app, manifest: manifest, dir: dir, options: options, sender: sender)
+        // Planned again after a new version (or product) was made: what that plan held back is drift the plan did not show.
+        let last = applied.replanned ?? plan
+        return ProvisionListingApplied(sent: applied.sent.count, held: last.held.map(\.subject), notes: last.notes)
     }
 }
 

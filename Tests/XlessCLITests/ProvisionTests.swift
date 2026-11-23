@@ -30,6 +30,9 @@ private final class World: @unchecked Sendable {
     var linked: [PortalLinkedKind: [String: [String]]] = [:]
     var authKeys: [PortalAuthKey] = []
     var listingPushed = false
+    /// What the listing's push holds back once planned again after it made a new version (Apple copied the old one's).
+    var heldAfterPush: [String] = []
+    var notesAfterPush: [String] = []
     var privacySent = false
     /// App Store Connect declares a category app.yml no longer has.
     var privacyExtra = false
@@ -187,10 +190,10 @@ private struct FakeListing: ProvisionListing {
     func plan(appID: String) async throws -> ProvisionListingPlan {
         ProvisionListingPlan(changes: world.listingPushed ? [] : ["+ version text en-US"], held: [], notes: [])
     }
-    func apply(appID: String) async throws -> Int {
+    func apply(appID: String) async throws -> ProvisionListingApplied {
         try world.write("push", appID)
         world.listingPushed = true
-        return 1
+        return ProvisionListingApplied(sent: 1, held: world.heldAfterPush, notes: world.notesAfterPush)
     }
 }
 
@@ -220,6 +223,15 @@ private struct TestVault {
     }
 
     func entry(_ name: String) throws -> VaultEntry? { try store.read()?.entry(named: name) }
+
+    /// Makes the file say a newer xless wrote it (store format 3): readable, never rewritten.
+    func makeNewer() throws {
+        let url = store.location.file
+        var object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        object["version"] = 3
+        object["minimumReaderVersion"] = 3
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: url)
+    }
     func cleanup() { try? FileManager.default.removeItem(at: root) }
 }
 
@@ -288,7 +300,7 @@ private struct Setup {
         try await ProvisionPlanner(inputs: inputs, account: account, web: hasWeb ? web : nil, vault: vault.vault, store: store, now: now).plan()
     }
 
-    func apply(_ plan: ProvisionPlan, lines: Lines = Lines()) async throws -> [ProvisionDone] {
+    func apply(_ plan: ProvisionPlan, lines: Lines = Lines()) async throws -> ProvisionApplied {
         let web = self.web
         return try await ProvisionApplier(inputs: inputs, account: account, web: { lines.add("sign-in"); return web }, vault: vault.vault, store: store,
                                           say: { lines.add($0) }, now: now).apply(plan)
@@ -335,6 +347,7 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(plan.steps.filter(\.web).map(\.area) == [.appGroups, .iCloudContainers, .keys, .app, .privacy])
     let app = try #require(plan.steps.first { $0.area == .app })
     #expect(app.details == ["\"Example\", SKU EX1, primary locale en-US, IOS version 1.0"], "a Developer ID Mac app is not on the App Store")
+    #expect(plan.steps[0].details == ["registered as universal (iOS and macOS), named \"xless com example app\""], "the name `sign` gives it")
     #expect(plan.text.contains("16 steps to apply (5 through the Apple ID web session)"))
     #expect(s.world.writes.isEmpty, "planning only reads")
     let json = try ASCOutput.json(plan)
@@ -346,8 +359,8 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     defer { v.cleanup() }
     let s = Setup(vault: v)
     let lines = Lines()
-    let done = try await s.apply(try await s.plan(), lines: lines)
-    #expect(done.count == 16)
+    let applied = try await s.apply(try await s.plan(), lines: lines)
+    #expect(applied.done.count == 16 && applied.drift.isEmpty)
     #expect(lines.all.filter { $0 == "sign-in" }.count == 1, "one sign-in for every web step")
     #expect(s.world.writes.count == 19, "\(s.world.writes)")
     #expect(s.world.writes.contains("createApp Example IOS"))
@@ -368,14 +381,27 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     let s = Setup(vault: v)
     s.world.failing = ["createProfile"]
     let lines = Lines()
-    var caught: XlessError?
-    do { _ = try await s.apply(try await s.plan(), lines: lines) } catch let e as XlessError { caught = e }
-    let e = try #require(caught)
-    #expect(e.stage == .account)
+    var caught: ProvisionApplyFailure?
+    let plan = try await s.plan()
+    do { _ = try await s.apply(plan, lines: lines) } catch let f as ProvisionApplyFailure { caught = f }
+    let failure = try #require(caught)
+    let e = XlessError.wrapping(failure, stage: .account)
+    #expect(e.stage == .account && e.stage.exitCode == 20 && e.cause == failure.error.cause)
     #expect(e.cause.contains("Profiles, create xless com.example.app IOS_APP_STORE: Apple refused createProfile (9 of 16 steps were done, 7 left)"), "\(e.cause)")
     #expect(e.fix.contains("re-run `xless provision apply`"))
     #expect(lines.all.contains { $0.hasPrefix("done: registered bundle ID com.example.app") })
     #expect(lines.all.contains { $0.hasPrefix("left: Profiles: create xless com.example.app IOS_APP_STORE;") })
+    // --json: the same story on standard output, with the exit code unchanged (the command rethrows `failure.error`).
+    #expect(failure.applied.done.count == 9)
+    #expect(failure.failed == .init(area: .profiles, action: .create, subject: "xless com.example.app IOS_APP_STORE", cause: "Apple refused createProfile", fix: "try later"))
+    #expect(failure.left.map(\.subject) == ["xless com.example.app MAC_APP_DIRECT", "app record for com.example.app", "appstore/", "app.yml privacy", "group Internal", "group Beta"])
+    let json = try ProvisionApplyCommand.output(plan: plan, failure: failure, json: true)
+    let doc = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    #expect((doc["done"] as? [Any])?.count == 9 && (doc["left"] as? [Any])?.count == 6 && (doc["drift"] as? [Any])?.isEmpty == true)
+    let failed = try #require(doc["failed"] as? [String: Any])
+    #expect(failed["area"] as? String == "profiles" && failed["subject"] as? String == "xless com.example.app IOS_APP_STORE" && failed["cause"] as? String == "Apple refused createProfile")
+    #expect((doc["plan"] as? [String: Any])?["team"] as? String == team)
+    #expect(try ProvisionApplyCommand.output(plan: plan, failure: failure, json: false).isEmpty, "the text output is the error itself")
 
     let rest = try await s.plan()
     #expect(subjects(rest) == [
@@ -504,8 +530,111 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(plan.blockers[0].fix.contains("xless secrets init"))
     #expect(plan.blockers[2].message == "the TestFlight group Beta exists as an internal group")
     #expect(!plan.steps.contains { $0.area == .keys } && plan.notes.contains { $0.contains("no APNs key is on this machine") })
-    await #expect(throws: XlessError.self) { _ = try await s.apply(plan) }
+    var caught: ProvisionApplyFailure?
+    do { _ = try await s.apply(plan) } catch let f as ProvisionApplyFailure { caught = f }
+    let failure = try #require(caught)
+    #expect(failure.failed == nil && failure.left.count == plan.steps.count && failure.applied == ProvisionApplied())
+    #expect(failure.error.cause.hasSuffix("; nothing was sent (and 2 more: see `xless provision plan`)"), "\(failure.error.cause)")
     #expect(s.world.writes.isEmpty)
+    let doc = try #require(try JSONSerialization.jsonObject(with: Data(try ProvisionApplyCommand.output(plan: plan, failure: failure, json: true).utf8)) as? [String: Any])
+    #expect(doc["failed"] is NSNull && (doc["done"] as? [Any])?.isEmpty == true && (doc["left"] as? [Any])?.count == plan.steps.count)
+    #expect(((doc["plan"] as? [String: Any])?["blockers"] as? [Any])?.count == 3)
+}
+
+@Test func aSuccessfulApplysJSONHasNoFailureAndNothingLeft() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    let plan = try await s.plan()
+    let applied = try await s.apply(plan)
+    let doc = try #require(try JSONSerialization.jsonObject(with: Data(try ProvisionApplyCommand.output(plan: plan, applied: applied, json: true).utf8)) as? [String: Any])
+    #expect(doc["failed"] is NSNull && (doc["left"] as? [Any])?.isEmpty == true && (doc["done"] as? [Any])?.count == 16)
+    #expect(try ProvisionApplyCommand.output(plan: plan, applied: applied, json: false) == "applied 16 steps\n")
+}
+
+@Test func listingDriftFoundAfterANewVersionIsReported() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    // The plan could not see it: the app record (and so the version Apple fills from the last one) did not exist yet.
+    s.world.heldAfterPush = ["screenshots en-US APP_IPHONE_67", "version text it-IT"]
+    s.world.notesAfterPush = ["version text it-IT at App Store Connect that appstore/ does not have: kept"]
+    let plan = try await s.plan()
+    #expect(plan.drift.isEmpty)
+    let lines = Lines()
+    let applied = try await s.apply(plan, lines: lines)
+    #expect(applied.drift.map(\.subject) == ["screenshots en-US APP_IPHONE_67", "version text it-IT"])
+    #expect(applied.drift.allSatisfy { $0.area == .listing && $0.fix.contains("xless store push") })
+    #expect(lines.all.contains("drift: version text it-IT: the manifest would delete or replace it — `xless store push` (it asks before deleting)"))
+    #expect(lines.all.contains("note: version text it-IT at App Store Connect that appstore/ does not have: kept"))
+    let text = try ProvisionApplyCommand.output(plan: plan, applied: applied, json: false)
+    #expect(text.hasPrefix("Drift found while applying (left as it is: provision never deletes, revokes or replaces):\n  ! screenshots en-US APP_IPHONE_67:"), "\(text)")
+    #expect(text.hasSuffix("applied 16 steps\n"))
+    let doc = try #require(try JSONSerialization.jsonObject(with: Data(try ProvisionApplyCommand.output(plan: plan, applied: applied, json: true).utf8)) as? [String: Any])
+    #expect((doc["drift"] as? [[String: Any]])?.map { $0["subject"] as? String } == ["screenshots en-US APP_IPHONE_67", "version text it-IT"])
+
+    // Drift the plan showed already is not reported twice.
+    var known = plan
+    known.drift = [ProvisionPlanner.listingDrift("version text it-IT")]
+    s.world.listingPushed = false
+    known.steps = known.steps.filter { $0.area == .listing }
+    #expect(try await s.apply(known).drift.map(\.subject) == ["screenshots en-US APP_IPHONE_67"])
+}
+
+@Test func aStoreANewerXlessWroteBlocksAStepThatWritesItBeforeAnythingIsSent() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let key = try SigningKey.generate()
+    try v.add("XLESS_DIST_KEY@\(team)", secret: key.pem, metadata: .init(teamID: team, certificateID: "REVOKED"))
+    try v.makeNewer()
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true)
+    s.inputs.targets.removeLast()
+    s.inputs.targets[0].entitlements = [:]
+    s.inputs.testflight = nil
+    let plan = try await s.plan()
+    #expect(plan.steps.contains { $0.area == .certificates && $0.writesStore })
+    #expect(plan.blockers.map(\.area) == [.certificates], "\(plan.text)")
+    #expect(plan.blockers[0].message.contains("writes the secret store, and the secret store was written by a newer xless"), "\(plan.blockers[0].message)")
+    #expect(plan.blockers[0].fix.contains("upgrade xless"))
+    await #expect(throws: ProvisionApplyFailure.self) { _ = try await s.apply(plan) }
+    #expect(s.world.writes.isEmpty, "not even the bundle ID: nothing is sent")
+}
+
+@Test func aStoredKeysCertificateIsNotRequestedWhenTheStoreBecameUnwritable() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let key = try SigningKey.generate()
+    try v.add("XLESS_DIST_KEY@\(team)", secret: key.pem, metadata: .init(teamID: team, certificateID: "REVOKED"))
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true)
+    s.inputs.targets.removeLast()
+    s.inputs.targets[0].entitlements = [:]
+    s.inputs.testflight = nil
+    let plan = try await s.plan()
+    #expect(plan.blockers.isEmpty)
+    // A newer xless rewrote the store between plan and apply.
+    try v.makeNewer()
+    var caught: ProvisionApplyFailure?
+    do { _ = try await s.apply(plan) } catch let f as ProvisionApplyFailure { caught = f }
+    let failure = try #require(caught)
+    #expect(failure.failed?.area == .certificates && failure.error.cause.contains("written by a newer xless"), "\(failure.error.cause)")
+    #expect(!s.world.writes.contains { $0.hasPrefix("createCertificate") }, "\(s.world.writes)")
+}
+
+@Test func aNewerStoreDoesNotBlockStepsThatLeaveItAlone() async throws {
+    let key = try SigningKey.generate()
+    let v = try TestVault(env: ["XLESS_DIST_KEY": key.pem])
+    defer { v.cleanup() }
+    try v.makeNewer()
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true)
+    s.inputs.targets.removeLast()
+    s.inputs.targets[0].entitlements = [:]
+    s.inputs.testflight = nil
+    let plan = try await s.plan()
+    #expect(plan.blockers.isEmpty && !plan.steps.contains(where: \.writesStore), "\(plan.text)")
+    #expect(plan.steps.contains { $0.area == .certificates }, "a certificate for the environment's key writes nothing to the store")
 }
 
 @Test func anAppRecordNeedsANameFromTheManifest() async throws {
@@ -635,4 +764,60 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(plan.blockers.isEmpty, "\(plan.text)")
     #expect(!plan.steps.contains { [.app, .listing, .privacy, .testflight].contains($0.area) })
     #expect(plan.notes.contains { $0.contains("there is no appstore/") })
+}
+
+// MARK: - App extensions an xless.yml / Tauri / cargo app declares (#143)
+
+@Test func declaredExtensionsArePlannedWithTheirOwnBundleIDCapabilitiesAndProfile() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-provision-ext-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try """
+    bundleID: com.example.app
+    teamID: \(team)
+    version: 1.0.0
+    build: 1
+    platforms:
+      ios:
+        minimumOS: "17.0"
+        product: App
+        entitlements: App.entitlements
+        extensions:
+          - { path: PlugIns/Widget.appex, bundleID: com.example.app.widget, entitlements: Widget.entitlements }
+          - { path: PlugIns/Plain.appex, bundleID: com.example.app.plain }
+    """.write(to: dir.appendingPathComponent("xless.yml"), atomically: true, encoding: .utf8)
+    try Plist.write(["com.apple.security.application-groups": ["group.com.example.app"]], to: dir.appendingPathComponent("App.entitlements"), format: .xml, stage: .account)
+    try Plist.write(["com.apple.security.application-groups": ["group.com.example.app"], "keychain-access-groups": ["$(AppIdentifierPrefix)com.example.app"]],
+                    to: dir.appendingPathComponent("Widget.entitlements"), format: .xml, stage: .account)
+    let loaded = try ProvisionInputs.load(project: dir, config: nil, source: nil, storeDir: nil)
+    #expect(loaded.targets.map(\.label) == ["the iOS app", "PlugIns/Widget.appex", "PlugIns/Plain.appex"])
+    #expect(loaded.targets[1].entitlements["keychain-access-groups"] as? [String] == ["\(team).com.example.app"], "signing prefixes expanded, as sign does")
+    #expect(loaded.targets.allSatisfy { $0.distribution == .appStore && $0.platform == .ios })
+    #expect(loaded.appStoreBundleID == "com.example.app" && loaded.appPlatforms(for: "com.example.app") == ["IOS"])
+
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.inputs = loaded
+    s.inputs.testflight = nil
+    let plan = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault, store: nil, now: now).plan()
+    #expect(subjects(plan) == [
+        "bundle-ids: create com.example.app",
+        "bundle-ids: create com.example.app.widget",
+        "bundle-ids: create com.example.app.plain",
+        "capabilities: enable APP_GROUPS (App Groups) on com.example.app",
+        "capabilities: enable APP_GROUPS (App Groups) on com.example.app.widget",
+        "app-groups: create group.com.example.app",
+        "certificates: create Apple Distribution",
+        "profiles: create xless com.example.app IOS_APP_STORE",
+        "profiles: create xless com.example.app.widget IOS_APP_STORE",
+        "profiles: create xless com.example.app.plain IOS_APP_STORE",
+    ], "\(plan.text)")
+    #expect(plan.steps.first { $0.area == .appGroups }?.details.contains("assigned to com.example.app, com.example.app.widget") == true)
+    #expect(plan.steps.first { $0.subject == "xless com.example.app.widget IOS_APP_STORE" }?.details.first?.contains("for PlugIns/Widget.appex") == true)
+
+    _ = try await ProvisionApplier(inputs: s.inputs, account: s.account, web: { s.web }, vault: v.vault, store: nil, now: now).apply(plan)
+    #expect(s.world.linked[.appGroup]?["com.example.app.widget"]?.isEmpty == false)
+    let again = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault, store: nil, now: now).plan()
+    #expect(again.steps.isEmpty && again.drift.isEmpty, "\(again.text)")
 }

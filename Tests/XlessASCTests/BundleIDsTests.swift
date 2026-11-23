@@ -47,6 +47,10 @@ func dataList(_ items: [String], next: String? = nil) -> String {
     try PortalName.validate("My App 2")
     for bad in ["", "  ", "My-App", "Café", "App!"] { #expect(throws: IdentifierInputError.self, "\(bad)") { try PortalName.validate(bad) } }
     #expect(PortalName.from(identifier: "com.example.my-app") == "com example my app")
+    // One name for every bundle ID xless registers by itself: `sign`, `provision`, `apps create`, `bundle-ids create`.
+    #expect(PortalName.bundleID(for: "com.example.my-app") == "xless com example my app")
+    #expect(PortalName.bundleID(for: String(repeating: "a.", count: 400)).count == 255)
+    try PortalName.validate(PortalName.bundleID(for: "com.exämple.app"))
     #expect(BundleIDPlatform(argument: "MacOS") == .macOS && BundleIDPlatform(argument: "Universal") == .universal && BundleIDPlatform(argument: "tvos") == nil)
     #expect(BundleIDPlatform.display("MAC_OS") == "macos" && BundleIDPlatform.display("SERVICES") == "SERVICES")
 }

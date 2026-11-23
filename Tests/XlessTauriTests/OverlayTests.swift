@@ -152,3 +152,21 @@ private let minimal = "type: tauri\nbundleID: com.example.a\nteamID: ABCDE12345\
     let e = #expect(throws: XlessError.self) { try TauriOverlay.parse(yaml: minimal + "xcode: newest\n", name: "a") }
     #expect(e?.stage == .config && e?.cause == "xcode 'newest' in overlay a is not an Xcode version")
 }
+
+@Test func iosExtensionsAreDeclaredInTheIOSBlock() throws {
+    let o = try TauriOverlay.parse(yaml: """
+    type: tauri
+    bundleID: com.example.a
+    teamID: ABCDE12345
+    ios:
+      extensions:
+        - { path: PlugIns/Widget.appex, bundleID: com.example.a.widget, entitlements: src-tauri/Widget.entitlements }
+    """, name: "a")
+    #expect(o.ios?.extensions == [ExtensionConfig(path: "PlugIns/Widget.appex", bundleID: "com.example.a.widget", entitlements: "src-tauri/Widget.entitlements")])
+}
+
+@Test func anExtensionOutsideTheAppsBundleIDNamesTheOverlaysKey() {
+    #expect { _ = try TauriOverlay.parse(yaml: "type: tauri\nbundleID: com.example.a\nteamID: ABCDE12345\nios:\n  extensions:\n    - { path: PlugIns/W.appex, bundleID: com.other.w }\n", name: "a") } throws: {
+        ($0 as? XlessError)?.cause == "overlay a: ios.extensions[0].bundleID 'com.other.w' is not under the app's com.example.a"
+    }
+}

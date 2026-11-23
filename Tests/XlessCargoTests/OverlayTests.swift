@@ -337,3 +337,33 @@ private func macosBlock(_ extra: String, minimumOS: String = "11.0") -> String {
     #expect(FileManager.default.fileExists(atPath: sample.appendingPathComponent("rust-toolchain.toml").path))
     #expect(FileManager.default.fileExists(atPath: sample.appendingPathComponent("Cargo.lock").path))
 }
+
+@Test func iosExtensionsAreDeclaredInTheIOSBlock() throws {
+    let yaml = minimalIOS + """
+      extensions:
+        - { path: PlugIns/Widget.appex, bundleID: com.example.hello.widget, entitlements: Widget.entitlements }
+
+    """
+    let o = try CargoOverlay.parse(yaml: yaml, name: "a")
+    #expect(o.ios?.extensions == [ExtensionConfig(path: "PlugIns/Widget.appex", bundleID: "com.example.hello.widget", entitlements: "Widget.entitlements")])
+    expectConfig(minimalIOS + "  extensions:\n    - { path: PlugIns/W.appex, bundleId: com.example.hello.w }\n", mentioning: "ios.extensions.bundleId")
+    expectConfig(minimalIOS + "  extensions:\n    - { path: PlugIns/W.appex, bundleID: com.example.hello.w, entitlements: input:x/W.entitlements }\n", mentioning: "ios.extensions[0].entitlements")
+}
+
+@Test func extensionsAreIOSOnlyAndUnderTheAppsBundleID() {
+    expectConfig(minimalIOS + "  extensions:\n    - { path: PlugIns/W.appex, bundleID: com.other.w }\n", mentioning: "ios.extensions[0].bundleID 'com.other.w' is not under the app's com.example.hello")
+    let mac = """
+    type: cargo
+    bundleID: com.example.hello
+    teamID: ABCDE12345
+    macos:
+      package: hello-desktop
+      product: Hello
+      minimumOS: "13.0"
+      icon: Hello.icns
+      extensions:
+        - { path: PlugIns/W.appex, bundleID: com.example.hello.w }
+
+    """
+    expectConfig(mac, mentioning: "macos.extensions: only an iOS app's extensions")
+}

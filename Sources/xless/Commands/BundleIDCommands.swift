@@ -94,12 +94,13 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
         abstract: "Register a bundle ID; an identifier the team already has is reported, never registered twice.",
         discussion: """
         The identifier is reverse-DNS (com.example.app), or a wildcard ending in .* (com.example.*). Without --name, the \
-        name is the identifier's words (com example app): Apple accepts only ASCII letters, digits and spaces in it. \
+        name is xless and the identifier's words (xless com example app), the name sign and provision give: Apple \
+        accepts only ASCII letters, digits and spaces in it. \
         Without --platform, the bundle ID is universal (iOS and macOS), as the sign stage registers its own.
         """)
 
     @Argument(help: ArgumentHelp("The bundle identifier.", valueName: "identifier")) var identifier: String
-    @Option(help: ArgumentHelp("The name the portal shows: ASCII letters, digits and spaces.", valueName: "name")) var name: String?
+    @Option(help: ArgumentHelp("The name the portal shows: ASCII letters, digits and spaces (default: xless and the identifier's words, the name `sign` and `provision` give).", valueName: "name")) var name: String?
     @OptionGroup var platform: BundleIDPlatformOption
     @OptionGroup var team: TeamOption
     @OptionGroup var output: JSONOption
@@ -116,7 +117,7 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
 
     func run() async throws {
         let identifier = try BundleIdentifier.validate(identifier)
-        let name = name?.trimmingCharacters(in: .whitespaces) ?? PortalName.from(identifier: identifier)
+        let name = name?.trimmingCharacters(in: .whitespaces) ?? PortalName.bundleID(for: identifier)
         try await runBundleIDs(team.team, verbose: trace.verbose) {
             try await $0.with(json: output.json).create(identifier: identifier, name: name, platform: platform.value ?? .universal)
         }

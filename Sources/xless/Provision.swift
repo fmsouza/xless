@@ -69,6 +69,14 @@ struct ProvisionStep: Sendable {
     var checked = true
     var work: Work
 
+    /// Whether applying it writes the secret store (a new key, or a certificate ID recorded with a stored key).
+    var writesStore: Bool {
+        switch work {
+        case .certificate(_, .generate), .certificate(_, .stored), .apnsKey: true
+        default: false
+        }
+    }
+
     var text: String {
         let sign = switch action { case .create: "+"; case .enable: "+"; case .update: "~"; case .assign: "~"; case .push: "~" }
         let marks = (web ? " [web]" : "") + (checked ? "" : " (checked when applied)")
@@ -136,16 +144,19 @@ struct ProvisionPlan: Sendable {
             guard !steps.isEmpty else { continue }
             out += "\(area.title):\n" + steps.map { $0.text + "\n" }.joined()
         }
-        if !drift.isEmpty {
-            out += "Drift (left as it is: provision never deletes, revokes or replaces):\n"
-            out += drift.map { "  ! \($0.subject): \($0.message) — \($0.fix)\n" }.joined()
-        }
+        out += Self.driftText(drift, heading: "Drift")
         if !blockers.isEmpty {
             out += "Blocked (nothing is applied until these are fixed):\n"
             out += blockers.map { "  x \($0.message) — \($0.fix)\n" }.joined()
         }
         out += notes.map { "note: \($0)\n" }.joined()
         return out + summary + "\n"
+    }
+
+    /// The drift section of the plan (and of what `apply` found while applying), empty without drift.
+    static func driftText(_ drift: [ProvisionDrift], heading: String) -> String {
+        guard !drift.isEmpty else { return "" }
+        return "\(heading) (left as it is: provision never deletes, revokes or replaces):\n" + drift.map { "  ! \($0.subject): \($0.message) — \($0.fix)\n" }.joined()
     }
 
     var summary: String {
@@ -206,13 +217,25 @@ struct ProvisionPlanner {
         try await planListing(&plan)
         try await planPrivacy(&plan)
         try await planTestFlight(&plan)
+        try blockUnwritableStore(&plan)
         return plan
+    }
+
+    /// A store this xless must not rewrite (a newer xless wrote it) blocks the plan when a step would write it: apply
+    /// refuses before anything is sent, instead of making a key or certificate at Apple it cannot keep or record.
+    func blockUnwritableStore(_ plan: inout ProvisionPlan) throws {
+        guard let step = plan.steps.first(where: \.writesStore), let file = try vault.file() else { return }
+        do { try file.requireWritable() } catch {
+            let e = XlessError.wrapping(error, stage: .account)
+            plan.blockers.append(ProvisionBlocker(area: step.area, message: "\(step.area.title), \(step.action.rawValue) \(step.subject) writes the secret store, and \(e.cause)",
+                                                  fix: e.fix))
+        }
     }
 
     func planBundleIDs(_ plan: inout ProvisionPlan) async throws {
         for id in inputs.bundleIDs {
             if let resource = try await account.bundleID(id) { plan.known.bundles[id] = resource; continue }
-            plan.add(.bundleIDs, .create, id, ["registered as universal (iOS and macOS), named \"\(PortalName.from(identifier: id))\""], .bundleID(id))
+            plan.add(.bundleIDs, .create, id, ["registered as universal (iOS and macOS), named \"\(PortalName.bundleID(for: id))\""], .bundleID(id))
         }
     }
 
@@ -496,11 +519,13 @@ struct ProvisionPlanner {
             return
         }
         plan.notes += listing.notes
-        for subject in listing.held {
-            plan.drift.append(ProvisionDrift(area: .listing, subject: subject, message: "the manifest would delete or replace it",
-                                             fix: "`xless store push` (it asks before deleting)"))
-        }
+        plan.drift += listing.held.map(Self.listingDrift)
         if !listing.changes.isEmpty { plan.add(.listing, .push, "appstore/", listing.changes, .listing) }
+    }
+
+    /// Something of the listing `store push` would delete or replace: provision leaves it.
+    static func listingDrift(_ subject: String) -> ProvisionDrift {
+        ProvisionDrift(area: .listing, subject: subject, message: "the manifest would delete or replace it", fix: "`xless store push` (it asks before deleting)")
     }
 
     func planPrivacy(_ plan: inout ProvisionPlan) async throws {
@@ -559,6 +584,32 @@ struct ProvisionDone: Encodable, Sendable, Equatable {
     var result: String
 }
 
+/// What `apply` did: the steps done, and the drift found while applying (the listing, planned again once a new App
+/// Store version or the app record exists, may hold things the manifest would delete or replace).
+struct ProvisionApplied: Sendable, Equatable {
+    var done: [ProvisionDone] = []
+    var drift: [ProvisionDrift] = []
+}
+
+/// `apply` stopped: blocked before anything was sent (`failed` nil), or at a step. `error` is what the command reports
+/// and exits with; `applied` and `left` (the steps not attempted) go into `--json`.
+struct ProvisionApplyFailure: Error, StageReportableError {
+    struct Failed: Encodable, Sendable, Equatable {
+        var area: ProvisionArea
+        var action: ProvisionStep.Action
+        var subject: String
+        var cause: String
+        var fix: String
+    }
+
+    var applied: ProvisionApplied
+    var failed: Failed?
+    var left: [ProvisionStep]
+    var error: XlessError
+
+    func stageError(_ stage: Stage) -> XlessError { error }
+}
+
 /// Runs a plan's steps in order. Each step reads again what it changes (a step already done meanwhile sends nothing),
 /// so a failed apply is re-run safely; the first failure stops it with what was done and what is left.
 struct ProvisionApplier {
@@ -573,27 +624,37 @@ struct ProvisionApplier {
 
     var team: String { inputs.team }
 
-    func apply(_ plan: ProvisionPlan) async throws -> [ProvisionDone] {
-        try plan.requireUnblocked()
+    func apply(_ plan: ProvisionPlan) async throws -> ProvisionApplied {
+        do { try plan.requireUnblocked() } catch {
+            throw ProvisionApplyFailure(applied: ProvisionApplied(), failed: nil, left: plan.steps, error: XlessError.wrapping(error, stage: .account))
+        }
         var state = plan.known
         var side: ProvisionWebSide?
-        var done: [ProvisionDone] = []
+        var applied = ProvisionApplied()
         for (i, step) in plan.steps.enumerated() {
             do {
                 if step.web, side == nil { side = try await web() }
-                let result = try await run(step, state: &state, web: side)
-                done.append(ProvisionDone(area: step.area, subject: step.subject, result: result))
+                var found: [ProvisionDrift] = []
+                let result = try await run(step, state: &state, web: side, drift: &found, planNotes: plan.notes)
+                applied.done.append(ProvisionDone(area: step.area, subject: step.subject, result: result))
                 say("\(i + 1)/\(plan.steps.count) \(result)")
+                for d in found where !plan.drift.contains(d) && !applied.drift.contains(d) {
+                    applied.drift.append(d)
+                    say("drift: \(d.subject): \(d.message) — \(d.fix)")
+                }
             } catch {
                 let e = XlessError.wrapping(error, stage: .account)
+                let done = applied.done
                 let left = plan.steps[i...].map { "\($0.area.title): \($0.action.rawValue) \($0.subject)" }
                 say("done: " + (done.isEmpty ? "nothing" : done.map(\.result).joined(separator: "; ")))
                 say("left: " + left.joined(separator: "; "))
-                throw XlessError(.account, "\(step.area.title), \(step.action.rawValue) \(step.subject): \(e.cause) (\(done.count) of \(plan.steps.count) steps were done, \(left.count) left)",
-                                 fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left")
+                let failure = XlessError(.account, "\(step.area.title), \(step.action.rawValue) \(step.subject): \(e.cause) (\(done.count) of \(plan.steps.count) steps were done, \(left.count) left)",
+                                         fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left")
+                throw ProvisionApplyFailure(applied: applied, failed: .init(area: step.area, action: step.action, subject: step.subject, cause: e.cause, fix: e.fix),
+                                            left: Array(plan.steps[(i + 1)...]), error: failure)
             }
         }
-        return done
+        return applied
     }
 
     func bundle(_ identifier: String, _ state: inout ProvisionState) async throws -> String {
@@ -616,7 +677,9 @@ struct ProvisionApplier {
 
     func storeFile() throws -> SecretCatalog { try vault.existing() }
 
-    func run(_ step: ProvisionStep, state: inout ProvisionState, web: ProvisionWebSide?) async throws -> String {
+    /// Runs one step; drift it finds (the listing planned again while pushing) goes into `drift`.
+    func run(_ step: ProvisionStep, state: inout ProvisionState, web: ProvisionWebSide?, drift: inout [ProvisionDrift],
+             planNotes: [String] = []) async throws -> String {
         switch step.work {
         case .bundleID(let id):
             state.bundles[id] = try await account.register(bundleID: id)
@@ -685,8 +748,11 @@ struct ProvisionApplier {
 
         case .listing:
             guard let store else { return "no appstore/ to push" }
-            let sent = try await store.listing.apply(appID: try await app(&state))
-            return "pushed the App Store listing (\(sent) change\(sent == 1 ? "" : "s"))"
+            let pushed = try await store.listing.apply(appID: try await app(&state))
+            drift += pushed.held.map(ProvisionPlanner.listingDrift)
+            // The plan's own notes were shown with it; what planning the listing again found is said now.
+            for note in pushed.notes where !planNotes.contains(note) { say("note: \(note)") }
+            return "pushed the App Store listing (\(pushed.sent) change\(pushed.sent == 1 ? "" : "s"))"
 
         case .privacy(let want):
             guard let web else { throw XlessError(.account, "the Apple ID web session is not open", fix: "this is a bug in xless; please report it") }
@@ -722,6 +788,9 @@ struct ProvisionApplier {
             guard let stored = file.entry(named: entry) else {
                 throw XlessError(.account, "the secret store no longer has \(entry)", fix: "re-run `xless provision apply`")
             }
+            // The certificate's ID is recorded with the key once it is made: a store this xless cannot write (or a
+            // credential helper that cannot store) refuses here, before the request.
+            try vault.unlock(file, reason: "recording the new certificate with \(entry)")
             let secret = try vault.open(stored, in: file, reason: "a certificate for \(entry)")
             defer { secret.wipe() }
             let cert = try await create(type, key: try SigningKey(pem: secret.utf8String()))

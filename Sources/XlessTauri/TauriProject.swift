@@ -55,7 +55,7 @@ public enum TauriProject {
         let config = ProjectConfig(
             bundleID: overlay.bundleID, teamID: overlay.teamID, version: version,
             build: dated ? "\(version).2000010101" : overlay.build,   // placeholder; Context chooses the real value when a run starts
-            platforms: [.ios: PlatformConfig(minimumOS: minimumOS, product: product, entitlements: entitlements)],
+            platforms: [.ios: PlatformConfig(minimumOS: minimumOS, product: product, entitlements: entitlements, extensions: overlay.ios?.extensions ?? [])],
             assets: assets, privacyManifest: overlay.privacyManifest, infoPlist: overlay.infoPlist ?? "\(appleDir)/\(target.infoPath)", launchStoryboard: storyboard,
             testflight: overlay.testflight, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
             buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)

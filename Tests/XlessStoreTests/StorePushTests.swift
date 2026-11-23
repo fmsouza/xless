@@ -568,3 +568,52 @@ private func liveOnly() -> [String: (Int, String)] {
     let (plan, _) = try await push.plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.privacy]))
     #expect(plan.changes.isEmpty)
 }
+
+/// The live 1.0 only; creating 1.2 makes Apple copy 1.0's it-IT text onto it (pulled appstore/ has no it-IT).
+private func liveOnlyCopyingItalian(_ t: RoutedTransport) {
+    t.onRequest = { r, t in
+        guard r.httpMethod == "POST", r.url!.path == "/v1/appStoreVersions" else { return }
+        t.routes["POST /v1/appStoreVersions"] = (201, single(#"{"type":"appStoreVersions","id":"V3","attributes":{"platform":"IOS","versionString":"1.2"}}"#))
+        t.routes["/v1/apps/123/appStoreVersions"] = (200, list([
+            #"{"type":"appStoreVersions","id":"V3","attributes":{"platform":"IOS","versionString":"1.2","appVersionState":"PREPARE_FOR_SUBMISSION","copyright":"2026 Example Inc.","releaseType":"SCHEDULED","earliestReleaseDate":"2026-12-01T08:00:00Z"}}"#,
+        ]))
+        t.routes["/v1/appStoreVersions/V3/appStoreVersionLocalizations"] = (200, list([
+            #"{"type":"appStoreVersionLocalizations","id":"VL7","attributes":{"locale":"it-IT","description":"Fa cose."}}"#,
+        ]))
+    }
+}
+
+@Test func holdingDeletesAfterANewVersionLeavesThemInTheReplannedPlan() async throws {
+    // The mechanism `xless provision` reports drift with (#143): what the plan made once the new version exists would
+    // delete is held back in `replanned.held`, and the rest is sent.
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.version = "1.2"
+    let t = RoutedTransport(liveOnly())
+    liveOnlyCopyingItalian(t)
+    let options = StorePush.Options(parts: [.text], prune: true, holdDeletes: true)
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir, options: options)
+    #expect(plan.held.isEmpty, "the new version's locales are not known yet")
+    let result = try await pusher(t).apply(plan, app: fakeASCApp, manifest: m, dir: dir, options: options, sender: sender(t))
+    #expect(result.replanned?.held.map(\.subject) == ["version text it-IT"])
+    #expect(!writes(t).contains { $0.hasPrefix("DELETE") }, "\(writes(t))")
+    #expect(writes(t).contains("POST /v1/appStoreVersionLocalizations"), "the rest is sent: \(writes(t))")
+}
+
+@Test func provisionKeepsALocalizationAppleCopiedOntoANewVersionWithANote() async throws {
+    // Provision's own options never prune: the copied it-IT text is kept, said in the plan made after the version.
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.version = "1.2"
+    let t = RoutedTransport(liveOnly())
+    liveOnlyCopyingItalian(t)
+    var options = StorePush.Options.provision(today: today)
+    options.parts = [.text]
+    let (plan, _) = try await pusher(t).plan(app: fakeASCApp, manifest: m, dir: dir, options: options)
+    let result = try await pusher(t).apply(plan, app: fakeASCApp, manifest: m, dir: dir, options: options, sender: sender(t))
+    let replanned = try #require(result.replanned)
+    #expect(replanned.held.isEmpty && !writes(t).contains { $0.hasPrefix("DELETE") })
+    #expect(replanned.notes.contains { $0.contains("it-IT") }, "\(replanned.notes)")
+}

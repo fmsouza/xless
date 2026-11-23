@@ -240,6 +240,53 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     for f in [stale, extra, watch, none] { #expect(f.asc.log.isEmpty) }   // refused before App Store Connect is called
 }
 
+/// xless.yml / Tauri / cargo (#143): the extensions the config declares are signed with their declared entitlements,
+/// with no manifest.
+@Test func declaredExtensionsAreSignedWithTheirOwnEntitlements() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    f.asc.assignedGroups = [appID: ["group.\(appID)"], extID: ["group.\(appID)"]]
+    try Plist.write(appEntitlements(), to: f.root.appendingPathComponent("App.entitlements"), stage: .sign)
+    try Plist.write(extEntitlements(), to: f.root.appendingPathComponent("Ext.entitlements"), stage: .sign)
+    let config = try ProjectConfig.parse(yaml: """
+    bundleID: \(appID)
+    teamID: ABCDE12345
+    version: "1.0"
+    build: 1
+    platforms:
+      ios:
+        minimumOS: "16.4"
+        product: X
+        entitlements: App.entitlements
+        extensions:
+          - { path: \(extPath), bundleID: \(extID), entitlements: Ext.entitlements }
+    """)
+    let capture = SignCapture()
+    _ = try await SignStage.run(input: f.input, outputDir: f.outputDir, platform: .ios, config: config, project: f.root,
+                                secrets: Secrets(env: ["XLESS_DIST_KEY": f.key.pem]), client: ASCClient(credentials: testCreds, transport: f.asc, sleep: { _ in }),
+                                manifest: nil, codesign: { try capture.record($0) })
+    #expect(f.asc.created.map { "\($0.0) \($0.1)" }.first == "\(extID) AUTOFILL_CREDENTIAL_PROVIDER")
+    #expect(f.asc.profiles.map(\.name) == ["xless \(extID) IOS_APP_STORE", "xless \(appID) IOS_APP_STORE"])
+    let e = try #require(capture.entitlements[extPath])
+    #expect(e[appGroups] as? [String] == ["group.\(appID)"] && e[keychain] as? [String] == ["ABCDE12345.\(appID).shared"] && e[autofill] as? Bool == true)
+}
+
+@Test func theDeclaredExtensionsMustBeTheOnesTheAppHolds() throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    func plan(_ declared: [DeclaredExtension]) throws -> [SignTarget] {
+        try SignTargets.plan(app: f.input, platform: .ios, appBundleID: appID, appEntitlements: [:], manifest: nil, teamID: "ABCDE12345", declared: declared)
+    }
+    #expect(try plan([DeclaredExtension(path: extPath, bundleID: extID, entitlements: [appGroups: ["group.\(appID)"]])]).map(\.bundleID) == [extID, appID])
+    #expect(try plan([]).map(\.bundleID) == [extID, appID], "none declared: as before, the extension gets no entitlements")
+    #expect(throws: XlessError.self) { _ = try plan([DeclaredExtension(path: extPath, bundleID: "com.example.app.Other", entitlements: [:])]) }
+    #expect { _ = try plan([DeclaredExtension(path: extPath, bundleID: extID, entitlements: [:]),
+                            DeclaredExtension(path: "PlugIns/Gone.appex", bundleID: "com.example.app.Gone", entitlements: [:])]) } throws: {
+        ($0 as? XlessError)?.cause == "the config's extensions (platforms.ios.extensions) names PlugIns/Gone.appex, which is not in X.app"
+    }
+    #expect { _ = try plan([DeclaredExtension(path: "PlugIns/Other.appex", bundleID: "com.example.app.Other", entitlements: [:])]) } throws: {
+        ($0 as? XlessError)?.cause == "the config's extensions (platforms.ios.extensions) names PlugIns/Other.appex, which is not in X.app"
+    }
+}
+
 /// xless.yml and Tauri apps: no manifest, no extensions. The same requests in the same order and the same rcodesign
 /// arguments as before app extensions were signed.
 @Test func aSingleBundleAppSignsAsBefore() async throws {

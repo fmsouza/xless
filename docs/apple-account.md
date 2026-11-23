@@ -227,8 +227,9 @@ its ID (from `list`) or its identifier. The [`sign` stage](signing-and-testfligh
 enables the capabilities their entitlements need ([below](#what-sign-enables)); these commands are for the rest.
 
 - **`create`** takes a reverse-DNS identifier (`com.example.app`) or a wildcard (`com.example.*`), checked before anything
-  is sent. The name defaults to the identifier's words (`com example app`); Apple accepts only ASCII letters, digits and
-  spaces in it. The platform defaults to `universal` (iOS and macOS), as `sign` registers. An identifier the team has
+  is sent. The name defaults to `xless` and the identifier's words (`xless com example app`), the name `sign`,
+  `provision` and `apps create` give the bundle IDs they register (a bare `*` needs `--name`); Apple accepts only ASCII
+  letters, digits and spaces in it. The platform defaults to `universal` (iOS and macOS), as `sign` registers. An identifier the team has
   already is reported with its ID, and nothing is sent.
 - **Capabilities** are named as the API names them, in any case (`icloud`, `push-notifications`): `ICLOUD`,
   `IN_APP_PURCHASE`, `GAME_CENTER`, `PUSH_NOTIFICATIONS`, `WALLET`, `INTER_APP_AUDIO`, `MAPS`, `ASSOCIATED_DOMAINS`,
@@ -1009,21 +1010,24 @@ that team, else an unteamed one). In dependency order:
 
 | Area | What is planned | Interface |
 |---|---|---|
-| bundle IDs | each platform's identifier, registered as universal (as `sign` does) | API key |
+| bundle IDs | each platform's identifier and each app extension's, registered as universal and named `xless <identifier's words>` (as `sign` does) | API key |
 | capabilities | the ones the entitlements need ([What `sign` enables](#what-sign-enables)); the Data Protection level they name | API key |
 | app groups, iCloud containers | the `group.…` and `iCloud.…` identifiers the entitlements name: created when missing, assigned to the bundle IDs that use them | web session |
 | certificates | per lane: Apple Distribution (iOS and Mac App Store), Mac Installer Distribution (Mac App Store package), Developer ID Application (Developer ID). A key in the environment (`XLESS_*_KEY`, `_FILE`) or the store whose certificate exists is used as it is; a key whose certificate is gone gets a new certificate (recorded with the entry); otherwise a key is generated into the store (`XLESS_*_KEY@<TEAM_ID>`) and its certificate created | API key |
 | keys | an APNs key when an entitlement uses push notifications and this machine has none of the team (the store, or `XLESS_APNS_KEY` / `_FILE`); when the team has one at Apple that is not here, a note says how to import it instead: one key serves every app, and Apple allows two | web session |
-| profiles | `xless <bundle ID> <TYPE>` for each lane, with its certificate | API key |
+| profiles | `xless <bundle ID> <TYPE>` for each lane and each app extension, with its certificate | API key |
 | app record | the App Store app (iOS, else Mac App Store): name from the primary locale's `name.txt`, `sku` (default: the bundle ID), `primaryLocale` and `version` from app.yml; `--company-name` for a team's first app | web session |
-| listing | what [`xless store push`](appstore-manifest.md) would send, but App Privacy | API key |
+| listing | what [`xless store push`](appstore-manifest.md) would send, but App Privacy: text, review details, declarations, price and availability, [in-app purchases and subscriptions](appstore-manifest.md#in-app-purchases-and-subscriptions) (a new product is created first, the rest of it once Apple has it), screenshots and previews | API key |
 | App Privacy | app.yml's `privacy` | web session |
 | TestFlight | `testflight.groups` (internal, every build) and `testflight.external.groups` | API key |
 
 A macOS app signed with Developer ID has no app record, listing or TestFlight; without `appstore/`, a missing app record
 (and with it the listing, App Privacy and TestFlight) is left out with a note. A React Native app's entitlements (and
 its app extensions) come from its last build's record (`.xless/build/ios/entitlements.json`); before a first build only
-its bundle ID, certificate and profile are planned. Other app extensions are provisioned by `sign`.
+its bundle ID, certificate and profile are planned. An xless.yml, Tauri or cargo app declares the app extensions it
+embeds under its iOS block (`platforms.ios.extensions` in xless.yml, `ios.extensions` in an overlay: `path`,
+`bundleID`, `entitlements`, [xless.yml](xless-yml.md#app-extensions)); each gets its bundle ID, capabilities, app groups
+and containers and profile, planned like the app's.
 
 - **`plan`** only reads, and prints the steps grouped by area (`[web]` marks the ones that use the Apple ID web
   session), the **drift** and what **blocks** the plan. Planning never signs in: it uses a session kept by `xless auth
@@ -1035,20 +1039,31 @@ its bundle ID, certificate and profile are planned. Other app extensions are pro
   checked through the web session (so the plan shown is exact), else at the first step that needs it. Each step
   reads again what it changes, so a second `apply` finds nothing to do. The first failure stops it: the error names the
   step, and standard error lists what was done and what is left; running `apply` again does only what is left. A plan
-  with blockers sends nothing.
+  with blockers sends nothing. When the listing push creates a new App Store version (or the app record was created
+  by this apply), it is planned again against what Apple then has: what that plan would delete or replace (a screenshot
+  Apple copied from the previous version that the manifest replaces) is reported as **drift found while applying**, on
+  standard output after the steps and as `drift` in `--json`; that plan's notes (a localization the manifest lacks,
+  kept) go to standard error.
 - **Never deletes or revokes.** What differs that way is drift, reported with the command that would change it: a
   capability no entitlement needs (`xless bundle-ids capabilities … disable`; In-App Purchase and Game Center, which
   Apple enables on every new bundle ID, are not reported), an app group or container assigned but not named (`xless
   app-groups unassign`), a profile that is not active, expires within 7 days, lacks the certificate or an entitlement
   (`xless profiles renew`; `sign` replaces it too), a listing change that deletes or replaces something (`xless store
   push`), App Privacy answers app.yml no longer declares (`xless store privacy push`).
-- **Blockers:** no secret store where a new signing key must go (`xless secrets init`), several store entries for a key,
+- **Blockers:** no secret store where a new signing key must go (`xless secrets init`), a secret store a newer xless
+  wrote when a step would write it (a new key, or a certificate's ID recorded with a stored key: upgrade xless; nothing
+  is created at Apple first), several store entries for a key,
   `appstore/` errors (as `xless store validate --draft` finds them) or an app.yml of another app, no name or primary
   locale for a new app record, a TestFlight group of the other kind.
 
 With `--json`, `plan` prints `{"team", "steps": [{"area", "action", "subject", "details", "webSession", "checked"}],
 "drift": [{"area", "subject", "message", "fix"}], "blockers": [{"area", "message", "fix"}], "notes"}`, and `apply`
-`{"plan", "done": [{"area", "subject", "result"}]}`. Areas: `bundle-ids`, `capabilities`, `app-groups`,
+`{"plan", "done": [{"area", "subject", "result"}], "drift", "failed", "left"}`: `drift` is what applying found that the
+plan did not show, `failed` the step that stopped it (`{"area", "action", "subject", "cause", "fix"}`; `null` when it
+went through, or when blockers stopped it before anything was sent), `left` the steps not attempted (as in `steps`;
+the failed step is not among them, while the error's "k of n steps were done, m left" counts it as left).
+`apply --json` prints this document whether it succeeds or fails; a failure keeps its exit code (20) and its error on
+standard error. Areas: `bundle-ids`, `capabilities`, `app-groups`,
 `icloud-containers`, `certificates`, `keys`, `profiles`, `app`, `listing`, `privacy`, `testflight`; actions: `create`,
 `enable`, `update`, `assign`, `push`.
 

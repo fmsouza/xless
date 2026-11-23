@@ -25,7 +25,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 - **Build.** `cargo build --release --locked -p <package> --bin <bin> --target <triple>` (plus `--features` when the overlay lists some). iOS: `aarch64-apple-ios`, device only. macOS: `aarch64-apple-darwin` and `x86_64-apple-darwin`, merged into one universal executable (the `x86_64` slice first, as `lipo` does), or only one of them with `macos.architectures` ([architectures](#architectures)). Rust links against Apple's SDK from the xless image, with the same linker and `xcrun` set-up as the Tauri builds ([tauri.md](tauri.md)). Then the usual stages: assets, finalize, sign, package, upload and TestFlight delivery ([pipeline.md](pipeline.md#stages)).
 - **Bundle.** xless writes the `.app` itself: the executable, an `Info.plist` made from the app's own file, the resources the overlay lists, the privacy manifest (iOS) and the icon. iOS is a flat bundle; macOS is `Contents/MacOS`, `Contents/Resources`, `Contents/Info.plist` and `PkgInfo`.
 - **Overlay only.** The app need not change: no `build.rs`, no crate, no `Cargo.toml` key for xless. If a Cargo app needs something xless lacks, that is an xless gap ([known gaps](#known-gaps)).
-- **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, embedded frameworks and app extensions, external TestFlight groups, App Store submission.
+- **Not supported.** Simulator and debug builds, x86_64 iOS, Android, Windows and Linux packaging, embedded frameworks, building app extensions (`ios.extensions` only declares ones the app already holds), external TestFlight groups, App Store submission.
 - **dSYMs.** With debug info in the release profile (`debug = "line-tables-only"`, or `CARGO_PROFILE_RELEASE_DEBUG` in the overlay's `env:`), `package` zips the dSYM next to the package ([dSYMs of Rust apps](pipeline.md#dsyms-of-rust-apps)).
 
 ## Requirements
@@ -115,6 +115,7 @@ Platform block keys (the same in `ios` and `macos`):
 | `icon` | macOS only: a ready `.icns`. iOS refuses it. Setting both `icon` and `assets` on macOS is refused. |
 | `architectures` | macOS only: the architectures to build, `arm64` and/or `x86_64`. Default `[arm64, x86_64]`, a universal app. iOS refuses it. See [architectures](#architectures). |
 | `entitlements` | A plist of entitlements for the signature. In the source root only. |
+| `extensions` | iOS only: app extensions the app embeds, each `{path, bundleID, entitlements}` (entitlements in the source root only), as in [xless.yml](xless-yml.md#app-extensions). The cargo build embeds none itself (see [what is supported](#what-is-supported)); declare only extensions the built app holds, or `sign` refuses it. |
 | `resources` | A list of `{ from, to }` copies into the bundle: see [resources](#resources). |
 
 ### The version
@@ -233,7 +234,7 @@ From the milestone's non-goals and what was left out:
 - No Android, Windows or Linux packaging.
 - The macOS App-Store lane ([above](#macos-app-store-testflight)) is not tested against a real App Store Connect upload ([research](research/mas-pkg.md)): the package is checked by Apple's `pkgutil` and `xar`, not by App Store Connect. The app's icon is the `.icns` of `macos.icon` (no macOS asset catalog).
 - **iOS 27 requires the UIKit scene life cycle.** An app built with the iOS 27 SDK that does not adopt UIScene is stopped by UIKit at launch on iOS 27 ("UIScene life cycle is required for apps built with this SDK"). The images default to Xcode 27.0, so a plain Cargo app has to adopt UIScene itself: winit 0.30 does not, so `samples/HelloCargo` installs from TestFlight but is stopped at launch on iOS 27 (it launches on iOS 26 and earlier), while an app with its own scene delegate works. Earlier iOS versions launch such an app as before; an app whose release pipeline uses an older Xcode is not affected (pin it with `xcode:`). The same note for React Native is in [react-native.md](react-native.md#known-gaps).
-- A plain Cargo app embeds no frameworks of its own and has no app extensions. The overlay has no launch storyboard key: use `UILaunchScreen` in the Info.plist.
+- The cargo build embeds no frameworks of its own and no app extensions (an `ios.extensions` declaration must match extensions placed in the app otherwise). The overlay has no launch storyboard key: use `UILaunchScreen` in the Info.plist.
 - No `cargo-bundle` or `cargo-xcode` compatibility. The overlay is the contract.
 - The DMG has a default layout: the app and an `/Applications` link on a plain volume, with no background image, window size, icon positions or volume icon.
 - No external TestFlight groups and no App Store submission.

@@ -55,7 +55,9 @@ and users need it; a key that only ships builds, edits the listing and releases 
 
 **2. The project.** In `xless.yml` (or the overlay), set `teamID` to that team and `bundleID` to the app's identifier
 ([xless-yml.md](xless-yml.md)). The entitlements you list there (push notifications, app groups, iCloud, Sign in with
-Apple…) are what `provision` reads to decide the capabilities, groups, containers and keys.
+Apple…) are what `provision` reads to decide the capabilities, groups, containers and keys. An iOS app that embeds
+app extensions declares each one, with its bundle ID and entitlements, under `platforms.ios.extensions`
+([xless-yml.md](xless-yml.md#app-extensions)); a React Native app's come from its last build.
 
 **3. The listing, at least its name.** A new app record takes its name, primary locale and first version from
 `appstore/`:
@@ -87,7 +89,8 @@ says what blocks it and what differs from the project without being changed (dri
 in one process: one passphrase, at most one Apple ID sign-in. A new signing key is generated into the store before
 its certificate is requested; an APNs key is created and stored when an entitlement uses push notifications. It
 never deletes or revokes anything; running it again does only what is left, so after a failure, fix the cause and run
-it again. Details: [`xless provision`](apple-account.md#xless-provision).
+it again. In CI, `apply --yes --json` prints what was done, the step that failed and what is left as one JSON document
+even when it fails (exit 20). Details: [`xless provision`](apple-account.md#xless-provision).
 
 **5. Build and ship.** Install the SDK once (`xless setup --xcode Xcode_27.xip`, [README](../README.md#set-up)), then:
 

@@ -27,6 +27,8 @@ public struct CargoPlatform: Sendable, Equatable {
     /// macOS only, in canonical order (`MacArchitecture.allCases`; default: both, merged into a universal executable).
     /// Empty on iOS, which builds arm64 alone.
     public var architectures: [MacArchitecture]
+    /// iOS only: the app extensions the app embeds (entitlements in the source root, like `entitlements`).
+    public var extensions: [ExtensionConfig] = []
 }
 
 /// A copy into the bundle: `Contents/Resources/<to>` on macOS, `<to>` at the bundle root on iOS.
@@ -111,6 +113,7 @@ private struct RawPlatform: Decodable {
     var entitlements: String?
     var resources: [RawResource]?
     var architectures: [String]?
+    var extensions: [ExtensionConfig]?
 }
 
 private struct RawInput: Decodable {
@@ -145,7 +148,8 @@ extension CargoOverlay {
     static let keys: Set<String> = ["type", "source", "bundleID", "teamID", "version", "build", "usesNonExemptEncryption", "privacyManifest",
                                     "testflight", "xcode", "rust", "env", "inputs", "plistVars", "ios", "macos"]
     static let platformKeys: Set<String> = ["package", "bin", "features", "product", "minimumOS", "bundleID", "infoPlist", "assets", "icon",
-                                            "entitlements", "resources", "architectures"]
+                                            "entitlements", "resources", "architectures", "extensions"]
+    static let extensionKeys: Set<String> = ["path", "bundleID", "entitlements"]
     static let inputKeys: Set<String> = ["name", "path", "git", "rev", "env"]
     static let resourceKeys: Set<String> = ["from", "to"]
 
@@ -167,6 +171,9 @@ extension CargoOverlay {
                 try check(top[platform], platformKeys, platform)
                 for resource in ((top[platform] as? [String: Any])?["resources"] as? [Any]) ?? [] {
                     try check(resource, resourceKeys, "\(platform).resources")
+                }
+                for item in ((top[platform] as? [String: Any])?["extensions"] as? [Any]) ?? [] {
+                    try check(item, extensionKeys, "\(platform).extensions")
                 }
             }
             for input in (top["inputs"] as? [Any]) ?? [] { try check(input, inputKeys, "inputs") }
@@ -351,6 +358,12 @@ extension CargoOverlay {
                                              ("entitlements", r.entitlements, false)] {
                 if let value { try checkPath(value, "\(which).\(key)", allowInput: allowInput) }
             }
+            // Checked here too, so the error names the overlay's key (`ios.extensions`), not xless.yml's.
+            try ExtensionConfig.validate(r.extensions ?? [], platform: which == "ios" ? .ios : .macos, appBundleID: r.bundleID ?? raw.bundleID,
+                                         key: "overlay \(name): \(which).extensions")
+            for (i, e) in (r.extensions ?? []).enumerated() {
+                if let path = e.entitlements { try checkPath(path, "\(which).extensions[\(i)].entitlements", allowInput: false) }
+            }
             var resources: [CargoResource] = []
             for (i, resource) in (r.resources ?? []).enumerated() {
                 try checkPath(resource.from, "\(which).resources[\(i)].from")
@@ -359,7 +372,7 @@ extension CargoOverlay {
             }
             return CargoPlatform(package: r.package, bin: r.bin, features: features, product: product, minimumOS: minimumOS, bundleID: r.bundleID,
                                  infoPlist: r.infoPlist, assets: r.assets, icon: r.icon, entitlements: r.entitlements, resources: resources,
-                                 architectures: architectures)
+                                 architectures: architectures, extensions: r.extensions ?? [])
         }
         let ios = try platform(raw.ios, "ios")
         let macos = try platform(raw.macos, "macos")

@@ -350,3 +350,115 @@ private func withProducts() -> [String: (Int, String)] {
     _ = try await puller(RoutedTransport(fakeApp()), FakeCDN(introStream.merging([homeURL: homePNG]) { $1 }), notes).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
     #expect(notes.lines.contains("note: appstore/iap/com.example.unpushed.yml is not on App Store Connect (never pushed), so the pulled listing does not have it"))
 }
+
+// MARK: - What `xless provision` pushes (#143): products included, nothing deleted
+
+/// App Store Connect for `newProducts…`: answers each create, and shows what a POST made on the reads that follow, so
+/// planning again after a push sees what it sent.
+private func remembering(_ t: RoutedTransport) {
+    func text(_ object: Any) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self) }
+    t.onRequest = { r, t in
+        guard r.httpMethod == "POST" else { return }
+        let attributes = (data(r)["attributes"] as? [String: Any]) ?? [:]
+        let relationships = (data(r)["relationships"] as? [String: Any]) ?? [:]
+        func resource(_ type: String, _ id: String) -> String { text(["type": type, "id": id, "attributes": attributes]) }
+        switch r.url!.path {
+        case "/v2/inAppPurchases":
+            let iap = #"{"type":"inAppPurchases","id":"IAPN","attributes":{"productId":"com.example.coins100","name":"100 Coins","inAppPurchaseType":"CONSUMABLE","familySharable":false,"reviewNote":"Buy it from the Store tab.","state":"MISSING_METADATA"}}"#
+            t.routes["POST /v2/inAppPurchases"] = (201, single(iap))
+            t.routes["/v1/apps/123/inAppPurchasesV2"] = (200, list([iap]))
+            t.routes["/v2/inAppPurchases/IAPN/inAppPurchaseLocalizations"] = (200, list([]))
+            t.routes["/v2/inAppPurchases/IAPN/pricePoints"] = (200, list([
+                #"{"type":"inAppPurchasePricePoints","id":"IPP0","attributes":{"customerPrice":"0.0"},"relationships":{"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+                #"{"type":"inAppPurchasePricePoints","id":"IPP1","attributes":{"customerPrice":"0.99"},"relationships":{"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+            ]))
+        case "/v1/inAppPurchaseLocalizations":
+            t.routes["/v2/inAppPurchases/IAPN/inAppPurchaseLocalizations"] = (200, list([resource("inAppPurchaseLocalizations", "ILN")]))
+        case "/v1/inAppPurchasePriceSchedules":
+            t.routes["/v2/inAppPurchases/IAPN/iapPriceSchedule"] = (200, single(#"{"type":"inAppPurchasePriceSchedules","id":"IPSN","relationships":{"baseTerritory":{"data":{"type":"territories","id":"USA"}}}}"#))
+            t.routes["/v1/inAppPurchasePriceSchedules/IPSN/manualPrices"] = (200, list([
+                #"{"type":"inAppPurchasePrices","id":"IPRN","attributes":{"startDate":null,"endDate":null},"relationships":{"inAppPurchasePricePoint":{"data":{"type":"inAppPurchasePricePoints","id":"IPP1"}},"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+            ], included: [#"{"type":"inAppPurchasePricePoints","id":"IPP1","attributes":{"customerPrice":"0.99"}}"#]))
+        case "/v1/inAppPurchaseAvailabilities":
+            let territories = (((relationships["availableTerritories"] as? [String: Any])?["data"]) as? [[String: Any]]) ?? []
+            t.routes["/v2/inAppPurchases/IAPN/inAppPurchaseAvailability"] = (200, single(resource("inAppPurchaseAvailabilities", "IAN")))
+            t.routes["/v1/inAppPurchaseAvailabilities/IAN/availableTerritories"] = (200, list(territories.map(text)))
+        case "/v1/subscriptionGroups":
+            let group = #"{"type":"subscriptionGroups","id":"G1","attributes":{"referenceName":"Premium"}}"#
+            t.routes["POST /v1/subscriptionGroups"] = (201, single(group))
+            t.routes["/v1/apps/123/subscriptionGroups"] = (200, list([group]))
+            t.routes["/v1/subscriptionGroups/G1/subscriptionGroupLocalizations"] = (200, list([]))
+            t.routes["/v1/subscriptionGroups/G1/subscriptions"] = (200, list([]))
+        case "/v1/subscriptionGroupLocalizations":
+            t.routes["/v1/subscriptionGroups/G1/subscriptionGroupLocalizations"] = (200, list([resource("subscriptionGroupLocalizations", "GLN")]))
+        case "/v1/subscriptions":
+            let sub = #"{"type":"subscriptions","id":"SUB1","attributes":{"productId":"com.example.monthly","name":"Premium Monthly","subscriptionPeriod":"ONE_MONTH","groupLevel":1}}"#
+            t.routes["POST /v1/subscriptions"] = (201, single(sub))
+            t.routes["/v1/subscriptionGroups/G1/subscriptions"] = (200, list([sub]))
+            t.routes["/v1/subscriptions/SUB1/subscriptionLocalizations"] = (200, list([]))
+            t.routes["/v1/subscriptions/SUB1/prices"] = (200, list([]))
+            t.routes["/v1/subscriptions/SUB1/pricePoints"] = (200, list([
+                #"{"type":"subscriptionPricePoints","id":"SPP1","attributes":{"customerPrice":"4.99"},"relationships":{"territory":{"data":{"type":"territories","id":"USA"}}}}"#,
+            ]))
+            t.routes["/v1/subscriptionPricePoints/SPP1/equalizations"] = (200, list([]))
+        case "/v1/subscriptionLocalizations":
+            t.routes["/v1/subscriptions/SUB1/subscriptionLocalizations"] = (200, list([resource("subscriptionLocalizations", "SLN")]))
+        case "/v1/subscriptionPrices":
+            t.routes["/v1/subscriptions/SUB1/prices"] = (200, list([
+                #"{"type":"subscriptionPrices","id":"SPN","attributes":{"startDate":null},"relationships":{"territory":{"data":{"type":"territories","id":"USA"}},"subscriptionPricePoint":{"data":{"type":"subscriptionPricePoints","id":"SPP1"}}}}"#,
+            ], included: [#"{"type":"subscriptionPricePoints","id":"SPP1","attributes":{"customerPrice":"4.99"}}"#]))
+        default: break
+        }
+    }
+}
+
+@Test func provisionPlansNewProductsFirstAndASecondPushSendsNothing() async throws {
+    let coins = coinsYAML.replacingOccurrences(of: "reviewScreenshot: iap/com.example.coins100.png\n", with: "")
+    let (root, dir) = try await pulledWith(["iap/com.example.coins100.yml": coins, "subscriptions/premium/group.yml": premiumGroupYAML,
+                                            "subscriptions/premium/com.example.monthly.yml": monthlyYAML])
+    defer { try? FileManager.default.removeItem(at: root) }
+    var routes = fakeApp()
+    routes["/v1/apps/123/inAppPurchasesV2"] = (200, list([]))
+    routes["/v1/apps/123/subscriptionGroups"] = (200, list([]))
+    // Its accessibility answers published (no draft left to publish): the listing itself is in sync.
+    routes["/v1/apps/123/accessibilityDeclarations"] = (200, list([
+        #"{"type":"accessibilityDeclarations","id":"AC1","attributes":{"deviceFamily":"IPHONE","state":"PUBLISHED","supportsVoiceover":true,"supportsDarkInterface":true}}"#,
+    ]))
+    let t = RoutedTransport(routes)
+    remembering(t)
+    let p = push(t)
+    let manifest = ManifestReader.read(dir).manifest
+    let options = StorePush.Options.provision(today: today)
+    #expect(!options.parts.contains(.privacy) && options.parts.contains(.iap) && options.parts.contains(.subscriptions) && options.holdDeletes)
+    let (plan, _) = try await p.plan(app: fakeASCApp, manifest: manifest, dir: dir, options: options)
+    // The creates come first, whatever else the listing needs: the rest of each product needs its ID.
+    let products = plan.changes.filter { [.iap, .subscriptions].contains($0.part) }
+    #expect(plan.changes.map(\.subject) == ["in-app purchase com.example.coins100", "subscription group Premium"], "\(plan.changes.map(\.text))")
+    #expect(products.allSatisfy { $0.replans })
+    #expect(plan.held.isEmpty)
+
+    let applied = try await p.apply(plan, app: fakeASCApp, manifest: manifest, dir: dir, options: options, sender: mediaSender(t))
+    #expect(t.requests.filter { $0.httpMethod == "POST" && ["/v2/inAppPurchases", "/v1/subscriptionGroups", "/v1/subscriptions"].contains($0.url!.path) }.count == 3,
+            "each product is created once")
+    #expect(applied.sent.contains { $0.subject == "subscription com.example.monthly" })
+    #expect(applied.replanned?.held.isEmpty == true)
+
+    // A second provision: nothing differs, so nothing is sent.
+    let before = t.requests.filter { $0.httpMethod != "GET" }.count
+    let (again, _) = try await p.plan(app: fakeASCApp, manifest: manifest, dir: dir, options: options)
+    #expect(again.changes.isEmpty, "\(again.changes.map(\.text))")
+    let second = try await p.apply(again, app: fakeASCApp, manifest: manifest, dir: dir, options: options, sender: mediaSender(t))
+    #expect(second.sent.isEmpty && t.requests.filter { $0.httpMethod != "GET" }.count == before)
+}
+
+@Test func provisionNeverDeletesAProductOrItsText() async throws {
+    // App Store Connect has com.example.legacy (no file) and fr-FR text the manifest lacks: kept, never held as a delete.
+    let (root, dir) = try await pulledWith(["iap/com.example.coins100.yml": coinsYAML])
+    defer { try? FileManager.default.removeItem(at: root) }
+    try write(pngHeader(1242, 2208), "iap/com.example.coins100.png", in: dir)
+    let t = RoutedTransport(withCoins())
+    let (plan, _) = try await push(t).plan(app: fakeASCApp, manifest: ManifestReader.read(dir).manifest, dir: dir, options: .provision(today: today))
+    #expect(!plan.changes.contains(where: \.deletes) && plan.held.isEmpty)
+    #expect(plan.notes.contains { $0.contains("in-app purchase com.example.legacy with no file in appstore/iap/: kept") })
+    #expect(plan.changes.contains { $0.subject == "in-app purchase com.example.coins100 availability" })
+}
