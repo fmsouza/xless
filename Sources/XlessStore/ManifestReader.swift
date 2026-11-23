@@ -13,6 +13,8 @@ public enum ManifestReader {
         public var issues: [StoreIssue]
         /// Whether `app.yml` exists.
         public var hasAppFile: Bool
+        /// Whether `app.yml` exists and its values could be read (else `manifest.app` is empty, not the file's).
+        public var appReadable: Bool = false
     }
 
     public static func read(_ dir: URL) -> Result {
@@ -29,11 +31,13 @@ public enum ManifestReader {
 
         let appURL = dir.appendingPathComponent(appFile)
         let hasAppFile = fm.fileExists(atPath: appURL.path)
+        var appReadable = false
         if hasAppFile {
             let (app, extras, appIssues) = readApp(appURL, display: "\(name)/\(appFile)")
             manifest.app = app
             manifest.extras = extras
             issues += appIssues
+            appReadable = !appIssues.contains { $0.severity == .error }
         } else {
             issues.append(StoreIssue("\(name)/\(appFile)", "missing", fix: "run `xless store pull`, or write it (docs/appstore-manifest.md)"))
         }
@@ -43,7 +47,7 @@ public enum ManifestReader {
             manifest.locales[entry.lastPathComponent] = listing
             issues += localeIssues
         }
-        return Result(manifest: manifest, issues: issues, hasAppFile: hasAppFile)
+        return Result(manifest: manifest, issues: issues, hasAppFile: hasAppFile, appReadable: appReadable)
     }
 
     // MARK: - app.yml

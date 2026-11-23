@@ -186,3 +186,33 @@ import Testing
     try write(pngHeader(1, 1), "en-US/screenshots/APP_IPHONE_67/01-home.png", in: root)
     #expect(back.unchangedFile(for: "abc", in: root) == nil, "an edited file is no longer Apple's upload")
 }
+
+@Test func rewritingThroughASymlinkedPathKeepsRelativePaths() throws {
+    let real = try tempDir()
+    defer { try? FileManager.default.removeItem(at: real) }
+    let link = FileManager.default.temporaryDirectory.appendingPathComponent("xless-store-link-\(UUID().uuidString)")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+    defer { try? FileManager.default.removeItem(at: link) }
+    let dir = link.appendingPathComponent("appstore")
+    try write("primaryLocale: en-US\n", "app.yml", in: dir)
+    try write("# notes\n", "README.md", in: dir)
+    try write("old\n", "en-US/name.txt", in: dir)
+    try ManifestWriter.write(StoreManifest(app: ManifestReader.read(dir).manifest.app), files: [:], lock: MediaLock(), to: dir)
+    #expect(read("README.md", in: dir) == "# notes\n")
+    #expect(read("en-US/name.txt", in: dir) == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["README.md", "app.yml"])
+}
+
+@Test func filesAppYMLNamesStayInsideTheManifest() throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("appstore")
+    try write("x", "eula.txt", in: dir)
+    try write("x", "outside.txt", in: root)
+    try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("link.txt"), withDestinationURL: root.appendingPathComponent("outside.txt"))
+    #expect(StoreManifest.resolve("eula.txt", in: dir) != nil)
+    #expect(StoreManifest.resolve("not-yet.txt", in: dir) != nil, "a missing file inside")
+    #expect(StoreManifest.resolve("../outside.txt", in: dir) == nil)
+    #expect(StoreManifest.resolve("/etc/passwd", in: dir) == nil)
+    #expect(StoreManifest.resolve("link.txt", in: dir) == nil, "a symbolic link out of the manifest")
+}

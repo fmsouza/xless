@@ -13,13 +13,14 @@ public struct MediaLock: Codable, Sendable, Equatable {
     public static let fileName = "media.lock"
 
     public struct Entry: Codable, Sendable, Equatable {
-        /// MD5 (hex) of the local file.
-        public var md5: String
+        /// MD5 (hex) of the local file; nil for an upload App Store Connect has that pull could not download (still
+        /// processing, or served only as a stream): it is there, with no local file, and `push` must leave it alone.
+        public var md5: String?
         /// Apple's `sourceFileChecksum` of the upload this file is; nil for a file never uploaded.
         public var appleChecksum: String?
         /// The App Store Connect resource (appScreenshots / appPreviews) it was read from.
         public var id: String?
-        public init(md5: String, appleChecksum: String? = nil, id: String? = nil) {
+        public init(md5: String?, appleChecksum: String? = nil, id: String? = nil) {
             self.md5 = md5; self.appleChecksum = appleChecksum; self.id = id
         }
     }
@@ -49,7 +50,7 @@ public struct MediaLock: Codable, Sendable, Equatable {
     /// The entry whose upload has Apple's checksum `appleChecksum` and whose local file still has its recorded MD5.
     public func unchangedFile(for appleChecksum: String, in dir: URL) -> String? {
         for (path, entry) in files.values.sorted(by: { $0.key < $1.key }) where entry.appleChecksum == appleChecksum {
-            if let md5 = MD5Hex.file(dir.appendingPathComponent(path)), md5 == entry.md5 { return path }
+            if let recorded = entry.md5, let md5 = MD5Hex.file(dir.appendingPathComponent(path)), md5 == recorded { return path }
         }
         return nil
     }

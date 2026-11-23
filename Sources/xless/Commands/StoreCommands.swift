@@ -162,7 +162,8 @@ enum StoreValidation {
     static func run(dir: URL, draft: Bool, json: Bool) -> (stdout: String, stderr: String, failed: Bool) {
         let read = ManifestReader.read(dir)
         let inherited = read.manifest.app.bundleID == nil ? StorePlatform.inheritedBundleID(manifestDir: dir, platform: read.manifest.app.platform) : nil
-        let found = read.issues + (read.hasAppFile ? ManifestValidator.validate(read.manifest, at: dir, draft: draft, inheritedBundleID: inherited) : [])
+        let exists = FileManager.default.fileExists(atPath: dir.path)
+        let found = read.issues + (!exists ? [] : ManifestValidator.validate(read.manifest, at: dir, draft: draft, inheritedBundleID: inherited, checkApp: read.appReadable))
         // Errors first, each kind in the order found.
         let issues = found.filter { $0.severity == .error } + found.filter { $0.severity != .error }
         let errors = issues.filter { $0.severity == .error }.count

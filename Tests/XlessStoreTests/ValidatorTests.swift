@@ -155,3 +155,13 @@ private func withManifest(_ body: (URL) throws -> Void) throws {
         #expect(lines(dir) == [])
     }
 }
+
+@Test func anUnreadableAppFileDoesNotCascade() throws {
+    try withManifest { dir in
+        try write(completeAppYAML.replacingOccurrences(of: "  contact:\n", with: "  contact: [a, b]\n  x:\n"), "app.yml", in: dir)
+        let read = ManifestReader.read(dir)
+        #expect(!read.appReadable)
+        let out = (read.issues + ManifestValidator.validate(read.manifest, at: dir, checkApp: read.appReadable)).map(\.description)
+        #expect(out.count == 1 && out[0].contains("appstore/app.yml"), "only the reader's error, no missing-key flood: \(out)")
+    }
+}

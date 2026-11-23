@@ -17,9 +17,12 @@ public enum ManifestValidator {
     /// - Parameters:
     ///   - dir: the manifest directory (its name starts every issue's path).
     ///   - inheritedBundleID: the bundle ID of the project next to the manifest (`xless.yml`), used when `app.yml` has none.
-    public static func validate(_ manifest: StoreManifest, at dir: URL, draft: Bool = false, inheritedBundleID: String? = nil) -> [StoreIssue] {
+    ///   - checkApp: false when `app.yml` is missing or could not be read (the reader said why): its values are not
+    ///     checked, so one bad value does not also report every key as missing.
+    public static func validate(_ manifest: StoreManifest, at dir: URL, draft: Bool = false, inheritedBundleID: String? = nil,
+                                checkApp: Bool = true) -> [StoreIssue] {
         var v = Run(manifest: manifest, dir: dir, draft: draft)
-        v.app(inheritedBundleID: inheritedBundleID)
+        if checkApp { v.app(inheritedBundleID: inheritedBundleID) }
         for locale in manifest.orderedLocales { v.locale(locale, manifest.locales[locale]!) }
         v.submission()
         return v.issues
@@ -166,10 +169,11 @@ public enum ManifestValidator {
 
         mutating func eula() {
             guard case .custom(let file, let territories) = app.eula else { return }
-            let url = dir.appendingPathComponent(file)
-            if file.contains("..") || file.hasPrefix("/") {
+            guard let url = StoreManifest.resolve(file, in: dir) else {
                 error(appPath, "eula.file \(file) is outside \(name)/", "keep the licence text inside the manifest, e.g. eula.txt")
-            } else if !FileManager.default.fileExists(atPath: url.path) {
+                return
+            }
+            if !FileManager.default.fileExists(atPath: url.path) {
                 error("\(name)/\(file)", "is missing (app.yml's eula.file)", "write the licence agreement there, or use `eula: standard`")
             } else {
                 switch ManifestText.read(url, isURL: false) {

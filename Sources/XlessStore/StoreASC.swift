@@ -83,8 +83,29 @@ public struct StoreRemoteSet: Sendable {
     public var items: [ASCKeptResource<StoreMediaAttributes>]
 }
 
-/// Reads of the listing's parts. A part App Store Connect does not have (404) is nil; so is one the key's role may not
-/// read (403), with a note through `say`, since `pull` can do without it.
+public struct StoreEULA: Sendable, Equatable {
+    public var text: String
+    public var territories: [String]
+}
+
+public struct StoreAvailability: Sendable, Equatable {
+    public var newTerritories: Bool?
+    public var available: [String]
+    /// Available in every territory App Store Connect listed.
+    public var all: Bool
+}
+
+/// An optional part of the listing: its value, absent from App Store Connect (404, or no data), or not readable with
+/// this API key's role (403). `pull` writes an absent part's default and keeps the manifest's own value of a forbidden one.
+public enum StorePart<T: Sendable>: Sendable {
+    case value(T)
+    case absent
+    case forbidden
+
+    public var value: T? { if case .value(let v) = self { return v }; return nil }
+}
+
+/// Reads of the listing's parts.
 public struct StoreASC: Sendable {
     public let resources: ASCResources
     public let say: @Sendable (String) -> Void
@@ -93,11 +114,11 @@ public struct StoreASC: Sendable {
         self.resources = resources; self.say = say
     }
 
-    /// Runs a read of an optional part: nil on 404, and on 403 with a note naming the part.
-    func optional<T>(_ part: String, _ read: () async throws -> T?) async throws -> T? {
-        do { return try await read() } catch let e as ASCError where e.status == 404 { return nil } catch let e as ASCError where e.status == 403 {
-            say("note: this API key may not read the \(part) (HTTP 403); it is left out")
-            return nil
+    /// Runs a read of an optional part: absent on 404 (or nil), forbidden on 403 with a note naming the part.
+    func optional<T: Sendable>(_ part: String, _ read: () async throws -> T?) async throws -> StorePart<T> {
+        do { return try await read().map { .value($0) } ?? .absent } catch let e as ASCError where e.status == 404 { return .absent } catch let e as ASCError where e.status == 403 {
+            say("note: this API key may not read the \(part) (HTTP 403); app.yml keeps what it had for it")
+            return .forbidden
         }
     }
 
@@ -127,7 +148,7 @@ public struct StoreASC: Sendable {
     }
 
     /// The age rating declaration's answers, Apple's attribute names as they are (null answers left out).
-    public func ageRating(of infoID: String) async throws -> [String: JSONValue]? {
+    public func ageRating(of infoID: String) async throws -> StorePart<[String: JSONValue]> {
         try await optional("age rating declaration") {
             try await one("/v1/appInfos/\(infoID)/ageRatingDeclaration").data?.attributes
         }
@@ -138,7 +159,7 @@ public struct StoreASC: Sendable {
     }
 
     /// Review details without the demo account's password (a sparse fieldset that leaves it out).
-    public func reviewDetail(of versionID: String) async throws -> StoreReviewDetailAttributes? {
+    public func reviewDetail(of versionID: String) async throws -> StorePart<StoreReviewDetailAttributes> {
         try await optional("App Review details") {
             let query = ASCQuery(fields: [("appStoreReviewDetails", StoreReviewDetailAttributes.fields)])
             return try await one("/v1/appStoreVersions/\(versionID)/appStoreReviewDetail", query: query).data
@@ -146,10 +167,11 @@ public struct StoreASC: Sendable {
         }
     }
 
-    public func phasedRelease(of versionID: String) async throws -> Bool {
+    /// Whether the version has a phased release (absent: it has none).
+    public func phasedRelease(of versionID: String) async throws -> StorePart<Bool> {
         try await optional("phased release") {
             try await one("/v1/appStoreVersions/\(versionID)/appStoreVersionPhasedRelease").data != nil
-        } ?? false
+        }
     }
 
     public func screenshotSets(of localizationID: String) async throws -> [StoreRemoteSet] {
@@ -171,21 +193,21 @@ public struct StoreASC: Sendable {
     }
 
     /// Every territory App Store Connect knows (three-letter codes).
-    public func territories() async throws -> [String] {
-        try await resources.list("/v1/territories", as: ASCRef.self).items.map(\.id)
+    public func territories() async throws -> StorePart<[String]> {
+        try await optional("territories") { try await resources.list("/v1/territories", as: ASCRef.self).items.map(\.id) }
     }
 
     /// The custom licence agreement (text and territories); nil for Apple's standard one.
-    public func eula(of appID: String) async throws -> (text: String, territories: [String])? {
+    public func eula(of appID: String) async throws -> StorePart<StoreEULA> {
         try await optional("licence agreement") {
             guard let eula = try await one("/v1/apps/\(appID)/endUserLicenseAgreement").data else { return nil }
             let territories = try await resources.list("/v1/endUserLicenseAgreements/\(eula.id)/territories", as: ASCRef.self).items.map(\.id)
-            return (eula.attributes?["agreementText"]?.string ?? "", territories)
+            return StoreEULA(text: eula.attributes?["agreementText"]?.string ?? "", territories: territories)
         }
     }
 
     /// The export compliance answers of the app's most recent encryption declaration.
-    public func encryption(of appID: String) async throws -> [String: JSONValue]? {
+    public func encryption(of appID: String) async throws -> StorePart<[String: JSONValue]> {
         try await optional("encryption declarations") {
             let declarations = try await resources.list("/v1/appEncryptionDeclarations", query: ASCQuery(filters: [("app", appID)]), as: ASCAnyResource.self).items
             let latest = declarations.max { ($0.attributes?["createdDate"]?.string ?? "") < ($1.attributes?["createdDate"]?.string ?? "") }
@@ -194,18 +216,18 @@ public struct StoreASC: Sendable {
     }
 
     /// Accessibility declarations: device family → state and answers.
-    public func accessibility(of appID: String) async throws -> [ASCAnyResource]? {
+    public func accessibility(of appID: String) async throws -> StorePart<[ASCAnyResource]> {
         try await optional("accessibility declarations") {
             try await resources.list("/v1/apps/\(appID)/accessibilityDeclarations", as: ASCAnyResource.self).items
         }
     }
 
     /// The price schedule's base territory and the current manual price there (customer price, as Apple writes it).
-    public func pricing(of appID: String, today: Date = Date()) async throws -> (baseTerritory: String?, price: String?)? {
+    public func pricing(of appID: String, today: Date = Date()) async throws -> StorePart<AppYAML.Pricing> {
         try await optional("price schedule") {
             guard let schedule = try await one("/v1/apps/\(appID)/appPriceSchedule", query: ASCQuery(include: ["baseTerritory"])).data else { return nil }
             let base = schedule.relationships?["baseTerritory"]?["data"]?["id"]?.string
-            guard let base else { return (nil, nil) }
+            guard let base else { return AppYAML.Pricing() }
             let listing = try await resources.list("/v1/appPriceSchedules/\(schedule.id)/manualPrices",
                                                    query: ASCQuery(filters: [("territory", base)], include: ["appPricePoint"]), as: ASCAnyResource.self)
             let day = Self.day(today)
@@ -214,8 +236,8 @@ public struct StoreASC: Sendable {
                 return (start.map { $0 <= day } ?? true) && (end.map { $0 > day } ?? true)
             }
             guard let point = current?.relationships?["appPricePoint"]?["data"]?["id"]?.string,
-                  let customer = listing.included.first(where: { $0.id == point })?.attributes?["customerPrice"]?.string else { return (base, nil) }
-            return (base, Double(customer) == 0 ? "free" : customer)
+                  let customer = listing.included.first(where: { $0.id == point })?.attributes?["customerPrice"]?.string else { return AppYAML.Pricing(baseTerritory: base) }
+            return AppYAML.Pricing(baseTerritory: base, price: Double(customer) == 0 ? "free" : customer)
         }
     }
 
@@ -228,7 +250,7 @@ public struct StoreASC: Sendable {
     }
 
     /// Availability: whether new territories are added automatically, and the territories the app is available in.
-    public func availability(of appID: String) async throws -> (newTerritories: Bool?, available: [String], all: Bool)? {
+    public func availability(of appID: String) async throws -> StorePart<StoreAvailability> {
         try await optional("availability") {
             guard let availability = try await one("/v1/apps/\(appID)/appAvailabilityV2").data else { return nil }
             let newTerritories: Bool? = { if case .bool(let b)? = availability.attributes?["availableInNewTerritories"] { return b }; return nil }()
@@ -240,7 +262,8 @@ public struct StoreASC: Sendable {
                       let territory = item.relationships?["territory"]?["data"]?["id"]?.string else { continue }
                 available.append(territory)
             }
-            return (newTerritories, available.sorted(), !listing.items.isEmpty && available.count == listing.items.count)
+            return StoreAvailability(newTerritories: newTerritories, available: available.sorted(),
+                                     all: !listing.items.isEmpty && available.count == listing.items.count)
         }
     }
 }

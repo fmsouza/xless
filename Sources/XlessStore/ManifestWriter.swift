@@ -98,22 +98,20 @@ public enum ManifestWriter {
         if !lock.files.isEmpty { try put(Data(try lock.render().utf8), MediaLock.fileName) }
 
         // What the format does not own comes along from the old directory.
-        let base = previous.standardizedFileURL.path
-        for file in allFiles(under: previous) {
-            let relative = String(file.standardizedFileURL.path.dropFirst(base.count + 1))
+        for relative in relativeFiles(under: previous) {
             let target = root.appendingPathComponent(relative)
             guard !owns(relative), !fm.fileExists(atPath: target.path) else { continue }
             try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: file, to: target)
+            try fm.copyItem(at: previous.appendingPathComponent(relative), to: target)
         }
     }
 
-    /// Every regular file under `dir`, hidden ones included, symbolic links not followed.
-    static func allFiles(under dir: URL) -> [URL] {
-        guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return [] }
-        return e.compactMap { $0 as? URL }.filter {
-            let v = try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            return v?.isRegularFile == true && v?.isSymbolicLink != true
-        }
+    /// The regular files under `dir` (hidden ones included, symbolic links not followed), as paths relative to it. The
+    /// enumerator gives relative paths, so a symbolic link in `dir`'s own path (macOS's /var → /private/var) cannot skew them.
+    static func relativeFiles(under dir: URL) -> [String] {
+        guard let e = FileManager.default.enumerator(atPath: dir.path) else { return [] }
+        return e.compactMap { $0 as? String }.filter {
+            (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent($0).path)[.type] as? FileAttributeType) == .typeRegular
+        }.sorted()
     }
 }

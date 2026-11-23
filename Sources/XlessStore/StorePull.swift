@@ -59,11 +59,12 @@ public struct StorePull: Sendable {
     /// - Parameter platform: IOS, MAC_OS, TV_OS or VISION_OS; nil: the existing manifest's, else the only platform the
     ///   app has versions for, else IOS.
     public func run(app: ASCApp, platform requested: String?, selection: Selection, into dir: URL, today: Date = Date()) async throws -> Report {
-        let existing = FileManager.default.fileExists(atPath: dir.appendingPathComponent(ManifestReader.appFile).path) ? ManifestReader.read(dir).manifest : nil
+        let existing = try Self.existingManifest(dir)
+        let old = existing?.app
         let oldLock = MediaLock.read(dir)
 
         let versions = try await asc.versions(of: app.id)
-        let platform = try choosePlatform(requested ?? existing?.app.platform, versions: versions)
+        let platform = try choosePlatform(requested ?? old?.platform, versions: versions)
         let version = try chooseVersion(selection, platform: platform, versions: versions.filter { $0.attributes.platform == platform })
         let isLive = Self.isLive(version.attributes)
 
@@ -83,12 +84,13 @@ public struct StorePull: Sendable {
         let info = infos.first { (Self.isLiveInfo($0.attributes)) == isLive } ?? infos.first
         if let info {
             a.categories = Self.categories(info.resource)
-            if let answers = try await asc.ageRating(of: info.id) {
-                let scalars = Self.scalars(answers)
-                a.ageRating = scalars.isEmpty ? nil : scalars
+            switch try await asc.ageRating(of: info.id) {
+            case .value(let answers): a.ageRating = Self.scalars(answers).nonEmpty
+            case .absent: break
+            case .forbidden: a.ageRating = old?.ageRating
             }
             for l in try await asc.appInfoLocalizations(of: info.id) {
-                guard let locale = l.attributes.locale else { continue }
+                guard let locale = usableLocale(l.attributes.locale) else { continue }
                 var listing = manifest.locales[locale] ?? LocaleListing()
                 listing.name = Self.text(l.attributes.name)
                 listing.subtitle = Self.text(l.attributes.subtitle)
@@ -99,9 +101,18 @@ public struct StorePull: Sendable {
         }
 
         let type = version.attributes.releaseType
-        a.release = AppYAML.Release(type: type, earliestDate: type == "SCHEDULED" ? version.attributes.earliestReleaseDate : nil,
-                                    phased: try await asc.phasedRelease(of: version.id))
-        a.review = review(try await asc.reviewDetail(of: version.id), existing: existing?.app.review)
+        let phased: Bool?
+        switch try await asc.phasedRelease(of: version.id) {
+        case .value(let p): phased = p
+        case .absent: phased = false
+        case .forbidden: phased = old?.release?.phased
+        }
+        a.release = AppYAML.Release(type: type, earliestDate: type == "SCHEDULED" ? version.attributes.earliestReleaseDate : nil, phased: phased)
+        switch try await asc.reviewDetail(of: version.id) {
+        case .value(let detail): a.review = review(detail, existing: old?.review)
+        case .absent: a.review = nil
+        case .forbidden: a.review = old?.review
+        }
 
         var files: [String: ManifestWriter.Content] = [:]
         var lock = MediaLock()
@@ -115,7 +126,7 @@ public struct StorePull: Sendable {
         var media = MediaFetch(pull: self, dir: dir, staging: staging, oldLock: oldLock)
 
         for l in try await asc.versionLocalizations(of: version.id) {
-            guard let locale = l.attributes.locale else { continue }
+            guard let locale = usableLocale(l.attributes.locale) else { continue }
             var listing = manifest.locales[locale] ?? LocaleListing()
             listing.description = Self.text(l.attributes.description)
             listing.keywords = Self.text(l.attributes.keywords)
@@ -123,10 +134,10 @@ public struct StorePull: Sendable {
             listing.whatsNew = Self.text(l.attributes.whatsNew)
             listing.supportURL = Self.url(l.attributes.supportUrl)
             listing.marketingURL = Self.url(l.attributes.marketingUrl)
-            for set in try await asc.screenshotSets(of: l.id) {
+            for set in try await asc.screenshotSets(of: l.id) where usableSetType(set.type) {
                 listing.screenshots.append(try await media.fetch(set, kind: "screenshots", locale: locale, files: &files, lock: &lock, report: &report))
             }
-            for set in try await asc.previewSets(of: l.id) {
+            for set in try await asc.previewSets(of: l.id) where usableSetType(set.type) {
                 listing.previews.append(try await media.fetch(set, kind: "previews", locale: locale, files: &files, lock: &lock, report: &report))
             }
             listing.screenshots.sort { $0.type < $1.type }
@@ -134,28 +145,95 @@ public struct StorePull: Sendable {
             manifest.locales[locale] = listing
         }
 
-        if let encryption = try await asc.encryption(of: app.id) {
+        switch try await asc.encryption(of: app.id) {
+        case .value(let encryption):
             let kept = ["appDescription", "availableOnFrenchStore", "containsProprietaryCryptography", "containsThirdPartyCryptography", "exempt", "usesEncryption"]
-            let answers = Self.scalars(encryption.filter { kept.contains($0.key) })
-            if !answers.isEmpty { a.encryption = answers }
+            a.encryption = Self.scalars(encryption.filter { kept.contains($0.key) }).nonEmpty
+        case .absent: break
+        case .forbidden: a.encryption = old?.encryption
         }
-        if let declarations = try await asc.accessibility(of: app.id) { a.accessibility = Self.accessibility(declarations, live: isLive) }
-        if let eula = try await asc.eula(of: app.id) {
-            let everywhere = Set(try await asc.territories())
+        switch try await asc.accessibility(of: app.id) {
+        case .value(let declarations): a.accessibility = Self.accessibility(declarations, live: isLive)
+        case .absent: break
+        case .forbidden: a.accessibility = old?.accessibility
+        }
+        switch try await asc.eula(of: app.id) {
+        case .value(let eula):
             files["eula.txt"] = .data(Data(ManifestText.render(eula.text).utf8))
-            a.eula = .custom(file: "eula.txt", territories: !everywhere.isEmpty && Set(eula.territories).isSuperset(of: everywhere) ? .all : .only(eula.territories.sorted()))
-        } else {
+            var territories = StoreTerritories.only(eula.territories.sorted())
+            if case .value(let everywhere) = try await asc.territories(), !everywhere.isEmpty, Set(eula.territories).isSuperset(of: everywhere) { territories = .all }
+            a.eula = .custom(file: "eula.txt", territories: territories)
+        case .absent:
             a.eula = .standard
+        case .forbidden:
+            a.eula = old?.eula
+            if case .custom(let file, _)? = old?.eula, let url = StoreManifest.resolve(file, in: dir), FileManager.default.fileExists(atPath: url.path) {
+                files[file] = .file(url)
+            }
         }
-        if let pricing = try await asc.pricing(of: app.id, today: today) { a.pricing = AppYAML.Pricing(baseTerritory: pricing.baseTerritory, price: pricing.price) }
-        if let availability = try await asc.availability(of: app.id) {
+        switch try await asc.pricing(of: app.id, today: today) {
+        case .value(let pricing): a.pricing = pricing
+        case .absent: break
+        case .forbidden: a.pricing = old?.pricing
+        }
+        switch try await asc.availability(of: app.id) {
+        case .value(let availability):
             a.availability = AppYAML.Availability(territories: availability.all ? .all : .only(availability.available), newTerritories: availability.newTerritories)
+        case .absent: break
+        case .forbidden: a.availability = old?.availability
         }
 
         manifest.app = a
         report.locales = manifest.orderedLocales
+        // Local media App Store Connect does not have (never pushed) are not part of what was pulled: say so.
+        let localMedia = (existing?.locales.values ?? [:].values).flatMap { ($0.screenshots + $0.previews).flatMap(\.files) }
+        // (Only a file the lock ties to an upload can be kept.)
+        for path in localMedia.sorted() where oldLock.files[path]?.appleChecksum == nil {
+            say("note: \(path) is not on App Store Connect (never uploaded), so the pulled listing does not have it")
+        }
         try ManifestWriter.write(manifest, files: files, lock: lock, to: dir)
         return report
+    }
+
+    /// The manifest at `dir` that pull replaces; nil when there is none. Refuses a directory pull must not replace: one
+    /// that is not a manifest (no app.yml, not empty), or whose app.yml cannot be read (its keys would be lost).
+    static func existingManifest(_ dir: URL) throws -> StoreManifest? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dir.path) else { return nil }
+        let name = dir.lastPathComponent
+        guard fm.fileExists(atPath: dir.appendingPathComponent(ManifestReader.appFile).path) else {
+            let entries = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0 != ".DS_Store" }
+            guard entries.isEmpty else {
+                throw XlessError(.account, "\(dir.path) is not an App Store manifest (it has no app.yml) and is not empty",
+                                 fix: "pull into a new or empty directory (--dir appstore)")
+            }
+            return nil
+        }
+        let read = ManifestReader.read(dir)
+        let appIssues = read.issues.filter { $0.severity == .error && $0.path == "\(name)/\(ManifestReader.appFile)" }
+        if let first = appIssues.first {
+            throw XlessError(.account, "\(first.path) cannot be read: \(first.message); pulling would lose what it holds",
+                             fix: "fix it (`xless store validate` lists the problems), or move it aside, then re-run")
+        }
+        return read.manifest
+    }
+
+    /// A locale App Store Connect sent, when it is safe as a directory name.
+    func usableLocale(_ locale: String?) -> String? {
+        guard let locale, locale.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil else {
+            say("note: App Store Connect sent a localization with an unusable locale (\(locale ?? "none")); it is left out")
+            return nil
+        }
+        return locale
+    }
+
+    /// A display or preview type App Store Connect sent, when it is safe as a directory name.
+    func usableSetType(_ type: String) -> Bool {
+        guard type.range(of: "^[A-Z0-9_]+$", options: .regularExpression) != nil else {
+            say("note: App Store Connect sent a media set of an unusable type (\(type)); it is left out")
+            return false
+        }
+        return true
     }
 
     // MARK: - Choices
@@ -278,6 +356,10 @@ private extension Array {
     var nilIfEmpty: [Element]? { isEmpty ? nil : self }
 }
 
+private extension SortedMap {
+    var nonEmpty: SortedMap? { isEmpty ? nil : self }
+}
+
 /// Fetching one set's media: keep the local original of an unchanged upload, else download Apple's copy.
 struct MediaFetch {
     let pull: StorePull
@@ -295,18 +377,20 @@ struct MediaFetch {
             if kind == "screenshots" { report.screenshots += 1 } else { report.previews += 1 }
             if let checksum = a.sourceFileChecksum, let local = oldLock.unchangedFile(for: checksum, in: dir) {
                 files[path] = .file(dir.appendingPathComponent(local))
-                lock.files[path] = MediaLock.Entry(md5: oldLock.files[local]!.md5, appleChecksum: checksum, id: item.id)
+                lock.files[path] = MediaLock.Entry(md5: oldLock.files[local]?.md5, appleChecksum: checksum, id: item.id)
                 report.kept += 1
                 paths.append(path)
                 continue
             }
             guard a.assetDeliveryState?.state == nil || a.assetDeliveryState?.state == "COMPLETE", let url = Self.deliveryURL(a, kind: kind, name: name) else {
                 report.skipped.append("\(path) (\(a.assetDeliveryState?.state.map { "processing: \($0)" } ?? "no delivery URL"))")
+                lock.files[path] = MediaLock.Entry(md5: nil, appleChecksum: a.sourceFileChecksum, id: item.id)
                 continue
             }
             let data = try await pull.download(url)
             if kind == "previews", data.starts(with: Data("#EXTM3U".utf8)) {
                 report.skipped.append("\(path) (App Store Connect serves it only as a stream)")
+                lock.files[path] = MediaLock.Entry(md5: nil, appleChecksum: a.sourceFileChecksum, id: item.id)
                 continue
             }
             let staged = staging.appendingPathComponent(path)

@@ -200,7 +200,12 @@ private let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
     #expect(read("eula.txt", in: dir) == "Terms.\n")
     #expect(try Data(contentsOf: dir.appendingPathComponent("en-US/screenshots/APP_IPHONE_67/01-home.png")) == homePNG)
     #expect(cdn.fetched == [homeURL, "https://example.apple.com/intro.m3u8"])
-    #expect(MediaLock.read(dir).files.values == ["en-US/screenshots/APP_IPHONE_67/01-home.png": .init(md5: MD5Hex.of(homePNG), appleChecksum: "apple-home", id: "SS1")])
+    #expect(MediaLock.read(dir).files.values == [
+        "en-US/screenshots/APP_IPHONE_67/01-home.png": .init(md5: MD5Hex.of(homePNG), appleChecksum: "apple-home", id: "SS1"),
+        // What pull could not download is recorded as there at Apple, with no local file, for push to leave alone.
+        "en-US/screenshots/APP_IPHONE_67/02-Settings-Screen.png": .init(md5: nil, appleChecksum: "apple-settings", id: "SS2"),
+        "de-DE/previews/IPHONE_67/01-intro.mov": .init(md5: nil, appleChecksum: "apple-intro", id: "PV1"),
+    ])
     #expect(report.text == """
         Pulled com.example.app (IOS 1.1, PREPARE_FOR_SUBMISSION) into appstore/: 2 locales (en-US, de-DE), 2 screenshots, 1 preview (1 downloaded, 0 unchanged)
           not downloaded: en-US/screenshots/APP_IPHONE_67/02-Settings-Screen.png (processing: UPLOAD_COMPLETE)
@@ -246,6 +251,58 @@ private let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
     }
 }
 
+@Test func partsTheKeyMayNotReadKeepTheManifestsValues() async throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("appstore")
+    try write("primaryLocale: en-US\nrelease:\n  phased: true\neula:\n  file: eula.txt\n  territories: all\npricing:\n  price: free\n", "app.yml", in: dir)
+    try write("Our terms.\n", "eula.txt", in: dir)
+    var routes = fakeApp()
+    let forbidden = (403, #"{"errors":[{"status":"403","code":"FORBIDDEN_ERROR","title":"no"}]}"#)
+    for path in ["/v1/apps/123/endUserLicenseAgreement", "/v1/appStoreVersions/V2/appStoreVersionPhasedRelease", "/v1/apps/123/appPriceSchedule"] { routes[path] = forbidden }
+    _ = try await puller(RoutedTransport(routes), FakeCDN(introStream.merging([homeURL: homePNG]) { $1 })).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    let app = try #require(read("app.yml", in: dir))
+    #expect(app.contains("phased: true") && app.contains("eula:\n  file: eula.txt\n  territories: all") && app.contains("pricing:\n  price: free"))
+    #expect(read("eula.txt", in: dir) == "Our terms.\n")
+}
+
+@Test func pullRefusesWhatItMustNotReplace() async throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pull = puller(RoutedTransport(fakeApp()), FakeCDN(introStream.merging([homeURL: homePNG]) { $1 }))
+    try write("# my project\n", "README.md", in: root)
+    do {
+        _ = try await pull.run(app: fakeASCApp, platform: nil, selection: .automatic, into: root, today: today)
+        Issue.record("pulled over a directory that is not a manifest")
+    } catch let e as XlessError { #expect(e.cause.contains("is not an App Store manifest (it has no app.yml) and is not empty")) }
+    #expect(read("README.md", in: root) == "# my project\n")
+    let dir = root.appendingPathComponent("appstore")
+    try write("primaryLocale: [en-US\nprivacy:\n  collectsData: false\n", "app.yml", in: dir)
+    do {
+        _ = try await pull.run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+        Issue.record("pulled over an unreadable app.yml")
+    } catch let e as XlessError { #expect(e.cause.hasPrefix("appstore/app.yml cannot be read: is not valid YAML")) }
+    #expect(read("app.yml", in: dir) == "primaryLocale: [en-US\nprivacy:\n  collectsData: false\n")
+}
+
+@Test func unusableNamesFromAppleAreLeftOut() async throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var routes = fakeApp()
+    routes["/v1/appStoreVersions/V2/appStoreVersionLocalizations"] = (200, list([
+        #"{"type":"appStoreVersionLocalizations","id":"VL1","attributes":{"locale":"en-US","description":"Does things."}}"#,
+        #"{"type":"appStoreVersionLocalizations","id":"VL3","attributes":{"locale":"../../evil","description":"x"}}"#,
+    ]))
+    routes["/v1/appStoreVersionLocalizations/VL1/appScreenshotSets"] = (200, list([#"{"type":"appScreenshotSets","id":"S1","attributes":{"screenshotDisplayType":"../X"}}"#]))
+    let notes = Notes()
+    let dir = root.appendingPathComponent("appstore")
+    _ = try await puller(RoutedTransport(routes), FakeCDN(introStream), notes).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["appstore"])
+    #expect(ManifestReader.read(dir).manifest.locales.keys.sorted() == ["de-DE", "en-US"])
+    #expect(notes.lines.contains("note: App Store Connect sent a localization with an unusable locale (../../evil); it is left out"))
+    #expect(notes.lines.contains("note: App Store Connect sent a media set of an unusable type (../X); it is left out"))
+}
+
 @Test func optionalPartsAppleDoesNotHaveAreLeftOut() async throws {
     let root = try tempDir()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -258,7 +315,7 @@ private let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
     _ = try await puller(RoutedTransport(routes), FakeCDN(introStream.merging([homeURL: homePNG]) { $1 }), notes).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
     let app = try #require(read("app.yml", in: dir))
     #expect(app.contains("eula: standard") && !app.contains("pricing") && !app.contains("availability") && !app.contains("encryption") && app.contains("phased: false"))
-    #expect(notes.lines.contains("note: this API key may not read the encryption declarations (HTTP 403); it is left out"))
+    #expect(notes.lines.contains("note: this API key may not read the encryption declarations (HTTP 403); app.yml keeps what it had for it"))
 }
 
 @Test func anUnchangedOriginalIsKeptNotDownloaded() async throws {

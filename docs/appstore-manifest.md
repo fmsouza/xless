@@ -39,7 +39,8 @@ the same thing: the field is not set. `name`, `subtitle` and the two privacy URL
 (they change with a new version's review), the other fields to the App Store version.
 
 Locale directories use App Store Connect's codes exactly: `en-US`, `de-DE`, `fr-FR`, `ja`, `zh-Hans`, `pt-BR`…
-(`de-de` is reported, with the right spelling). `iap/` and `subscriptions/` are kept for in-app purchases.
+(`de-de` is reported, with the right spelling). Every directory of `appstore/` is a locale, except `iap/` and
+`subscriptions/`, kept for in-app purchases; other files (a README) may sit at the top.
 
 ## Screenshots and previews
 
@@ -53,8 +54,9 @@ portrait or landscape. `<locale>/previews/<preview type>/` is the same for app p
 
 App Store Connect never gives back an uploaded file, only a re-encoded copy. `media.lock` records, for each media file,
 its MD5 and the checksum Apple keeps of the upload it is (`sourceFileChecksum`). As long as a file is unchanged, it
-*is* that upload: `pull` keeps it instead of downloading Apple's copy, and `push` will upload nothing. xless writes
-this file; commit it with the rest.
+*is* that upload: `pull` keeps it instead of downloading Apple's copy, and `push` will upload nothing. An upload
+`pull` could not download (still processing, or a preview App Store Connect only streams) is recorded without a local
+file (`md5` absent), so `push` knows it is there and leaves it alone. xless writes this file; commit it with the rest.
 
 ## `app.yml`
 
@@ -132,7 +134,8 @@ information (categories, age rating, name, subtitle and privacy URLs per locale)
 release type and date, phased release, App Review contact, demo account name and notes, and per locale the
 description, keywords, what's new, promotional text, support and marketing URLs, screenshots and previews); the custom
 licence agreement; the latest encryption declaration; accessibility declarations; the price in the base territory; and
-availability. A part the app does not have is left out, and so is one the key's role may not read (with a note).
+availability. A part the app does not have is left out (or written as its default: `eula: standard`, `phased: false`);
+a part the key's role may not read keeps the value `app.yml` already had, with a note.
 
 - **The version** is the one being prepared if there is one, else the one on the App Store, else the newest;
   `--editable`, `--live` or `--app-version` choose. The app information is the live one for the live version, else the
@@ -147,8 +150,11 @@ availability. A part the app does not have is left out, and so is one the key's 
   `media.lock`, except files the lock shows are the local original of the same upload, which are kept. Media still
   processing, and previews App Store Connect only streams, are listed as not downloaded.
 - **All at once**: the new directory is built beside the old one and swapped in when everything is read, so a failure
-  leaves `appstore/` as it was. Files the format does not own (a README, notes, `iap/`) and `app.yml` keys xless does not
-  manage (`privacy`) are carried over.
+  leaves `appstore/` as it was. Files the format does not own (a README, `iap/`) and `app.yml` keys xless does not
+  manage (`privacy`) are carried over. It is a pull: the listing's text and media become App Store Connect's, and a
+  local screenshot never uploaded is not kept (a note names it).
+- **Refusals**: `pull` does not replace a directory that is not a manifest (no `app.yml`, not empty), nor one whose
+  `app.yml` cannot be read (its keys would be lost): fix it first (`xless store validate`).
 
 It prints what it wrote (`--json`: `{"appID", "bundleID", "platform", "version", "versionState", "directory",
 "locales", "screenshots", "previews", "downloaded", "kept", "skipped"}`). Errors are `[account]` errors, exit code 20
