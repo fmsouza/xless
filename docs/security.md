@@ -232,7 +232,11 @@ Each of these says so in its `--help`. After the first setup, only creating apps
 everything else a release needs runs on the API key.
 
 - The sign-in is Apple's own SRP-6a and two-factor code, typed on the terminal; never read from a pipe, a file, an
-  argument or the environment. Accounts with hardware security keys or the old two-step verification are refused.
+  argument or the environment. Accounts with the old two-step verification are refused.
+- With a security key, the key signs Apple's challenge for `apple.com` (origin `https://idmsa.apple.com`), and xless
+  sends that assertion once to idmsa.apple.com, never again. Only the keys Apple names are asked, and only after a
+  silent check that the key holds one, so a touch never signs for another account. The key's PIN, when the key wants
+  one, is read like the password, sent to the key only (encrypted with the FIDO2 PIN protocol), and wiped after use.
 - The cookies stay in this process's memory and are forgotten when it ends, unless `--keep` ([above](#caches-off-by-default-at-most-an-hour)).
 - xless never accepts legal terms: when Apple wants an agreement accepted, the command stops and names the page.
 

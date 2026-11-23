@@ -35,7 +35,8 @@ come from the same release (the share's `VERSION` file) whenever it reads the sh
 | `Apple refused the Apple ID or password` | Check them and run it again. A few failed attempts can lock the Apple ID. |
 | `Apple says the Apple ID is locked` | Unlock it at <https://iforgot.apple.com>, then run it again. |
 | `Apple did not accept the verification code 3 times` | Run it again and type the newest code; with `sms` at the code prompt the code comes by text message instead. |
-| `… hardware security key …`, `… old two-step verification …` | xless supports two-factor codes only. Use an Apple ID without security keys, or download in a browser. |
+| `… old two-step verification …` | xless supports two-factor codes and security keys only. Turn on two-factor authentication for the Apple ID, or download in a browser. |
+| `… security key …` (none connected, `permission denied`, not registered, not touched in time, PIN) | See [Signing in with a security key](apple-account.md#signing-in-with-a-security-key): a USB key registered with the Apple ID, on Linux, that your user may open (a udev rule), touched when asked. |
 | `Apple refused the download list …`, `Apple wants this Apple ID to accept new terms …` | Sign in once at <https://developer.apple.com/download/all/> in a browser, accept the agreement it shows, and run it again. |
 | `Apple offers no Xcode …` | Use the name Apple lists: `xless xcode download --list`. |
 | `Apple did not authorise the download of …` | Check in a browser that the Apple ID can download that file, then run it again. |
@@ -180,7 +181,8 @@ reports its own errors as `[config]`, exit 10.
 | `… is accessible to other users`, `… is a symlink`, `… belongs to another user` | xless refuses a store others could read or swap, and never fixes it: `chmod 700 ~/.local/share/xless/vault`, `chmod 600` the files in it, or move the symlink away. |
 | `the secret store failed its integrity check` | The file, or one entry, was altered or damaged: nothing was read from it. Restore it from a backup, or remove it and import the keys again ([security.md](security.md#wiping-everything)). |
 | `signing in to Apple needs an interactive terminal` | A web-session command ran without a terminal. Run it in one, or keep a session first in this login session: `xless auth login --keep 30m`. |
-| `… hardware security key …`, `… old two-step verification …` | xless supports two-factor codes only; use an Apple ID with codes (another Admin of the team) or the [browser way](bootstrap.md#appendix-the-same-in-a-browser). |
+| `… old two-step verification …` | xless supports two-factor codes and security keys only; use an Apple ID with two-factor authentication (another Admin of the team) or the [browser way](bootstrap.md#appendix-the-same-in-a-browser). |
+| `… security key …` (none connected, `permission denied`, not registered, not touched in time, PIN) | See [Signing in with a security key](apple-account.md#signing-in-with-a-security-key). Over SSH or on a server, `/dev/hidraw*` usually needs the udev rule shown there. |
 | `Apple has agreements or terms pending for this account …` | xless never accepts legal terms. The Account Holder accepts them on the page the error names (App Store Connect > Business, or developer.apple.com/account), then run the command again. |
 | `the kernel keyring is not available here (macOS, or a container that blocks it)` | `--remember` and `--keep` need the Linux kernel keyring. Leave them out: each command asks again. |
 | A web-session command fails with `App Store Connect answered HTTP …` or `the developer portal …` | These interfaces are undocumented and may have changed. The error names the page to do it in a browser meanwhile; please report it with the `--verbose` trace (it is redacted: [security.md](security.md#process-hardening)). |

@@ -9,7 +9,7 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
         commandName: "download",
         abstract: "Sign in to Apple once and download one or more Xcode .xips (for xless setup --xcode).",
         discussion: """
-        Asks for your Apple ID, its password and the two-factor code on the terminal, signs in to Apple directly (no \
+        Asks for your Apple ID, its password and the two-factor code (or a touch on a security key) on the terminal, signs in to Apple directly (no \
         browser; the password itself is never sent, as in Apple's own sign-in), then downloads each requested Xcode in \
         that one session. Nothing of the sign-in is stored: no password, code, cookie or token is written to disk, \
         logged or passed to another program, and the session ends with the command.

@@ -58,9 +58,10 @@ Nothing of the sign-in is kept, and none of it leaves for anywhere but Apple:
 
 ## What it does not do
 
-- Apple IDs that sign in with a hardware security key, and the old two-step verification, are refused with a message.
-  Managed (federated) Apple IDs are not recognised as such: their sign-in fails with the refusal Apple gives. Two-factor
-  codes from a trusted device or by text message work.
+- Apple IDs with the old two-step verification are refused with a message. Managed (federated) Apple IDs are not
+  recognised as such: their sign-in fails with the refusal Apple gives. Two-factor codes from a trusted device or by
+  text message work, and so do USB security keys on Linux
+  ([apple-account.md](apple-account.md#signing-in-with-a-security-key)).
 - It downloads Xcode `.xip`s only (not the Command Line Tools, simulators or older `.dmg` Xcodes), one at a time.
 - It does not run `xless setup`.
 

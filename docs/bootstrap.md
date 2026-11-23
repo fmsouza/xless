@@ -16,7 +16,8 @@ store; never commit one. (`.gitignore` already excludes `*.p8` and `*.pem`.)
 ## What you need first
 
 - An Apple Developer Program membership, and an Apple ID that is its Account Holder, or an Admin the Account Holder
-  allowed to generate API keys. Two-factor authentication by code (hardware security keys are not supported).
+  allowed to generate API keys. Two-factor authentication by code, or a USB security key on Linux
+  ([apple-account.md](apple-account.md#signing-in-with-a-security-key)).
 - The agreements accepted and, the first time, App Store Connect API access requested by the Account Holder: both are
   in a browser only ([account.md](account.md#before-you-start)).
 - xless installed ([README](../README.md)).
