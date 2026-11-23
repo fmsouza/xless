@@ -60,10 +60,18 @@ let package = Package(
         // C for what Swift cannot call: variadic prctl (SecretScope), explicit_bzero/memset_s (SecretBytes), and the kernel
         // keyring's add_key/keyctl syscalls (KernelKeyring) without libkeyutils, so the static musl build keeps working.
         .target(name: "CXlessProcess"),
+        // FIDO security keys spoken to directly (CBOR, CTAPHID, CTAP2 and U2F over Linux /dev/hidraw), with no libfido2
+        // so the static musl build keeps working: the Apple ID sign-in's security-key second factor.
+        .target(name: "XlessFIDO", dependencies: [
+            "XlessCore",
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "_CryptoExtras", package: "swift-crypto"),
+        ]),
         // Apple ID sign-in (SRP, 2FA) and Xcode .xip downloads from developer.apple.com (`xless xcode download`).
         .target(name: "XlessAppleID", dependencies: [
             "CXlessProcess",
             "XlessCore",
+            "XlessFIDO",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "BigInt", package: "BigInt"),
         ]),
@@ -115,8 +123,13 @@ let package = Package(
         .testTarget(name: "XlessMachOTests", dependencies: ["XlessMachO"]),
         .testTarget(name: "XlessReactNativeTests", dependencies: ["XlessReactNative", "XlessXcode", "XlessCore", "XlessTauri", "XlessASC"]),
         .testTarget(name: "XlessCargoTests", dependencies: ["XlessCargo", "XlessCore", "XlessTauri", "XlessMachO", "XlessReactNative"]),
+        .testTarget(name: "XlessFIDOTests", dependencies: [
+            "XlessFIDO", "XlessCore",
+            .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "_CryptoExtras", package: "swift-crypto"),
+        ]),
         .testTarget(name: "XlessAppleIDTests", dependencies: [
-            "XlessAppleID", "XlessCore",
+            "XlessAppleID", "XlessCore", "XlessFIDO",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "BigInt", package: "BigInt"),
         ]),
