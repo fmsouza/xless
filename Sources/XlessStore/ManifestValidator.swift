@@ -247,11 +247,50 @@ public enum ManifestValidator {
                 if let base = p.baseTerritory, base.range(of: "^[A-Z]{3}$", options: .regularExpression) == nil {
                     error(appPath, "pricing.baseTerritory \(base) is not a territory code", "use a three-letter code, e.g. USA")
                 }
-                if let price = p.price, price != "free", price.range(of: "^[0-9]+(\\.[0-9]+)?$", options: .regularExpression) == nil {
+                if let price = p.price, CustomerPrice.parse(price) == nil {
                     error(appPath, "pricing.price \(price) is not a price", "write `free` or the customer price in the base territory, quoted, e.g. \"0.99\"")
+                }
+                for (territory, price) in (p.territories?.values ?? [:]).sorted(by: { $0.key < $1.key }) {
+                    if !Self.isTerritory(territory) {
+                        error(appPath, "pricing.territories: \(territory) is not a territory code", "use App Store Connect's three-letter codes, e.g. GBR, JPN")
+                    } else if territory == p.baseTerritory {
+                        error(appPath, "pricing.territories lists the base territory \(territory)", "set its price with pricing.price, and remove it from pricing.territories")
+                    }
+                    if CustomerPrice.parse(price) == nil {
+                        error(appPath, "pricing.territories.\(territory): \(price) is not a price", "write `free` or the customer price in \(territory)'s currency, quoted, e.g. \"0.99\"")
+                    }
+                }
+                var seen: Set<String> = []
+                for change in p.changes ?? [] {
+                    let territory = change.territory ?? p.baseTerritory ?? "the base territory"
+                    if !Self.isDay(change.date) {
+                        error(appPath, "pricing.changes: \(change.date) is not a date", "write it as YYYY-MM-DD, quoted, e.g. \"2027-01-01\"")
+                    }
+                    if let t = change.territory, !Self.isTerritory(t) {
+                        error(appPath, "pricing.changes: \(t) is not a territory code", "use App Store Connect's three-letter codes, or leave territory out for the base territory")
+                    }
+                    if CustomerPrice.parse(change.price) == nil {
+                        error(appPath, "pricing.changes: \(change.price) (\(change.date)) is not a price", "write `free` or the customer price, quoted, e.g. \"0.99\"")
+                    }
+                    if !seen.insert("\(change.territory ?? p.baseTerritory ?? "") \(change.date)").inserted {
+                        error(appPath, "pricing.changes has two changes for \(territory) on \(change.date)", "keep one")
+                    }
                 }
             }
             territoryList(app.availability?.territories, key: "availability.territories")
+        }
+
+        static func isTerritory(_ code: String) -> Bool { code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil }
+
+        /// YYYY-MM-DD, a real day.
+        static func isDay(_ text: String) -> Bool {
+            guard text.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil else { return false }
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = TimeZone(identifier: "UTC")
+            f.dateFormat = "yyyy-MM-dd"
+            f.isLenient = false
+            return f.date(from: text).map { f.string(from: $0) == text } ?? false
         }
 
         // MARK: Locales
