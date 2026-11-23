@@ -101,10 +101,13 @@ public struct HTTPTrace: Sendable {
     }
 
     static let secretFieldNames: Set<String> = ["key", "a", "b", "c", "m1", "m2"]
-    static let secretFieldWords = ["password", "passphrase", "secret", "token", "privatekey", "apikey", "cookie", "securitycode", "session"]
+    static let secretFieldWords = ["password", "passphrase", "secret", "token", "privatekey", "apikey", "cookie", "securitycode", "session",
+                                   "challenge", "credential", "keyhandle", "userhandle", "clientdata", "authenticatordata", "signature"]
 
     /// Whether a JSON or form field named `name` holds a secret: the SRP exchange's `a`, `b`, `c`, `m1`, `m2`, a `key`,
-    /// and anything named like a password, secret, token, private key, cookie, session or the two-factor code.
+    /// anything named like a password, secret, token, private key, cookie, session or the two-factor code, and the
+    /// security-key exchange (`fsaChallenge`, credential IDs, user handle, client data, authenticator data, signature),
+    /// which identifies the account and its keys.
     public static func isSecretField(_ name: String) -> Bool {
         let lower = name.lowercased().filter { $0 != "_" && $0 != "-" }
         return secretFieldNames.contains(lower) || secretFieldWords.contains(where: lower.contains)

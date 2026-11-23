@@ -18,8 +18,8 @@ in [security.md](security.md).
 You need:
 
 - an **Apple Developer Program** membership, and an Apple ID that is its **Account Holder**, or an **Admin** the
-  Account Holder allowed to generate API keys, with two-factor authentication by code (hardware security keys are not
-  supported);
+  Account Holder allowed to generate API keys, with two-factor authentication by code or a USB security key
+  ([apple-account.md](apple-account.md#signing-in-with-a-security-key));
 - xless installed on a Linux machine ([README](../README.md)).
 
 A few things only a person can do, in a browser, and xless never does for you:

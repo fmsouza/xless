@@ -9,7 +9,7 @@ enum AppleWebHelp {
     /// Part of the `--help` of every command that uses the Apple ID web session.
     static let note = """
     Uses the Apple ID web session, not the App Store Connect API: Apple's own web interface, undocumented, for what the \
-    API cannot do. It signs in with your Apple ID, password and two-factor code on the terminal, unless \
+    API cannot do. It signs in with your Apple ID, password and two-factor code (or security key) on the terminal, unless \
     `xless auth login --keep` kept a session; nothing of the session is written to disk.
     """
 }

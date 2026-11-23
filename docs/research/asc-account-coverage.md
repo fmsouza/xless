@@ -66,6 +66,7 @@ those sources. The real-account check is [#105](https://github.com/fmsouza/xless
 |---|---|---|
 | `GET /appleauth/auth/signin?widgetKey=…` (a proof-of-work challenge), `POST …/signin/init`, `POST …/signin/complete` | SRP-6a sign-in: the password never leaves the machine | fastlane (spaceship), xcodes |
 | `GET /appleauth/auth`, `POST …/verify/trusteddevice/securitycode`, `PUT …/verify/phone`, `POST …/verify/phone/securitycode`, `GET …/2sv/trust` | the two-factor code (trusted device or text message), then finishing the sign-in | fastlane (spaceship), xcodes |
+| `POST …/verify/security/key` (after `fsaChallenge` in `GET /appleauth/auth`) | a security key's WebAuthn assertion (rpId `apple.com`, origin `https://idmsa.apple.com`) as the second factor | XcodesLoginKit (`Client+SecurityKey.swift`, LibFido2Swift), the asc CLI (`internal/web/auth_security_key.go`) |
 | `HEAD https://appstoreconnect.apple.com/logout`, `GET /olympus/v1/app/config?hostname=itunesconnect.apple.com` | the sign-in widget key | fastlane (spaceship) |
 
 ### App Store Connect (`appstoreconnect.apple.com`)

@@ -24,6 +24,7 @@ enum AppleEndpoints {
     static let verifyPhone = URL(string: "https://idmsa.apple.com/appleauth/auth/verify/phone")!
     static let verifyPhoneCode = URL(string: "https://idmsa.apple.com/appleauth/auth/verify/phone/securitycode")!
     static let verifyDeviceCode = URL(string: "https://idmsa.apple.com/appleauth/auth/verify/trusteddevice/securitycode")!
+    static let verifySecurityKey = URL(string: "https://idmsa.apple.com/appleauth/auth/verify/security/key")!
     static let trust = URL(string: "https://idmsa.apple.com/appleauth/auth/2sv/trust")!
     static let listDownloads = URL(string: "https://developer.apple.com/services-account/QH65B2/downloadws/listDownloads.action")!
     static func downloadAuth(path: String) -> URL {
@@ -62,5 +63,40 @@ struct AuthOptions: Decodable {
     let trustedDevices: [Present]?
     let securityCode: CodeInfo?
     let noTrustedDevices: Bool?
-    let fsaChallenge: Present?
+    /// Set when the Apple ID signs in with a security key; its fields are nil when Apple sent something unreadable.
+    let fsaChallenge: FSAChallenge?
+
+    enum CodingKeys: String, CodingKey { case trustedPhoneNumbers, trustedDevices, securityCode, noTrustedDevices, fsaChallenge }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        trustedPhoneNumbers = try c.decodeIfPresent([Phone].self, forKey: .trustedPhoneNumbers)
+        trustedDevices = try c.decodeIfPresent([Present].self, forKey: .trustedDevices)
+        securityCode = try c.decodeIfPresent(CodeInfo.self, forKey: .securityCode)
+        noTrustedDevices = try c.decodeIfPresent(Bool.self, forKey: .noTrustedDevices)
+        if c.contains(.fsaChallenge), (try? c.decodeNil(forKey: .fsaChallenge)) != true {
+            fsaChallenge = (try? c.decode(FSAChallenge.self, forKey: .fsaChallenge)) ?? FSAChallenge()
+        } else {
+            fsaChallenge = nil
+        }
+    }
+}
+
+/// `fsaChallenge`: a WebAuthn challenge, and the credentials (security keys) registered with the Apple ID, as a
+/// comma-separated `allowedCredentials` and/or a `keyHandles` array, in base64 (standard or URL-safe).
+struct FSAChallenge: Decodable {
+    var challenge: String?
+    var keyHandles: [String]?
+    var allowedCredentials: String?
+
+    init() {}
+
+    enum CodingKeys: String, CodingKey { case challenge, keyHandles, allowedCredentials }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        challenge = try? c.decodeIfPresent(String.self, forKey: .challenge)
+        keyHandles = try? c.decodeIfPresent([String].self, forKey: .keyHandles)
+        allowedCredentials = try? c.decodeIfPresent(String.self, forKey: .allowedCredentials)
+    }
 }

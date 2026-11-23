@@ -44,9 +44,10 @@ instead, through the web interfaces Apple's own pages use (`appstoreconnect.appl
 `developer.apple.com/services-account`), and their `--help` says so. They are undocumented and may change; when one
 fails, the error says which interface it was and which page to use in a browser meanwhile.
 
-- The sign-in is Apple's own: SRP (the password itself is never sent) and the two-factor code, typed on the terminal
-  (`/dev/tty`); never read from a pipe, a file, an argument or the environment. Accounts with security keys or the old
-  two-step verification are not supported.
+- The sign-in is Apple's own: SRP (the password itself is never sent), then the second factor: the two-factor code, or
+  a touch on a [security key](#signing-in-with-a-security-key) (Linux). Everything is typed on the terminal
+  (`/dev/tty`); never read from a pipe, a file, an argument or the environment. Accounts with the old two-step
+  verification are not supported.
 - The session's cookies stay in memory and are forgotten when the command ends. Nothing is written to disk, ever.
 - **Opt-in cache:** `xless auth login --keep 30m` seals the cookies with a random key and keeps both in the Linux kernel
   keyring for that long (at most an hour, never past the session's own expiry). Later commands of the same login
@@ -58,6 +59,38 @@ fails, the error says which interface it was and which page to use in a browser 
 - **Agreements:** xless never accepts legal terms. When Apple wants new terms accepted, the command stops and names the
   page: [App Store Connect > Business](https://appstoreconnect.apple.com/agreements) or
   [developer.apple.com/account](https://developer.apple.com/account), where the Account Holder accepts them.
+
+### Signing in with a security key
+
+When the Apple ID is protected by security keys, xless asks for one instead of a code: plug in a USB key registered
+with the Apple ID and touch it when asked. xless talks to the key itself (FIDO2/CTAP2, or U2F for older keys) through
+Linux's `/dev/hidraw*`, with nothing to install. With several keys plugged in, it uses the one registered with the
+Apple ID without asking the others for a touch.
+
+```text
+This Apple ID signs in with a security key.
+Touch your security key (Yubico YubiKey OTP+FIDO+CCID) to sign in.
+```
+
+- **PIN:** Apple does not ask for the key's PIN, so most keys sign without one. A key configured to always check it
+  asks for it (read with echo off, like the password), and the prompt shows how many tries the key has left; xless
+  stops after three wrong PINs, before the key locks itself. The PIN goes to the key only, encrypted as FIDO2 specifies; never to Apple, never to disk.
+- **No key plugged in:** xless asks you to plug one in and press Enter. NFC and Bluetooth keys are not supported, and on
+  macOS xless does not read security keys.
+- **Permission:** on desktop Linux the person at the screen may open their security keys (systemd 244 or later marks
+  them for `uaccess`). Over SSH, on a server, or on an older system, `/dev/hidraw*` may be root's only, and xless says
+  `permission denied`. Give your user the keys with a udev rule, then unplug the key and plug it in again:
+
+  ```sh
+  echo 'KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}=="1", GROUP="plugdev", MODE="0660", TAG+="uaccess"' \
+    | sudo tee /etc/udev/rules.d/70-xless-fido.rules
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  getent group plugdev >/dev/null || sudo groupadd plugdev   # Fedora and Arch have no plugdev group
+  sudo usermod -aG plugdev "$USER"                           # then log in again
+  ```
+
+  Without systemd's `fido_id` (which sets `ID_FIDO_TOKEN`), install the rules libfido2 ships instead (`libu2f-udev`
+  on Debian and Ubuntu). In a container, pass the device in (`docker run --device /dev/hidraw3 …`).
 
 ## `xless auth`
 

@@ -95,6 +95,13 @@ func expectNoFakeSecret(_ text: String, sourceLocation: SourceLocation = #_sourc
     #expect(HTTPTrace.redact(body: Data(), contentType: "application/json") == nil)
 }
 
+@Test func theSecurityKeyExchangeIsHidden() {
+    let text = HTTPTrace.redact(body: Data(#"{"fsaChallenge":{"challenge":"FAKE-CHAL","keyHandles":["FAKE-KH"],"allowedCredentials":"FAKE-CRED"},"credentialID":"FAKE-ID","userHandle":"FAKE-USER","clientData":"FAKE-CD","authenticatorData":"FAKE-AD","signatureData":"FAKE-SIG","rpId":"apple.com"}"#.utf8),
+                                contentType: "application/json") ?? ""
+    #expect(!text.contains("FAKE"), "\(text)")
+    #expect(text.contains(#""rpId":"apple.com""#))
+}
+
 @Test func twoFactorCodesAndKeysInJSONAreHidden() {
     let text = HTTPTrace.redact(body: Data(#"{"securityCode":{"code":"FAKE-CODE"},"phoneNumber":{"id":1},"key":"FAKE-KEY","Password":"FAKE-PASSWORD"}"#.utf8),
                                 contentType: "application/json") ?? ""
