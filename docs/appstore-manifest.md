@@ -375,8 +375,8 @@ some); `push` checks every ID against App Store Connect's own lists before sendi
   says when App Store Connect's answers are not published, and leaves out (with a note) answers it cannot read.
 - **`push`** checks the section, compares it with App Store Connect's answers and prints the plan, one line per
   category; `--dry-run` stops there. App Store Connect keeps one answer per category, purpose and protection (linked,
-  not linked, tracking) and has no edit: only the answers that differ are deleted and created again (a category's new
-  answers before its old ones go). Switching to or from `collectsData: false` deletes the old answers first: App
+  not linked, tracking); xless does not edit one in place: only the answers that differ are deleted and created again (a category's new
+  answers before its old ones go, except one a new answer contradicts, linked ↔ not linked, which goes first). Switching to or from `collectsData: false` deletes the old answers first: App
   Store Connect refuses "Data Not Collected" next to collected data. The answers are then published (also when they
   already matched but were not published). Removing a category is not a deletion that asks: it changes the
   declaration, as editing a text does. If a request fails, re-run: it sends only what still differs.

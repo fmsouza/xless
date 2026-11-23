@@ -218,3 +218,13 @@ private let target = StorePrivacyCLI.Target(id: "123", name: "com.example.app")
     #expect(push.dryRun && push.directory.dir == "listing" && push.app == "com.example.app")
     #expect(throws: (any Error).self) { try StorePrivacyPullCommand.parse(["--app", "not an app"]) }
 }
+
+@Test func aWebSessionThatCannotOpenSkipsPrivacyUnlessItWasAskedFor() async throws {
+    let said = Said()
+    let failing: () async throws -> String = { throw XlessError(.account, "your Apple ID belongs to 2 teams and none was chosen", fix: "pass --team") }
+    let skipped = try await StorePrivacyCLI.webForStorePush(explicit: false, say: { said.add($0) }, open: failing)
+    #expect(skipped == nil)
+    #expect(said.lines == ["note: the Apple ID web session could not be opened (your Apple ID belongs to 2 teams and none was chosen); the privacy part is skipped"])
+    await #expect(throws: XlessError.self) { _ = try await StorePrivacyCLI.webForStorePush(explicit: true, say: { _ in }, open: failing) }
+    #expect(try await StorePrivacyCLI.webForStorePush(explicit: false, say: { _ in }, open: { "session" }) == "session")
+}

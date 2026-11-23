@@ -262,8 +262,10 @@ struct StorePushCommand: AsyncParsableCommand {
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if try StorePrivacyCLI.storePushNeedsWeb(manifest: manifest, parts: options.parts, explicit: !only.isEmpty,
                                                      kept: AppleWebCLI.cache.info() != nil, terminal: (try? AppleWebCLI.prompter()) != nil) {
-                let (s, t, _) = try await APIKeyWebCLI.open(team: session.team, verbose: trace.verbose)
-                web = (s, t)
+                web = try await StorePrivacyCLI.webForStorePush(explicit: !only.isEmpty, say: StorePushCLI.standardError) {
+                    let (s, t, _) = try await APIKeyWebCLI.open(team: session.team, verbose: trace.verbose)
+                    return (session: s, transport: t)
+                }
             }
             defer { web?.transport.invalidate() }
             let cli = StorePushCLI(client: session.client, secrets: session.secrets, privacy: web.map { ASCWebPrivacy(asc: $0.session.asc) },

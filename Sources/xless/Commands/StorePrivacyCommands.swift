@@ -65,8 +65,7 @@ struct StorePrivacyPushCommand: AsyncParsableCommand {
 
 
         Checks app.yml's privacy section and every ID in it against App Store Connect's own lists, prints the plan and \
-        sends only the answers that differ (each changed answer is deleted and created again; App Store Connect has \
-        no edit), then publishes. Switching to or from "Data Not Collected" deletes the old answers first: App Store \
+        sends only the answers that differ (each changed answer is deleted and created again), then publishes. Switching to or from "Data Not Collected" deletes the old answers first: App Store \
         Connect refuses the two together. --dry-run stops after the plan. Re-running after a failure sends only what \
         still differs. `xless store push` sends the same part (privacy) with the rest of the listing.
         """)
@@ -186,7 +185,7 @@ struct StorePrivacyCLI {
                 wrote = true
             }
         } else {
-            allNotes.append("App Store Connect has no App Privacy answers for \(app.name) yet; \(dir.lastPathComponent)/app.yml is unchanged")
+            allNotes.append("App Store Connect has no App Privacy answers \(have.usages.isEmpty ? "" : "xless can read ")for \(app.name)\(have.usages.isEmpty ? " yet" : ""); \(dir.lastPathComponent)/app.yml is unchanged")
         }
         for note in allNotes { say("note: \(note)") }
         if json {
@@ -226,6 +225,17 @@ struct StorePrivacyCLI {
             sent += 1
         }
         return json ? try ASCOutput.json(document(applied: sent)) : "sent \(sent) change\(sent == 1 ? "" : "s") to App Store Connect; the App Privacy answers are published\n"
+    }
+
+    /// The Apple ID web session for `store push`'s privacy part. When the part was not named (`--only`), a session
+    /// that cannot be opened (several teams and no --team, an expired kept session, a sign-in given up) skips it with a
+    /// note and the rest is pushed; named, it stops the push.
+    static func webForStorePush<T>(explicit: Bool, say: (String) -> Void, open: () async throws -> T) async throws -> T? {
+        do { return try await open() } catch {
+            if explicit { throw error }
+            say("note: the Apple ID web session could not be opened (\(XlessError.wrapping(error, stage: .account).cause)); the privacy part is skipped")
+            return nil
+        }
     }
 
     /// Whether `store push` opens the Apple ID web session for App Privacy: only when app.yml has `privacy` and the

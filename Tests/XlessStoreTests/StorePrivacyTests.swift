@@ -75,10 +75,10 @@ func plan(_ want: AppYAML.Privacy, _ usages: [WebDataUsage], published: Bool? = 
         "- u4 CRASH_DATA / ANALYTICS: DATA_NOT_LINKED_TO_YOU",
         "+ EMAIL_ADDRESS / ANALYTICS: DATA_LINKED_TO_YOU",
         "- u2 EMAIL_ADDRESS / PRODUCT_PERSONALIZATION: DATA_LINKED_TO_YOU",
-        "+ NAME / APP_FUNCTIONALITY: DATA_LINKED_TO_YOU",
         "- u3 NAME / APP_FUNCTIONALITY: DATA_NOT_LINKED_TO_YOU",
+        "+ NAME / APP_FUNCTIONALITY: DATA_LINKED_TO_YOU",
         "publish",
-    ], "u1 is kept; each category creates before it deletes, so an interruption leaves more answers, never fewer")
+    ], "u1 is kept; each category creates before it deletes (an interruption leaves more answers, never fewer), except an answer the new one contradicts")
     #expect(changes.map(\.text) == [
         "- App Privacy CRASH_DATA\n    purposes: \"ANALYTICS\" → (none)\n    linkedToYou: \"false\" → (none)\n    tracking: \"false\" → (none)",
         "~ App Privacy EMAIL_ADDRESS: purposes: \"APP_FUNCTIONALITY, PRODUCT_PERSONALIZATION\" → \"ANALYTICS, APP_FUNCTIONALITY\"",

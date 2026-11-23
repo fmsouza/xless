@@ -191,8 +191,17 @@ public struct StorePrivacy: Sendable {
         var categoryChanges: [StoreChange] = []
         let categories = Set(creates.compactMap(\.category) + deletes.compactMap { $0.tuple?.category }).sorted()
         for category in categories {
-            let mine = creates.filter { $0.category == category }.map { PrivacyStep.create($0) }
-                + deletes.filter { $0.tuple?.category == category }.map { PrivacyStep.delete($0.id, $0.tuple) }
+            // New answers go in before the old ones go (an interruption leaves more, never fewer), except an answer
+            // the new one contradicts (the same purpose, linked ↔ not linked), which goes first.
+            let added = creates.filter { $0.category == category }
+            let removed = deletes.filter { $0.tuple?.category == category }
+            func contradicted(_ t: PrivacyTuple?) -> Bool {
+                guard let t, t.protection != PrivacyProtection.tracking else { return false }
+                return added.contains { $0.purpose == t.purpose && $0.protection != PrivacyProtection.tracking }
+            }
+            let mine = removed.filter { contradicted($0.tuple) }.map { PrivacyStep.delete($0.id, $0.tuple) }
+                + added.map { PrivacyStep.create($0) }
+                + removed.filter { !contradicted($0.tuple) }.map { PrivacyStep.delete($0.id, $0.tuple) }
             let before = entry(have, category), after = entry(want, category)
             let action: StoreChange.Action = before == nil ? .create : after == nil ? .delete : .update
             var fields: [StoreFieldChange] = []
