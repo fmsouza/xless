@@ -381,6 +381,12 @@ struct ProfileCLI {
     /// Renews a profile: everything it lists that can still go into a profile (its certificates that exist and have
     /// not expired; its devices that are registered, enabled and of its kind) is checked before anything is deleted.
     func renew(_ id: String, yes: Bool, team: String? = nil) async throws -> String {
+        guard let created = try await renewed(id, yes: yes, team: team) else { return "" }
+        return try report(created)
+    }
+
+    /// `renew`'s work: the profile created again, or nil when the answer was no.
+    func renewed(_ id: String, yes: Bool, team: String? = nil) async throws -> ProfileCreated? {
         let (p, bundle) = try await profiles.get(id: id)
         guard let type = ProfileType(rawValue: p.profileType) else {
             throw XlessError(.account, "profile \(id) has type \(p.profileType), which xless does not know", fix: "renew it at developer.apple.com/account/resources/profiles")
@@ -421,7 +427,7 @@ struct ProfileCLI {
         question += ". Files of the old profile stop working."
         guard try AccountConfirm.confirm(question, action: "renewing profile \(id)", yes: yes, terminal: terminal) else {
             say("cancelled; nothing was sent")
-            return ""
+            return nil
         }
         try await profiles.delete(id: id)
         let created: ASCProfile
@@ -433,7 +439,7 @@ struct ProfileCLI {
             throw XlessError(.account, "profile \(p.name) (\(id)) was deleted, but creating it again failed: \(cause)",
                              fix: "create it again with: \(recreate)")
         }
-        return try report(ProfileCreated(profile: created, bundleId: bundle.identifier, certificates: certificates, devices: devices, replaced: id))
+        return ProfileCreated(profile: created, bundleId: bundle.identifier, certificates: certificates, devices: devices, replaced: id)
     }
 
     struct Deleted: Encodable { let deleted: String; let name: String; let profileType: String }

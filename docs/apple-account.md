@@ -9,7 +9,9 @@ Connect: [`xless auth`](#xless-auth), which signs in to your Apple ID and shows 
 [`xless merchant-ids`](#xless-merchant-ids), which registers Apple Pay merchant IDs,
 [`xless certs`](#xless-certs), which creates, downloads and revokes certificates of every type with their private keys
 in the secret store, [`xless profiles`](#xless-profiles), which creates, downloads, renews and deletes provisioning
-profiles of every type, and [`xless api`](#xless-api), which calls any documented App Store Connect endpoint. More
+profiles of every type, [`xless app-groups` and `xless icloud-containers`](#xless-app-groups-and-xless-icloud-containers),
+which register app groups and iCloud containers and assign them to bundle IDs, and [`xless api`](#xless-api), which
+calls any documented App Store Connect endpoint. More
 commands (apps, TestFlight, releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
@@ -198,8 +200,9 @@ enables the capabilities their entitlements need ([below](#what-sign-enables)); 
 - **`enable`** on a capability that is enabled already sends nothing, or changes its setting when `--setting` names
   another option. **`disable`** asks first and sends nothing when the capability is not enabled.
 - **Linked identifiers:** App Groups, iCloud and Apple Pay are enabled here, but the app group, iCloud container or
-  merchant ID they use must still be assigned to the bundle ID on
-  [developer.apple.com](https://developer.apple.com/account/resources/identifiers): the API cannot do it. `enable` says so.
+  merchant ID they use must still be assigned to the bundle ID, which the API cannot do: with
+  [`xless app-groups assign` / `xless icloud-containers assign`](#xless-app-groups-and-xless-icloud-containers), and for
+  a merchant ID on [developer.apple.com](https://developer.apple.com/account/resources/identifiers). `enable` says so.
 - **Profiles:** a provisioning profile keeps the entitlements it was made with. After a change, regenerate the
   profiles that use the bundle ID; `sign` regenerates its own.
 
@@ -250,10 +253,12 @@ capability enabled already is left as it is. On macOS, the profile's push enviro
 Declared Age Range, the increased memory limit, …) is left to the portal: `sign` regenerates the profile once in case
 it was enabled by hand, then stops and names the capability to enable. When a key whose capability xless enabled is
 still missing from the profile, `sign` stops with the `xless bundle-ids capabilities` command that shows it. iCloud
-containers (`…icloud-container-identifiers`, `…ubiquity-container-identifiers`) and merchant IDs
-(`com.apple.developer.in-app-payments`) must also be assigned to the bundle ID, which the API cannot do: an identifier
-the profile does not list stops `sign` with the steps to create and assign it (`xless merchant-ids create` for a
-merchant ID), as for [app groups](react-native.md#capabilities). A capability Apple refuses to enable (one that needs
+containers (`…icloud-container-identifiers`, `…ubiquity-container-identifiers`), app groups
+(`com.apple.security.application-groups`) and merchant IDs (`com.apple.developer.in-app-payments`) must also be
+assigned to the bundle ID, which the API cannot do: an identifier the profile does not list stops `sign` with the
+commands that create and assign it ([`xless icloud-containers` and `xless app-groups`](#xless-app-groups-and-xless-icloud-containers),
+which use the Apple ID web session; `sign` itself never signs in) or, for a merchant ID, `xless merchant-ids create`
+and the portal step. A capability Apple refuses to enable (one that needs
 its approval, or does not apply to the platform) stops `sign` with Apple's answer.
 
 ## `xless merchant-ids`
@@ -384,6 +389,45 @@ the error gives the exact `xless profiles create` command that makes it again. `
 With `--json`, `list` prints `{"data": [profiles]}` (without `profileContent`; each profile's `relationships.bundleId`
 names its bundle ID), `create` and `renew` `{"profile": profile, "bundleId": identifier, "certificates": [IDs],
 "devices": [IDs]}` (plus `"replaced": old ID` for `renew`), and `delete` `{"deleted", "name", "profileType"}`.
+
+## `xless app-groups` and `xless icloud-containers`
+
+```sh
+xless app-groups list                                           # ID, identifier, name
+xless app-groups create group.com.example.shared                # --name "Shared" (default: the identifier's words)
+xless app-groups assign com.example.app group.com.example.shared
+xless app-groups assign com.example.app.widget group.com.example.shared
+xless app-groups unassign com.example.app group.com.example.shared   # asks first
+xless icloud-containers list                                    # visible and hidden ones
+xless icloud-containers create iCloud.com.example.app
+xless icloud-containers assign com.example.app iCloud.com.example.app
+xless icloud-containers unassign com.example.app iCloud.com.example.app
+```
+
+The App Store Connect API can neither create nor assign app groups and iCloud containers, so these commands use the
+[Apple ID web session](#the-apple-id-web-session) on the developer portal: iCloud containers through
+`services-account/v1/cloudContainers`, app groups through the portal's `listApplicationGroups.action` and
+`addApplicationGroup.action`, and assignment by updating the bundle ID (`services-account/v1/bundleIds/{id}`) so that
+only its App Groups (or iCloud) capability changes and every other capability stays as it is. When Apple answers the
+container listing, the container creation or the bundle ID update as if it did not exist (400, 404, 405, 415, 422),
+the matching older `….action` post fastlane uses is tried instead; nothing else is retried another way. Every
+assignment is checked by reading the bundle ID again.
+
+- A group or container is named by its identifier (`group.` or `iCloud.`, then reverse-DNS) or by its ID from `list`;
+  a bundle ID by its identifier or ID. Registering an identifier the team has already sends nothing. Apple cannot
+  delete an iCloud container.
+- `assign` keeps what the bundle ID has and adds the rest; App Groups is enabled on the bundle ID if needed. A
+  container needs the bundle ID's iCloud capability enabled first (`xless bundle-ids capabilities <bundle-id> enable ICLOUD`,
+  which `sign` also does). `unassign` asks first and leaves the capability enabled.
+- A provisioning profile lists the groups and containers of the moment it was made, so after a change xless
+  regenerates the bundle ID's profiles through the API key ([`xless profiles renew`](#xless-profiles); it asks first,
+  or `--yes`). Without an API key, or without a terminal and `--yes`, it says which profiles to renew; `sign`
+  regenerates its own. A profile that cannot be made again as it is (no unexpired certificate left) is left with a
+  note.
+
+With `--json`, `list` prints `{"data": [{"id", "identifier", "name", "prefix", …}]}`, `create`
+`{"registered": [...], "existing": [...]}`, and `assign` / `unassign` `{"bundleId", "changed", "unchanged", "linked",
+"regeneratedProfiles"}` (identifiers; each regenerated profile as `xless profiles renew --json` prints it).
 
 ## JSON output
 

@@ -238,7 +238,7 @@ Capabilities can also be listed, enabled and disabled by hand with
 **Portal-only capability.** When a profile lacks a key the API cannot enable, `sign` regenerates the profile once, in case it was enabled by hand since. If the key is still missing it stops:
 
 ```
-[sign] entitlement 'com.apple.developer.devicecheck.appattest-environment' is not granted by the provisioning profile for com.example.myapp; xless cannot enable this capability automatically — enable the matching capability (App Attest) for com.example.myapp at developer.apple.com/account/resources/identifiers, then re-run. Finish every portal step before re-running: each run regenerates the profiles that still lack something
+[sign] entitlement 'com.apple.developer.devicecheck.appattest-environment' is not granted by the provisioning profile for com.example.myapp; xless cannot enable this capability automatically — enable the matching capability (App Attest) for com.example.myapp at developer.apple.com/account/resources/identifiers, then re-run. Finish every step before re-running: each run regenerates the profiles that still lack something
 ```
 
 1. Go to developer.apple.com/account/resources/identifiers.
@@ -248,13 +248,15 @@ Capabilities can also be listed, enabled and disabled by hand with
 
 To ship a test build without the capability, drop the key with `entitlements.remove` instead.
 
-**App groups.** The API can enable App Groups on an identifier but can neither create a group nor assign one. A group missing from a profile stops `sign` with one message covering every bundle that uses it. At developer.apple.com/account/resources/identifiers:
+**App groups.** The API can enable App Groups on an identifier but can neither create a group nor assign one. A group missing from a profile stops `sign` with one message covering every bundle that uses it, and the [`xless app-groups`](apple-account.md#xless-app-groups-and-xless-icloud-containers) commands that fix it (they sign in to your Apple ID; `sign` never does):
 
-1. **Identifiers → + → App Groups → Continue**, enter the group identifier (`group.com.example.myapp`), **Register**. Skip this when the group exists.
-2. For each bundle ID the message lists: open it, **App Groups → Configure**, select the group, **Save**.
+1. `xless app-groups create group.com.example.myapp` (it reports a group that exists).
+2. For each bundle ID the message lists: `xless app-groups assign <bundle-id> group.com.example.myapp`.
 3. Re-run `sign`. xless regenerates the profiles that predate the assignment.
 
-**Finish every portal step before re-running.** Each run that still finds something missing deletes and recreates the affected profiles.
+iCloud containers work the same way with `xless icloud-containers create` and `assign`.
+
+**Finish every step before re-running.** Each run that still finds something missing deletes and recreates the affected profiles.
 
 **Another team's identifiers.** An app signed under a team that does not own its app group or keychain group (a test build under a personal team, for example) maps them with `identifiers.replace`, e.g. `{ <original app ID>: <your app ID> }`. The map applies to the entitlements (at `sign`) and to every string value of the app's and its extensions' Info.plists (at `finalize`; for a simulator build, before its ad-hoc signature), so an app that reads its group name from an Info.plist key opens the group it is signed for. `finalize` prints what it replaced:
 

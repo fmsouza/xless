@@ -287,7 +287,12 @@ struct BundleIDCLI {
         }
         if case .unchanged = result {} else {
             if let linked = type.linkedIdentifier {
-                say("note: \(type.displayName) also needs \(linked) assigned to \(b.identifier), which the App Store Connect API cannot do: assign it at https://developer.apple.com/account/resources/identifiers (\(b.identifier) → \(type.displayName) → Configure)")
+                let how = switch type {
+                case .appGroups: "assign it with `xless app-groups assign \(b.identifier) <group>`"
+                case .icloud: "assign it with `xless icloud-containers assign \(b.identifier) <container>`"
+                default: "assign it at https://developer.apple.com/account/resources/identifiers (\(b.identifier) → \(type.displayName) → Configure)"
+                }
+                say("note: \(type.displayName) also needs \(linked) assigned to \(b.identifier), which the App Store Connect API cannot do: \(how)")
             }
             say("note: provisioning profiles made before this do not carry it until they are regenerated (the sign stage regenerates its own)")
         }

@@ -142,7 +142,10 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
 
 @Test func everyCommandThatUsesTheWebSessionSaysSo() {
     for command in [AuthLoginCommand.self, TeamListCommand.self, AuthAPIKeyCreateCommand.self, AuthAPIKeyListCommand.self,
-                    AuthAPIKeyRevokeCommand.self] as [any ParsableCommand.Type] {
+                    AuthAPIKeyRevokeCommand.self, AppGroupsCommand.self, ICloudContainersCommand.self,
+                    LinkedListCommand<AppGroupKind>.self, LinkedCreateCommand<AppGroupKind>.self, LinkedAssignCommand<AppGroupKind>.self,
+                    LinkedUnassignCommand<AppGroupKind>.self, LinkedListCommand<CloudContainerKind>.self, LinkedCreateCommand<CloudContainerKind>.self,
+                    LinkedAssignCommand<CloudContainerKind>.self, LinkedUnassignCommand<CloudContainerKind>.self] as [any ParsableCommand.Type] {
         let help = command.helpMessage(columns: 10_000)
         #expect(help.contains("Uses the Apple ID web session, not the App Store Connect API"), "\(command)")
     }
