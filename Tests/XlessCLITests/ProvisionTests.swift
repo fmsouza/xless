@@ -1,0 +1,555 @@
+import ArgumentParser
+import Crypto
+import Foundation
+import SwiftASN1
+import Testing
+import X509
+import XlessAppleID
+import XlessASC
+import XlessCore
+import XlessSign
+import XlessStore
+import XlessVault
+@testable import xless
+
+private let team = "ABCDE12345"
+private let bundle = "com.example.app"
+private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+private struct Failure: Error {}
+
+/// One in-memory Apple account: the documented API's resources, the web session's, and what was written.
+private final class World: @unchecked Sendable {
+    var bundles: [String: String] = [:]
+    var capabilities: [String: [ProvisionCapability]] = [:]
+    var certificates: [ASCCertificate] = []
+    var profiles: [ProvisionProfile] = []
+    var apps: [AppSummary] = []
+    var groups: [String: [ProvisionGroup]] = [:]
+    var portal: [PortalLinkedKind: [PortalIdentifier]] = [:]
+    var linked: [PortalLinkedKind: [String: [String]]] = [:]
+    var authKeys: [PortalAuthKey] = []
+    var listingPushed = false
+    var privacySent = false
+    /// Write operations, in order.
+    var writes: [String] = []
+    /// Operations that fail once.
+    var failing: Set<String> = []
+    var counter = 0
+
+    func next(_ prefix: String) -> String { counter += 1; return "\(prefix)\(counter)" }
+
+    func write(_ op: String, _ detail: String) throws {
+        if failing.remove(op) != nil { throw XlessError(.account, "Apple refused \(op)", fix: "try later") }
+        writes.append("\(op) \(detail)")
+    }
+
+    /// What a profile made now grants: every key of the enabled capabilities, the assigned groups and containers.
+    func content(bundleID identifier: String, platform: Platform) -> Data {
+        var ents: [String: Any] = [:]
+        let types = Set((capabilities[bundles[identifier] ?? ""] ?? []).map(\.type))
+        for (key, type) in Capabilities.map(for: platform) where types.contains(type.rawValue) { ents[key] = ["*"] }
+        if types.contains("APP_GROUPS") { ents["com.apple.security.application-groups"] = ids(.appGroup, identifier) }
+        if types.contains("ICLOUD") { ents["com.apple.developer.icloud-container-identifiers"] = ids(.cloudContainer, identifier) }
+        if types.contains("PUSH_NOTIFICATIONS") { ents["aps-environment"] = "production" }
+        let plist = try! PropertyListSerialization.data(fromPropertyList: ["Entitlements": ents], format: .xml, options: 0)
+        return Data("CMS".utf8) + plist + Data("SIG".utf8)
+    }
+
+    func ids(_ kind: PortalLinkedKind, _ identifier: String) -> [String] {
+        (linked[kind]?[identifier] ?? []).compactMap { id in portal[kind]?.first { $0.id == id }?.identifier }
+    }
+}
+
+private struct FakeAccount: ProvisionAccount {
+    let world: World
+    var issuerID: String { "ISSUER" }
+
+    func bundleID(_ identifier: String) async throws -> String? { world.bundles[identifier] }
+    func register(bundleID identifier: String) async throws -> String {
+        if let id = world.bundles[identifier] { return id }
+        try world.write("registerBundle", identifier)
+        let id = world.next("B")
+        world.bundles[identifier] = id
+        return id
+    }
+    func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability] { world.capabilities[bundleResourceID] ?? [] }
+    func enable(_ request: CapabilityRequest, on bundleResourceID: String, identifier: String) async throws {
+        try world.write("enable", "\(request.type.rawValue) \(identifier)")
+        world.capabilities[bundleResourceID, default: []].removeAll { $0.type == request.type.rawValue }
+        world.capabilities[bundleResourceID, default: []].append(ProvisionCapability(id: world.next("CAP"), type: request.type.rawValue,
+                                                                                   settings: CapabilitySetting.chosen(request.settings)))
+    }
+    func list(types: [CertificateType], withContent: Bool) async throws -> [ASCCertificate] {
+        world.certificates.filter { types.map(\.rawValue).contains($0.certificateType) }
+    }
+    func create(type: CertificateType, csrPEM: String, relatedID: String?) async throws -> ASCCertificate {
+        try world.write("createCertificate", type.rawValue)
+        let cert = certificate(world.next("C"), type: type.rawValue, der: try issue(csrPEM))
+        world.certificates.append(cert)
+        return cert
+    }
+    func profiles(named name: String, type: ProfileType) async throws -> [ProvisionProfile] {
+        world.profiles.filter { $0.name == name && $0.type == type.rawValue }
+    }
+    func createProfile(name: String, type: ProfileType, bundleResourceID: String, certificateID: String) async throws -> ProvisionProfile {
+        try world.write("createProfile", name)
+        let identifier = world.bundles.first { $0.value == bundleResourceID }!.key
+        let p = ProvisionProfile(id: world.next("P"), name: name, type: type.rawValue, state: "ACTIVE", expires: now.addingTimeInterval(300 * 86_400),
+                                 bundleID: bundleResourceID, certificateIDs: [certificateID],
+                                 content: world.content(bundleID: identifier, platform: type == .iosAppStore ? .ios : .macos))
+        world.profiles.append(p)
+        return p
+    }
+    func findApp(bundleID: String) async throws -> AppSummary? { world.apps.first { $0.bundleId == bundleID } }
+    func hasBundleID(_ identifier: String) async throws -> Bool { world.bundles[identifier] != nil }
+    func registerBundleID(_ identifier: String) async throws { _ = try await register(bundleID: identifier) }
+    func betaGroups(app appID: String) async throws -> [ProvisionGroup] { world.groups[appID] ?? [] }
+    func createBetaGroup(name: String, app appID: String, external: Bool) async throws {
+        try world.write("createGroup", name)
+        world.groups[appID, default: []].append(ProvisionGroup(id: world.next("G"), name: name, isInternal: !external))
+    }
+}
+
+private struct FakePortal: LinkedIdentifierPortal {
+    let world: World
+    let kind: PortalLinkedKind
+
+    func list() async throws -> [PortalIdentifier] { world.portal[kind] ?? [] }
+    func create(identifier: String, name: String) async throws -> PortalCreation {
+        try world.write("create\(kind.rawValue)", identifier)
+        let item = PortalIdentifier(id: world.next("L"), identifier: identifier, name: name)
+        world.portal[kind, default: []].append(item)
+        return .created(item)
+    }
+    func bundle(_ argument: String) async throws -> PortalBundleID {
+        guard let id = world.bundles[argument] else { throw XlessError(.account, "no bundle \(argument)", fix: "") }
+        return PortalBundleID(id: id, identifier: argument, name: argument)
+    }
+    func linked(of bundle: PortalBundleID) async throws -> LinkedState {
+        let present = (world.capabilities[bundle.id] ?? []).contains { $0.type == kind.capability }
+        return LinkedState(present: present, enabled: present, ids: world.linked[kind]?[bundle.identifier] ?? [])
+    }
+    func setLinked(_ ids: [String], enabled: Bool, on bundle: PortalBundleID) async throws -> LinkedState {
+        try world.write("assign\(kind.rawValue)", "\(ids.joined(separator: ",")) \(bundle.identifier)")
+        world.linked[kind, default: [:]][bundle.identifier] = ids
+        return LinkedState(present: true, enabled: enabled, ids: ids)
+    }
+}
+
+private struct FakeAuthKeys: AuthKeyWeb {
+    let world: World
+    func list() async throws -> [PortalAuthKey] { world.authKeys }
+    func get(id: String) async throws -> PortalAuthKey { world.authKeys.first { $0.id == id }! }
+    func create(name: String, services: [AuthKeyService], bundleIDs: [String], musicIDs: [String]) async throws -> PortalAuthKey {
+        try world.write("createAuthKey", name)
+        let key = PortalAuthKey(id: "KEY\(world.authKeys.count + 1)", name: name, services: services.map { .init(id: $0.rawValue) })
+        world.authKeys.append(key)
+        return key
+    }
+    func downloadPrivateKey(id: String) async throws -> SecretBytes { SecretBytes(utf8: "-----BEGIN PRIVATE KEY-----\nAPNS\n-----END PRIVATE KEY-----\n") }
+    func revoke(id: String) async throws { Issue.record("revoked \(id)") }
+}
+
+private struct FakeApps: AppCreationWeb, Sendable {
+    let world: World
+    func issuerID() async throws -> String? { "ISSUER" }
+    func findApp(bundleID: String) async throws -> AppSummary? { world.apps.first { $0.bundleId == bundleID } }
+    func requireBundleID(_ identifier: String) async throws {}
+    func create(_ request: AppCreateRequest) async -> AppCreateAnswer {
+        do { try world.write("createApp", "\(request.name) \(request.platforms.joined(separator: ","))") } catch {
+            return .ambiguous("no answer")
+        }
+        let app = WebApp(id: "APP1", name: request.name, bundleID: request.bundleID, sku: request.sku, primaryLocale: request.primaryLocale)
+        world.apps.append(AppSummary(app))
+        return .created(app)
+    }
+}
+
+private struct FakePrivacy: ProvisionPrivacy {
+    let world: World
+    func plan(_ want: AppYAML.Privacy, app: String, appName: String) async throws -> [StoreChange] {
+        world.privacySent ? [] : [StoreChange(.create, .privacy, "App Privacy EMAIL_ADDRESS", requests: [])]
+    }
+    func apply(_ change: StoreChange, app: String) async throws {
+        try world.write("privacy", change.subject)
+        world.privacySent = true
+    }
+}
+
+private struct FakeListing: ProvisionListing {
+    let world: World
+    func plan(appID: String) async throws -> ProvisionListingPlan {
+        ProvisionListingPlan(changes: world.listingPushed ? [] : ["+ version text en-US"], held: [], notes: [])
+    }
+    func apply(appID: String) async throws -> Int {
+        try world.write("push", appID)
+        world.listingPushed = true
+        return 1
+    }
+}
+
+/// A real store in a temporary directory, with a fast KDF.
+private struct TestVault {
+    let root: URL
+    let store: VaultStore
+    let key: SymmetricKey
+    var vault: ProvisionVault
+
+    init(env: [String: String] = [:], create: Bool = true) throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-provision-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        store = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
+        let (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"), kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
+        if create { try store.create(file) }
+        self.key = key
+        vault = ProvisionVault(store: store, env: env, unlock: { _, _ in key })
+    }
+
+    func add(_ name: String, kind: VaultEntry.Kind = .signingKey, secret: String, metadata: VaultEntry.Metadata) throws {
+        try store.update { file in
+            var next = file
+            next.entries.append(try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: SecretBytes(utf8: secret), dataKey: key))
+            return next
+        }
+    }
+
+    func entry(_ name: String) throws -> VaultEntry? { try store.read()?.entry(named: name) }
+    func cleanup() { try? FileManager.default.removeItem(at: root) }
+}
+
+private func certificate(_ id: String, type: String, der: Data?, expires: String = "2030-03-01T12:00:00.000+0000") -> ASCCertificate {
+    var attributes: [String: JSONValue] = ["certificateType": .string(type), "expirationDate": .string(expires)]
+    if let der { attributes["certificateContent"] = .string(der.base64EncodedString()) }
+    return ASCCertificate(resource: ASCAnyResource(type: "certificates", id: id, attributes: attributes))
+}
+
+/// A certificate for the CSR's key, issued by itself, with the team as its OU (as Apple's are).
+private func issue(_ csrPEM: String) throws -> Data {
+    let csr = try CertificateSigningRequest(pemEncoded: csrPEM)
+    let issuerKey = P256.Signing.PrivateKey()
+    let name = try DistinguishedName { CommonName("Example (\(team))"); OrganizationalUnitName(team) }
+    let cert = try Certificate(version: .v3, serialNumber: .init(), publicKey: csr.publicKey, notValidBefore: Date(timeIntervalSince1970: 1_700_000_000),
+                               notValidAfter: Date(timeIntervalSince1970: 1_900_000_000), issuer: name, subject: name,
+                               signatureAlgorithm: .ecdsaWithSHA256, extensions: Certificate.Extensions(), issuerPrivateKey: .init(issuerKey))
+    var ser = DER.Serializer()
+    try ser.serialize(cert)
+    return Data(ser.serializedBytes)
+}
+
+private nonisolated(unsafe) let entitlements: [String: Any] = [
+    "aps-environment": "production",
+    "com.apple.security.application-groups": ["group.com.example.app"],
+    "com.apple.developer.icloud-container-identifiers": ["iCloud.com.example.app"],
+    "com.apple.developer.icloud-services": ["CloudKit"],
+]
+
+/// An iOS App Store app and its Developer ID macOS app under one bundle ID, internal and external TestFlight groups.
+private func inputs(ios: Bool = true, macDistribution: Distribution = .developerID) -> ProvisionInputs {
+    var targets: [ProvisionTarget] = []
+    if ios { targets.append(ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: entitlements)) }
+    targets.append(ProvisionTarget(platform: .macos, distribution: macDistribution, bundleID: bundle, entitlements: [:]))
+    return ProvisionInputs(team: team, targets: targets, version: "1.0",
+                           testflight: TestFlightConfig(groups: ["Internal"], whatToTest: "Everything", external: ExternalTestFlight(groups: ["Beta"])))
+}
+
+private func manifest() -> StoreManifest {
+    var m = StoreManifest()
+    m.app.primaryLocale = "en-US"
+    m.app.sku = "EX1"
+    m.app.version = "1.0"
+    m.app.privacy = AppYAML.Privacy(collectsData: true, data: [.init(category: "EMAIL_ADDRESS", purposes: ["APP_FUNCTIONALITY"], linkedToYou: true, tracking: false)])
+    m.locales["en-US"] = LocaleListing(name: "Example")
+    return m
+}
+
+private struct Setup {
+    let world = World()
+    var inputs = xless_inputs()
+    var vault: TestVault
+    var hasWeb = true
+    var signIns = 0
+
+    init(vault: TestVault) { self.vault = vault }
+
+    var account: FakeAccount { FakeAccount(world: world) }
+    var web: ProvisionWebSide {
+        ProvisionWebSide(appGroups: FakePortal(world: world, kind: .appGroup), cloudContainers: FakePortal(world: world, kind: .cloudContainer),
+                         authKeys: FakeAuthKeys(world: world), apps: FakeApps(world: world), privacy: FakePrivacy(world: world))
+    }
+    var store: ProvisionStore { ProvisionStore(manifest: manifest(), listing: FakeListing(world: world)) }
+
+    func plan() async throws -> ProvisionPlan {
+        try await ProvisionPlanner(inputs: inputs, account: account, web: hasWeb ? web : nil, vault: vault.vault, store: store, now: now).plan()
+    }
+
+    func apply(_ plan: ProvisionPlan, lines: Lines = Lines()) async throws -> [ProvisionDone] {
+        let web = self.web
+        return try await ProvisionApplier(inputs: inputs, account: account, web: { lines.add("sign-in"); return web }, vault: vault.vault, store: store,
+                                          say: { lines.add($0) }, now: now).apply(plan)
+    }
+}
+
+private func xless_inputs() -> ProvisionInputs { inputs() }
+
+private final class Lines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _all: [String] = []
+    var all: [String] { lock.withLock { _all } }
+    func add(_ line: String) { lock.withLock { _all.append(line) } }
+}
+
+private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($0.area.rawValue): \($0.action.rawValue) \($0.subject)" } }
+
+// MARK: - Plan
+
+@Test func anEmptyAccountGetsTheWholePlanInDependencyOrder() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    let plan = try await s.plan()
+    #expect(subjects(plan) == [
+        "bundle-ids: create com.example.app",
+        "capabilities: enable PUSH_NOTIFICATIONS (Push Notifications) on com.example.app",
+        "capabilities: enable ICLOUD (iCloud) on com.example.app",
+        "capabilities: enable APP_GROUPS (App Groups) on com.example.app",
+        "app-groups: create group.com.example.app",
+        "icloud-containers: create iCloud.com.example.app",
+        "certificates: create Apple Distribution",
+        "certificates: create Developer ID Application",
+        "keys: create APNs key",
+        "profiles: create xless com.example.app IOS_APP_STORE",
+        "profiles: create xless com.example.app MAC_APP_DIRECT",
+        "app: create app record for com.example.app",
+        "listing: push appstore/",
+        "privacy: push app.yml privacy",
+        "testflight: create group Internal",
+        "testflight: create group Beta",
+    ], "\(plan.text)")
+    #expect(plan.blockers.isEmpty && plan.drift.isEmpty)
+    #expect(plan.steps.filter(\.web).map(\.area) == [.appGroups, .iCloudContainers, .keys, .app, .privacy])
+    let app = try #require(plan.steps.first { $0.area == .app })
+    #expect(app.details == ["\"Example\", SKU EX1, primary locale en-US, IOS version 1.0"], "a Developer ID Mac app is not on the App Store")
+    #expect(plan.text.contains("16 steps to apply (5 through the Apple ID web session)"))
+    #expect(s.world.writes.isEmpty, "planning only reads")
+    let json = try ASCOutput.json(plan)
+    #expect(json.contains("\"webSession\" : true") && json.contains("\"area\" : \"bundle-ids\"") && json.contains("\"team\" : \"ABCDE12345\""), "\(json)")
+}
+
+@Test func applyingTheWholePlanLeavesNothingToDo() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    let lines = Lines()
+    let done = try await s.apply(try await s.plan(), lines: lines)
+    #expect(done.count == 16)
+    #expect(lines.all.filter { $0 == "sign-in" }.count == 1, "one sign-in for every web step")
+    #expect(s.world.writes.count == 18, "\(s.world.writes)")
+    #expect(s.world.writes.contains("createApp Example IOS"))
+    let dist = try #require(try v.entry("XLESS_DIST_KEY@\(team)"))
+    #expect(dist.metadata.certificateID != nil && dist.metadata.teamID == team)
+    #expect(try v.entry("XLESS_DEVID_KEY@\(team)")?.metadata.certificateID != nil)
+    #expect(try v.entry("XLESS_APNS_KEY@\(team)")?.kind == .authKey)
+
+    let again = try await s.plan()
+    #expect(again.steps.isEmpty, "\(again.text)")
+    #expect(again.drift.isEmpty && again.blockers.isEmpty, "\(again.text)")
+    #expect(again.text.contains("nothing to do"))
+}
+
+@Test func aFailedApplySaysWhatWasDoneAndARerunDoesTheRest() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    s.world.failing = ["createProfile"]
+    let lines = Lines()
+    var caught: XlessError?
+    do { _ = try await s.apply(try await s.plan(), lines: lines) } catch let e as XlessError { caught = e }
+    let e = try #require(caught)
+    #expect(e.stage == .account)
+    #expect(e.cause.contains("Profiles, create xless com.example.app IOS_APP_STORE: Apple refused createProfile (9 of 16 steps were done, 7 left)"), "\(e.cause)")
+    #expect(e.fix.contains("re-run `xless provision apply`"))
+    #expect(lines.all.contains { $0.hasPrefix("done: registered bundle ID com.example.app") })
+    #expect(lines.all.contains { $0.hasPrefix("left: Profiles: create xless com.example.app IOS_APP_STORE;") })
+
+    let rest = try await s.plan()
+    #expect(subjects(rest) == [
+        "profiles: create xless com.example.app IOS_APP_STORE",
+        "profiles: create xless com.example.app MAC_APP_DIRECT",
+        "app: create app record for com.example.app",
+        "listing: push appstore/",
+        "privacy: push app.yml privacy",
+        "testflight: create group Internal",
+        "testflight: create group Beta",
+    ], "\(rest.text)")
+    let before = s.world.writes.count
+    _ = try await s.apply(rest)
+    #expect(s.world.writes.count == before + 7)
+    #expect(s.world.writes.filter { $0.hasPrefix("createCertificate") }.count == 2, "certificates are not made twice")
+    #expect(try await s.plan().steps.isEmpty)
+}
+
+@Test func withoutAKeptSessionTheWebStepsAreCheckedWhenApplied() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.hasWeb = false
+    let plan = try await s.plan()
+    let unchecked = plan.steps.filter { !$0.checked }
+    #expect(unchecked.map(\.area) == [.appGroups, .iCloudContainers, .privacy])
+    #expect(unchecked.allSatisfy { $0.web })
+    #expect(plan.steps.first { $0.area == .appGroups }?.details.last?.contains("xless auth login --keep") == true)
+    #expect(plan.text.contains("[web] (checked when applied)"))
+    // Applying signs in and finds the groups in place: nothing is created twice.
+    s.world.portal[.appGroup] = [PortalIdentifier(id: "LG", identifier: "group.com.example.app", name: "Example")]
+    _ = try await s.apply(plan)
+    #expect(!s.world.writes.contains { $0.hasPrefix("createappGroup") })
+    #expect(s.world.writes.contains("assignappGroup LG com.example.app"))
+}
+
+@Test func aStoredKeyWhoseCertificateIsGoneGetsANewCertificateNotANewKey() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let key = try SigningKey.generate()
+    try v.add("XLESS_DIST_KEY@\(team)", secret: key.pem, metadata: .init(teamID: team, certificateID: "REVOKED"))
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true, macDistribution: .appStore)
+    s.inputs.targets[0].entitlements = [:]
+    s.inputs.testflight = nil
+    let plan = try await s.plan()
+    let certs = plan.steps.filter { $0.area == .certificates }
+    #expect(certs.map(\.subject) == ["Apple Distribution", "Mac Installer Distribution"], "\(plan.text)")
+    #expect(certs[0].details[0].contains("stored as XLESS_DIST_KEY@\(team), whose certificate is gone"))
+    _ = try await s.apply(plan)
+    let entry = try #require(try v.entry("XLESS_DIST_KEY@\(team)"))
+    let made = try #require(s.world.certificates.first { $0.certificateType == "DISTRIBUTION" })
+    #expect(entry.metadata.certificateID == made.id)
+    #expect(try key.matches(certificateDER: Array(try #require(made.der))))
+    #expect(try v.entry("XLESS_INSTALLER_KEY@\(team)") != nil)
+    #expect(try await s.plan().steps.isEmpty)
+}
+
+@Test func aKeyInTheEnvironmentWithItsCertificateIsUsedAsItIs() async throws {
+    let key = try SigningKey.generate()
+    let v = try TestVault(env: ["XLESS_DIST_KEY": key.pem])
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true)
+    s.inputs.targets.removeLast()
+    s.world.certificates = [certificate("C9", type: "DISTRIBUTION", der: try issue(try key.csrPEM(commonName: "x")))]
+    let plan = try await s.plan()
+    #expect(!plan.steps.contains { $0.area == .certificates })
+    #expect(plan.known.certificates[.distribution] == "C9")
+}
+
+@Test func aDeveloperIDOnlyProjectHasNoAppRecordListingOrTestFlight() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: false)
+    let plan = try await s.plan()
+    #expect(subjects(plan) == ["bundle-ids: create com.example.app", "certificates: create Developer ID Application",
+                               "profiles: create xless com.example.app MAC_APP_DIRECT"], "\(plan.text)")
+}
+
+@Test func whatWouldBeDeletedIsDriftNotAStep() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    _ = try await s.apply(try await s.plan())
+    let resource = try #require(s.world.bundles[bundle])
+    // An extra capability with an entitlement, one Apple enables by itself, an extra app group, a profile gone stale.
+    s.world.capabilities[resource]!.append(ProvisionCapability(id: "X1", type: "HEALTHKIT", settings: [:]))
+    s.world.capabilities[resource]!.append(ProvisionCapability(id: "X2", type: "IN_APP_PURCHASE", settings: [:]))
+    s.world.portal[.appGroup]!.append(PortalIdentifier(id: "OLD", identifier: "group.com.example.old", name: "Old"))
+    s.world.linked[.appGroup]![bundle]!.append("OLD")
+    let i = try #require(s.world.profiles.firstIndex { $0.type == "IOS_APP_STORE" })
+    s.world.profiles[i].expires = now.addingTimeInterval(86_400)
+    let plan = try await s.plan()
+    #expect(plan.steps.isEmpty, "\(plan.text)")
+    #expect(plan.drift.map(\.subject) == ["HEALTHKIT on com.example.app", "group.com.example.old on com.example.app",
+                                          "xless com.example.app IOS_APP_STORE (\(s.world.profiles[i].id))"], "\(plan.text)")
+    #expect(plan.drift[0].fix == "`xless bundle-ids capabilities com.example.app disable HEALTHKIT` once no app uses it")
+    #expect(plan.drift[1].fix.contains("xless app-groups unassign com.example.app group.com.example.old"))
+    #expect(plan.drift[2].message.contains("it expires on") && plan.drift[2].fix.contains("xless profiles renew"))
+    #expect(plan.text.contains("Drift (left as it is: provision never deletes, revokes or replaces):"))
+}
+
+@Test func aProfileMissingANewCapabilityIsDrift() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.inputs.targets[0].entitlements = [:]
+    _ = try await s.apply(try await s.plan())
+    s.inputs.targets[0].entitlements = ["aps-environment": "production"]
+    let plan = try await s.plan()
+    #expect(subjects(plan) == ["capabilities: enable PUSH_NOTIFICATIONS (Push Notifications) on com.example.app", "keys: create APNs key"], "\(plan.text)")
+    #expect(plan.drift.first?.message.contains("it lacks aps-environment") == true, "\(plan.text)")
+}
+
+@Test func blockersStopApplyBeforeAnythingIsSent() async throws {
+    let v = try TestVault(create: false)
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    s.world.groups["APP1"] = [ProvisionGroup(id: "G1", name: "Beta", isInternal: true)]
+    s.world.apps = [AppSummary(id: "APP1", name: "Example", bundleId: bundle, sku: "EX1", primaryLocale: "en-US")]
+    s.inputs.testflight = TestFlightConfig(groups: [], external: ExternalTestFlight(groups: ["Beta"], submit: false))
+    let plan = try await s.plan()
+    #expect(plan.blockers.map(\.area) == [.certificates, .certificates, .keys, .testflight], "\(plan.text)")
+    #expect(plan.blockers[0].fix.contains("xless secrets init"))
+    #expect(plan.blockers[3].message == "the TestFlight group Beta exists as an internal group")
+    await #expect(throws: XlessError.self) { _ = try await s.apply(plan) }
+    #expect(s.world.writes.isEmpty)
+}
+
+@Test func anAppRecordNeedsANameFromTheManifest() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    var m = manifest()
+    m.locales = [:]
+    let plan = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault,
+                                          store: ProvisionStore(manifest: m, listing: FakeListing(world: s.world)), now: now).plan()
+    #expect(plan.blockers.map(\.area) == [.app])
+    #expect(plan.blockers[0].fix.contains("appstore/<locale>/name.txt"))
+}
+
+// MARK: - Inputs and the CLI
+
+@Test func xlessYmlGivesTheTargetsWithTheirEntitlements() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-provision-in-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir.appendingPathComponent("appstore"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try """
+    bundleID: com.example.app
+    teamID: \(team)
+    version: 1.2.0
+    build: 7
+    platforms:
+      ios: { minimumOS: "17.0", product: App, entitlements: App.entitlements }
+      macos: { minimumOS: "14.0", product: App, distribution: app-store, bundleID: com.example.mac }
+    """.write(to: dir.appendingPathComponent("xless.yml"), atomically: true, encoding: .utf8)
+    try Plist.write(["keychain-access-groups": ["$(AppIdentifierPrefix)com.example.app"], "aps-environment": "production"],
+                    to: dir.appendingPathComponent("App.entitlements"), format: .xml, stage: .account)
+    let inputs = try ProvisionInputs.load(project: dir, config: nil, source: nil, storeDir: nil)
+    #expect(inputs.team == team && inputs.version == "1.2.0")
+    #expect(inputs.targets.map(\.bundleID) == ["com.example.app", "com.example.mac"])
+    #expect(inputs.targets[0].entitlements["keychain-access-groups"] as? [String] == ["\(team).com.example.app"])
+    #expect(inputs.certificateKinds == [.distribution, .installer])
+    #expect(inputs.appStoreBundleID == "com.example.app")
+    #expect(inputs.appPlatforms(for: "com.example.app") == ["IOS"])
+    #expect(inputs.storeDir?.lastPathComponent == "appstore")
+    #expect(throws: XlessError.self) { _ = try ProvisionInputs.load(project: dir, config: nil, source: nil, storeDir: dir.appendingPathComponent("nope").path) }
+}
+
+@Test func provisionIsAnAppleAccountCommandThatSaysItUsesTheWebSession() throws {
+    let help = Xless.helpMessage()
+    let group = try #require(help.range(of: "APPLE ACCOUNT SUBCOMMANDS", options: .caseInsensitive))
+    #expect(help[group.upperBound...].contains("provision"))
+    for command in [ProvisionCommand.self, ProvisionApplyCommand.self] as [any ParsableCommand.Type] {
+        #expect(command.helpMessage(columns: 10_000).contains("Uses the Apple ID web session, not the App Store Connect API"), "\(command)")
+    }
+    #expect(throws: (any Error).self) { try ProvisionPlanCommand.parse(["--config", "x.yml", "--project", "p"]) }
+    #expect(throws: (any Error).self) { try ProvisionPlanCommand.parse(["--source", "s"]) }
+    _ = try ProvisionApplyCommand.parse(["--yes", "--json", "--company-name", "Example Ltd"])
+}
