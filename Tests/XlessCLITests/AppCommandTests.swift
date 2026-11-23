@@ -29,6 +29,7 @@ private final class FakeAPI: AppCreationAPI, @unchecked Sendable {
     var app: AppSummary?
     var hasBundle = true
     var calls: [String] = []
+    let issuerID = "69a6de70-0000-47e3-e053-5b8c7c11a4d1"
     init(app: AppSummary? = nil, hasBundle: Bool = true) { self.app = app; self.hasBundle = hasBundle }
     func findApp(bundleID: String) async throws -> AppSummary? { calls.append("find \(bundleID)"); return app }
     func hasBundleID(_ identifier: String) async throws -> Bool { calls.append("has \(identifier)"); return hasBundle }
@@ -40,11 +41,13 @@ private final class FakeWeb: AppCreationWeb, @unchecked Sendable {
     var found: [Result<AppSummary?, XlessError>]
     var answer: AppCreateAnswer
     var bundleError: XlessError?
+    var issuer: String? = "69A6DE70-0000-47E3-E053-5B8C7C11A4D1"
     var calls: [String] = []
     init(found: [Result<AppSummary?, XlessError>] = [.success(nil)], answer: AppCreateAnswer = .created(WebApp(id: "1234567890", name: "Example", bundleID: "com.example.app", sku: "EX1", primaryLocale: "en-US")),
          bundleError: XlessError? = nil) {
         self.found = found; self.answer = answer; self.bundleError = bundleError
     }
+    func issuerID() async throws -> String? { issuer }
     func findApp(bundleID: String) async throws -> AppSummary? {
         calls.append("find \(bundleID)")
         let next = found.count > 1 ? found.removeFirst() : found[0]
@@ -66,7 +69,7 @@ private func creation(api: FakeAPI?, web: FakeWeb, answer: Bool = true, said: Sa
 @Test func appsAreInTheAppleAccountGroup() {
     let help = Xless.helpMessage()
     let group = try! #require(help.range(of: "APPLE ACCOUNT SUBCOMMANDS", options: .caseInsensitive))
-    #expect(help[group.upperBound...].contains("apps"), "\(help)")
+    #expect(help[group.upperBound...].contains("\n  apps "), "\(help)")
 }
 
 @Test func appArgumentsAreCheckedBeforeAnythingIsSent() throws {
@@ -209,13 +212,35 @@ private func creation(api: FakeAPI?, web: FakeWeb, answer: Bool = true, said: Sa
 
     let absent = FakeWeb(found: [.success(nil)], answer: .ambiguous("App Store Connect did not answer (timed out)"))
     do { _ = try await creation(api: FakeAPI(), web: absent).run(request); Issue.record("expected an error") } catch let e as XlessError {
-        #expect(e.cause == "App Store Connect did not answer (timed out), and App Store Connect has no app for com.example.app: nothing was created")
-        #expect(e.fix == "re-run the same `xless apps create`")
+        #expect(e.cause == "App Store Connect did not answer (timed out), and App Store Connect shows no app for com.example.app yet")
+        #expect(e.fix.hasPrefix("re-run the same `xless apps create`"))
     }
 
-    let unknown = FakeWeb(found: [.failure(XlessError(.account, "x", fix: "y"))], answer: .ambiguous("App Store Connect answered HTTP 500"))
-    do { _ = try await creation(api: FakeAPI(), web: unknown).run(request); Issue.record("expected an error") } catch let e as XlessError {
+    let viaKey = FakeWeb(found: [.failure(XlessError(.account, "x", fix: "y"))], answer: .ambiguous("App Store Connect answered HTTP 500"))
+    let key = FakeAPI()
+    let nameless = AppSummary(id: "5", name: nil, bundleId: "com.example.app", sku: "EX1", primaryLocale: "en-US")
+    let c = AppCreation(api: key, web: { key.app = nameless; return viaKey }, confirm: { _, _ in true }, say: { _ in })
+    #expect(try await c.run(request)?.created.first?.name == "Example", "found through the key when the web lookup fails; named as asked")
+
+    let unknown = FakeWeb(found: [.success(nil), .failure(XlessError(.account, "x", fix: "y"))], answer: .ambiguous("App Store Connect answered HTTP 500"))
+    do { _ = try await creation(api: nil, web: unknown).run(request); Issue.record("expected an error") } catch let e as XlessError {
         #expect(e.cause.contains("could not check whether the app for com.example.app was created"))
         #expect(e.fix.contains("xless apps show com.example.app"))
     }
+}
+
+@Test func aKeyOfAnotherTeamStopsBeforeAnythingIsSent() async throws {
+    let api = FakeAPI(hasBundle: false)
+    let web = FakeWeb()
+    web.issuer = "00000000-1111-2222-3333-444444444444"
+    do { _ = try await creation(api: api, web: web).run(request); Issue.record("expected an error") } catch let e as XlessError {
+        #expect(e.cause.contains("belongs to another team than the Apple ID session's") && e.cause.hasSuffix("nothing was sent"))
+        #expect(e.fix.contains("--team"))
+    }
+    #expect(api.calls == ["find com.example.app"], "no registration on the key's team")
+    #expect(web.calls.isEmpty, "no create on the session's team")
+
+    let unknownIssuer = FakeWeb()
+    unknownIssuer.issuer = nil
+    #expect(try await creation(api: FakeAPI(), web: unknownIssuer).run(request)?.created == [made], "App Store Connect not saying is not a mismatch")
 }

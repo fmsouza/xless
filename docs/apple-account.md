@@ -506,22 +506,26 @@ do). The Apple ID needs the Account Holder, Admin or App Manager role. In one pr
    default `1.0`). `--company-name` (the seller name) is only asked for a team's first app.
 2. With an API key for the team, the app is looked up by bundle ID: **an app that already has the bundle ID is reported
    and reused**, nothing is sent and no sign-in happens (a note says when its name, SKU or locale differ from the ones
-   given). The bundle ID must be registered; when it is not, `create` offers to register it (universal, as `sign`
-   does; `--yes` without a terminal). Without an API key, both checks go through the web session and an unregistered
-   bundle ID is an error that says to run [`xless bundle-ids create`](#xless-bundle-ids).
-3. It signs in and sends **one** create request, never retried: the app, its name in the primary locale, and a first
+   given). Otherwise it signs in and checks that the key and the Apple ID session are on the same App Store Connect
+   team (their issuer IDs), and stops before anything is sent when they are not (`ASC_KEY_*` in the environment take
+   precedence over `--team`'s store entry). The bundle ID must be registered; when it is not, `create` offers to
+   register it (universal, as `sign` does; `--yes` without a terminal). Without an API key, both checks go through the
+   web session and an unregistered bundle ID is an error that says to run [`xless bundle-ids create`](#xless-bundle-ids).
+   A key that resolves but that Apple refuses stops the command: fix or unset it.
+3. It sends **one** create request, never retried: the app, its name in the primary locale, and a first
    App Store version with a localization per platform. A refusal is reported as Apple worded it: a name already used on
    the App Store (names are unique across the store) asks for another `--name`, a SKU already used by the team for
    another `--sku`.
 4. When the answer is unclear (no answer, a server error, a body xless cannot read), it looks the app up by bundle ID
-   before saying anything: found, it is reported as created; not found, the error says nothing was created and the
-   same command can be re-run.
+   before saying anything (through the web session, else the API key): found, it is reported as created; not found,
+   the error says so, and the same command can be re-run: if the app appeared meanwhile, it is reported, never created
+   twice.
 
 After that, everything else about the app goes through the API key: `xless apps show` sees it at once.
 
 With `--json`, `list` prints `{"data": [apps]}`, `show` `{"data": app, "appInfos": [...], "appStoreVersions": [...]}`
 (App Store Connect's resources), `update` the app, and `create` `{"created": [app], "existing": [app]}`, each app as
-`{"id", "name", "bundleId", "sku", "primaryLocale"}`.
+`{"id", "name", "bundleId", "sku", "primaryLocale"}` (a field App Store Connect did not send is left out).
 
 ## JSON output
 

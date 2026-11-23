@@ -74,6 +74,8 @@ final class ASCWebAppsTests: XCTestCase {
         XCTAssertTrue(sku?.1.fix.contains("--sku") == true)
         let bundle = await refusal(409, [["code": "ENTITY_ERROR", "detail": "An app with this Bundle ID already exists."]])
         XCTAssertEqual(bundle?.0, .bundleIDTaken)
+        let platform = await refusal(409, [["code": "ENTITY_ERROR", "detail": "The bundle ID is not registered for this platform."]])
+        XCTAssertEqual(platform?.0, .other, "a bundle refusal that is not about a taken bundle ID keeps Apple's words only")
         let other = await refusal(409, [["code": "ENTITY_ERROR", "detail": "Something else entirely."]])
         XCTAssertEqual(other?.0, .other)
         XCTAssertTrue(other?.1.cause.contains("HTTP 409 to POST /iris/v1/apps") == true, other?.1.cause ?? "")

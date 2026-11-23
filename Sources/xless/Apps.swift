@@ -29,6 +29,8 @@ struct AppSummary: Codable, Equatable {
 
 /// The documented API's part of `apps create` (the API key), when a key resolves.
 protocol AppCreationAPI {
+    /// The key's issuer ID: its App Store Connect team.
+    var issuerID: String { get }
     func findApp(bundleID: String) async throws -> AppSummary?
     func hasBundleID(_ identifier: String) async throws -> Bool
     /// Registers the identifier as a universal bundle ID, as the sign stage does.
@@ -37,6 +39,8 @@ protocol AppCreationAPI {
 
 /// The web session's part of `apps create`: the create itself, and the lookups when no API key resolves.
 protocol AppCreationWeb {
+    /// The issuer ID of the session's App Store Connect team (its provider's public ID), when App Store Connect says.
+    func issuerID() async throws -> String?
     func findApp(bundleID: String) async throws -> AppSummary?
     /// Throws when the team has no such bundle ID (the developer portal's error says how to register it).
     func requireBundleID(_ identifier: String) async throws
@@ -46,8 +50,11 @@ protocol AppCreationWeb {
 struct KeyAppCreationAPI: AppCreationAPI {
     let apps: ASCApps
     let bundleIDs: ASCBundleIDs
+    let issuerID: String
 
-    init(resources: ASCResources) { apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources) }
+    init(resources: ASCResources) {
+        apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources); issuerID = resources.client.issuerID
+    }
 
     func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
     func hasBundleID(_ identifier: String) async throws -> Bool { try await bundleIDs.find(identifier: identifier) != nil }
@@ -60,6 +67,7 @@ struct WebAppCreation: AppCreationWeb {
     let apps: ASCWebApps
     let portal: PortalBundleIDs
 
+    func issuerID() async throws -> String? { try await apps.asc.session().provider?.publicProviderId }
     func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
     func requireBundleID(_ identifier: String) async throws { _ = try await portal.resolve(identifier) }
     func create(_ request: AppCreateRequest) async -> AppCreateAnswer { await apps.create(request) }
@@ -80,8 +88,9 @@ struct AppCreated: Encodable {
 }
 
 /// `apps create`, in order: an app that already has the bundle ID is reported (nothing is sent); the bundle ID must be
-/// registered (with the API key, xless offers to register it); then one create request through the web session. When
-/// its outcome is unclear, the app is looked up by bundle ID before anything is said.
+/// registered (with the API key, xless offers to register it, once the key and the Apple ID session are known to be on
+/// the same team); then one create request through the web session. When its outcome is unclear, the app is looked up
+/// by bundle ID before anything is said.
 struct AppCreation {
     /// nil when no API key resolves: the lookups go through the web session.
     var api: (any AppCreationAPI)?
@@ -93,8 +102,11 @@ struct AppCreation {
     /// nil when the user declined to register the bundle ID (nothing was sent).
     func run(_ request: AppCreateRequest) async throws -> AppCreated? {
         let bundle = request.bundleID
+        // A bundle identifier belongs to one team only, so an app the key finds is the app, whichever team that is.
+        if let api, let existing = try await api.findApp(bundleID: bundle) { return reportExisting(existing, request) }
+        let web = try await web()
         if let api {
-            if let existing = try await api.findApp(bundleID: bundle) { return reportExisting(existing, request) }
+            try await sameTeam(api, web)
             if !(try await api.hasBundleID(bundle)) {
                 let question = "Bundle ID \(bundle) is not registered on this team, and an app needs one. Register it now (universal, named \"\(PortalName.from(identifier: bundle))\")?"
                 guard try confirm(question, "registering bundle ID \(bundle)") else {
@@ -104,9 +116,7 @@ struct AppCreation {
                 try await api.registerBundleID(bundle)
                 say("registered bundle ID \(bundle)")
             }
-        }
-        let web = try await web()
-        if api == nil {
+        } else {
             if let existing = try await web.findApp(bundleID: bundle) { return reportExisting(existing, request) }
             try await web.requireBundleID(bundle)
         }
@@ -117,16 +127,35 @@ struct AppCreation {
             throw error
         case .ambiguous(let why):
             let found: AppSummary?
-            do { found = try await web.findApp(bundleID: bundle) } catch {
+            do { found = try await lookUp(bundle, web) } catch {
                 throw XlessError(.account, "\(why), and xless could not check whether the app for \(bundle) was created",
                                  fix: "check with `xless apps show \(bundle)` (or App Store Connect > Apps) before re-running; re-running when the app exists only reports it")
             }
-            guard let found else {
-                throw XlessError(.account, "\(why), and App Store Connect has no app for \(bundle): nothing was created",
-                                 fix: "re-run the same `xless apps create`")
+            guard var found else {
+                throw XlessError(.account, "\(why), and App Store Connect shows no app for \(bundle) yet",
+                                 fix: "re-run the same `xless apps create`: if the app was created meanwhile, it is reported, not created twice")
             }
+            if found.name == nil { found.name = request.name }
             say("note: \(why), but the app for \(bundle) exists")
             return AppCreated(created: [found], existing: [])
+        }
+    }
+
+    /// The app after an unclear answer: through the web session, else through the API key.
+    private func lookUp(_ bundle: String, _ web: any AppCreationWeb) async throws -> AppSummary? {
+        do { return try await web.findApp(bundleID: bundle) } catch {
+            guard let api else { throw error }
+            return try await api.findApp(bundleID: bundle)
+        }
+    }
+
+    /// Refuses to go on when the API key's team is not the Apple ID session's: the key would register the bundle ID on
+    /// one team and the app would be created on the other.
+    private func sameTeam(_ api: any AppCreationAPI, _ web: any AppCreationWeb) async throws {
+        guard let issuer = try await web.issuerID(), !issuer.isEmpty else { return }
+        guard issuer.caseInsensitiveCompare(api.issuerID) == .orderedSame else {
+            throw XlessError(.account, "the App Store Connect API key (issuer \(api.issuerID)) belongs to another team than the Apple ID session's (issuer \(issuer)); nothing was sent",
+                             fix: "use the key of the team the app is for (`--team <TEAM_ID>` picks the store's key; ASC_KEY_* in the environment take precedence, so unset them), or pass --team for the key's team")
         }
     }
 

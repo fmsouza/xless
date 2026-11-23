@@ -164,9 +164,9 @@ public struct ASCWebApps: Sendable {
         for e in errors {
             let text = [e["code"], e["title"], e["detail"]].compactMap { $0 as? String }.joined(separator: " ").lowercased()
             let pointer = (((e["source"] as? [String: Any])?["pointer"] as? String) ?? "").lowercased()
-            if text.contains("sku") || pointer.hasSuffix("/sku") { return .skuTaken }
-            if text.contains("bundle") || pointer.hasSuffix("/bundleid") { return .bundleIDTaken }
             let taken = ["already", "in use", "being used", "not available", "unavailable", "taken"].contains { text.contains($0) }
+            if (text.contains("sku") && taken) || pointer.hasSuffix("/sku") { return .skuTaken }
+            if (text.contains("bundle") && taken) || pointer.hasSuffix("/bundleid") { return .bundleIDTaken }
             if (text.contains("name") && taken) || pointer.hasSuffix("/name") { return .nameTaken }
         }
         return .other
