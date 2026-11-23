@@ -233,10 +233,10 @@ public enum RustApple {
 
     private static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
+    /// The wrappers run as soon as cargo links (ExecutableFile: never "Text file busy" while other threads start tools).
     private static func write(_ text: String, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try text.write(to: url, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        try ExecutableFile.write(text, to: url, stage: .build)
     }
 
     // MARK: rustup

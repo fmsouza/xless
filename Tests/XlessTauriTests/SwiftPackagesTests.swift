@@ -18,7 +18,8 @@ private func write(_ text: String, to url: URL, mode: Int? = nil) throws {
 /// A shell script standing in for llvm-nm / llvm-objdump / rustc.
 private func script(_ body: String, in dir: URL, name: String = "tool") throws -> URL {
     let url = dir.appendingPathComponent(name)
-    try write("#!/bin/sh\n\(body)\n", to: url, mode: 0o755)
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    try ExecutableFile.write("#!/bin/sh\n\(body)\n", to: url, stage: .build)
     return url
 }
 

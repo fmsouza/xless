@@ -22,8 +22,7 @@ private struct HelperDir {
     @discardableResult
     func script(_ name: String, _ body: String, mode: Int = 0o755) throws -> URL {
         let url = bin.appendingPathComponent("xless-credential-\(name)")
-        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
-        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+        try ExecutableFile.write("#!/bin/sh\n\(body)\n", to: url, mode: mode_t(mode), stage: .config)
         return url
     }
 
@@ -278,8 +277,7 @@ esac
     let tools = dir.root.appendingPathComponent("tools")
     try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
     let pass = tools.appendingPathComponent("pass")
-    try Data("#!/bin/sh\n\(stubPass)\n".utf8).write(to: pass)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pass.path)
+    try ExecutableFile.write("#!/bin/sh\n\(stubPass)\n", to: pass, stage: .config)
     var env = dir.env
     env["PATH"] = "\(dir.bin.path):\(tools.path):/usr/bin:/bin"
     env["PASSWORD_STORE_DIR"] = dir.home.appendingPathComponent("pw").path

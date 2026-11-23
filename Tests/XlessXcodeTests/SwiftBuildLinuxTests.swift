@@ -243,15 +243,14 @@ func xcodebuildRefusesOtherCalls(_ args: [String]) {
     try FileManager.default.createDirectory(at: dir.appendingPathComponent("bin"), withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let fake = dir.appendingPathComponent("bin/swbuild")
-    try #"""
+    try ExecutableFile.write(#"""
     #!/bin/sh
     echo "$@" > "$(dirname "$0")/../argv"
     env > "$(dirname "$0")/../env"
     m='{"kind":"error","message":"boom"}'; printf '%s\n%s\n' "${#m}" "$m"
     m='{"kind":"buildCompleted","result":"failed"}'; printf '%s\n%s\n' "${#m}" "$m"
     exit 1
-    """#.write(to: fake, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+    """#, to: fake, stage: .build)
     let base = ["PATH": dir.appendingPathComponent("bin").path + ":/usr/bin:/bin", "SDKROOT": "/x", "KEEP": "1", "ASC_KEY_P8": "secret"]
     let s = try SwiftBuildRunner.build(pif: URL(fileURLWithPath: "/w.pif"), request: URL(fileURLWithPath: "/r.json"),
                                        derivedData: URL(fileURLWithPath: "/dd"), environment: env, log: dir.appendingPathComponent("log"),

@@ -6,8 +6,7 @@ private func fakeToolchain(_ versionLine: String) throws -> SwiftToolchain {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("swift-tc-\(UUID().uuidString)")
     let swiftc = root.appendingPathComponent("usr/bin/swiftc")
     try FileManager.default.createDirectory(at: swiftc.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try "#!/bin/sh\necho '\(versionLine)'\necho 'Target: aarch64-unknown-linux-gnu'\n".write(to: swiftc, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swiftc.path)
+    try ExecutableFile.write("#!/bin/sh\necho '\(versionLine)'\necho 'Target: aarch64-unknown-linux-gnu'\n", to: swiftc, stage: .build)
     return SwiftToolchain(version: "6.2.3", root: root.path)
 }
 

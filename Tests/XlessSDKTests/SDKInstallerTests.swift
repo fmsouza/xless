@@ -5,8 +5,7 @@ import Foundation
 
 private func executable(_ url: URL, _ script: String) throws {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try script.write(to: url, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    try ExecutableFile.write(script, to: url, stage: .sdk)
 }
 
 @Test func theToolchainGoesFirstOnPath() {

@@ -384,8 +384,7 @@ struct BrokenHelper {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
         let file = bin.appendingPathComponent("xless-credential-broken")
-        try Data("#!/bin/sh\n\(script)".utf8).write(to: file)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        try ExecutableFile.write("#!/bin/sh\n\(script)", to: file, stage: .config)
         store = HelperSecretStore(helper: try CredentialHelper.find(name: "broken", env: ["PATH": "\(bin.path):/usr/bin:/bin", "HOME": root.path]))
     }
 
