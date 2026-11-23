@@ -61,6 +61,7 @@ func account403NamesTheRoleNeeded(path: String, role: String) async {
     let e = await mapped(.account) { throw ASCError(status: 403, items: [], method: "GET", path: path) }
     #expect(e?.fix.contains("the \(role) role") == true, "\(String(describing: e))")
     #expect(e?.cause.contains("GET \(path)") == true)
+    #expect(e?.fix.contains("`xless auth api-key create --role \(role.uppercased().replacingOccurrences(of: " ", with: "_"))`") == true)
 }
 
 @Test func account409NamesTheField() async {

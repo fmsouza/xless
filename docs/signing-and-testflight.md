@@ -101,8 +101,9 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   affected, and a dry run takes no lock. After a SIGKILL, which leaves no chance to clean up, the next run on that work
   copy sees that the run holding the lock is gone, and stops what it left before it starts: its containers (labelled
   `xless.work=<hash>`) and, natively, the xless it was running.
-- **Testers.** Internal testers must be App Store Connect users. Add them to the group once in the web UI (Users and
-  Access, then TestFlight); xless creates missing groups but cannot add users. API details:
+- **Testers.** Internal testers must be App Store Connect users of the team: invite them with
+  [`xless users invite`](apple-account.md#xless-users) (an Admin API key). Then add them to the group once in the web
+  UI (TestFlight); xless creates missing groups but does not add testers to them yet. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
 
 With a project directory everything runs in one process (one container with `--docker`), so package code built there
