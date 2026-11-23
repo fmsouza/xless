@@ -113,3 +113,24 @@ private func state(_ s: String, errors: String = "[]") -> MockTransport.Step {
     let t = MockTransport(steps: [reserved, .response(204, "")])
     await #expect { _ = try await uploader(t).upload(try asset(f, size: 3)) } throws: { "\($0)".contains("invalid upload operation") }
 }
+
+@Test func aTransferEndsAtTheCommitAndTheWaitPollsWithBackoff() async throws {
+    let f = try tempFile([1, 2, 3, 4, 5, 6, 7])
+    let t = MockTransport(steps: [reserved, .response(200, ""), .response(200, ""), committed, state("UPLOAD_COMPLETE"), state("UPLOAD_COMPLETE"), state("COMPLETE")])
+    let slept = Slept()
+    let u = AssetUploader(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in }), stage: .account, rerun: "re-run",
+                          sleep: { slept.add($0) }, pollInterval: .seconds(2), timeout: .seconds(600), maxPollInterval: .seconds(3))
+    let a = try asset(f, size: 7)
+    let id = try await u.transfer(a)
+    #expect(id == "SS9")
+    #expect(t.requests.count == 4, "reserve, two parts, commit: no poll yet")
+    #expect(try await u.wait(id: id, asset: a) == .complete("SS9"))
+    #expect(slept.all == [.seconds(2), .seconds(3)], "1.5x, capped")
+}
+
+final class Slept: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Duration] = []
+    func add(_ d: Duration) { lock.withLock { values.append(d) } }
+    var all: [Duration] { lock.withLock { values } }
+}

@@ -122,7 +122,7 @@ private func withManifest(_ body: (URL) throws -> Void) throws {
         try write(app, "app.yml", in: dir)
         #expect(lines(dir) == [
             "warning: appstore/app.yml: unknown key `review2` — remove it; the keys are listed in docs/appstore-manifest.md",
-            "[account] appstore/app.yml: no bundleID, and no usable xless.yml next to appstore/ to take it from — add `bundleID: com.example.app` to app.yml",
+            "[account] appstore/app.yml: no bundleID, and no usable xless.yml next to appstore/ to take it from — add `bundleID: com.example.app` to app.yml (or pass the app's overlay with --config)",
             "[account] appstore/app.yml: platform WATCH_OS is not one App Store Connect knows — use one of IOS, MAC_OS, TV_OS, VISION_OS",
             "[account] appstore/app.yml: version 1.0.0.1 is not an App Store version — use 1 to 3 numbers separated by dots, quoted: version: \"1.0\"",
             "[account] appstore/app.yml: category Utilities is not an App Store Connect category ID — use IDs such as GAMES, GAMES_ACTION, UTILITIES (`xless api GET /v1/appCategories`)",

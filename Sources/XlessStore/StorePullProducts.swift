@@ -12,6 +12,8 @@ extension StorePull {
         var files: [String: ManifestWriter.Content] = [:]
         var lock: [String: MediaLock.Entry] = [:]
         var skipped: [String] = []
+        /// Apple's copies of review screenshots, downloaded with the version's media.
+        var downloads: [MediaDownload] = []
     }
 
     func pullProducts(app: ASCApp, old: StoreProducts?, dir: URL, staging: URL, oldLock: MediaLock, today: Date) async throws -> PulledProducts {
@@ -170,12 +172,8 @@ extension StorePull {
             }
             return nil
         }
-        let data = try await download(url)
-        let staged = staging.appendingPathComponent(path)
-        try FileManager.default.createDirectory(at: staged.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: staged)
-        out.files[path] = .file(staged)
-        out.lock[path] = MediaLock.Entry(md5: MD5Hex.of(data), appleChecksum: a.sourceFileChecksum, id: item.id)
+        out.downloads.append(MediaDownload(path: path, url: url, staged: staging.appendingPathComponent(path), appleChecksum: a.sourceFileChecksum,
+                                           id: item.id, preview: false, counted: false))
         return path
     }
 

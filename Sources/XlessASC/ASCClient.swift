@@ -153,6 +153,17 @@ public struct ASCClient: Sendable {
         }
     }
 
+    /// Sends `request` as it is (no credentials: a file on Apple's delivery network) and hands its body to a sink
+    /// piece by piece, retried like `raw`; each attempt writes into a fresh sink from `open`. A non-2xx answer throws
+    /// `ASCError`.
+    public func download(_ request: URLRequest, open: () throws -> @Sendable (Data) throws -> Void) async throws {
+        _ = try await withRetry {
+            let sink = try open()
+            let (response, errorBody) = try await transport.stream(request, chunk: sink)
+            return (errorBody, response)
+        }
+    }
+
     func url(_ path: String, query: [(String, String)]) -> URL {
         var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty {

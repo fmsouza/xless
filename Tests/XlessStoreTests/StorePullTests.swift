@@ -38,15 +38,22 @@ final class RoutedTransport: HTTPTransport, @unchecked Sendable {
     }
 }
 
-/// Media served by URL; records what was fetched.
+/// Media served by URL, written to the file asked for; records what was fetched and how many downloads ran at once.
 final class FakeCDN: @unchecked Sendable {
-    var files: [String: Data]
-    var fetched: [String] = []
-    init(_ files: [String: Data]) { self.files = files }
-    func download(_ url: URL) async throws -> Data {
-        fetched.append(url.absoluteString)
+    private let lock = NSLock()
+    private var now = 0
+    private var fetchedURLs: [String] = []
+    private(set) var most = 0
+    let files: [String: Data]
+    let delay: Duration
+    init(_ files: [String: Data], delay: Duration = .zero) { self.files = files; self.delay = delay }
+    var fetched: [String] { lock.withLock { fetchedURLs } }
+    func download(_ url: URL, to file: URL) async throws {
+        lock.withLock { fetchedURLs.append(url.absoluteString); now += 1; most = max(most, now) }
+        defer { lock.withLock { now -= 1 } }
+        if delay > .zero { try await Task.sleep(for: delay) }
         guard let data = files[url.absoluteString] else { throw URLError(.fileDoesNotExist) }
-        return data
+        try data.write(to: file)
     }
 }
 
@@ -130,7 +137,7 @@ final class Notes: @unchecked Sendable {
 
 func puller(_ t: RoutedTransport, _ cdn: FakeCDN, _ notes: Notes = Notes()) -> StorePull {
     StorePull(resources: ASCResources(client: ASCClient(credentials: storeCreds, transport: t, sleep: { _ in })),
-              download: { try await cdn.download($0) }, say: { notes.say($0) })
+              download: { try await cdn.download($0, to: $1) }, say: { notes.say($0) })
 }
 
 let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
@@ -206,7 +213,7 @@ let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
     #expect(read("de-DE/subtitle.txt", in: dir) == nil, "an empty value is no file")
     #expect(read("eula.txt", in: dir) == "Terms.\n")
     #expect(try Data(contentsOf: dir.appendingPathComponent("en-US/screenshots/APP_IPHONE_67/01-home.png")) == homePNG)
-    #expect(cdn.fetched == [homeURL, "https://example.apple.com/intro.m3u8"])
+    #expect(Set(cdn.fetched) == [homeURL, "https://example.apple.com/intro.m3u8"])
     #expect(MediaLock.read(dir).files.values == [
         "en-US/screenshots/APP_IPHONE_67/01-home.png": .init(md5: MD5Hex.of(homePNG), appleChecksum: "apple-home", id: "SS1"),
         // What pull could not download is recorded as there at Apple, with no local file, for push to leave alone.
@@ -412,4 +419,38 @@ func scheduledPricing() -> [String: (Int, String)] {
     #expect(t.queries("/v1/appPriceSchedules/PR1/manualPrices") == [["include=appPricePoint,territory", "limit=200"]])
     let read = ManifestReader.read(dir)
     #expect(read.issues.isEmpty && read.manifest.app.pricing?.changes?.count == 2, "pull's pricing reads back")
+}
+
+@Test func mediaIsDownloadedSeveralAtOnceStraightToDisk() async throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    var routes = fakeApp()
+    var cdnFiles = introStream
+    var items: [String] = []
+    for i in 1...9 {
+        let template = "https://is1-ssl.mzstatic.com/image/thumb/a/s\(i).png/{w}x{h}bb.{f}"
+        cdnFiles["https://is1-ssl.mzstatic.com/image/thumb/a/s\(i).png/1320x2868bb.png"] = pngHeader(1320, 2868) + Data([UInt8(i)])
+        items.append(#"{"type":"appScreenshots","id":"SS\#(i)","attributes":{"fileName":"s\#(i).png","sourceFileChecksum":"apple-\#(i)","imageAsset":{"templateUrl":"\#(template)","width":1320,"height":2868},"assetDeliveryState":{"state":"COMPLETE"}}}"#)
+    }
+    routes["/v1/appScreenshotSets/S1/appScreenshots"] = (200, list(items))
+    routes["/v1/appPreviewSets/PS1/appPreviews"] = (200, list([#"{"type":"appPreviews","id":"PV1","attributes":{"fileName":"intro.mov","sourceFileChecksum":"apple-intro","videoUrl":"https://example.apple.com/intro.m3u8","previewFrameTimeCode":"00:00:01:00","assetDeliveryState":{"state":"COMPLETE"}}}"#]))
+    let cdn = FakeCDN(cdnFiles, delay: .milliseconds(15))
+    let dir = root.appendingPathComponent("appstore")
+    let report = try await puller(RoutedTransport(routes), cdn).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
+    #expect(cdn.most > 1 && cdn.most <= StorePull.downloadConcurrency, "\(cdn.most) at once")
+    #expect(report.downloaded == 9)
+    #expect(report.skipped == ["de-DE/previews/IPHONE_67/01-intro.mov (App Store Connect serves it only as a stream)"])
+    let set = ManifestReader.read(dir).manifest.locales["en-US"]!.screenshots[0]
+    #expect(set.files == (1...9).map { "en-US/screenshots/APP_IPHONE_67/0\($0)-s\($0).png" }, "in Apple's order")
+    let lock = MediaLock.read(dir)
+    for i in 1...9 {
+        let path = "en-US/screenshots/APP_IPHONE_67/0\(i)-s\(i).png"
+        let data = pngHeader(1320, 2868) + Data([UInt8(i)])
+        #expect(try Data(contentsOf: dir.appendingPathComponent(path)) == data)
+        #expect(lock.files[path] == MediaLock.Entry(md5: MD5Hex.of(data), appleChecksum: "apple-\(i)", id: "SS\(i)"))
+    }
+    #expect(ManifestReader.read(dir).manifest.locales["de-DE"]?.previews.flatMap(\.files) ?? [] == [], "the stream-only preview is left out")
+    #expect(ManifestReader.read(dir).manifest.app.previewFrames == nil, "and so is its poster frame")
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0 != "appstore" }
+    #expect(leftovers.isEmpty, "the staging directory is gone: \(leftovers)")
 }

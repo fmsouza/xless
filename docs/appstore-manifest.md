@@ -75,7 +75,7 @@ is what you write here. Every key is optional to read; `validate` says which one
 them in this order:
 
 ```yaml
-bundleID: com.example.app            # the app; without it, the bundleID of the xless.yml next to appstore/
+bundleID: com.example.app            # the app; without it, the bundleID of the --config overlay, else of the xless.yml next to appstore/
 sku: EXAMPLE1                        # informational: a SKU never changes
 platform: IOS                        # IOS, MAC_OS, TV_OS or VISION_OS: the platform this listing's version is for
 primaryLocale: en-US
@@ -159,6 +159,7 @@ xless store pull                                  # again: the app is app.yml's 
 xless store pull --live                           # the version on the App Store, not the one being prepared
 xless store pull --app-version 1.2 --dir listing  # a given version, into ./listing
 xless store pull --platform macos
+xless store pull --config ../overlays/hello.yml  # a Tauri, cargo or React Native app: into ../overlays/appstore
 ```
 
 It reads, with the App Store Connect API key (App Manager is enough), only the documented API: the app record; the app
@@ -175,11 +176,18 @@ a part the key's role may not read keeps the value `app.yml` already had, with a
   one being edited.
 - **The platform** is `app.yml`'s, else the only one the app has versions for (an app with several gets a note and
   `IOS`); `--platform ios|macos|tvos|visionos` chooses.
-- **The app** is `--app` (app ID or bundle ID), else `app.yml`'s `bundleID`, else the `xless.yml` next to the directory.
+- **The app** is `--app` (app ID or bundle ID), else `app.yml`'s `bundleID`, else the project configuration's: the
+  overlay given with `--config` (`type: tauri`, `cargo` or `react-native`; for `MAC_OS` its macOS bundle ID), else
+  the `xless.yml` next to the directory. With `--config`, the directory defaults to `appstore/` next to the overlay.
+  The configuration's `teamID` (overlay or xless.yml) is the team when neither `--team` nor `--app` is given, before
+  the team `xless team use` saved; its API key is the one stored for that team, else one stored for no team (as for
+  `xless provision`). `validate`,
+  `push`, `store privacy` and `xless release` take `--config` the same way. The overlay is only read, not its source.
 - **The demo account's password is never read**: xless asks App Store Connect for the review details without it, so it
   is not in memory, in a `--verbose` trace or on disk. A pulled `app.yml` keeps its `passwordSecret`; a first pull of an
   app whose review needs a demo account writes `XLESS_DEMO_PASSWORD` and says how to store it.
-- **Screenshots and previews** are downloaded from Apple's delivery URLs (https, no credentials) and checksummed into
+- **Screenshots and previews** are downloaded from Apple's delivery URLs (https, no credentials), four at a time and
+  written to disk as they arrive (a preview is never held in memory), once the rest is read, and checksummed into
   `media.lock`, except files the lock shows are the local original of the same upload, which are kept. Media still
   processing, and previews App Store Connect only streams, are listed as not downloaded.
 - **All at once**: the new directory is built beside the old one and swapped in when everything is read, so a failure
@@ -318,8 +326,13 @@ whose content changed replaces the upload `media.lock` ties its path to; an uplo
 (FAILED), or one reserved and never finished (an interrupted push), is removed. An upload is App Store Connect's documented protocol: the file is reserved with its name and size,
 sent in the parts App Store Connect asks for (read from disk one part at a time, each part retried on its own, no
 credentials sent to Apple's storage), committed with its MD5, then watched until App Store Connect has processed it.
-A file it refuses fails the push with App Store Connect's message (the failed upload is removed, so a re-run starts
-clean); one still processing after ten minutes is a note. `media.lock` is updated with every upload, even when a later
+Four files go up at a time, across the sets of the push (each locale and display type; a set that must be emptied
+before its new files go up is sent on its own), and their processing is
+waited for in parallel (checked less often the longer it takes, so many files stay well inside App Store Connect's
+hourly request limit); each set is then put in the directory's order, so the result is what one file at a time
+would give. A file it refuses fails the push with App Store Connect's message (the failed upload is removed, so a
+re-run starts clean): no other file starts going up, those already on their way finish and are recorded, and that
+file's set is not reordered. One still processing after ten minutes is a note. `media.lock` is updated with every upload, even when a later
 change fails. Screenshots and previews are checked first, as `store validate` does (format, size for the display type,
 transparency, how many per set), so nothing App Store Connect would refuse is reserved.
 

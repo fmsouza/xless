@@ -23,10 +23,12 @@ func acceptUploads(_ t: RoutedTransport, state: String = "COMPLETE") {
     }
 }
 
-func mediaSender(_ t: HTTPTransport) -> StoreSender {
+/// - Parameter concurrency: 1 where a test reads the exact order of the requests.
+func mediaSender(_ t: HTTPTransport, concurrency: Int = StoreSender.uploadConcurrency) -> StoreSender {
     let client = ASCClient(credentials: storeCreds, transport: t, sleep: { _ in })
     return StoreSender(client: client, secret: { _ in "" },
-                       uploader: AssetUploader(client: client, stage: .account, rerun: "re-run `xless store push`", sleep: { _ in }, pollInterval: .zero, timeout: .seconds(5)))
+                       uploader: AssetUploader(client: client, stage: .account, rerun: "re-run `xless store push`", sleep: { _ in }, pollInterval: .zero, timeout: .seconds(5)),
+                       concurrency: concurrency)
 }
 
 /// "METHOD path" of every request but reads, PUTs to Apple's storage named `PUT <file>`.
@@ -51,7 +53,7 @@ private func json(_ r: URLRequest) -> [String: Any] { (r.httpBody.flatMap { try?
     let b = try upload(dir, "en-US/screenshots/APP_IPHONE_65/02-b.png", bytes: pngHeader(1242, 2688))
     let t = RoutedTransport(fakeApp())
     acceptUploads(t)
-    let sender = mediaSender(t)
+    let sender = mediaSender(t, concurrency: 1)
     let work = StoreMediaWork(kind: .screenshots, container: .newSet(type: "APP_IPHONE_65", localization: .locale("en-US", versionID: "V2")),
                               slots: [.upload(a), .upload(b)], reorder: true)
     try await sender.apply(StoreChange(.create, .media, "screenshots en-US APP_IPHONE_65", requests: [], media: work))

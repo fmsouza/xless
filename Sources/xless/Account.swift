@@ -75,6 +75,19 @@ struct AccountSession {
         return AccountSession(team: team, secrets: secrets, client: ASCClient(credentials: credentials, transport: wire))
     }
 
+    /// For a command run for a project (an appstore/ manifest, a release): `--team`, else the project configuration's
+    /// team, whose API key is preferred and one recorded for no team accepted (as `provision` resolves it), else the
+    /// saved team.
+    /// - Parameter store: the secret store (default: the process's).
+    static func open(team flag: String?, project: String?, verbose: Bool, env: [String: String] = ProcessInfo.processInfo.environment,
+                     transport: HTTPTransport = URLSessionTransport(), store: () -> (any SecretStore)? = { try? SecretStoreCLI.store() }) throws -> AccountSession {
+        guard flag == nil, let project else { return try open(team: flag, verbose: verbose, env: env, transport: transport) }
+        return try open(team: project, verbose: verbose, env: env, transport: transport, fallback: { _ in
+            guard let store = store() else { return Secrets.installedFallback }
+            return VaultResolver(secrets: store).preferring(team: project)
+        })
+    }
+
     /// The store's resolver for a team; with no team, the one `main` installed.
     static func storeFallback(_ team: String?) -> (any SecretFallback)? {
         guard let team, let store = try? SecretStoreCLI.store() else { return Secrets.installedFallback }

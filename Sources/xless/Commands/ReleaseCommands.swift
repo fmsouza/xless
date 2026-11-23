@@ -27,7 +27,7 @@ struct ReleaseCommand: AsyncParsableCommand {
 
 /// Which app, platform and version: options first, then the manifest, then xless.yml.
 struct ReleaseTargetOptions: ParsableArguments {
-    @Option(help: ArgumentHelp("The app: app ID or bundle identifier (default: app.yml's bundleID, else xless.yml's).", valueName: "app"))
+    @Option(help: ArgumentHelp("The app: app ID or bundle identifier (default: app.yml's bundleID, else --config's or xless.yml's).", valueName: "app"))
     var app: String?
     @Option(help: ArgumentHelp("ios, macos, tvos or visionos (default: app.yml's, else the app's only platform).", valueName: "platform"))
     var platform: String?
@@ -46,7 +46,7 @@ struct ReleaseTargetOptions: ParsableArguments {
         let dir = directory.url
         guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("app.yml").path) else { return nil }
         let m = ManifestReader.read(dir).manifest.app
-        if let app, AppArgument.isAppID(app) || app != (m.bundleID ?? StorePlatform.inheritedBundleID(manifestDir: dir, platform: m.platform)) { return nil }
+        if let app, AppArgument.isAppID(app) || app != (m.bundleID ?? (try? directory.project())??.bundleID(for: m.platform)) { return nil }
         return m
     }
 
@@ -54,12 +54,14 @@ struct ReleaseTargetOptions: ParsableArguments {
     func wanted(manifestVersion: Bool = true) throws -> ReleaseWanted {
         let m = manifest
         let platform = self.platform.flatMap(StorePlatform.parse) ?? m?.platform
-        guard let app = app ?? m?.bundleID ?? StorePlatform.inheritedBundleID(manifestDir: directory.url, platform: platform) else {
-            throw XlessError(.account, "no app: no --app, no bundleID in \(directory.dir)/app.yml and no xless.yml next to it",
-                             fix: "pass --app <app ID or bundle ID> (see `xless apps list`)")
+        let project = try directory.project()
+        guard let app = app ?? m?.bundleID ?? project?.bundleID(for: platform) else {
+            throw XlessError(.account, "no app: no --app, no bundleID in \(directory.name)/app.yml and \(directory.noConfig)",
+                             fix: "pass --app <app ID or bundle ID> (see `xless apps list`)\(directory.config == nil ? ", or --config <overlay>" : "")")
         }
         let samePlatform = m.map { ($0.platform ?? "IOS") == (platform ?? $0.platform ?? "IOS") } ?? false
-        return ReleaseWanted(app: app, platform: platform, version: appVersion ?? (manifestVersion && samePlatform ? m?.version : nil))
+        return ReleaseWanted(app: app, platform: platform, version: appVersion ?? (manifestVersion && samePlatform ? m?.version : nil),
+                             team: self.app == nil ? project?.team : nil)
     }
 }
 
@@ -72,9 +74,10 @@ enum ReleaseVersionArgument {
 }
 
 /// Opens the account session and runs `body` with the release operations; prints what it returns.
-private func runRelease(_ team: TeamOption, _ trace: VerboseOption, json: Bool, _ body: (ReleaseCLI) async throws -> String) async throws {
+/// - Parameter wanted: its `team` (the project configuration's) is the default team.
+private func runRelease(_ team: TeamOption, _ trace: VerboseOption, json: Bool, _ wanted: ReleaseWanted, _ body: (ReleaseCLI) async throws -> String) async throws {
     try await AccountSession.run {
-        let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
+        let session = try AccountSession.open(team: team.team, project: wanted.team, verbose: trace.verbose)
         let out = try await body(ReleaseCLI(resources: session.resources, json: json))
         FileHandle.standardOutput.write(Data(out.utf8))
     }
@@ -102,7 +105,7 @@ struct ReleaseCreateCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wanted = try target.wanted(manifestVersion: false)
-        try await runRelease(team, trace, json: output.json) { try await $0.create(app: wanted.app, platform: wanted.platform, versionString: version) }
+        try await runRelease(team, trace, json: output.json, wanted) { try await $0.create(app: wanted.app, platform: wanted.platform, versionString: version) }
     }
 }
 
@@ -126,7 +129,7 @@ struct ReleaseAttachCommand: AsyncParsableCommand {
     func run() async throws {
         let wanted = try target.wanted()
         let reference = try BuildReference.parse(build)
-        try await runRelease(team, trace, json: output.json) { try await $0.attach(wanted, build: reference) }
+        try await runRelease(team, trace, json: output.json, wanted) { try await $0.attach(wanted, build: reference) }
     }
 }
 
@@ -183,11 +186,11 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
                                                phased: phased, manifestDir: manifest, dryRun: dryRun)
         options.products = products
         if manifest != nil, ManifestReader.read(dir).manifest.app.bundleID == nil {
-            options.inheritedBundleID = StorePlatform.inheritedBundleID(manifestDir: dir, platform: wanted.platform)
+            options.inheritedBundleID = try target.directory.project()?.bundleID(for: wanted.platform)
         }
-        let (team, verbose, json) = (team.team, trace.verbose, output.json)
+        let (team, project, verbose, json) = (team.team, wanted.team, trace.verbose, output.json)
         let exit: Int32 = try await AccountSession.run {
-            let session = try AccountSession.open(team: team, verbose: verbose)
+            let session = try AccountSession.open(team: team, project: project, verbose: verbose)
             // App Privacy has no API: checked only through a session `xless auth login --keep` kept; never a sign-in here.
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if AppleWebCLI.cache.info() != nil {
@@ -241,7 +244,7 @@ struct ReleaseStatusCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wanted = try target.wanted()
-        try await runRelease(team, trace, json: output.json) { try await $0.status(wanted) }
+        try await runRelease(team, trace, json: output.json, wanted) { try await $0.status(wanted) }
     }
 }
 
@@ -257,7 +260,7 @@ struct ReleaseCancelCommand: AsyncParsableCommand {
     func run() async throws {
         let wanted = try target.wanted()
         let yes = account.confirmation.yes
-        try await runRelease(account.team, account.trace, json: account.output.json) { try await $0.cancel(wanted, yes: yes) }
+        try await runRelease(account.team, account.trace, json: account.output.json, wanted) { try await $0.cancel(wanted, yes: yes) }
     }
 }
 
@@ -274,7 +277,7 @@ struct ReleasePublishCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wanted = try target.wanted(manifestVersion: false)
-        try await runRelease(team, trace, json: output.json) { try await $0.publish(wanted) }
+        try await runRelease(team, trace, json: output.json, wanted) { try await $0.publish(wanted) }
     }
 }
 
@@ -298,7 +301,7 @@ struct ReleasePhasedOptions: ParsableArguments {
 
     func run(_ action: ReleaseCLI.PhasedAction) async throws {
         let wanted = try target.wanted(manifestVersion: false)
-        try await runRelease(team, trace, json: output.json) { try await $0.phased(action, wanted) }
+        try await runRelease(team, trace, json: output.json, wanted) { try await $0.phased(action, wanted) }
     }
 }
 
