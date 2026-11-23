@@ -70,15 +70,29 @@ Only for signing and uploading. Building up to `finalize` needs none of this.
 |---|---|---|
 | An Apple ID | downloading Xcode | <https://appleid.apple.com>, free |
 | Apple Developer Program membership | everything below | <https://developer.apple.com/programs/>, paid yearly |
-| App Store Connect API key (`.p8`, Admin role), with its key ID and issuer ID | `sign`, `upload`, macOS notarization, `xless sign bootstrap` | App Store Connect, Users and Access, Integrations ([bootstrap.md](bootstrap.md#1-app-store-connect-api-key)) |
-| Apple Distribution certificate and its private key | iOS `sign` | `xless sign bootstrap --type distribution`, on Linux ([bootstrap.md](bootstrap.md#2-apple-distribution-key-ios)) |
-| Developer ID Application certificate and its private key | macOS `sign` | `xless sign bootstrap --type developer-id` ([bootstrap.md](bootstrap.md#3-developer-id-application-key-macos-only)) |
-| A registered bundle ID | `sign`, the app record | developer.apple.com, or the first `xless ship` ([bootstrap.md](bootstrap.md#4-bundle-id-before-the-app-record)) |
-| An App Store Connect app record | `upload` | `xless apps create` (Apple ID sign-in: the API cannot create it), or App Store Connect by hand ([bootstrap.md](bootstrap.md#5-app-record)) |
+| App Store Connect API key (`.p8`, Admin role), with its key ID and issuer ID | `sign`, `upload`, macOS notarization, the account commands | `xless auth api-key create` (Apple ID sign-in), or App Store Connect, Users and Access, Integrations ([bootstrap.md](bootstrap.md#2-app-store-connect-api-key)) |
+| Apple Distribution certificate and its private key | iOS `sign` | `xless sign bootstrap --type distribution`, on Linux ([bootstrap.md](bootstrap.md#5b-apple-distribution-key-ios-and-the-mac-app-store-app)) |
+| Developer ID Application certificate and its private key | macOS `sign` | `xless sign bootstrap --type developer-id` ([bootstrap.md](bootstrap.md#5c-developer-id-application-key-a-notarized-mac-app)) |
+| A registered bundle ID | `sign`, the app record | `xless provision apply`, `xless bundle-ids create`, or the first `xless ship` ([bootstrap.md](bootstrap.md#5a-bundle-id)) |
+| An App Store Connect app record | `upload` | `xless apps create` (Apple ID sign-in: the API cannot create it), or App Store Connect by hand ([bootstrap.md](bootstrap.md#5e-app-record)) |
 | Provisioning profiles | `sign` | Created by `xless sign` through the API; nothing to do (other types: [`xless profiles`](apple-account.md#xless-profiles)) |
 | TestFlight testers | delivery to a group | Internal: App Store Connect users ([`xless users invite`](apple-account.md#xless-users)); external: any address, once Apple approves the build. Added by `testflight.testers` in xless.yml or [`xless testflight testers add`](apple-account.md#xless-testflight) |
 
-All of it is done in a web browser or with xless itself; none of it needs a Mac.
+All of it is done with xless itself, or in a web browser; none of it needs a Mac. Only the membership, Apple's
+agreements and, the first time, App Store Connect API access need a browser ([account.md](account.md#before-you-start)).
+
+### The account endpoints xless calls
+
+| Interface | Host | Credential | For |
+|---|---|---|---|
+| The App Store Connect API (documented, 4.6.1) | `api.appstoreconnect.apple.com` | the API key, as a 15-minute JWT per request | everything that has an API: identifiers, capabilities, certificates, profiles, devices, the app record (but creating it), the listing, screenshots, pricing, builds, TestFlight, users, the review submission and the release |
+| App Store Connect's web interface (undocumented) | `appstoreconnect.apple.com` (`/olympus/v1`, `/iris/v1`) | the Apple ID web session | creating the app record, App Store Connect API keys, App Privacy, teams |
+| The developer portal's web interface (undocumented) | `developer.apple.com` (`/services-account/…`) | the Apple ID web session | teams, app groups, iCloud containers, auth keys (APNs, Sign in with Apple, DeviceCheck, MusicKit) |
+| Apple ID sign-in | `idmsa.apple.com` | the Apple ID, password (SRP: never sent) and two-factor code | every web-session command, `xless xcode download` |
+
+[research/asc-account-coverage.md](research/asc-account-coverage.md) lists what the API covers, read from Apple's
+OpenAPI file, and every web endpoint with the open-source client it comes from; [security.md](security.md#what-goes-to-which-host)
+has every host with what is sent to it.
 
 ## Maintainers only (on a Mac)
 

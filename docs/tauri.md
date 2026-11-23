@@ -87,7 +87,7 @@ With `build: dated`, `prepare` and `build` ask App Store Connect for the builds 
 
 ## Creating the App Store Connect app record
 
-Same as for any app ([bootstrap.md](bootstrap.md) steps 4 and 5).
+Same as for any app: `xless provision apply`, or [bootstrap.md](bootstrap.md#5a-bundle-id) 5a and 5e.
 
 1. Register the bundle ID from the overlay (`bundleID`) with `xless bundle-ids create <bundleID>`, or run `xless ship --config <overlay>` once: `sign` registers it, and the run stops at `upload` with "no app record".
 2. Create the record with `xless apps create --bundle-id <bundleID> --name "<name>" --sku <SKU> --locale en-US` ([`xless apps`](apple-account.md#xless-apps); Apple ID sign-in), or in App Store Connect (Apps, **+**, New App: that bundle ID, iOS, and a name).
@@ -136,7 +136,7 @@ The top-level `infoPlist` and `binaryDependencies` are iOS-only: the macOS build
 
 **Prerequisites.**
 
-- The one-time setup from [bootstrap.md](bootstrap.md), step 3: `xless sign bootstrap --type developer-id --out devid-key.pem` creates the Developer ID Application key and certificate. Point `XLESS_DEVID_KEY_FILE` at the key.
+- The one-time setup from [bootstrap.md](bootstrap.md#5c-developer-id-application-key-a-notarized-mac-app), step 5c: `xless sign bootstrap --type developer-id --out devid-key.pem` creates the Developer ID Application key and certificate. Point `XLESS_DEVID_KEY_FILE` at the key.
 - The App Store Connect API key, as for iOS (`ASC_KEY_ID`, `ASC_ISSUER_ID_FILE`, `ASC_KEY_P8_FILE`). On macOS it is used for two things only: finding the Developer ID certificate (a read-only lookup) and notarization. No distribution key is needed (`XLESS_DIST_KEY_FILE` can stay unset).
 - The `xless-tauri` image (from `xless setup --docker`), which also carries the tools that build the DMG (`mkfs.hfsplus`, `hfsplus` and `dmg`; there is no `hdiutil` on Linux).
 

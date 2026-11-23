@@ -159,8 +159,12 @@ same as `xless run --docker …`.
 
 ## Next
 
-- [Sign the app and upload it to TestFlight](docs/signing-and-testflight.md): you need an Apple Developer Program
+- [Set up your Apple account from the terminal](docs/account.md): API keys, certificates, profiles, the app record,
+  the listing, TestFlight and the release, with `xless provision` first; you need an Apple Developer Program
   membership for this.
+- [Sign the app and upload it to TestFlight](docs/signing-and-testflight.md)
+- [What xless keeps and sends](docs/security.md): the encrypted secret store, the Apple ID session, and which host
+  gets what
 - [React Native and Expo apps](docs/react-native.md)
 - [Tauri v2 apps](docs/tauri.md), for iOS and macOS
 - [Plain Cargo apps](docs/cargo.md) (winit, egui…), for iOS and macOS

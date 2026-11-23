@@ -117,7 +117,9 @@ cached key. macOS has no kernel keyring, and containers often block it; there `-
 
 The store is `$XDG_DATA_HOME/xless/vault/secrets.vault` (`~/.local/share/xless/vault/secrets.vault` by default), in a
 directory of mode 0700, with mode 0600. xless refuses to use it if the directory or the file is a symlink, belongs to
-another user, or can be read or written by anyone else; it never fixes the permissions itself.
+another user, or can be read or written by anyone else; it never fixes the permissions itself. With the default
+install prefix that directory is inside the install's `~/.local/share/xless`: running the install line again keeps it,
+and removing the install by hand removes it with the rest ([uninstall.md](uninstall.md#uninstall)).
 
 Each entry is encrypted with AES-256-GCM under a random 256-bit data key; the data key is encrypted with a key derived
 from the passphrase by scrypt (N = 2^17, r = 8, p = 1, recorded in the file). The names, kinds and IDs are in clear (so
@@ -130,6 +132,8 @@ file.
 file (a backup) still opens with the old passphrase, so after a passphrase leak, revoke the keys at Apple too.
 
 ## What it protects against, and what it does not
+
+[security.md](security.md) has the whole model: the caches, process hardening, and which host gets what.
 
 The store protects keys at rest: a stolen disk or laptop, a backup or a synced home directory, and other users of the
 machine. It does not protect against malware running as you while the store is unlocked (it can read the process's

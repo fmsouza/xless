@@ -6,15 +6,19 @@ an `xless.yml` project and for the overlay apps (Tauri, React Native).
 
 ## Before you start
 
-Do the one-time Apple setup in [bootstrap.md](bootstrap.md): an App Store Connect API key, a distribution key (iOS)
-or a Developer ID key (macOS), the bundle ID and the app record. In your `xless.yml` (or overlay), set `teamID` to your
-team and `bundleID` to the registered bundle ID; the sample's values are placeholders.
+Do the one-time Apple setup from the terminal: an App Store Connect API key (`xless auth api-key create`), then
+`xless provision apply`, which registers the bundle ID, creates the distribution key (iOS) or the Developer ID key
+(macOS) with its certificate, and, with an `appstore/` listing, the app record ([bootstrap.md](bootstrap.md), [account.md](account.md)). In your
+`xless.yml` (or overlay), set `teamID` to your team and `bundleID` to the app's bundle ID; the sample's values are
+placeholders.
 
 ## Secrets
 
 Secrets come from environment variables, from a `NAME_FILE` variable naming a file that holds the value, or, on your
-own machine, from the encrypted secret store ([secrets.md](secrets.md)), in that order. They are never command-line
-flags and are never logged.
+own machine, from the encrypted secret store ([secrets.md](secrets.md)), in that order. The keys `xless auth api-key
+create`, `xless certs create`, `xless sign bootstrap` and `xless provision apply` make are already in the store, under
+`NAME@<TEAM_ID>`, and a project's run takes its `teamID`'s entries: nothing to set on your own machine. They are never
+command-line flags and are never logged ([security.md](security.md)).
 
 | Variable | Purpose | Needed for |
 |---|---|---|
@@ -164,7 +168,7 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
   `testflight.groups` block). Only that second ship has the two keys; the DMG ship has the Developer ID key. A
   failure in either channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
 - App Store Connect refuses a package that is not signed with a Mac Installer Distribution certificate
-  (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#3b-mac-installer-distribution-key-macos-app-store-lane-only);
+  (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#5d-mac-installer-distribution-key-the-mac-app-store-package);
 - ASC processing requires the mac app to carry **App Sandbox** (an App-Store/TestFlight
   build); a mac app that is deliberately non-sandboxed must stay on the DMG channel, or ASC rejects
   it.

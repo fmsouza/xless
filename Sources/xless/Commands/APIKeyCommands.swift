@@ -58,8 +58,8 @@ struct AuthAPIKeyCreateCommand: AsyncParsableCommand {
         after the key was created, the error says so: the key exists and should be revoked.
 
         Roles (--role, repeatable): pick the narrowest that covers what you plan. APP_MANAGER (the default) works for \
-        apps, the listing, TestFlight, builds, certificates and profiles; users and invitations need ADMIN; DEVELOPER \
-        cannot create certificates; FINANCE, SALES and ACCESS_TO_REPORTS read reports. The role is shown now and by \
+        apps, the listing, TestFlight, builds and the release; bundle IDs, devices, certificates and profiles (so \
+        `xless provision`), users and invitations need ADMIN; DEVELOPER cannot create certificates; FINANCE, SALES and ACCESS_TO_REPORTS read reports. The role is shown now and by \
         `xless auth status`.
         """)
 

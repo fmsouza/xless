@@ -9,6 +9,7 @@ After `xless setup` and a few builds, xless takes space in these places:
 | The exported SDKs, Tauri work copies and downloads | `~/.cache/xless` (`$XDG_CACHE_HOME/xless` when that is set) | about 3.5 GB per Xcode and architecture, plus the work copies |
 | With `--docker`: the images `xless-base`, `xless`, `xless-tauri`, `xless-rn`, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 21 to 31 GB per Xcode and architecture ([measured](acceptance-m5.md#runs-in-the-vm)) |
 | With `--docker`: Docker volumes of `xless run --docker` (Rust toolchains, React Native work copies and caches) | Docker's data root | a few GB per app |
+| The secret store, if you made one (your keys) | `~/.local/share/xless/vault` (`$XDG_DATA_HOME/xless/vault`) | a few KB |
 
 Part of the Docker figure is Docker's build cache, which `xless clean` leaves alone ([below](#free-the-build-cache)).
 
@@ -31,7 +32,8 @@ xless clean --all           # remove all of them
 | `--native` | the native install: `~/.local/share/xless-native` (or `$XLESS_NATIVE_HOME`), the installed SDK and its `toolchain-meta.json`; needs no Docker |
 | `--all` | `--images`, `--volumes`, `--cache` and `--native` |
 
-It leaves alone the xless install itself and Docker's build cache, which other projects share. A volume or image that a
+It leaves alone the xless install itself, the [secret store](secrets.md) and Docker's build cache, which other
+projects share. A volume or image that a
 container still uses is not removed: `docker ps -a` shows the container, `docker rm <container>` removes it. Tauri
 work copies are built as root inside the container, so if `--cache` reports files it could not remove, run the
 `sudo rm -rf` it prints.
@@ -75,20 +77,25 @@ Docker removes an image when its last tag goes. The plain `:local-<arch>` tags b
 
 ## Uninstall
 
-To return the machine to its state before xless:
+To return the machine to its state before xless (with the default prefix, the second `rm` removes the secret store
+too: read the paragraph below first):
 
 ```sh
 xless clean --all
 rm -f ~/.local/bin/xless
-rm -rf ~/.local/share/xless
+rm -rf ~/.local/share/xless       # with the default prefix this holds the secret store too (vault/): see below
 ```
 
-Use your prefix in place of `~/.local` if you installed with `--prefix` or `XLESS_PREFIX`. Then, if you want:
+Use your prefix in place of `~/.local` if you installed with `--prefix` or `XLESS_PREFIX`. With the default prefix,
+`~/.local/share/xless/vault` is the [secret store](secrets.md): the only copy of the keys xless created for you.
+Before removing it, revoke at Apple the keys and certificates you no longer use, or export the ones you keep
+([security.md](security.md#wiping-everything)); to keep it, remove everything in `~/.local/share/xless` but `vault`.
+Reinstalling or upgrading with the install line keeps it. Then, if you want:
 
 - free Docker's build cache ([above](#free-the-build-cache));
 - remove `~/.cache/xless` by hand if `xless clean` was already gone (and `docker image rm` the images and
   `docker volume rm` the volumes listed in the table above);
-- remove `~/.config/xless` (it may hold your `testflight.env`);
+- remove `~/.config/xless` (it may hold your `testflight.env`, and `config.yml` with the default team);
 - remove the line that adds `~/.local/bin` to `PATH` from your shell's startup file, if you added one;
 - delete the Xcode `.xip` you downloaded.
 
