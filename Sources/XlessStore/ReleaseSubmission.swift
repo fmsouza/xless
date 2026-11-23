@@ -22,11 +22,15 @@ public struct ReleaseSubmission: Sendable {
         /// Run the pre-flight and list the steps; send nothing.
         public var dryRun: Bool
         public var today: Date
+        /// Send the manifest's in-app purchases and subscriptions with the version (`--no-products`: false).
+        public var products: Bool
 
         public init(app: ASCApp, platform: String, version: ASCAppStoreVersion, build: BuildReference? = nil, release: ReleaseChoice? = nil,
-                    phased: Bool? = nil, manifestDir: URL? = nil, inheritedBundleID: String? = nil, dryRun: Bool = false, today: Date = Date()) {
+                    phased: Bool? = nil, manifestDir: URL? = nil, inheritedBundleID: String? = nil, dryRun: Bool = false, today: Date = Date(),
+                    products: Bool = true) {
             self.app = app; self.platform = platform; self.version = version; self.build = build; self.release = release; self.phased = phased
             self.manifestDir = manifestDir; self.inheritedBundleID = inheritedBundleID; self.dryRun = dryRun; self.today = today
+            self.products = products
         }
     }
 
@@ -158,7 +162,28 @@ public struct ReleaseSubmission: Sendable {
         }
         var submissionID = found.holding?.id
         var submittedState: String?
+        // The manifest's products, as items of the submission (or submitted the older way).
+        let manifestProducts = r.products ? try await ManifestProducts.read(r.manifestDir, app: r.app.id, resources: release.resources) : nil
+        func productSteps(_ existing: [ASCReviewSubmissionItem], into id: @escaping () -> String?) -> [(String, () async throws -> Void)] {
+            (manifestProducts?.toSubmit(existing: existing) ?? []).map { p in
+                (p.step, {
+                    switch p.how {
+                    case .item(let relationship, let type, let itemID):
+                        guard let submission = id() else { return }
+                        _ = try await release.addItem(relationship, type: type, id: itemID, to: submission)
+                    case .submission(let path, let relationship, let type, let productID):
+                        try await release.submitProduct(path, relationship: relationship, type: type, id: productID)
+                    }
+                })
+            }
+        }
         if let holding = found.holding {
+            if holding.state == SubmissionState.draft {
+                let items = holding.id == found.draft?.id ? found.draftItems : try await release.items(of: holding.id)
+                steps += productSteps(items) { holding.id }
+            } else if !(manifestProducts?.toSubmit(existing: []).isEmpty ?? true) {
+                out.notes.append("the manifest's products are not added to review submission \(holding.id) (\(VersionState.display(holding.state))): App Review has it already")
+            }
             steps.append((holding.state == SubmissionState.unresolved ? "submit review submission \(holding.id) again" : "submit review submission \(holding.id)",
                           { submittedState = try await release.submit(holding.id).state }))
         } else {
@@ -170,6 +195,7 @@ public struct ReleaseSubmission: Sendable {
                 }
                 submissionID = draft.id
                 steps.append(("add version \(v.versionString) to draft review submission \(draft.id)", { _ = try await release.addItem(version: v.id, to: draft.id) }))
+                steps += productSteps(found.draftItems) { draft.id }
                 steps.append(("submit review submission \(draft.id)", { submittedState = try await release.submit(draft.id).state }))
             } else {
                 steps.append(("create a review submission", {
@@ -180,6 +206,7 @@ public struct ReleaseSubmission: Sendable {
                     guard let id = submissionID else { return }
                     _ = try await release.addItem(version: v.id, to: id)
                 }))
+                steps += productSteps([]) { submissionID }
                 steps.append(("submit it", {
                     guard let id = submissionID else { return }
                     submittedState = try await release.submit(id).state

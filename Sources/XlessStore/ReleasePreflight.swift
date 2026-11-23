@@ -12,7 +12,8 @@ public struct PreflightCheck: Encodable, Sendable, Equatable {
         case ok, failed, warning, skipped
     }
 
-    /// manifest, metadata, listing, screenshots, privacy, pricing, availability, build, encryption, review contact.
+    /// manifest, metadata, listing, screenshots, privacy, pricing, availability, build, encryption, review contact,
+    /// products (when the manifest lists in-app purchases or subscriptions).
     public var name: String
     public var status: Status
     public var message: String
@@ -97,6 +98,7 @@ public struct ReleasePreflight: Sendable {
         checks += try await pricing(input)
         checks += build(input)
         checks.append(try await reviewContact(input))
+        if let products = try await ManifestProducts.read(input.manifestDir, app: input.app.id, resources: resources) { checks.append(products.check) }
         return PreflightReport(checks: checks)
     }
 
