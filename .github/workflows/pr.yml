@@ -43,10 +43,12 @@ jobs:
             sleep $((attempt * 20))
           done
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # scripts/ci-swift.sh runs swift again, once, when swift itself crashed (a Swift 6.4 swift-build bug), never on a
+      # test failure.
       - name: swift test
-        run: swift test
+        run: sh scripts/ci-swift.sh test
       - name: swift test (AssetKit)
-        run: swift test --package-path ThirdParty/AssetKit
+        run: sh scripts/ci-swift.sh test --package-path ThirdParty/AssetKit
       # Every Tests/shell/*.test.sh runs. A test that genuinely needs docker or macOS starts with a guard that exits 0 with
       # "SKIP: <reason>"; each such test is listed here, one line per test, with its reason:
       #   (none)
@@ -134,7 +136,7 @@ jobs:
         run: shellcheck -s sh scripts/install.sh scripts/credential-helpers/xless-credential-pass scripts/credential-helpers/xless-credential-secret-tool
       - name: Shipped scripts
         run: |
-          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh
+          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh scripts/ci-swift.sh
           shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/testflight.sh scripts/xcode-swift.sh
       - name: Mac bench scripts
