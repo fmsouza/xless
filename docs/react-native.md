@@ -228,9 +228,12 @@ Refused before any App Store Connect call:
 
 ## Capabilities
 
-| Enabled by xless through the App Store Connect API (iOS) | Portal only |
+| Enabled by xless through the App Store Connect API | Portal only |
 |---|---|
-| Push Notifications (`aps-environment`), Associated Domains, AutoFill Credential Provider, App Groups (the capability, not the group) | App Attest, Declared Age Range, Increased Memory Limit, Extended Virtual Address Space, and any other capability the API has no type for |
+| Every capability with an entitlement key: Push Notifications (`aps-environment`), iCloud, Sign in with Apple, Associated Domains, AutoFill Credential Provider, App Groups, Apple Pay, HealthKit, NFC Tag Reading, Data Protection… ([the full list](apple-account.md#what-sign-enables)). For App Groups, iCloud and Apple Pay, the capability, not the group, container or merchant ID | App Attest, Declared Age Range, Increased Memory Limit, Extended Virtual Address Space, Family Controls, and any other capability the API has no type for |
+
+Capabilities can also be listed, enabled and disabled by hand with
+[`xless bundle-ids capabilities`](apple-account.md#xless-bundle-ids).
 
 **Portal-only capability.** When a profile lacks a key the API cannot enable, `sign` regenerates the profile once, in case it was enabled by hand since. If the key is still missing it stops:
 
