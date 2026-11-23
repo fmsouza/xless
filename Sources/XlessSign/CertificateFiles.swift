@@ -1,3 +1,4 @@
+import _CryptoExtras
 import Foundation
 import X509
 import XlessASC
@@ -49,7 +50,12 @@ public enum KeyMatch {
     /// A public key, as its DER SubjectPublicKeyInfo.
     public struct PublicKey: Hashable, Sendable {
         let info: [UInt8]
-        init(_ key: Certificate.PublicKey) { info = Array(key.subjectPublicKeyInfoBytes) }
+        /// An RSA key (the only kind of signing key the secret store keeps).
+        public let isRSA: Bool
+        init(_ key: Certificate.PublicKey) {
+            info = Array(key.subjectPublicKeyInfoBytes)
+            isRSA = _RSA.Signing.PublicKey(key) != nil
+        }
     }
 
     /// The public key of a private key PEM (RSA, PKCS#8, or SEC1 EC); nil when it is none of them.

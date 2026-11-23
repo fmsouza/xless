@@ -163,17 +163,12 @@ struct CertsCreateCommand: AsyncParsableCommand {
             case .passTypeID?: related = try await certificates.passTypeID(passTypeId ?? "")
             case nil: related = nil
             }
-            let creation = CertificateCreation(api: certificates, say: AppleWebCLI.say)
-            var created: CertificateCreated
+            var creation = CertificateCreation(api: certificates, say: AppleWebCLI.say)
+            let created: CertificateCreated
             if let csrPEM {
-                created = try await creation.run(type: type, relatedID: related, csrPEM: csrPEM)
                 // The CSR may have been made from a key the store holds (`sign bootstrap --csr-only`, then imported).
-                if let store = try? SecretStoreCLI.store(),
-                   let entry = await CertificateKeyLink(store: store, team: session.team).linkNew(
-                       created.certificate, known: { Set(try await certificates.list().map(\.id)) }, say: AppleWebCLI.say) {
-                    created.entry = entry
-                    created.matched = true
-                }
+                creation.link = (try? SecretStoreCLI.store()).map { CertificateKeyLink(store: $0, team: session.team) }
+                created = try await creation.run(type: type, relatedID: related, csrPEM: csrPEM)
             } else {
                 created = try await creation.run(type: type, relatedID: related, entry: entry, team: session.team, keys: {
                     try APIKeyWebCLI.unlocked(reason: "storing the new certificate's private key") { CertificateKeyStore(store: $0, catalogID: $1.id) }
@@ -321,7 +316,11 @@ struct CertCLI {
             throw XlessError(.account, "there is no secret store, so no key to link", fix: "create it with `xless secrets init`")
         }
         let all = try await certificates.list(withContent: true)
-        let outcome = try CertificateKeyLink(store: store, team: team).link(all, known: Set(all.map(\.id)), reason: "matching the signing keys with their certificates")
+        // Without a selected team, the team the certificates are for (Apple puts it in each one): another team's keys
+        // are never opened, nor called unmatched.
+        let teams = Set(all.compactMap { $0.der.flatMap { CertificateFacts(der: $0) }?.teamID })
+        let link = CertificateKeyLink(store: store, team: team ?? (teams.count == 1 ? teams.first : nil))
+        let outcome = try link.link(all, known: Set(all.map(\.id)), reason: "matching the signing keys with their certificates")
         if json { return try ASCOutput.json(outcome) }
         if outcome.linked.isEmpty, outcome.unmatched.isEmpty { return "Every signing key in the secret store has its certificate recorded.\n" }
         var text = ""

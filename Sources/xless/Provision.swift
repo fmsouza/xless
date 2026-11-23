@@ -746,11 +746,13 @@ struct ProvisionApplier {
     func create(_ type: CertificateType, key: SigningKey) async throws -> ASCCertificate {
         let creation = CertificateCreation(api: account, say: say)
         try await creation.precheck(type)
+        // The key may have had certificates before (gone, or expired): only one made by this request counts.
+        let before = try await creation.existingIDs()
         do {
             return try await account.create(type: type, csrPEM: try key.csrPEM(commonName: "xless"), relatedID: nil)
         } catch {
             guard ASCCertificates.isAmbiguous(error) else { throw creation.refused(type, error, removedEntry: nil, keptEntry: nil) }
-            if let made = await creation.made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error) { return made }
+            if let made = await creation.made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error, excluding: before) { return made }
             throw creation.ambiguous(type, error, kept: nil)
         }
     }

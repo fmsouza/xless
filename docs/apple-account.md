@@ -365,9 +365,11 @@ recorded with the key. `sign` finds the key through the store and matches it to 
 command asks the store's passphrase once, also when the API key itself comes from the store.
 
 `create --csr <file>` (PEM or DER) is for keys that live elsewhere (an HSM, another machine): xless checks the CSR and
-sends it, and nothing secret touches it. If the CSR was made from a key the store holds without a certificate (`xless
-sign bootstrap --csr-only`, then `xless secrets import`), the new certificate is recorded with that key, found by its
-public key (this asks the passphrase; without a terminal, a note says to run `xless certs link` later). Apple Pay payment processing (`apple-pay`) needs an ECC P-256 key, usually made
+sends it, and nothing secret touches it. If the CSR was made from an RSA key the store holds without a live
+certificate (`xless sign bootstrap --csr-only`, then `xless secrets import`), xless finds that key by its public key
+before the request (asking the passphrase then, only when the store has such keys of the team) and records the new
+certificate with it; without a terminal, a note says to run `xless certs link` later. A failed request that may have
+gone through is settled the same way as above, counting only a certificate that was not there before it. Apple Pay payment processing (`apple-pay`) needs an ECC P-256 key, usually made
 by the payment provider, so it always takes `--csr`. Apple Pay certificates need `--merchant-id` (an identifier or
 ID, see [`xless merchant-ids`](#xless-merchant-ids)), Wallet pass certificates `--pass-type-id` (an identifier
 `pass.…` or ID).
@@ -386,7 +388,8 @@ names it (`xless secrets rm <name>`; with a store a newer xless wrote, upgrade x
 `link` matches the store's signing keys that have no certificate recorded (imported keys, a key kept after a create
 whose answer was lost, a CSR's key), or whose recorded certificate is gone, with the team's certificates by public key,
 and records the match (certificate ID, type, expiry, team) so `list` and `show` name the key. It asks the passphrase
-only when there is such a key, never opens another team's keys, and names the keys no certificate matches. `xless sign bootstrap --type
+only when there is such a key, never opens another team's keys (without `--team`, the team the certificates are for;
+keys recorded for no team are always looked at), and names the keys no certificate matches. `xless sign bootstrap --type
 distribution|developer-id|installer` is `create` for the three certificates `sign` uses, with its own `--allow-new`
 check ([bootstrap.md](bootstrap.md#how-sign-bootstrap-behaves)); `--out <file>` keeps its file behaviour.
 
