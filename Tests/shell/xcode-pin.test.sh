@@ -2,6 +2,8 @@
 # scripts/xcode-pin.sh: the Xcode a bench run asked for reaches every Apple tool found through PATH, even when the
 # caller (the Tauri CLI) clears DEVELOPER_DIR; and a log naming another Xcode or the Command Line Tools is caught.
 set -euo pipefail
+# The shim listing below is a glob, whose order follows the locale (en_US puts xcodebuild before xcode-select, C after).
+export LC_ALL=C
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
