@@ -17,8 +17,9 @@ struct AppsCommand: AsyncParsableCommand {
           xless apps show com.example.app
           xless apps create --bundle-id com.example.app --name "Example" --sku EXAMPLE1 --locale en-US
           xless apps update com.example.app --content-rights does-not-use-third-party-content
+          xless apps price-points com.example.app --territory USA --price 0.99
         """,
-        subcommands: [AppsListCommand.self, AppsShowCommand.self, AppsUpdateCommand.self, AppsCreateCommand.self])
+        subcommands: [AppsListCommand.self, AppsShowCommand.self, AppsUpdateCommand.self, AppsCreateCommand.self, AppsPricePointsCommand.self])
 }
 
 enum AppArgumentHelp {
@@ -123,6 +124,46 @@ struct AppsUpdateCommand: AsyncParsableCommand {
         let (locale, rights, bundleID) = try parsed()
         try await runApps(team.team, verbose: trace.verbose) {
             try await $0.with(json: output.json).update(app, primaryLocale: locale, contentRights: rights, bundleID: bundleID)
+        }
+    }
+}
+
+struct AppsPricePointsCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "price-points",
+        abstract: "List an app's price points in a territory, or show one price's point and what it is in every other territory.",
+        discussion: """
+        A price point is a price App Store Connect lets the app take in a territory: its customer price and the proceeds, \
+        in the territory's currency. app.yml's pricing names prices (`free`, "0.99"), and `xless store push` sends the \
+        points with exactly those prices. With --price, the point with that customer price is shown with its \
+        equalizations: the price App Store Connect sets in every other territory that follows the base price. A price \
+        that is no point is an error naming the nearest ones.
+
+          xless apps price-points com.example.app                       # every point in the United States
+          xless apps price-points com.example.app --territory JPN
+          xless apps price-points com.example.app --price 0.99          # and its price in every territory
+        """)
+
+    @Argument(help: AppArgumentHelp.help) var app: String
+    @Option(help: ArgumentHelp("The territory, as a three-letter code (USA, GBR, JPN…; default USA).", valueName: "code")) var territory: String = "USA"
+    @Option(help: ArgumentHelp("A customer price in the territory's currency (`free`, 0.99).", valueName: "price")) var price: String?
+    @OptionGroup var team: TeamOption
+    @OptionGroup var output: JSONOption
+    @OptionGroup var trace: VerboseOption
+
+    func validate() throws {
+        try AppArgumentHelp.validate(app)
+        guard territory.uppercased().range(of: "^[A-Z]{3}$", options: .regularExpression) != nil else {
+            throw ValidationError("--territory \(territory) is not a territory code: use three letters, e.g. USA, GBR, JPN")
+        }
+        if let price, CustomerPrice.parse(price) == nil {
+            throw ValidationError("--price \(price) is not a price: write `free` or the customer price with a dot, e.g. 0.99")
+        }
+    }
+
+    func run() async throws {
+        try await runApps(team.team, verbose: trace.verbose) {
+            try await $0.with(json: output.json).pricePoints(app, territory: territory.uppercased(), price: price)
         }
     }
 }

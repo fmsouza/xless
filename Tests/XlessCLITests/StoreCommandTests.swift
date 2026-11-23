@@ -57,7 +57,8 @@ private func manifest(_ files: [String: String]) throws -> URL {
     #expect(try StorePushCommand.parse([]).options.parts == StorePushPart.allCases)
     #expect(try StorePushCommand.parse(["--only", "declarations", "--only", "text"]).options.parts == [.text, .declarations])
     #expect(try StorePushCommand.parse(["--only", "media"]).options.parts == [.media])
-    #expect(throws: (any Error).self) { try StorePushCommand.parse(["--only", "pricing"]) }
+    #expect(try StorePushCommand.parse(["--only", "pricing"]).options.parts == [.pricing])
+    #expect(throws: (any Error).self) { try StorePushCommand.parse(["--only", "privacy"]) }
 }
 
 @Test func pushStopsOnManifestErrorsBeforeContactingApple() throws {

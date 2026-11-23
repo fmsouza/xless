@@ -487,6 +487,9 @@ xless apps create --bundle-id com.example.app --name "Example" --sku EXAMPLE1 --
 xless apps create --bundle-id com.example.app --name "Example" --sku EXAMPLE1 --locale en-US --platform ios --platform macos
 xless apps update com.example.app --content-rights does-not-use-third-party-content
 xless apps update 1234567890 --primary-locale de-DE
+xless apps price-points com.example.app                  # every price point in the United States, cheapest first
+xless apps price-points com.example.app --territory JPN
+xless apps price-points com.example.app --price 0.99    # that point, and its price in every other territory
 ```
 
 An app is named by its app ID (the digits App Store Connect shows as "Apple ID", from `list`) or its bundle identifier.
@@ -523,9 +526,18 @@ do). The Apple ID needs the Account Holder, Admin or App Manager role. In one pr
 
 After that, everything else about the app goes through the API key: `xless apps show` sees it at once.
 
+`price-points` lists the prices the app can take in a territory (`--territory`, three letters, default `USA`): each
+price point's customer price, proceeds and currency, cheapest first (`GET /v1/apps/{id}/appPricePoints`). With
+`--price` (`free` or a customer price such as `0.99`), it shows the point with exactly that price and its
+equalizations, the price App Store Connect sets in every other territory that follows it
+(`GET /v3/appPricePoints/{id}/equalizations`); a price that is no point is an error naming the nearest ones. These are
+the prices `app.yml`'s `pricing` takes ([appstore-manifest.md](appstore-manifest.md#appyml)).
+
 With `--json`, `list` prints `{"data": [apps]}`, `show` `{"data": app, "appInfos": [...], "appStoreVersions": [...]}`
 (App Store Connect's resources), `update` the app, and `create` `{"created": [app], "existing": [app]}`, each app as
 `{"id", "name", "bundleId", "sku", "primaryLocale"}` (a field App Store Connect did not send is left out).
+`price-points` prints `{"data": [points]}`, or with `--price` `{"pricePoint": point, "equalizations": [points]}`, each
+point as `{"id", "territory", "currency", "customerPrice", "proceeds"}`.
 
 ## `xless store`
 
