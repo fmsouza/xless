@@ -89,7 +89,7 @@ public struct VaultFile: Codable, Sendable, Equatable {
         guard isWritable else {
             throw VaultError(.newerFormat,
                              "the secret store was written by a newer xless (store format \(minimumReaderVersion); this xless knows format \(Self.currentVersion) and older): it can read the entries it knows but must not change the file, or it would drop what it does not know",
-                             fix: "upgrade xless (docs/native-install.md); the store is unchanged")
+                             fix: "upgrade xless (run the install line again: README.md#install); the store is unchanged")
         }
     }
 

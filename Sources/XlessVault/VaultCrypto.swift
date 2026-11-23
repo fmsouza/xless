@@ -63,7 +63,7 @@ public enum VaultCrypto {
     public static func open(_ entry: VaultEntry, dataKey: SymmetricKey) throws -> SecretBytes {
         if entry.format > VaultEntry.currentFormat {
             throw VaultError(.newerFormat, "the entry \(entry.name) was written by a newer xless (entry format \(entry.format); this xless knows format \(VaultEntry.currentFormat) and older)",
-                             fix: "upgrade xless (docs/native-install.md) to use it")
+                             fix: "upgrade xless (run the install line again: README.md#install) to use it")
         }
         // A current entry authenticates every field: one this xless does not know was added after it was sealed.
         guard entry.format < 2 || entry.metadata.unknown.isEmpty, let aad = entry.associatedData,

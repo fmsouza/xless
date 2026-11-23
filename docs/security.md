@@ -75,22 +75,26 @@ machine as you can read your files and your login session's keyring: that is why
 - **Where.** `$XDG_DATA_HOME/xless/vault/` (`~/.local/share/xless/vault/`): the directory mode 0700, `secrets.vault`
   and the writers' `lock` mode 0600. A symlink, another owner, or any permission bit for the group or others on any of
   them is refused, never repaired.
-- **Format.** One JSON file (`"format": "xless-vault"`, `"version": 1`, a random store ID, the KDF and its parameters,
-  the wrapped data key, a key check and the entries). A random 256-bit data key seals each entry's secret with
-  AES-256-GCM; the data key is sealed with AES-256-GCM under a key derived from the passphrase by scrypt (N = 2^17,
+- **Format.** One JSON file (`"format": "xless-vault"`, `"version": 2`, `"minimumReaderVersion": 2`, a random store
+  ID, the KDF and its parameters, the wrapped data key, a key check and the entries). A random 256-bit data key seals
+  each entry's secret with AES-256-GCM; the data key is sealed with AES-256-GCM under a key derived from the passphrase by scrypt (N = 2^17,
   r = 8, p = 1: about 128 MiB and a fraction of a second per unlock; parameters no xless writes are refused before
   anything is derived). Each entry's name, kind and metadata (team, key ID, issuer ID, certificate ID, type, role,
   services, dates) are in clear so that `xless secrets list` works while the store is locked, and are authenticated as
-  the seal's associated data: an altered field makes the entry fail to open, and nothing of it is used.
+  the seal's associated data, every field whether it is set or not: an altered, added or removed field makes the entry
+  fail to open, and nothing of it is used. A store of the first format (version 1, where the type, role and services
+  were authenticated only when set) is sealed again this way by the first change made with the data key at hand, and
+  an entry of the first format put into a newer store never opens. An xless older than the file's
+  `minimumReaderVersion` refuses to rewrite it, and every xless writes back the fields it does not know, so an older
+  release cannot drop a field a newer one recorded ([secrets.md](secrets.md#store-format-and-older-xless-releases)).
 - **Writes** re-read the file under the lock and replace it in one step (a temporary file in the same directory, then a
   rename), so concurrent commands do not lose each other's entries and a crash never leaves half a file.
 - **The passphrase** is read from `/dev/tty` with echo off, never from a pipe, a file, an argument or the environment.
-  It cannot be recovered. `passwd` seals the data key again under a new passphrase; the entries are not re-encrypted,
-  so an old copy of the file still opens with the old passphrase.
+  It cannot be recovered. `passwd` seals the data key again under a new passphrase; the entries are not re-encrypted
+  (except to move a first-format store to format 2), so an old copy of the file still opens with the old passphrase.
 - **What the store does not detect:** someone who can write the file can delete entries, put back an older copy of
-  the whole file (with entries you removed since), or strip the optional `role`, `certificateType` and `services`
-  fields of an entry (they are authenticated only when present, so that entries written before they existed still
-  open). None of it reveals a secret; keep the store's directory yours.
+  the whole file (with entries you removed since) or of an entry. None of it reveals a secret; keep the store's
+  directory yours.
 
 CI does not use the store: it gives secrets as `NAME` or `NAME_FILE` variables, which xless reads the same way.
 
