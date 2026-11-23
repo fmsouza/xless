@@ -105,7 +105,7 @@ public struct StoreChange: Sendable, Equatable {
     }
 }
 
-/// The parts of the listing `store push` sends, in the order it sends them (#96–#97 add pricing and privacy).
+/// The parts of the listing `store push` sends, in the order it sends them (#97 adds privacy).
 public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
     /// Text and the version: primary locale, categories, the app information and version localizations, the version.
     case text
@@ -113,6 +113,8 @@ public enum StorePushPart: String, Sendable, CaseIterable, Encodable {
     case review
     /// Age rating, content rights, licence agreement, export compliance (and its document), accessibility.
     case declarations
+    /// The price schedule and the territories the app is available in (app-level: no version needed).
+    case pricing
     /// Screenshots and app previews, per locale and display type.
     case media
 
