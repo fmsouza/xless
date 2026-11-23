@@ -88,6 +88,16 @@ struct APIKeyStore {
         return used
     }
 
+    /// After `auth api-key revoke`: `removeKeys`, and when the store keeps them, an error that says the key is revoked at
+    /// Apple already and how to remove them (upgrading xless first when a newer one wrote the store).
+    static func removeRevoked(id keyID: String, from store: any SecretStore) throws -> [String] {
+        do { return try removeKeys(id: keyID, from: store) } catch {
+            let names = ((try? store.catalog())?.entries ?? []).filter { matches($0, keyID) }.map(\.name)
+            throw XlessError(.account, "API key \(keyID) is revoked, but \(names.isEmpty ? "its entries" : names.joined(separator: ", ")) could not be removed from the secret store (\(XlessError.wrapping(error, stage: .account).cause))",
+                             fix: StoreCleanup.fix(after: error, names: names, fallback: "the entries of key \(keyID) (`xless secrets list`)", done: "the key itself is revoked at Apple"))
+        }
+    }
+
     /// Removes the store's API-key entries of `keyID` (any team); returns their names. Needs no passphrase.
     static func removeKeys(id keyID: String, from store: any SecretStore) throws -> [String] {
         guard let file = try store.catalog(), file.entries.contains(where: { matches($0, keyID) }) else { return [] }

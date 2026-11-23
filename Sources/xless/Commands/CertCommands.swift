@@ -346,7 +346,8 @@ struct CertCLI {
     func revoke(_ id: String, yes: Bool) async throws -> String {
         let c = try await certificates.get(id: id)
         let profiles = try await certificates.profiles(using: c.id)
-        let keys = CertificateKeyStore.entries(holding: c.id, in: storeFile())
+        let store = storeFile()
+        let keys = CertificateKeyStore.entries(holding: c.id, in: store)
         let type = CertificateType(rawValue: c.certificateType)
         for p in profiles { say("stops working: profile \(p.name) (\(p.id), \(p.profileType ?? "?"))") }
         var question = "Revoke \(type?.displayName ?? c.certificateType) certificate \(c.id)\(c.attributes.name.map { " (\($0))" } ?? "")"
@@ -364,7 +365,8 @@ struct CertCLI {
         if !profiles.isEmpty {
             text += "now invalid: \(profiles.map(\.name).joined(separator: ", ")) (`xless sign` makes its own profiles again with another certificate)\n"
         }
-        for key in keys { text += "the secret store still holds its private key as \(key): remove it with `xless secrets rm \(key)`\n" }
+        let writable = (store as? SecretCatalog)?.isWritable ?? (store as? VaultFile)?.isWritable ?? true
+        for key in keys { text += StoreCleanup.leftEntry(key, writable: writable) + "\n" }
         return text
     }
 }

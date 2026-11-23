@@ -150,8 +150,8 @@ struct WebhookCLI {
         let removed: [String]
         do { removed = try removeEntries(hook.id) } catch {
             let names = WebhookSecretStore.entries(holding: hook.id, in: storeFile())
-            say("warning: the webhook is deleted, but its secret could not be removed from the store (\(error))"
-                + (names.isEmpty ? "" : ": `xless secrets rm \(names.joined(separator: "` and `xless secrets rm "))`"))
+            say("warning: the webhook is deleted, but its secret could not be removed from the store (\(XlessError.wrapping(error, stage: .account).cause)): "
+                + StoreCleanup.fix(after: error, names: names, fallback: "its XLESS_WEBHOOK_SECRET.\(hook.id) entry (`xless secrets list`)", done: "the webhook is deleted at Apple"))
             removed = []
         }
         struct Deleted: Encodable { var deleted: ASCWebhook; var removedEntries: [String] }

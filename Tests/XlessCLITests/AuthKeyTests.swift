@@ -333,3 +333,18 @@ func aFailedAuthKeyDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownl
     #expect(e?.cause.hasPrefix("revoked auth key K1, but could not remove") == true)
     #expect(e?.fix.contains("the key itself is revoked") == true)
 }
+
+@Test func aRevokedKeyWhoseEntryANewerStoreKeepsSaysToUpgrade() async throws {
+    let file = try KeyVault(entries: [("XLESS_APNS_KEY@\(team)", .authKey, .init(teamID: team, keyID: "K1", services: "apns"))])
+    defer { file.cleanup() }
+    let store = file.store
+    let cli = AuthKeyCLI(web: FakePortal(events: Events(), existing: [apnsKey("K1", "Push")]), storeFile: { try? store.read() },
+                         removeEntries: { _ in throw VaultError(.newerFormat, "the secret store was written by a newer xless", fix: "upgrade xless (run the install line again: README.md#install); the store is unchanged") })
+    do {
+        _ = try await cli.revoke("K1") { _ in true }
+        Issue.record("expected an error")
+    } catch let e as XlessError {
+        #expect(e.cause.hasPrefix("revoked auth key K1, but could not remove XLESS_APNS_KEY@\(team)"))
+        #expect(e.fix.hasPrefix("the key itself is revoked at Apple already;") && e.fix.contains("upgrade xless"))
+    }
+}

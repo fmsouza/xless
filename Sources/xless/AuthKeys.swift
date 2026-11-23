@@ -264,7 +264,7 @@ struct AuthKeyCLI {
         let removed: [String]
         do { removed = try removeEntries(id) } catch {
             throw XlessError(.account, "revoked auth key \(id), but could not remove \(entries.isEmpty ? "its entries" : entries.joined(separator: ", ")) from the secret store (\(XlessError.wrapping(error, stage: .account).cause))",
-                             fix: "remove \(entries.isEmpty ? "the entries of key \(id) (`xless secrets list`)" : entries.joined(separator: ", ")) with `xless secrets rm <name>`; the key itself is revoked")
+                             fix: StoreCleanup.fix(after: error, names: entries, fallback: "the entries of key \(id) (`xless secrets list`)", done: "the key itself is revoked at Apple"))
         }
         out += removed.isEmpty ? "the secret store held no entry for it\n" : "removed \(removed.joined(separator: ", ")) from the secret store\n"
         return out
