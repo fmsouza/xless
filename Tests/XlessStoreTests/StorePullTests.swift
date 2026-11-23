@@ -344,7 +344,7 @@ let today = ISO8601DateFormatter().date(from: "2026-11-23T12:00:00Z")!
     #expect(read("en-US/screenshots/APP_IPHONE_67/01-my-home.png", in: dir) == nil, "renamed after Apple's file name")
     #expect(MediaLock.read(dir).files["en-US/screenshots/APP_IPHONE_67/01-home.png"]?.md5 == MD5Hex.of(original))
     let app = try #require(read("app.yml", in: dir))
-    #expect(app.contains("passwordSecret: MY_DEMO") && app.hasSuffix("privacy:\n  collectsData: false\n"))
+    #expect(app.contains("passwordSecret: MY_DEMO") && app.contains("privacy:\n  collectsData: false\n"), "pull keeps the App Privacy answers (read with the web session only)")
     #expect(read("README.md", in: dir) == "# keep me\n")
 }
 

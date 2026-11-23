@@ -4,6 +4,7 @@ import FoundationNetworking
 #endif
 import Testing
 import XlessASC
+import XlessAppleID
 import XlessCore
 @testable import XlessStore
 
@@ -507,4 +508,53 @@ private func liveOnly() -> [String: (Int, String)] {
     let t = RoutedTransport(routes)
     try await sender(t).apply(StoreChange(.delete, .declarations, "licence agreement", requests: [.delete("endUserLicenseAgreements", id: "EU1")]))
     #expect(writes(t) == ["DELETE /v1/endUserLicenseAgreements/EU1"])
+}
+
+// MARK: - App Privacy
+
+@Test func privacyIsAPartOfPushSentThroughTheWebSessionAndPublished() async throws {
+    let (root, dir) = try await pulled(synced())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.privacy = emailLinked
+    let t = RoutedTransport(synced())
+    let fake = FakePrivacy([usage("u0", nil, nil, PrivacyProtection.notCollected)])
+    let push = StorePush(resources: ASCResources(client: client(t)), privacy: fake)
+    let (plan, report) = try await push.plan(app: fakeASCApp, manifest: m, dir: dir)
+    #expect(plan.changes.map(\.text) == [
+        "- App Privacy: data not collected",
+        "+ App Privacy EMAIL_ADDRESS\n    purposes: \"APP_FUNCTIONALITY\"\n    linkedToYou: \"true\"\n    tracking: \"false\"",
+        "~ publish the App Privacy answers of com.example.app",
+    ])
+    #expect(report.changes.allSatisfy { $0.part == .privacy })
+    #expect(plan.deletes.isEmpty)
+    let applied = try await push.apply(plan, app: fakeASCApp, manifest: m, dir: dir, sender: sender(t))
+    #expect(applied.sent.count == 3)
+    #expect(writes(t) == [], "nothing went through the API key")
+    #expect(fake.sent == ["DELETE u0", "POST 123 EMAIL_ADDRESS / APP_FUNCTIONALITY: DATA_LINKED_TO_YOU", "PATCH PS-123"])
+    #expect(try await push.plan(app: fakeASCApp, manifest: m, dir: dir).0.changes.isEmpty)
+}
+
+@Test func withoutTheWebSessionPrivacyIsOnlyNoted() async throws {
+    let (root, dir) = try await pulled(synced())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.privacy = emailLinked
+    let (plan, _) = try await pusher(RoutedTransport(synced())).plan(app: fakeASCApp, manifest: m, dir: dir)
+    #expect(plan.changes.isEmpty)
+    #expect(plan.notes == ["privacy is not pushed: App Privacy needs the Apple ID web session (`xless store privacy push`, or keep a session first with `xless auth login --keep 30m`)"])
+    m.app.privacy = nil
+    #expect(try await pusher(RoutedTransport(synced())).plan(app: fakeASCApp, manifest: m, dir: dir).0.notes.isEmpty, "no privacy key: not managed, nothing said")
+}
+
+@Test func privacyNeedsNoVersion() async throws {
+    let (root, dir) = try await pulled(synced())
+    defer { try? FileManager.default.removeItem(at: root) }
+    var m = manifest(dir)
+    m.app.version = "9.0"
+    m.app.privacy = AppYAML.Privacy(collectsData: false)
+    let fake = FakePrivacy([usage("u0", nil, nil, PrivacyProtection.notCollected)])
+    let push = StorePush(resources: ASCResources(client: client(RoutedTransport(liveOnly()))), privacy: fake)
+    let (plan, _) = try await push.plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.privacy]))
+    #expect(plan.changes.isEmpty)
 }

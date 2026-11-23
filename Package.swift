@@ -74,9 +74,10 @@ let package = Package(
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
         // The App Store listing as an `appstore/` directory (docs/appstore-manifest.md): its model, `xless store pull`
-        // (App Store Connect → files) and `validate` (offline checks); `store push` and `provision` build on it.
+        // (App Store Connect → files) and `validate` (offline checks); `store push` and `provision` build on it. App
+        // Privacy goes through the Apple ID web session (XlessAppleID's `ASCWebPrivacy`).
         .target(name: "XlessStore", dependencies: [
-            "XlessCore", "XlessASC",
+            "XlessCore", "XlessASC", "XlessAppleID",
             .product(name: "Yams", package: "Yams"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
@@ -125,7 +126,7 @@ let package = Package(
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
         .testTarget(name: "XlessStoreTests", dependencies: [
-            "XlessStore", "XlessASC", "XlessCore",
+            "XlessStore", "XlessASC", "XlessCore", "XlessAppleID",
             .product(name: "Yams", package: "Yams"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),

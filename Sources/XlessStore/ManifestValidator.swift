@@ -24,6 +24,48 @@ public enum ManifestValidator {
         return ["_KEY", "_TOKEN", "_P8", "_PEM", "_SECRET"].contains { base.hasSuffix($0) || base.hasSuffix($0 + "_FILE") }
     }
 
+    /// What is wrong with app.yml's `privacy` section (`path`: app.yml as issues name it). IDs are checked for their
+    /// shape; one outside xless's lists is a warning (Apple adds some), `store push` checks them against Apple's own.
+    public static func privacyIssues(_ privacy: AppYAML.Privacy, path: String) -> [StoreIssue] {
+        var issues: [StoreIssue] = []
+        func error(_ message: String, _ fix: String) { issues.append(StoreIssue(path, message, fix: fix)) }
+        func warn(_ message: String, _ fix: String) { issues.append(StoreIssue(path, message, fix: fix, severity: .warning)) }
+        func isID(_ s: String) -> Bool { s.range(of: "^[A-Z][A-Z0-9_]*$", options: .regularExpression) != nil }
+        let data = privacy.data ?? []
+        switch privacy.collectsData {
+        case nil:
+            error("privacy has no collectsData", "add `collectsData: true` with the data the app collects under `data:`, or `collectsData: false` (Data Not Collected)")
+        case false?:
+            if !data.isEmpty { error("privacy says collectsData: false but lists data", "remove `data:`, or set `collectsData: true`") }
+            return issues
+        case true?:
+            if data.isEmpty { error("privacy says collectsData: true but lists no data", "list each kind of data under `data:` (category, purposes, linkedToYou, tracking), or set `collectsData: false`") }
+        }
+        var seen: Set<String> = []
+        for (i, usage) in data.enumerated() {
+            let at = "privacy.data[\(i)]"
+            guard isID(usage.category) else {
+                error("\(at).category \(usage.category) is not an App Privacy category ID", "use Apple's IDs, e.g. EMAIL_ADDRESS, PRECISE_LOCATION, CRASH_DATA (docs/appstore-manifest.md)")
+                continue
+            }
+            let name = "privacy.data \(usage.category)"
+            if !seen.insert(usage.category).inserted { error("\(name) is listed twice", "list each category once, with all its purposes") }
+            if !StorePrivacy.knownCategories.contains(usage.category) {
+                warn("\(name) is not a category xless knows", "check the ID; `xless store privacy push` checks it against App Store Connect's list")
+            }
+            let purposes = usage.purposes ?? []
+            if purposes.isEmpty { error("\(name) has no purposes", "add `purposes: [APP_FUNCTIONALITY]` (what the data is used for)") }
+            for p in purposes {
+                if !isID(p) { error("\(name): purpose \(p) is not an App Privacy purpose ID", "use Apple's IDs: \(StorePrivacy.knownPurposes.sorted().joined(separator: ", "))") }
+                else if !StorePrivacy.knownPurposes.contains(p) { warn("\(name): purpose \(p) is not one xless knows", "check the ID: \(StorePrivacy.knownPurposes.sorted().joined(separator: ", "))") }
+            }
+            if Set(purposes).count < purposes.count { error("\(name) lists a purpose twice", "list each purpose once") }
+            if usage.linkedToYou == nil { error("\(name) has no linkedToYou", "say whether the data is linked to the user's identity: `linkedToYou: true` or `false`") }
+            if usage.tracking == nil { error("\(name) has no tracking", "say whether the data is used to track the user: `tracking: true` or `false`") }
+        }
+        return issues
+    }
+
     /// - Parameters:
     ///   - dir: the manifest directory (its name starts every issue's path).
     ///   - inheritedBundleID: the bundle ID of the project next to the manifest (`xless.yml`), used when `app.yml` has none.
@@ -109,6 +151,7 @@ public enum ManifestValidator {
             attachedFiles()
             previewFrames()
             pricing()
+            if let privacy = app.privacy { issues += ManifestValidator.privacyIssues(privacy, path: appPath) }
             if let families = app.accessibility?.values.keys {
                 for family in families.sorted() where !ManifestValidator.deviceFamilies.contains(family) {
                     warn(appPath, "accessibility.\(family) is not a device family xless knows", "use \(oneOf(ManifestValidator.deviceFamilies))")

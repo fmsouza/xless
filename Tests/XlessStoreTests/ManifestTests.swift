@@ -72,15 +72,37 @@ import Testing
     #expect(result.manifest.app.version == "1.10")
 }
 
-@Test func unknownKeysWarnAndAreKeptPrivacyIsKeptSilently() throws {
+@Test func unknownKeysWarnAndAreKept() throws {
     let root = try tempDir()
     defer { try? FileManager.default.removeItem(at: root) }
     let dir = root.appendingPathComponent("appstore")
     try write("primarylocale: en-US\nprivacy:\n  collectsData: false\n", "app.yml", in: dir)
     let result = ManifestReader.read(dir)
     #expect(result.issues.map(\.description) == ["warning: appstore/app.yml: unknown key `primarylocale` — did you mean `primaryLocale`?"])
-    #expect(result.manifest.extras.map(\.key) == ["primarylocale", "privacy"])
-    #expect(result.manifest.extras[1].yaml == "privacy:\n  collectsData: false\n")
+    #expect(result.manifest.extras.map(\.key) == ["primarylocale"])
+    #expect(result.manifest.app.privacy == AppYAML.Privacy(collectsData: false))
+}
+
+@Test func privacyAnswersRoundTripThroughAppYAML() throws {
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("appstore")
+    let yaml = """
+    privacy:
+      collectsData: true
+      data:
+      - category: EMAIL_ADDRESS
+        purposes:
+        - APP_FUNCTIONALITY
+        linkedToYou: true
+        tracking: false
+
+    """
+    try write(yaml, "app.yml", in: dir)
+    let manifest = ManifestReader.read(dir).manifest
+    #expect(manifest.app.privacy == AppYAML.Privacy(collectsData: true, data: [
+        .init(category: "EMAIL_ADDRESS", purposes: ["APP_FUNCTIONALITY"], linkedToYou: true, tracking: false)]))
+    #expect(try ManifestWriter.renderApp(manifest).hasSuffix(yaml))
 }
 
 @Test func typeErrorsNameTheKey() throws {
