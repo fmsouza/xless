@@ -68,7 +68,7 @@ struct BuildsListCommand: AsyncParsableCommand {
     @Option(name: .customLong("state"), help: ArgumentHelp("processing, valid, invalid or failed; repeatable or comma-separated.", valueName: "state"))
     var states: [String] = []
     @Flag(help: "List only the expired builds.") var expired = false
-    @Option(help: ArgumentHelp("At most this many builds (default 50).", valueName: "n")) var limit: Int = 50
+    @Option(help: ArgumentHelp("At most this many builds.", valueName: "n")) var limit: Int = 50
     @OptionGroup var team: TeamOption
     @OptionGroup var output: JSONOption
     @OptionGroup var trace: VerboseOption
@@ -128,7 +128,7 @@ struct BuildsWaitCommand: AsyncParsableCommand {
         """)
 
     @OptionGroup var selection: BuildSelection
-    @Option(help: ArgumentHelp("How long to wait: 90s, 30m, 2h or seconds (default 60m, at most 24h).", valueName: "duration")) var timeout: String = "60m"
+    @Option(help: ArgumentHelp("How long to wait: 90s, 30m, 2h or seconds (at most 24h).", valueName: "duration")) var timeout: String = "60m"
     @OptionGroup var team: TeamOption
     @OptionGroup var output: JSONOption
     @OptionGroup var trace: VerboseOption
@@ -143,10 +143,15 @@ struct BuildsWaitCommand: AsyncParsableCommand {
         let (reference, app, platform) = (selection.reference, selection.app, selection.platform.value)
         let flag = Interrupt.Flag()
         do {
-            try await Interrupt.cancelling(flag: flag) {
-                try await runBuilds(team, verbose: verbose) {
-                    try await $0.with(json: json).wait(reference, app: app, platform: platform, timeout: seconds)
+            try await AccountSession.run {
+                // The session (and a passphrase the secret store may ask) and --app come first: Ctrl-C covers the poll only.
+                let session = try AccountSession.open(team: team, verbose: verbose)
+                let builds = ASCBuilds(resources: session.resources)
+                let appID = try await BuildCLI(builds: builds).appID(app)
+                let out = try await Interrupt.cancelling(flag: flag) {
+                    try await BuildCLI(builds: builds).with(json: json).wait(reference, appID: appID, platform: platform, timeout: seconds)
                 }
+                FileHandle.standardOutput.write(Data(out.utf8))
             }
         } catch where flag.interrupted {
             FileHandle.standardError.write(Data("stopped waiting for build \(reference); nothing was changed (Apple keeps processing it: re-run `xless builds wait \(reference)` to wait again)\n".utf8))

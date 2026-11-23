@@ -578,7 +578,7 @@ is named by its ID (from `list`) or by its version and build number, `<version>+
 `build: dated` number reads `1.2.0+1.2.0.2026112301`). That lookup covers every app the key sees, expired builds
 included; when two apps or two platforms have the same numbers, it is an error naming each, and `--app` (app ID or
 bundle identifier) or `--platform` (`ios`, `macos`, `tvos`, `visionos`) narrows it. A bare build number is refused: it
-could be an ID.
+could be an ID. With a build ID, `--app` is checked: a build of another app is refused.
 
 - `list` shows the builds most recently uploaded first (at most `--limit`, default 50; a note says when there may be
   more): ID, app (without `--app`), version, build number, platform, state (`processing`, `valid`, `invalid`, `failed`,

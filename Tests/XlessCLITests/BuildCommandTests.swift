@@ -110,7 +110,7 @@ private func cli(_ t: FakeTransport, json: Bool = false, terminal: (any Confirmi
     let t = FakeTransport([(200, one(build(idA, number: "42", state: "PROCESSING"))), (200, one(build(idA, number: "42", state: "PROCESSING"))),
                            (200, one(build(idA, number: "42", state: "VALID")))])
     let said = Said()
-    let out = try await cli(t, said: said).wait(.id(idA), app: nil, platform: nil, timeout: 3600)
+    let out = try await cli(t, said: said).wait(.id(idA), appID: nil, platform: nil, timeout: 3600)
     #expect(out == "build 1.2.0+42 (\(idA)) is valid\n")
     #expect(said.lines == ["build 1.2.0+42 (\(idA)): processing", "build 1.2.0+42 (\(idA)): valid"])
     #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
@@ -118,34 +118,45 @@ private func cli(_ t: FakeTransport, json: Bool = false, terminal: (any Confirmi
 
 @Test func waitFailsOnInvalidAndOnTimeout() async throws {
     let invalid = FakeTransport([(200, one(build(idA, number: "42", state: "INVALID")))])
-    do { _ = try await cli(invalid).wait(.id(idA), app: nil, platform: nil, timeout: 60); Issue.record("expected an error") } catch let e as XlessError {
+    do { _ = try await cli(invalid).wait(.id(idA), appID: nil, platform: nil, timeout: 60); Issue.record("expected an error") } catch let e as XlessError {
         #expect(e.stage == .account && e.cause == "build 1.2.0+42 (\(idA)) processing ended invalid" && e.fix.contains("higher build number"))
     }
     let never = FakeTransport((0..<5).map { _ in (200, many([])) })
     var c = cli(never)
     c.sleep = { _ in try await Task.sleep(for: .milliseconds(600)) }
-    do { _ = try await c.wait(.version("1.2.0", number: "42"), app: nil, platform: nil, timeout: 1); Issue.record("expected an error") } catch let e as XlessError {
+    do { _ = try await c.wait(.version("1.2.0", number: "42"), appID: nil, platform: nil, timeout: 1); Issue.record("expected an error") } catch let e as XlessError {
         #expect(e.cause == "build 1.2.0+42 did not appear within 1s" && e.fix.contains("xless builds wait 1.2.0+42"))
     }
     #expect((2...3).contains(never.requests.count))
 }
 
-@Test func interruptCancelsTheWaitAndSaysSo() async throws {
+private final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func first() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+}
+
+@Test func aSignalCancelsTheWaitWhichOnlyRead() async throws {
     let flag = Interrupt.Flag()
+    let once = Once()
     let t = FakeTransport((0..<1000).map { _ in (200, one(build(idA, number: "42", state: "PROCESSING"))) })
-    let raiser = Task.detached { try? await Task.sleep(for: .milliseconds(100)); kill(getpid(), SIGUSR2) }
     do {
         _ = try await Interrupt.cancelling(on: SIGUSR2, flag: flag) {
             var c = cli(t)
-            c.sleep = { _ in try await Task.sleep(for: .milliseconds(20)) }
-            return try await c.wait(.id(idA), app: nil, platform: nil, timeout: 3600)
+            // The signal is sent from inside the wait, while the handler is surely installed (a process-wide kill, as
+            // Ctrl-C is: raise() would target a thread that may block it).
+            c.sleep = { _ in
+                if once.first() { kill(getpid(), SIGUSR2) }
+                try await Task.sleep(for: .seconds(30))
+            }
+            return try await c.wait(.id(idA), appID: nil, platform: nil, timeout: 3600)
         }
         Issue.record("expected the wait to stop")
     } catch {
+        #expect(error is CancellationError, "\(error)")
         #expect(flag.interrupted)
     }
-    _ = await raiser.value
-    #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
+    #expect(t.requests.count == 1 && t.requests[0].httpMethod == "GET")
 }
 
 @Test func expireAsksAndNeverExpiresTwice() async throws {
@@ -170,12 +181,12 @@ private func cli(_ t: FakeTransport, json: Bool = false, terminal: (any Confirmi
             == "build 1.2.0+42 (\(idA)) already has these values; nothing was sent\n")
     #expect(same.requests.count == 1)
 
-    let t = FakeTransport([(200, one(build(idA, number: "42", encryption: nil))), (200, one(build(idA, number: "42", encryption: false))),
+    let t = FakeTransport([(200, one(build(idA, number: "42", encryption: nil))),
                            (200, #"{"data":[{"type":"appEncryptionDeclarations","id":"DECL1","attributes":{"createdDate":"2026-01-01T00:00:00Z"}}],"links":{"self":"x"}}"#),
-                           (204, "")])
+                           (200, one(build(idA, number: "42", encryption: false))), (204, "")])
     let out = try await cli(t).update(.id(idA), app: nil, platform: nil, usesNonExemptEncryption: false, declaration: "DECL1")
     #expect(out == "updated build 1.2.0+42 (\(idA)): uses non-exempt encryption not answered → no, encryption declaration none → DECL1\n")
-    #expect(t.requests.map(\.httpMethod) == ["GET", "PATCH", "GET", "PATCH"])
+    #expect(t.requests.map(\.httpMethod) == ["GET", "GET", "PATCH", "PATCH"])
     #expect(t.requests[3].url!.path == "/v1/builds/\(idA)/relationships/appEncryptionDeclaration")
 }
 
@@ -187,4 +198,23 @@ private func cli(_ t: FakeTransport, json: Bool = false, terminal: (any Confirmi
         #expect(e.fix == "use one of the app's: DECL1 (approved, 2026-01-01)")
     }
     #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
+}
+
+@Test func updateChecksTheDeclarationBeforeChangingAnything() async throws {
+    let t = FakeTransport([(200, one(build(idA, number: "42", encryption: nil))),
+                           (200, #"{"data":[],"links":{"self":"x"}}"#)])
+    do {
+        _ = try await cli(t).update(.id(idA), app: nil, platform: nil, usesNonExemptEncryption: false, declaration: "OTHER")
+        Issue.record("expected an error")
+    } catch let e as XlessError {
+        #expect(e.cause.hasSuffix("nothing was sent") && e.fix.hasPrefix("the app has none"))
+    }
+    #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
+}
+
+@Test func aBuildIDWithAnotherAppIsRefused() async throws {
+    let t = FakeTransport([(200, one(build(idA, number: "42")))])
+    do { _ = try await cli(t).show(.id(idA), app: "999", platform: nil); Issue.record("expected an error") } catch let e as XlessError {
+        #expect(e.cause == "build \(idA) is a build of com.example.app, not of 999")
+    }
 }

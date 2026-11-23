@@ -53,8 +53,15 @@ struct BuildCLI {
     }
 
     /// The build a command names: `--app` and `--platform` narrow a `version+number`.
+    /// A build named by its ID with `--app` must be that app's.
     func resolve(_ reference: BuildReference, app: String?, platform: BuildPlatform?) async throws -> ASCBuildDetail {
-        try await builds.resolve(reference, appID: try await appID(app), platform: platform)
+        let appID = try await appID(app)
+        let b = try await builds.resolve(reference, appID: appID, platform: platform)
+        if let app, let appID, let owner = b.appID, owner != appID {
+            throw XlessError(.account, "build \(b.id) is a build of \(b.bundleID ?? owner), not of \(app)",
+                             fix: "check the build ID with `xless builds list --app \(app)`")
+        }
+        return b
     }
 
     func show(_ reference: BuildReference, app: String?, platform: BuildPlatform?) async throws -> String {
@@ -72,15 +79,15 @@ struct BuildCLI {
         if let s = b.internalBetaState { rows.append(["TESTFLIGHT (INTERNAL)", s.lowercased()]) }
         if let s = b.externalBetaState { rows.append(["TESTFLIGHT (EXTERNAL)", s.lowercased()]) }
         var out = TextTable(["ID", b.id], rows).rendered
-        if a.usesNonExemptEncryption == nil, b.encryptionDeclarationID == nil, !b.build.isExpired {
+        if a.usesNonExemptEncryption == nil, b.encryptionDeclarationID == nil, !b.build.isExpired, a.processingState == "VALID" {
             out += "\nexport compliance is not answered: `xless builds update \(b.id) --uses-non-exempt-encryption false` "
                 + "(or true, or attach a declaration with --encryption-declaration)\n"
         }
         return out
     }
 
-    func wait(_ reference: BuildReference, app: String?, platform: BuildPlatform?, timeout seconds: Int) async throws -> String {
-        let appID = try await appID(app)
+    /// - Parameter appID: `--app` already resolved (`appID(_:)`), so that nothing but the poll runs once Ctrl-C is armed.
+    func wait(_ reference: BuildReference, appID: String?, platform: BuildPlatform?, timeout seconds: Int) async throws -> String {
         var lastState: String??
         let waited = try await builds.wait(reference, appID: appID, platform: platform, interval: interval, timeout: .seconds(seconds), sleep: sleep) { b in
             let state = b?.build.attributes.processingState
@@ -96,7 +103,7 @@ struct BuildCLI {
         case .finished(let state):
             throw XlessError(.account, "build \(name) processing ended \(state.lowercased())",
                              fix: "Apple emails the reasons to the account holder and the uploader; fix the build and upload it again with a higher build number")
-        case .timedOut(nil):
+        case .timedOut where waited.build == nil:
             throw XlessError(.account, "build \(reference) did not appear within \(WaitTimeout.display(seconds))",
                              fix: "check that the upload went through (`xless upload`, upload.json) and `xless builds list`; re-run `xless builds wait \(reference)`")
         case .timedOut:
@@ -123,24 +130,29 @@ struct BuildCLI {
 
     func update(_ reference: BuildReference, app: String?, platform: BuildPlatform?, usesNonExemptEncryption: Bool?, declaration: String?) async throws -> String {
         let b = try await resolve(reference, app: app, platform: platform)
+        // Everything is checked before the first request that changes the build.
+        let attach = declaration.flatMap { $0 == b.encryptionDeclarationID ? nil : $0 }
+        if let attach {
+            guard let appID = b.appID else {
+                throw XlessError(.account, "App Store Connect did not say which app build \(b.id) belongs to; nothing was sent",
+                                 fix: "re-run; if it persists, report it as an xless bug")
+            }
+            let known = try await builds.declarations(appID: appID)
+            guard known.contains(where: { $0.id == attach }) else {
+                let list = known.map { "\($0.id) (\(($0.attributes.appEncryptionDeclarationState ?? "state unknown").lowercased()), \(String(($0.attributes.createdDate ?? "").prefix(10))))" }
+                throw XlessError(.account, "\(attach) is not an encryption declaration of \(b.bundleID ?? appID); nothing was sent",
+                                 fix: known.isEmpty ? "the app has none: answer with --uses-non-exempt-encryption, or declare it in app.yml (encryption) and run `xless store push`"
+                                                    : "use one of the app's: \(list.joined(separator: ", "))")
+            }
+        }
         var changes: [String] = []
         if let usesNonExemptEncryption, usesNonExemptEncryption != b.build.attributes.usesNonExemptEncryption {
             _ = try await builds.setUsesNonExemptEncryption(b.id, usesNonExemptEncryption)
             changes.append("uses non-exempt encryption \(Self.encryption(b.build)) → \(usesNonExemptEncryption ? "yes" : "no")")
         }
-        if let declaration, declaration != b.encryptionDeclarationID {
-            guard let appID = b.appID else {
-                throw XlessError(.account, "App Store Connect did not say which app build \(b.id) belongs to", fix: "re-run; if it persists, report it as an xless bug")
-            }
-            let known = try await builds.declarations(appID: appID)
-            guard known.contains(where: { $0.id == declaration }) else {
-                let list = known.map { "\($0.id) (\(($0.attributes.appEncryptionDeclarationState ?? "state unknown").lowercased()), \(String(($0.attributes.createdDate ?? "").prefix(10))))" }
-                throw XlessError(.account, "\(declaration) is not an encryption declaration of \(b.bundleID ?? appID); nothing was sent",
-                                 fix: known.isEmpty ? "the app has none: answer with --uses-non-exempt-encryption, or declare it in app.yml (encryption) and run `xless store push`"
-                                                    : "use one of the app's: \(list.joined(separator: ", "))")
-            }
-            try await builds.attach(declaration: declaration, to: b.id)
-            changes.append("encryption declaration \(b.encryptionDeclarationID ?? "none") → \(declaration)")
+        if let attach {
+            try await builds.attach(declaration: attach, to: b.id)
+            changes.append("encryption declaration \(b.encryptionDeclarationID ?? "none") → \(attach)")
         }
         if json {
             let now = changes.isEmpty ? b : try await builds.get(id: b.id)
