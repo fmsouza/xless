@@ -9,6 +9,8 @@ public struct VaultError: Error, StageReportableError, CustomStringConvertible, 
         case helper
         /// What the configured backend does not do (`xless secrets passwd` with a credential helper).
         case unsupportedByBackend
+        /// A store or an entry a newer xless wrote, which this one must not change (or cannot open).
+        case newerFormat
     }
 
     public let kind: Kind

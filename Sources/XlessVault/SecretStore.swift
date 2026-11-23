@@ -27,6 +27,10 @@ public struct SecretCatalog: SecretEntries, Sendable {
         self.file = file
     }
 
+    /// Refuses, before anything is asked or created, a store this xless may not change (a newer xless wrote it:
+    /// `VaultFile.requireWritable`). A credential helper's is always writable.
+    public func requireWritable() throws { try file?.requireWritable() }
+
     init(id: String, entries: [VaultEntry]) {
         self.id = id
         self.entries = entries

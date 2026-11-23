@@ -47,6 +47,7 @@ enum APIKeyWebCLI {
     static func unlocked<T>(reason: String, _ make: (any SecretStore, SecretCatalog) -> T) throws -> T {
         let store = try store()
         let catalog = try store.existingCatalog()
+        try catalog.requireWritable()
         try store.unlock(catalog, remember: nil, reason: reason)
         return make(store, catalog)
     }

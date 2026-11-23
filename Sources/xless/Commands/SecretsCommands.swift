@@ -208,6 +208,7 @@ struct SecretsImportCommand: ParsableCommand {
             let store = try SecretStoreCLI.store()
             let current = try store.existingCatalog()
             if current.entry(named: name) != nil { throw Self.exists(name) }
+            try current.requireWritable()
             try store.unlock(current, remember: remember, reason: "importing \(name)")
             try store.update(reason: "importing \(name)") { file in
                 try SecretStoreCLI.same(file, as: current)
@@ -355,13 +356,14 @@ struct SecretsPasswdCommand: ParsableCommand {
             case .vault(let v): vault = v
             }
             let file = try SecretStoreCLI.existing(vault)
+            try file.requireWritable()
             let terminal = try TerminalPrompter.forSecretStore()
             // Always the current passphrase, even when a remembered unlock is there.
             let key = try VaultUnlocker.dataKey(for: file, cache: nil, prompter: { terminal }, reason: "changing the passphrase")
             let passphrase = try VaultUnlocker.newPassphrase(terminal)
             try vault.vault.update { current in
                 guard current.id == file.id else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
-                return try VaultCrypto.rewrap(current, dataKey: key, passphrase: passphrase)
+                return try VaultCrypto.rewrap(try VaultCrypto.upgrade(current, dataKey: key), dataKey: key, passphrase: passphrase)
             }
             print("changed the secret store's passphrase")
         }
