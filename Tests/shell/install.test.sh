@@ -61,6 +61,16 @@ rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.3.0 PATH="$p/bin:$t/tools" "$sh_bi
 [[ "$(cat "$p/share/xless/VERSION")" == 1.3.0 ]] || fail "share not replaced"
 [[ "$("$p/bin/xless")" == "xless 1.3.0 x86_64" ]] || fail "binary not replaced"
 
+# The secret store lives in share/xless/vault when the prefix is ~/.local ($XDG_DATA_HOME/xless/vault): an upgrade keeps
+# it, with its permissions, and a rollback puts it back.
+mkdir -m 700 "$p/share/xless/vault"; (umask 077; echo sealed > "$p/share/xless/vault/secrets.vault"; : > "$p/share/xless/vault/lock")
+rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.2.3 PATH="$p/bin:$t/tools" "$sh_bin" "$repo/scripts/install.sh" --prefix "$p" 2>&1) || rc=$?
+[[ $rc == 0 && "$(cat "$p/share/xless/VERSION")" == 1.2.3 ]] || fail "downgrade with a store exited $rc: $out"
+[[ "$(cat "$p/share/xless/vault/secrets.vault" 2>/dev/null)" == sealed && -e "$p/share/xless/vault/lock" ]] || fail "the upgrade lost the secret store"
+[[ "$(stat -c %a "$p/share/xless/vault")" == 700 && "$(stat -c %a "$p/share/xless/vault/secrets.vault")" == 600 ]] || fail "the store's permissions changed"
+rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.3.0 PATH="$p/bin:$t/tools" "$sh_bin" "$repo/scripts/install.sh" --prefix "$p" 2>&1) || rc=$?
+[[ $rc == 0 && "$(cat "$p/share/xless/vault/secrets.vault" 2>/dev/null)" == sealed ]] || fail "the second upgrade lost the secret store: $out"
+
 # A pinned version uses /download/v<version>/ and nothing else.
 rm -rf "$rel/latest"
 run "${base[@]}" XLESS_PREFIX="$t/p2" XLESS_VERSION=v1.2.3 PATH="$t/p2/bin:$t/tools"
@@ -155,6 +165,11 @@ run "${base[@]}" XLESS_PREFIX="$p" XLESS_VERSION=1.3.0 PATH="$p/bin:$t/tools-bad
 [[ "$("$p/bin/xless")" == "xless 1.2.3 x86_64" ]] || fail "old binary lost"
 [[ -z "$(ls -A "$p/share" | grep -v '^xless$')" ]] || fail "temp files left in share: $(ls -A "$p/share")"
 [[ -z "$(ls -A "$p/bin" | grep -v '^xless$')" ]] || fail "temp binary left in bin: $(ls -A "$p/bin")"
+# ... the secret store included.
+mkdir -m 700 "$p/share/xless/vault"; echo sealed > "$p/share/xless/vault/secrets.vault"
+run "${base[@]}" XLESS_PREFIX="$p" XLESS_VERSION=1.3.0 PATH="$p/bin:$t/tools-badmv"
+[[ $rc == 1 && "$(cat "$p/share/xless/VERSION")" == 1.2.3 ]] || fail "failed upgrade with a store: rc=$rc $out"
+[[ "$(cat "$p/share/xless/vault/secrets.vault" 2>/dev/null)" == sealed ]] || fail "the rollback lost the secret store"
 # The same on a fresh prefix leaves no share/xless behind.
 run "${base[@]}" XLESS_PREFIX="$t/p5" XLESS_VERSION=1.3.0 PATH="$t/p5/bin:$t/tools-badmv"
 [[ $rc == 1 && ! -e "$t/p5/share/xless" && ! -e "$t/p5/bin/xless" ]] || fail "fresh failed install left files"
