@@ -28,7 +28,7 @@ done
 
 # The stand-ins. timeout: checks it bounds the command (-k <grace> <seconds>), then runs it with UNDER_TIMEOUT set.
 # apt-get: refuses to run outside timeout, logs its subcommand, and takes its exit status from the next line of $t/plan
-# (124 is what timeout returns for a command that hung). sleep: logged, instant.
+# (124 is what timeout returns for a command that hung). sleep and dpkg --configure -a: logged, instant.
 mkdir -p "$t/bin"
 cat > "$t/bin/getent" <<'EOF'
 #!/bin/sh
@@ -51,6 +51,11 @@ cat > "$t/bin/sleep" <<'EOF'
 #!/bin/sh
 echo "sleep $1" >> "$T/log"
 EOF
+cat > "$t/bin/dpkg" <<'EOF'
+#!/bin/sh
+[ "$*" = "--configure -a" ] || exit 97
+echo "dpkg" >> "$T/log"
+EOF
 chmod +x "$t/bin/"*
 
 # run <plan…>: the first step's block with apt-get answering the plan; prints the exit status, then the log.
@@ -64,10 +69,10 @@ run() {
 got=$(run 0 0)
 [[ "$got" == "0 update install " ]] || fail "a working mirror: $got"
 got=$(run 124 0 0)
-[[ "$got" == "0 update sleep 20 update install " ]] || fail "an update that hung once: $got"
+[[ "$got" == "0 update dpkg sleep 20 update install " ]] || fail "an update that hung once: $got"
 grep -q '::warning::installing the tools failed (attempt 1 of 3)' "$t/out" || fail "no warning for the retry: $(cat "$t/out")"
 got=$(run 0 100 0 124 0 0)
-[[ "$got" == "0 update install sleep 20 update install sleep 40 update install " ]] || fail "installs that failed twice: $got"
+[[ "$got" == "0 update install dpkg sleep 20 update install dpkg sleep 40 update install " ]] || fail "installs that failed twice: $got"
 got=$(run 124 124 124)
-[[ "$got" == "1 update sleep 20 update sleep 40 update " ]] || fail "a mirror that never answers: $got"
+[[ "$got" == "1 update dpkg sleep 20 update dpkg sleep 40 update " ]] || fail "a mirror that never answers: $got"
 echo PASS

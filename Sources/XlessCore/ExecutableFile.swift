@@ -21,9 +21,12 @@ public enum ExecutableFile {
         }
         try contents.write(to: staged)
         try Shell.run("/bin/cp", [staged.path, made.path], stage: stage)
-        guard chmod(made.path, mode) == 0, rename(made.path, url.path) == 0 else {
-            throw XlessError(stage, "cannot write the executable \(url.path): \(String(cString: strerror(errno)))",
-                             fix: "check that its directory is writable")
+        for (call, result) in [("chmod", { chmod(made.path, mode) }), ("rename", { rename(made.path, url.path) })] {
+            guard result() == 0 else {
+                let error = errno
+                throw XlessError(stage, "cannot write the executable \(url.path) (\(call)): \(String(cString: strerror(error)))",
+                                 fix: "check that its directory is writable")
+            }
         }
     }
 

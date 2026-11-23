@@ -80,7 +80,7 @@ jobs:
         # The runners' resolver can fail on *.ubuntu.com while public resolvers answer (seen 2026-11-11, every job
         # failing here); only then does this container use public resolvers instead. A mirror that stopped answering
         # once hung this step until the job was cancelled (2026-11-23): each apt-get is bounded, and retried twice.
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           getent hosts archive.ubuntu.com ports.ubuntu.com security.ubuntu.com >/dev/null \
             || printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0\n' > /etc/resolv.conf
@@ -89,6 +89,7 @@ jobs:
             timeout -k 10 180 $apt update && timeout -k 10 300 $apt install -y git curl ca-certificates >/dev/null && break
             [ "$attempt" -lt 3 ] || exit 1
             echo "::warning::installing the tools failed (attempt $attempt of 3), retrying"
+            dpkg --configure -a >/dev/null 2>&1 || true    # an install stopped while dpkg ran would block the next one
             sleep $((attempt * 20))
           done
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

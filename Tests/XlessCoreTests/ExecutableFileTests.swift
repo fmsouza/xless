@@ -28,27 +28,28 @@ private func scratchDir() throws -> URL {
 
 /// Many threads write a script each and run it at once, while the others start children: a script written with a plain
 /// `Data.write` fails here now and then with "Text file busy" (a child another thread was starting still held it open
-/// for writing); one written with `ExecutableFile` never does.
-@Test func scriptsWrittenWhileOtherThreadsStartChildrenRunAtOnce() async throws {
+/// for writing); one written with `ExecutableFile` never does. Plain threads, not tasks: every thread blocks in a child.
+@Test func scriptsWrittenWhileOtherThreadsStartChildrenRunAtOnce() throws {
     let dir = try scratchDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let body = "#!/bin/sh\necho ok\n" + String(repeating: "# padding the script so that writing it takes a while\n", count: 500)
-    let failures = await withTaskGroup(of: [String].self) { group in
-        for worker in 0..<24 {
-            group.addTask {
-                var failed: [String] = []
-                for i in 0..<50 {
-                    let tool = dir.appendingPathComponent("tool-\(worker)-\(i)")
-                    do {
-                        try ExecutableFile.write(body, to: tool, stage: .build)
-                        _ = try Shell.run(tool.path, [], stage: .build)
-                    } catch { failed.append("\(error)") }
+    let lock = NSLock()
+    nonisolated(unsafe) var failures: [String] = []
+    let done = DispatchGroup()
+    for worker in 0..<16 {
+        done.enter()
+        Thread {
+            defer { done.leave() }
+            for i in 0..<40 {
+                let tool = dir.appendingPathComponent("tool-\(worker)-\(i)")
+                do {
+                    try ExecutableFile.write(body, to: tool, stage: .build)
+                    _ = try Shell.run(tool.path, [], stage: .build)
+                } catch {
+                    lock.lock(); failures.append("\(error)"); lock.unlock()
                 }
-                return failed
             }
-        }
-        var all: [String] = []
-        for await failed in group { all += failed }
-        return all
+        }.start()
     }
+    done.wait()
     #expect(failures.isEmpty, "\(failures.count) runs failed, the first: \(failures.first ?? "")")
 }

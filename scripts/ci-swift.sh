@@ -11,7 +11,7 @@ swift=${CI_SWIFT:-swift}
 rc=0
 "$swift" "$@" || rc=$?
 [ "$rc" -gt 128 ] || exit "$rc"
-echo "::warning::$swift $* was killed by signal $((rc - 128)) (a crash of the toolchain itself, not a test failure): running it again once"
+echo "::warning::$swift $* ended with status $rc (killed by signal $((rc - 128)): the toolchain crashed, no test failed): running it again once"
 rc=0
 "$swift" "$@" || rc=$?
 exit "$rc"
