@@ -103,9 +103,11 @@ public struct ReleasePreflight: Sendable {
     // MARK: The manifest
 
     func manifest(_ input: Input) async throws -> [PreflightCheck] {
-        guard let dir = input.manifestDir, FileManager.default.fileExists(atPath: dir.path) else {
-            let name = input.manifestDir?.lastPathComponent ?? "appstore"
-            return [PreflightCheck("manifest", .skipped, "no \(name)/ directory: the listing is checked on App Store Connect only")]
+        guard let dir = input.manifestDir else {
+            return [PreflightCheck("manifest", .skipped, "no manifest for this app and platform: the listing is checked on App Store Connect only")]
+        }
+        guard FileManager.default.fileExists(atPath: dir.path) else {
+            return [PreflightCheck("manifest", .skipped, "no \(dir.lastPathComponent)/ directory: the listing is checked on App Store Connect only")]
         }
         let name = dir.lastPathComponent
         let read = ManifestReader.read(dir)
@@ -149,7 +151,10 @@ public struct ReleasePreflight: Sendable {
                 checks.append(PreflightCheck("metadata", .failed, "\(n) change\(n == 1 ? "" : "s") in \(name)/ \(n == 1 ? "is" : "are") not on App Store Connect (\(shown))",
                                              fix: "`xless store push` sends \(n == 1 ? "it" : "them") (`--dry-run` lists \(n == 1 ? "it" : "them"))"))
             }
-        } catch let e as XlessError {
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            let e = XlessError.wrapping(error, stage: .account)
             checks.append(PreflightCheck("metadata", .failed, e.cause, fix: e.fix))
         }
         return checks
@@ -192,11 +197,12 @@ public struct ReleasePreflight: Sendable {
         return checks
     }
 
-    /// The display types App Review needs (one of each group), and those it needs only for some apps.
-    static func screenshotGroups(_ platform: String) -> (required: [[String]], ifSupported: [(what: String, types: [String])]) {
+    /// The device families whose screenshots App Review needs: at least one family's (any of its types); a missing
+    /// family is only a warning when another has them, since App Review needs it only when the app runs there.
+    static func screenshotFamilies(_ platform: String) -> [(what: String, types: [String])] {
         switch platform {
-        case "IOS": ([["APP_IPHONE_67", "APP_IPHONE_65"]], [("iPad", ["APP_IPAD_PRO_3GEN_129", "APP_IPAD_PRO_129"])])
-        default: ([ScreenshotDisplayType.required(for: platform)], [])
+        case "IOS": [("iPhone", ["APP_IPHONE_67", "APP_IPHONE_65"]), ("iPad", ["APP_IPAD_PRO_3GEN_129", "APP_IPAD_PRO_129"])]
+        default: [(BuildPlatform.display(platform), ScreenshotDisplayType.required(for: platform))]
         }
     }
 
@@ -218,14 +224,17 @@ public struct ReleasePreflight: Sendable {
         }
         let usable = { (types: [String]) in primarySets.contains { types.contains($0.type) && $0.items.contains { $0.attributes.state != "FAILED" } } }
         let locale = primary ?? localizations[0].attributes.locale ?? "the primary locale"
-        let groups = Self.screenshotGroups(input.platform)
-        for types in groups.required where !usable(types) {
+        let families = Self.screenshotFamilies(input.platform)
+        let present = families.filter { usable($0.types) }
+        if present.isEmpty {
+            let types = families.flatMap(\.types)
             checks.append(PreflightCheck("screenshots", .failed, "\(locale): no screenshot for \(types.count == 1 ? types[0] : types.joined(separator: " or "))",
                                          fix: "add them to appstore/\(locale)/screenshots/\(types[0])/ and `xless store push`"))
-        }
-        for group in groups.ifSupported where !usable(group.types) {
-            checks.append(PreflightCheck("screenshots", .warning, "\(locale): no \(group.what) screenshot (\(group.types.joined(separator: " or ")))",
-                                         fix: "App Review needs them when the app runs on \(group.what)"))
+        } else {
+            for family in families where !usable(family.types) {
+                checks.append(PreflightCheck("screenshots", .warning, "\(locale): no \(family.what) screenshot (\(family.types.joined(separator: " or ")))",
+                                             fix: "App Review needs them when the app runs on \(family.what)"))
+            }
         }
         if !broken.isEmpty {
             checks.append(PreflightCheck("screenshots", .failed, "\(broken.count) screenshot\(broken.count == 1 ? " is" : "s are") not usable: \(broken.prefix(5).joined(separator: ", "))\(broken.count > 5 ? ", …" : "")",

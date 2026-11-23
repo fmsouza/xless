@@ -751,10 +751,10 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
 
   | Check | What it needs |
   |---|---|
-  | manifest | `appstore/` valid as `xless store validate` (without `--draft`) checks it, of this app, platform and version; skipped without a manifest |
+  | manifest | `appstore/` valid as `xless store validate` (without `--draft`) checks it, of this app, platform and version; skipped without a manifest, or when it describes another app or platform |
   | metadata | `xless store push` would send nothing: the listing on App Store Connect is the manifest's |
   | listing | per locale a name, description, keywords and support URL; a privacy policy URL; a primary category; the content rights declaration |
-  | screenshots | in the primary locale, a screenshot for the required display types (iPhone 6.7" or 6.5" for iOS; iPad 13" only warns); none failed |
+  | screenshots | in the primary locale, screenshots of the required display types (for iOS iPhone 6.7" or 6.5", or iPad 13": a missing family only warns, App Review needs it when the app runs there); none failed |
   | privacy | the App Privacy answers published: checked through an Apple ID web session kept by `xless auth login --keep`, else a warning (it has no API) |
   | pricing, availability | a price schedule, and at least one territory |
   | build, encryption | the build valid, not expired, of the version's string and platform; its export compliance answered |
@@ -781,7 +781,8 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
 - **`cancel`** withdraws the version from App Review (asks first, or `--yes`): its review submission is canceled, and
   the version can be changed and submitted again.
 - **`publish`** releases a version that App Review approved and that waits for a manual release (`pending developer
-  release`); a version already released is reported and nothing is sent. With a phased release, the phases start.
+  release`); a version already released, or approved and scheduled for a date, is reported and nothing is sent. With a
+  phased release, the phases start.
 - **`phased pause | resume | complete`**: a phased release gives the update to more users each day over 7 days.
   `pause` holds it (at most 30 days in all), `resume` goes on, `complete` gives it to everyone now. A phased release
   already in that state sends nothing; one that has not started (the version is not released) cannot be moved.

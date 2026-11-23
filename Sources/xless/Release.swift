@@ -72,9 +72,12 @@ struct ReleaseCLI {
 
     // MARK: create
 
-    func create(app argument: String, platform: String, versionString: String) async throws -> String {
+    /// - Parameter platform: nil: the app's only platform (iOS for an app with no version yet).
+    func create(app argument: String, platform wanted: String?, versionString: String) async throws -> String {
         let app = try await ASCApps(resources: resources).resolve(argument)
-        let versions = try await release.versions(app: app.id, platform: platform)
+        let all = try await release.versions(app: app.id)
+        let platform = try Self.platform(wanted, among: all, app: app)
+        let versions = all.filter { $0.platform == platform }
         let display = BuildPlatform.display(platform)
         if let same = versions.first(where: { $0.versionString == versionString }) {
             guard VersionState.editable.contains(same.state) || same.state == VersionState.readyForReview else {
@@ -110,6 +113,10 @@ struct ReleaseCLI {
         let b = try await ASCBuilds(resources: resources).resolve(reference, appID: t.app.id, platform: BuildPlatform(rawValue: t.platform))
         if let owner = b.appID, owner != t.app.id {
             throw XlessError(.account, "build \(b.id) is a build of \(b.bundleID ?? owner), not of \(t.app.bundleID); nothing was sent", fix: "pick one of `xless builds list --app \(t.app.bundleID)`")
+        }
+        if let p = b.platform, p != t.platform {
+            throw XlessError(.account, "build \(b.name) (\(b.id)) is a \(BuildPlatform.display(p)) build, not \(BuildPlatform.display(t.platform)); nothing was sent",
+                             fix: "pick a \(BuildPlatform.display(t.platform)) build (`xless builds list --app \(t.app.bundleID) --platform \(BuildPlatform.display(t.platform))`)")
         }
         if let v = b.appVersion, v != t.version.versionString {
             throw XlessError(.account, "build \(b.name) is version \(v), not \(t.version.versionString); nothing was sent",
@@ -218,7 +225,9 @@ struct ReleaseCLI {
         }
         if submissions.isEmpty { rows.append(["REVIEW SUBMISSION", "none"]) }
         var out = TextTable([t.app.bundleID, v.display], rows).rendered
-        let rejected = v.state.contains("REJECTED") || submissions.contains { $0.state == SubmissionState.unresolved || $0.items.contains { $0.state == "REJECTED" } }
+        // App Review's rejection (not the developer's own withdrawal), or an open submission it sent back.
+        let rejected = ["REJECTED", "METADATA_REJECTED", "INVALID_BINARY"].contains(v.state)
+            || submissions.contains { $0.state == SubmissionState.unresolved }
         if rejected {
             out += "\nApp Review rejected it. The App Store Connect API does not give App Review's reasons: Apple emails them to the account holder "
                 + "and the admins. Fix what they name, then `xless release submit` again.\n"
@@ -266,6 +275,10 @@ struct ReleaseCLI {
         let t = try await target(wanted, prefer: { $0.state == VersionState.pendingDeveloperRelease })
         let v = t.version
         struct Published: Encodable { var result: String; var versionID: String; var state: String }
+        if v.state == "PENDING_APPLE_RELEASE" {
+            if json { return try ASCOutput.json(Published(result: "unchanged", versionID: v.id, state: v.state)) }
+            return "\(t.name) is approved and scheduled: Apple releases it on \(v.attributes.earliestReleaseDate ?? "its date"); nothing was sent\n"
+        }
         if VersionState.released.contains(v.state) {
             if json { return try ASCOutput.json(Published(result: "unchanged", versionID: v.id, state: v.state)) }
             return "\(t.name) is already released (\(VersionState.display(v.state))); nothing was sent\n"
@@ -278,7 +291,10 @@ struct ReleaseCLI {
         }
         try await release.requestRelease(version: v.id)
         let phased = try? await release.phasedRelease(of: v.id)
-        if json { return try ASCOutput.json(Published(result: "released", versionID: v.id, state: v.state)) }
+        if json {
+            let now = (try? await release.version(id: v.id))?.state ?? v.state
+            return try ASCOutput.json(Published(result: "released", versionID: v.id, state: now))
+        }
         return "released \(t.name)\(phased != nil ? ": its phased release starts (`xless release phased pause` holds it)" : ""); it reaches the App Store within a few hours\n"
     }
 

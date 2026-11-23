@@ -101,6 +101,13 @@ private func routes(_ versions: [String], _ extra: [String: (Int, String)] = [:]
     #expect(try await cli(t).create(app: "123", platform: "IOS", versionString: "1.2") == "renamed ios version 1.1 (V2), the one being prepared, to 1.2\n")
     #expect(t.writes == ["PATCH /v1/appStoreVersions/V2"])
 
+    // No --platform: the app's only platform, never iOS added to a Mac app.
+    t = routes([version("V1", "1.0", "READY_FOR_DISTRIBUTION", platform: "MAC_OS")])
+    #expect(try await cli(t).create(app: "123", platform: nil, versionString: "1.1").hasPrefix("created macos version 1.1"))
+    #expect(String(data: t.requests.last!.httpBody!, encoding: .utf8)!.contains("\"MAC_OS\""))
+    t = routes([version("V1", "1.0", "READY_FOR_DISTRIBUTION", platform: "MAC_OS"), version("V0", "1.0", "READY_FOR_DISTRIBUTION")])
+    await #expect(throws: XlessError.self) { _ = try await cli(t).create(app: "123", platform: nil, versionString: "1.1") }
+
     t = routes([version("V1", "1.0", "READY_FOR_DISTRIBUTION")])
     await #expect(throws: XlessError.self) { _ = try await cli(t).create(app: "123", platform: "IOS", versionString: "1.0") }
     t = routes([version("V2", "1.1", "WAITING_FOR_REVIEW")])
@@ -121,6 +128,11 @@ private let build42 = #"{"data":{"type":"builds","id":"B1","attributes":{"versio
     let other = routes([version("V3", "1.2", "PREPARE_FOR_SUBMISSION")], ["/v1/builds/B1": (200, build42)])
     await #expect(throws: XlessError.self) { _ = try await cli(other).attach(wanted, build: .id("B1")) }
     #expect(other.writes.isEmpty)
+    let mac = routes([version("V4", "1.1", "PREPARE_FOR_SUBMISSION", platform: "MAC_OS")], ["/v1/builds/B1": (200, build42)])
+    do { _ = try await cli(mac).attach(wanted, build: .id("B1")); Issue.record("expected throw") } catch let e as XlessError {
+        #expect(e.cause == "build 1.1+42 (B1) is a ios build, not macos; nothing was sent")
+    }
+    #expect(mac.writes.isEmpty)
 }
 
 // MARK: submit
@@ -189,7 +201,9 @@ private let waiting = #"{"type":"reviewSubmissions","id":"S1","attributes":{"sta
     #expect(try await cli(released).publish(wanted) == "com.example.app 1.1 (ios) is already released (ready for distribution); nothing was sent\n")
     let editable = routes([version("V3", "1.2", "PREPARE_FOR_SUBMISSION")])
     await #expect(throws: XlessError.self) { _ = try await cli(editable).publish(wanted) }
-    #expect(released.writes.isEmpty && editable.writes.isEmpty)
+    let scheduled = routes([version("V2", "1.1", "PENDING_APPLE_RELEASE")])
+    #expect(try await cli(scheduled).publish(wanted).hasPrefix("com.example.app 1.1 (ios) is approved and scheduled"))
+    #expect(released.writes.isEmpty && editable.writes.isEmpty && scheduled.writes.isEmpty)
 }
 
 @Test func phasedReleaseMovesOnlyFromAStateThatAllowsIt() async throws {

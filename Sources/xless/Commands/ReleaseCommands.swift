@@ -102,7 +102,7 @@ struct ReleaseCreateCommand: AsyncParsableCommand {
 
     func run() async throws {
         let wanted = try target.wanted(manifestVersion: false)
-        try await runRelease(team, trace, json: output.json) { try await $0.create(app: wanted.app, platform: wanted.platform ?? "IOS", versionString: version) }
+        try await runRelease(team, trace, json: output.json) { try await $0.create(app: wanted.app, platform: wanted.platform, versionString: version) }
     }
 }
 
@@ -172,7 +172,9 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
     func run() async throws {
         let wanted = try target.wanted()
         let dir = target.directory.url
-        let manifest = target.manifest != nil ? dir : nil
+        // The manifest is checked only when it describes this app and platform (else the pre-flight says it skipped it).
+        let m = target.manifest
+        let manifest: URL? = if let m, wanted.platform == nil || wanted.platform == (m.platform ?? "IOS") { dir } else if m == nil, !FileManager.default.fileExists(atPath: dir.path) { dir } else { nil }
         var options = ReleaseCLI.SubmitOptions(build: try build.map(BuildReference.parse), release: try release.map { try ReleaseChoice.parse($0) },
                                                phased: phased, manifestDir: manifest, dryRun: dryRun)
         if manifest != nil, ManifestReader.read(dir).manifest.app.bundleID == nil {
@@ -184,11 +186,9 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
             // App Privacy has no API: checked only through a session `xless auth login --keep` kept; never a sign-in here.
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if AppleWebCLI.cache.info() != nil {
-                web = try await StorePrivacyCLI.webForStorePush(explicit: false, say: { _ in }) {
-                    let (s, t, _) = try await APIKeyWebCLI.open(team: session.team, verbose: verbose)
-                    return (session: s, transport: t)
+                do { web = try await ReleaseWeb.kept(team: session.team, verbose: verbose) } catch {
+                    StorePushCLI.standardError("note: the kept Apple ID web session could not be used (\(XlessError.wrapping(error, stage: .account).cause)); App Privacy is not checked")
                 }
-                if web == nil { StorePushCLI.standardError("note: the kept Apple ID web session could not be used; App Privacy is not checked") }
             }
             defer { web?.transport.invalidate() }
             let cli = ReleaseCLI(resources: session.resources, json: json)
@@ -198,6 +198,25 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
             return exit
         }
         if exit != 0 { throw ExitCode(exit) }
+    }
+}
+
+/// The Apple ID web session `xless auth login --keep` kept, for the privacy check; never a sign-in.
+enum ReleaseWeb {
+    static func kept(team: String?, verbose: Bool) async throws -> (session: AppleWebSession, transport: URLSessionAppleTransport) {
+        SecretScope.enter()
+        let (client, transport) = AppleWebCLI.client(verbose: verbose)
+        do {
+            let session = try await AppleWebSession.open(web: client, cache: AppleWebCLI.cache) {
+                throw XlessError(.account, "the kept session has expired", fix: "`xless auth login --keep 30m`")
+            }
+            let selected = try await session.selectTeam(team)
+            try await session.useProvider(for: selected, choose: AppleWebCLI.chooser())
+            return (session, transport)
+        } catch {
+            transport.invalidate()
+            throw error
+        }
     }
 }
 

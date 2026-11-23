@@ -157,9 +157,10 @@ public struct ReleaseSubmission: Sendable {
             }
         }
         var submissionID = found.holding?.id
+        var submittedState: String?
         if let holding = found.holding {
             steps.append((holding.state == SubmissionState.unresolved ? "submit review submission \(holding.id) again" : "submit review submission \(holding.id)",
-                          { _ = try await release.submit(holding.id) }))
+                          { submittedState = try await release.submit(holding.id).state }))
         } else {
             if let draft = found.draft {
                 // A draft of another version cannot take this one too.
@@ -169,7 +170,7 @@ public struct ReleaseSubmission: Sendable {
                 }
                 submissionID = draft.id
                 steps.append(("add version \(v.versionString) to draft review submission \(draft.id)", { _ = try await release.addItem(version: v.id, to: draft.id) }))
-                steps.append(("submit review submission \(draft.id)", { _ = try await release.submit(draft.id) }))
+                steps.append(("submit review submission \(draft.id)", { submittedState = try await release.submit(draft.id).state }))
             } else {
                 steps.append(("create a review submission", {
                     let created = try await release.createSubmission(app: r.app.id, platform: r.platform)
@@ -181,7 +182,7 @@ public struct ReleaseSubmission: Sendable {
                 }))
                 steps.append(("submit it", {
                     guard let id = submissionID else { return }
-                    _ = try await release.submit(id)
+                    submittedState = try await release.submit(id).state
                 }))
             }
         }
@@ -199,9 +200,7 @@ public struct ReleaseSubmission: Sendable {
             sent += 1
         }
         out.submissionID = submissionID
-        if let submissionID {
-            out.submissionState = try? await release.submissions(app: r.app.id, platform: r.platform).first { $0.id == submissionID }?.state
-        }
+        out.submissionState = submittedState.flatMap { $0.isEmpty ? nil : $0 }
         return out
     }
 

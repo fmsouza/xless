@@ -212,3 +212,52 @@ let draftSubmission = #"{"type":"reviewSubmissions","id":"S1","attributes":{"pla
     #expect(ReleaseSubmission.notSubmittable(version("PENDING_DEVELOPER_RELEASE")).fix == "`xless release publish` releases it")
     #expect(ReleaseSubmission.notSubmittable(version("READY_FOR_DISTRIBUTION")).cause == "version 1.1 (ios) is ready for distribution; nothing was sent")
 }
+
+@Test func aRejectedSubmissionIsSubmittedAgain() async throws {
+    var routes = releaseApp()
+    routes["/v1/appStoreVersions/V2/relationships/build"] = (200, #"{"data":{"type":"builds","id":"B1"}}"#)
+    routes["/v1/reviewSubmissions"] = (200, list([#"{"type":"reviewSubmissions","id":"S1","attributes":{"platform":"IOS","state":"UNRESOLVED_ISSUES"},"relationships":{"appStoreVersionForReview":{"data":{"type":"appStoreVersions","id":"V2"}}}}"#]))
+    routes["PATCH /v1/reviewSubmissions/S1"] = (200, single(#"{"type":"reviewSubmissions","id":"S1","attributes":{"state":"WAITING_FOR_REVIEW"}}"#))
+    let t = RoutedTransport(routes)
+    let rejected = ASCAppStoreVersion(resource: ASCAnyResource(type: "appStoreVersions", id: "V2", attributes: [
+        "platform": .string("IOS"), "versionString": .string("1.1"), "appVersionState": .string("REJECTED")]))
+    let out = try await ReleaseSubmission(resources: resources(t)).run(.init(app: fakeASCApp, platform: "IOS", version: rejected, today: today))
+    #expect(out.outcome == .submitted && out.steps == ["submit review submission S1 again"])
+    #expect(out.submissionState == "WAITING_FOR_REVIEW")
+    #expect(writes(t) == ["PATCH /v1/reviewSubmissions/S1"])
+}
+
+@Test func aStepThatFailsSaysHowToResume() async throws {
+    var routes = releaseApp()
+    routes["POST /v1/reviewSubmissionItems"] = (409, #"{"errors":[{"status":"409","code":"STATE_ERROR","title":"no","detail":"not now"}]}"#)
+    let t = RoutedTransport(routes)
+    let notes = Notes()
+    await #expect(throws: (any Error).self) { _ = try await submit(t, notes: notes) }
+    #expect(writes(t) == ["PATCH /v1/appStoreVersions/V2/relationships/build", "POST /v1/reviewSubmissions", "POST /v1/reviewSubmissionItems"])
+    #expect(notes.lines.last == "note: 2 of 4 steps were sent before add version 1.1 to it failed; re-run `xless release submit` to resume (it sends only what is missing)")
+}
+
+@Test func phasedAddsAPhasedReleaseOnlyWhenThereIsNone() async throws {
+    var routes = releaseApp()
+    routes["/v1/appStoreVersions/V2/appStoreVersionPhasedRelease"] = (200, single(nil))
+    var t = RoutedTransport(routes)
+    var out = try await submit(t, phased: true, dryRun: true)
+    #expect(out.steps.contains("add a phased release (7 days, from the release)"))
+    _ = try await submit(t, phased: true)
+    #expect(writes(t).contains("POST /v1/appStoreVersionPhasedReleases"))
+    routes["/v1/appStoreVersions/V2/appStoreVersionPhasedRelease"] = (200, single(#"{"type":"appStoreVersionPhasedReleases","id":"P1","attributes":{"phasedReleaseState":"ACTIVE"}}"#))
+    t = RoutedTransport(routes)
+    out = try await submit(t, phased: false, dryRun: true)
+    #expect(!out.steps.contains { $0.contains("phased") } && out.notes == ["the phased release has started (active); --no-phased leaves it"])
+}
+
+@Test func anIPadOnlyAppPassesWithAWarningAboutIPhone() async throws {
+    var routes = releaseApp()
+    routes["/v1/appStoreVersionLocalizations/VL1/appScreenshotSets"] = (200, list([#"{"type":"appScreenshotSets","id":"S1","attributes":{"screenshotDisplayType":"APP_IPAD_PRO_3GEN_129"}}"#]))
+    let t = RoutedTransport(routes)
+    let report = try await ReleasePreflight(resources: resources(t)).run(.init(app: fakeASCApp, platform: "IOS", version: releaseVersion,
+                                                                                build: try await build(t), manifestDir: nil, today: today))
+    #expect(report.passed, "\(report.text)")
+    #expect(report.checks.contains { $0.name == "screenshots" && $0.status == .warning && $0.message.hasPrefix("en-US: no iPhone screenshot") })
+    #expect(report.checks[0].message == "no manifest for this app and platform: the listing is checked on App Store Connect only")
+}
