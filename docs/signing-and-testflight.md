@@ -92,7 +92,9 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   exits with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove what is left with
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
-  warning. The exit code is xless's (17 for a failed upload or delivery).
+  warning. The exit code is xless's (17 for a failed upload or delivery). Afterwards,
+  [`xless builds`](apple-account.md#xless-builds) lists the build, waits for its processing, answers its export
+  compliance and expires old builds.
 - **One run per work copy.** A run holds a lock on the work copy it builds (the project directory; for an overlay,
   `~/.cache/xless/work/<overlay name>`, or its work volume for React Native in Docker) in `~/.cache/xless/locks`. A
   second run on the same work copy is refused (exit 2) while the first is running; runs on other work copies are not

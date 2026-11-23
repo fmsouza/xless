@@ -13,8 +13,10 @@ profiles of every type, [`xless app-groups` and `xless icloud-containers`](#xles
 which register app groups and iCloud containers and assign them to bundle IDs, [`xless keys`](#xless-keys), which
 creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with their `.p8` in the secret store,
 [`xless apps`](#xless-apps), which lists, shows, updates and creates app records, [`xless store`](#xless-store), which
-keeps the App Store listing in an `appstore/` directory, and [`xless api`](#xless-api), which calls any documented App
-Store Connect endpoint. More commands (TestFlight, releases) follow the conventions on this page.
+keeps the App Store listing in an `appstore/` directory, [`xless builds`](#xless-builds), which lists uploaded builds,
+waits for their processing, answers their export compliance and expires them, and [`xless api`](#xless-api), which
+calls any documented App Store Connect endpoint. More commands (TestFlight, releases) follow the conventions on this
+page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -556,6 +558,51 @@ agreement, price and availability, App Privacy) lives in an `appstore/` director
 except App Privacy, which has no API: `store privacy pull|push`, and `push` when `app.yml` has `privacy:`, use the
 Apple ID web session ([App Privacy](appstore-manifest.md#app-privacy-xless-store-privacy)). `pull` never reads the
 demo account's password, and `push` sends it from the secret store only when it must.
+
+## `xless builds`
+
+```sh
+xless builds list --app com.example.app                        # newest first; expired builds left out
+xless builds list --app com.example.app --state processing,failed --app-version 1.2.0
+xless builds list --expired                                     # only the expired ones, every app
+xless builds show 1.2.0+42 --app com.example.app               # state, expiry, export compliance, TestFlight states
+xless builds wait 1.2.0+42 --app com.example.app --timeout 2h  # until processing ends
+xless builds update 1.2.0+42 --app com.example.app --uses-non-exempt-encryption false
+xless builds update 1.2.0+42 --app com.example.app --encryption-declaration 1a2b3c4d
+xless builds expire 1.1.0+17 --app com.example.app             # asks first
+```
+
+After [`xless upload`](signing-and-testflight.md) a build is processed by App Store Connect before TestFlight or a
+release can use it. `builds` reads and changes builds with the API key (`/v1/builds`; App Manager is enough). A build
+is named by its ID (from `list`) or by its version and build number, `<version>+<build number>` (`1.2.0+42`; a
+`build: dated` number reads `1.2.0+1.2.0.2026112301`). That lookup covers every app the key sees, expired builds
+included; when two apps or two platforms have the same numbers, it is an error naming each, and `--app` (app ID or
+bundle identifier) or `--platform` (`ios`, `macos`, `tvos`, `visionos`) narrows it. A bare build number is refused: it
+could be an ID. With a build ID, `--app` is checked: a build of another app is refused.
+
+- `list` shows the builds most recently uploaded first (at most `--limit`, default 50; a note says when there may be
+  more): ID, app (without `--app`), version, build number, platform, state (`processing`, `valid`, `invalid`, `failed`,
+  or `expired`), whether it uses non-exempt encryption (`yes`, `no` or `not answered`), and the upload and expiry
+  dates. Builds that expired are left out; `--expired` lists only them. `--app-version`, `--build-number`,
+  `--platform` and `--state` (repeatable or comma-separated) filter on App Store Connect's side.
+- `show` adds the minimum OS, the audience, the encryption declaration and the TestFlight states, and says how to
+  answer export compliance when nothing answers it.
+- `wait` reads the build every 30 seconds until its processing ends, saying each state change on standard error. A
+  `<version>+<build number>` that is not visible yet (a build just uploaded) is looked up until it appears. It exits
+  0 once the build is valid; an invalid or failed build, or the end of `--timeout` (`90s`, `30m`, `2h` or seconds;
+  default `60m`, at most `24h`), is an error. It only reads: Ctrl-C stops it (exit 130), and nothing is left behind.
+- `update` answers export compliance for a build uploaded without `ITSAppUsesNonExemptEncryption` in its Info.plist
+  (Apple refuses the answer when the Info.plist gives it): `--uses-non-exempt-encryption true|false`
+  (`PATCH /v1/builds/{id}`), or `--encryption-declaration <id>` to attach one of the app's existing encryption
+  declarations (`PATCH /v1/builds/{id}/relationships/appEncryptionDeclaration`; an ID that is not one of the app's is
+  refused with the list of its declarations; [`xless store push`](appstore-manifest.md) creates them from `app.yml`).
+  Only what differs from the build is sent.
+- `expire` asks first (or needs `--yes`): testers can no longer install the build, and it cannot be undone. An expired
+  build is reported and nothing is sent.
+
+With `--json`, `list` prints `{"data": [builds], "included": [versions and apps]}` and `show`, `wait`, `update` and
+`expire` print `{"data": build, "included": [...]}`: App Store Connect's resources, the build's `version` being its
+build number and its `preReleaseVersion` (in `included`) its version and platform.
 
 ## JSON output
 
