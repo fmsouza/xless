@@ -257,3 +257,47 @@ private let pem = "-----BEGIN PRIVATE KEY-----\nMIG\"quote\\back/slash\té\n----
     #expect(!fds.contains("open-in-xless"), "\(fds)")
     #endif
 }
+
+/// A stand-in for `pass`: entries in clear under $PASSWORD_STORE_DIR (what the reference helper needs of it).
+private let stubPass = #"""
+set -eu
+d=$PASSWORD_STORE_DIR
+case "$1" in
+  insert) mkdir -p "$(dirname "$d/$4")"; echo "Enter contents of $4:"; cat > "$d/$4.gpg" ;;
+  show) [ -f "$d/$2.gpg" ] || exit 1; cat "$d/$2.gpg" ;;
+  rm) rm -rf "${d:?}/$4" ;;
+esac
+"""#
+
+@Test func theShippedPassHelperKeepsWhatXlessGivesIt() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    let shipped = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("scripts/credential-helpers/xless-credential-pass")
+    try dir.script("pass", try String(contentsOf: shipped, encoding: .utf8).replacingOccurrences(of: "#!/bin/sh\n", with: ""))
+    let tools = dir.root.appendingPathComponent("tools")
+    try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+    let pass = tools.appendingPathComponent("pass")
+    try Data("#!/bin/sh\n\(stubPass)\n".utf8).write(to: pass)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pass.path)
+    var env = dir.env
+    env["PATH"] = "\(dir.bin.path):\(tools.path):/usr/bin:/bin"
+    env["PASSWORD_STORE_DIR"] = dir.home.appendingPathComponent("pw").path
+    let store = HelperSecretStore(helper: try CredentialHelper.find(name: "pass", env: env))
+
+    let tricky = pem + "\u{1}\u{1f}\u{7f}\r\n\n"
+    let meta = VaultEntry.Metadata(teamID: "ABCDE12345", certificateID: "C1", expires: Date(timeIntervalSince1970: 1_900_000_000))
+    try store.update(reason: "test") { _ in
+        [.add(name: "XLESS_DIST_KEY@ABCDE12345", kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: tricky)),
+         .add(name: "XLESS_DEMO_PASSWORD", kind: .password, metadata: .init(), secret: SecretBytes(utf8: ""))]
+    }
+    let catalog = try store.existingCatalog()
+    #expect(catalog.entries.map(\.name).sorted() == ["XLESS_DEMO_PASSWORD", "XLESS_DIST_KEY@ABCDE12345"])
+    let entry = try #require(catalog.entry(named: "XLESS_DIST_KEY@ABCDE12345"))
+    #expect(entry.kind == .signingKey && entry.metadata == meta)
+    #expect(try store.secret(entry, in: catalog, reason: "test").utf8String() == tricky)
+    #expect(try store.secret(try #require(catalog.entry(named: "XLESS_DEMO_PASSWORD")), in: catalog, reason: "test").isEmpty)
+    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup("XLESS_DIST_KEY", stage: .sign) == tricky)
+    try store.update(reason: "test") { _ in [.remove(name: "XLESS_DEMO_PASSWORD")] }
+    #expect(try store.existingCatalog().entries.map(\.name) == ["XLESS_DIST_KEY@ABCDE12345"])
+}
