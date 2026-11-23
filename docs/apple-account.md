@@ -15,8 +15,9 @@ creates and revokes APNs, Sign in with Apple, DeviceCheck and MusicKit keys with
 [`xless apps`](#xless-apps), which lists, shows, updates and creates app records, [`xless store`](#xless-store), which
 keeps the App Store listing in an `appstore/` directory, [`xless builds`](#xless-builds), which lists uploaded builds,
 waits for their processing, answers their export compliance and expires them, [`xless users`](#xless-users), which
-invites, updates and removes the team's App Store Connect users, and [`xless api`](#xless-api), which calls any
-documented App Store Connect endpoint. More commands (TestFlight, releases) follow the conventions on this page.
+invites, updates and removes the team's App Store Connect users, [`xless testflight`](#xless-testflight), which
+manages TestFlight groups and testers, delivers builds and runs external testing, and [`xless api`](#xless-api), which
+calls any documented App Store Connect endpoint. More commands (releases) follow the conventions on this page.
 
 They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (or their `_FILE` variables), else
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
@@ -646,6 +647,77 @@ With `--json`, `list` and `invitations list` print `{"data": [users or invitatio
 prints `{"data": user, "included": [apps]}`, `update` prints `{"data": user, "included": []}`, `invite` prints
 `{"result": "invited" | "existing-user" | "existing-invitation", "data": resource}`, `remove` prints
 `{"removed": user}` and `invitations cancel` prints `{"cancelled": invitation}`.
+
+## `xless testflight`
+
+```sh
+xless testflight groups list --app com.example.app            # internal/external, automatic distribution, public link
+xless testflight groups create "Public Beta" --external --app com.example.app
+xless testflight groups create "QA" --all-builds --app com.example.app      # internal, gets every build
+xless testflight groups update "QA" --name "QA team" --no-feedback --app com.example.app
+xless testflight groups delete "QA team" --app com.example.app              # asks first
+xless testflight testers list --app com.example.app --group "Public Beta"
+xless testflight testers add ada@example.com grace@example.com --group "Public Beta" --app com.example.app
+xless testflight testers remove ada@example.com --group "Public Beta" --app com.example.app   # asks first
+xless testflight testers invite grace@example.com --app com.example.app     # Apple emails the invitation again
+xless testflight builds add 1.2.0+42 --group "QA" --group "Public Beta" --app com.example.app
+xless testflight builds remove 1.2.0+41 --group "Public Beta" --app com.example.app           # asks first
+xless testflight whats-new set 1.2.0+42 --app com.example.app --locale en-US --file notes.txt
+xless testflight beta-info set --app com.example.app --description-file beta.txt --feedback-email beta@example.com \
+  --privacy-policy-url https://example.com/privacy --contact-first-name Ada --contact-last-name Lovelace \
+  --contact-email review@example.com --contact-phone "+1 555 0100" --demo-account-name demo --demo-required
+xless testflight beta-info show --app com.example.app
+xless testflight beta-review submit 1.2.0+42 --app com.example.app
+xless testflight beta-review status 1.2.0+42 --app com.example.app
+xless testflight public-link enable "Public Beta" --app com.example.app --limit 500
+xless testflight public-link disable "Public Beta" --app com.example.app    # asks first
+```
+
+TestFlight with the API key (`/v1/betaGroups`, `/v1/betaTesters`, `/v1/betaTesterInvitations`, `/v1/betaAppLocalizations`,
+`/v1/betaAppReviewDetails`, `/v1/betaLicenseAgreements`, `/v1/betaAppReviewSubmissions`; App Manager is enough). `--app`
+(an app ID or a bundle identifier) names the app; a group is named by its exact, case-sensitive name or its ID; a build
+by its ID or `<version>+<build number>`, as in [`xless builds`](#xless-builds) (`--app` and `--platform` narrow it).
+
+- **Groups.** `create` makes an internal group unless `--external` is given; `--all-builds` (internal only) gives the
+  group every build (automatic distribution). Whether a group is internal or external, and its automatic distribution,
+  cannot change afterwards. A group of that name already there is reported and nothing is sent (a group of the other
+  kind is an error). `update` renames a group or turns its feedback on or off, sending only what differs. `delete`
+  asks first (or needs `--yes`).
+- **Testers.** `add` adds each address to the group: someone already in it is reported and nothing is sent; an
+  existing tester is linked to the group; a new one is created with it (sent once; Apple emails them). The testers of an
+  internal group must be App Store Connect users of the team: an address that is not one is refused, with the
+  [`xless users invite`](#xless-users) to run. That check reads `/v1/users`, which needs an Admin key; without one, a
+  note says so and Apple decides. `--first-name` and `--last-name` name a new tester (one address at a time).
+  `remove` takes testers out of a group, or without `--group` out of every group and build of the app; it asks first.
+  `invite` has Apple email testers of the app their invitation again. Addresses are compared without regard to case.
+- **Builds.** `builds add` adds the build to the groups that lack it (groups that have it are left alone); an external
+  group's testers get it once Apple approves it. `builds remove` asks first. `whats-new set` sets the build's What to
+  Test for `--locale` (default `en-US`, at most 4000 characters, `--text` or `--file`); the same text sends nothing.
+  `whats-new show` prints every locale's.
+- **Beta information.** `beta-info set` sets, with only what differs: the texts of `--locale` (`--description` or
+  `--description-file`, `--feedback-email`, `--marketing-url`, `--privacy-policy-url`), the beta App Review details
+  (`--contact-first-name`, `--contact-last-name`, `--contact-phone`, `--contact-email`, `--review-notes`,
+  `--demo-account-name`, `--[no-]demo-required`) and the beta license agreement (`--license-file`). `""` clears a text.
+  The demo account's **password is never an option**: it comes from the secret `--demo-password-secret-name` names
+  (`XLESS_DEMO_PASSWORD` by default: the environment, `NAME_FILE`, or the [secret store](secrets.md)). Apple never
+  gives it back, so it is sent only when the demo account is required and had no name, its name changes, it becomes
+  required, or with `--resend-demo-account`; it is hidden from `--verbose` traces and scrubbed from Apple's errors. A
+  required demo account without a name is refused. `beta-info show` prints all of it, never the password.
+- **Beta app review.** `beta-review submit` submits a processed (valid, unexpired) build; a build already submitted
+  is reported with its state and nothing is sent. Apple reviews it with the beta information above and the build's
+  What to Test. `beta-review status` shows the review state (`waiting for review`, `in review`, `rejected`,
+  `approved`) and the build's external testing state.
+- **Public links.** `public-link enable` turns on an external group's public link (or changes its limit:
+  `--limit` 1–10000, `--no-limit`) and prints it; `show` prints it; `disable` asks first. Internal groups have none.
+
+With `xless ship`, the [`testflight:` block of xless.yml](xless-yml.md#testflight) does the same in one run: testers for
+the internal groups, and with `external:` the external groups, their testers, the beta information and the submission.
+
+With `--json`, `groups list` prints `{"data": [groups], "included": []}`, `testers list` `{"data": [testers],
+"included": [groups]}`, `groups create` and `beta-review submit` `{"result": "created" | "existing" | "submitted", "data":
+resource}`, `testers add` `{"results": [{"email", "result": "created" | "added" | "already-in-group", "data"}]}`,
+`beta-info show` and `set` `{"localizations": [...], "reviewDetail": ..., "licenseAgreement": ...}`, `beta-review status`
+`{"build", "submission", "externalBuildState"}`, and the other commands the resource they changed.
 
 ## JSON output
 

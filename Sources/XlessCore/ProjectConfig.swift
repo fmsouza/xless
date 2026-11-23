@@ -15,23 +15,113 @@ public struct PlatformConfig: Sendable, Equatable, Decodable {
     }
 }
 
-/// Optional `testflight:` block: deliver each uploaded build to internal TestFlight groups.
+/// Optional `testflight:` block: deliver each uploaded build to TestFlight groups, add testers to them, and run external
+/// testing (beta app review).
 public struct TestFlightConfig: Sendable, Equatable, Decodable {
+    /// Internal groups (created as internal with automatic distribution when missing).
     public var groups: [String]
     public var whatToTest: String?
-    /// Locale of the "What to Test" text.
+    /// Locale of the "What to Test" text (and of `external.info`).
     public var locale: String
+    /// Added to every internal group of `groups`: App Store Connect users of the team.
+    public var testers: [TestFlightTester]
+    public var external: ExternalTestFlight?
 
-    public init(groups: [String], whatToTest: String? = nil, locale: String = "en-US") {
-        self.groups = groups; self.whatToTest = whatToTest; self.locale = locale
+    public init(groups: [String], whatToTest: String? = nil, locale: String = "en-US", testers: [TestFlightTester] = [],
+                external: ExternalTestFlight? = nil) {
+        self.groups = groups; self.whatToTest = whatToTest; self.locale = locale; self.testers = testers; self.external = external
     }
 
-    enum CodingKeys: String, CodingKey { case groups, whatToTest, locale }
+    enum CodingKeys: String, CodingKey { case groups, whatToTest, locale, testers, external }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        groups = try c.decode([String].self, forKey: .groups)
+        groups = try c.decodeIfPresent([String].self, forKey: .groups) ?? []
         whatToTest = try c.decodeIfPresent(String.self, forKey: .whatToTest)
         locale = try c.decodeIfPresent(String.self, forKey: .locale) ?? "en-US"
+        testers = try c.decodeIfPresent([TestFlightTester].self, forKey: .testers) ?? []
+        external = try c.decodeIfPresent(ExternalTestFlight.self, forKey: .external)
+    }
+}
+
+/// A tester in xless.yml: an email address, or `{email, firstName, lastName}`.
+public struct TestFlightTester: Sendable, Equatable, Decodable {
+    public var email: String
+    public var firstName: String?
+    public var lastName: String?
+
+    public init(email: String, firstName: String? = nil, lastName: String? = nil) {
+        self.email = email; self.firstName = firstName; self.lastName = lastName
+    }
+
+    enum CodingKeys: String, CodingKey { case email, firstName, lastName }
+    public init(from decoder: Decoder) throws {
+        if let text = try? decoder.singleValueContainer().decode(String.self) { self.init(email: text); return }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(email: try c.decode(String.self, forKey: .email), firstName: try c.decodeIfPresent(String.self, forKey: .firstName),
+                  lastName: try c.decodeIfPresent(String.self, forKey: .lastName))
+    }
+}
+
+/// `testflight.external`: external groups, their testers, the beta information App Review reads, and the submission.
+public struct ExternalTestFlight: Sendable, Equatable, Decodable {
+    /// External groups (created as external when missing).
+    public var groups: [String]
+    /// Added to every group of `groups`.
+    public var testers: [TestFlightTester]
+    /// Submit the build for beta app review (default true): external testers get a build only once Apple approves it.
+    public var submit: Bool
+    public var info: Info?
+    public var review: Review?
+
+    public struct Info: Sendable, Equatable, Decodable {
+        public var description: String?
+        public var feedbackEmail: String?
+        public var marketingUrl: String?
+        public var privacyPolicyUrl: String?
+        public init(description: String? = nil, feedbackEmail: String? = nil, marketingUrl: String? = nil, privacyPolicyUrl: String? = nil) {
+            self.description = description; self.feedbackEmail = feedbackEmail; self.marketingUrl = marketingUrl; self.privacyPolicyUrl = privacyPolicyUrl
+        }
+    }
+
+    public struct Review: Sendable, Equatable, Decodable {
+        public struct Contact: Sendable, Equatable, Decodable {
+            public var firstName: String?
+            public var lastName: String?
+            public var phone: String?
+            public var email: String?
+            public init(firstName: String? = nil, lastName: String? = nil, phone: String? = nil, email: String? = nil) {
+                self.firstName = firstName; self.lastName = lastName; self.phone = phone; self.email = email
+            }
+        }
+        public struct DemoAccount: Sendable, Equatable, Decodable {
+            public var name: String?
+            /// The secret holding the password (never the password itself); default XLESS_DEMO_PASSWORD.
+            public var passwordSecret: String?
+            public var required: Bool?
+            public init(name: String? = nil, passwordSecret: String? = nil, required: Bool? = nil) {
+                self.name = name; self.passwordSecret = passwordSecret; self.required = required
+            }
+        }
+        public var contact: Contact?
+        public var notes: String?
+        public var demoAccount: DemoAccount?
+        public init(contact: Contact? = nil, notes: String? = nil, demoAccount: DemoAccount? = nil) {
+            self.contact = contact; self.notes = notes; self.demoAccount = demoAccount
+        }
+    }
+
+    public init(groups: [String], testers: [TestFlightTester] = [], submit: Bool = true, info: Info? = nil, review: Review? = nil) {
+        self.groups = groups; self.testers = testers; self.submit = submit; self.info = info; self.review = review
+    }
+
+    enum CodingKeys: String, CodingKey { case groups, testers, submit, info, review }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        groups = try c.decodeIfPresent([String].self, forKey: .groups) ?? []
+        testers = try c.decodeIfPresent([TestFlightTester].self, forKey: .testers) ?? []
+        submit = try c.decodeIfPresent(Bool.self, forKey: .submit) ?? true
+        info = try c.decodeIfPresent(Info.self, forKey: .info)
+        review = try c.decodeIfPresent(Review.self, forKey: .review)
     }
 }
 
@@ -208,17 +298,17 @@ extension ProjectConfig {
     }
 
     private static func validate(_ tf: TestFlightConfig) throws {
-        if tf.groups.isEmpty {
-            throw XlessError(.config, "testflight.groups is empty", fix: "list at least one internal TestFlight group, e.g. groups: [\"Internal\"], or remove the testflight block")
+        let external = tf.external?.groups ?? []
+        if tf.external != nil, external.isEmpty {
+            throw XlessError(.config, "testflight.external.groups is empty", fix: "list at least one external TestFlight group, e.g. groups: [\"Beta\"], or remove testflight.external")
         }
-        var seen = Set<String>()
-        for g in tf.groups {
-            if g.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                throw XlessError(.config, "testflight.groups contains an empty name", fix: "give every group a name")
-            }
-            if !seen.insert(g).inserted {
-                throw XlessError(.config, "testflight.groups lists '\(g)' twice", fix: "remove the duplicate")
-            }
+        if tf.groups.isEmpty, external.isEmpty {
+            throw XlessError(.config, "testflight.groups is empty", fix: "list at least one internal TestFlight group, e.g. groups: [\"Internal\"] (or external groups in testflight.external.groups), or remove the testflight block")
+        }
+        try validateNames(tf.groups, key: "testflight.groups")
+        try validateNames(external, key: "testflight.external.groups")
+        if let both = tf.groups.first(where: external.contains) {
+            throw XlessError(.config, "'\(both)' is in both testflight.groups and testflight.external.groups", fix: "a group is either internal or external: keep it in one list")
         }
         if let w = tf.whatToTest {
             if w.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -231,5 +321,70 @@ extension ProjectConfig {
         if tf.locale.wholeMatch(of: /[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*/) == nil {
             throw XlessError(.config, "testflight.locale '\(tf.locale)' is not a locale code", fix: "use e.g. en-US")
         }
+        if !tf.testers.isEmpty, tf.groups.isEmpty {
+            throw XlessError(.config, "testflight.testers has no internal group to go to", fix: "list the internal groups in testflight.groups, or move the testers to testflight.external.testers")
+        }
+        try validateTesters(tf.testers, key: "testflight.testers")
+        guard let ext = tf.external else { return }
+        try validateTesters(ext.testers, key: "testflight.external.testers")
+        if ext.submit, tf.whatToTest == nil {
+            throw XlessError(.config, "testflight.external submits builds for beta app review, which needs the build's What to Test",
+                             fix: "add testflight.whatToTest, or set testflight.external.submit: false")
+        }
+        if let info = ext.info {
+            if let d = info.description, d.count > 4000 {
+                throw XlessError(.config, "testflight.external.info.description is \(d.count) characters; App Store Connect allows at most 4000", fix: "shorten the text")
+            }
+            if let e = info.feedbackEmail, !looksLikeEmail(e) {
+                throw XlessError(.config, "testflight.external.info.feedbackEmail '\(e)' is not an email address", fix: "use e.g. beta@example.com")
+            }
+            for (key, url) in [("marketingUrl", info.marketingUrl), ("privacyPolicyUrl", info.privacyPolicyUrl)] {
+                if let url, !url.isEmpty, !(url.hasPrefix("https://") || url.hasPrefix("http://")) {
+                    throw XlessError(.config, "testflight.external.info.\(key) '\(url)' is not an http(s) URL", fix: "use e.g. https://example.com")
+                }
+            }
+        }
+        if let review = ext.review {
+            if let e = review.contact?.email, !looksLikeEmail(e) {
+                throw XlessError(.config, "testflight.external.review.contact.email '\(e)' is not an email address", fix: "use e.g. review@example.com")
+            }
+            if let demo = review.demoAccount {
+                if demo.required == true, (demo.name ?? "").trimmingCharacters(in: .whitespaces).isEmpty {
+                    throw XlessError(.config, "testflight.external.review.demoAccount is required but has no name", fix: "add demoAccount.name: the account App Review signs in with")
+                }
+                if let secret = demo.passwordSecret, SecretEnvironment.isKeyOrToken(secret) {
+                    throw XlessError(.config, "testflight.external.review.demoAccount.passwordSecret \(secret) names a key or token, not a password",
+                                     fix: "keep the demo password in its own secret, e.g. XLESS_DEMO_PASSWORD (`xless secrets import XLESS_DEMO_PASSWORD --file <file> --kind password`)")
+                }
+            }
+        }
+    }
+
+    private static func validateNames(_ names: [String], key: String) throws {
+        var seen = Set<String>()
+        for g in names {
+            if g.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw XlessError(.config, "\(key) contains an empty name", fix: "give every group a name")
+            }
+            if !seen.insert(g).inserted {
+                throw XlessError(.config, "\(key) lists '\(g)' twice", fix: "remove the duplicate")
+            }
+        }
+    }
+
+    private static func validateTesters(_ testers: [TestFlightTester], key: String) throws {
+        var seen = Set<String>()
+        for t in testers {
+            guard looksLikeEmail(t.email), !t.email.contains(",") else {
+                throw XlessError(.config, "\(key) has '\(t.email)', which is not an email address", fix: "use e.g. grace@example.com")
+            }
+            if !seen.insert(t.email.lowercased()).inserted {
+                throw XlessError(.config, "\(key) lists \(t.email) twice", fix: "remove the duplicate")
+            }
+        }
+    }
+
+    private static func looksLikeEmail(_ text: String) -> Bool {
+        text.wholeMatch(of: /[^@\s\/]+@[^@\s\/.]+(\.[^@\s\/.]+)+/) != nil
     }
 }

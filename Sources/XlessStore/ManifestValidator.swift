@@ -17,12 +17,7 @@ public enum ManifestValidator {
 
     /// Whether a `passwordSecret` names one of xless's other secrets, or something named like a key or token: `store push`
     /// would send its value to App Store Connect as the demo password, where App Review (and the app's team) can read it.
-    public static func isReservedSecret(_ name: String) -> Bool {
-        let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
-        if base == "XLESS_DEMO_PASSWORD" { return false }
-        if SecretEnvironment.isSecret(base) || base.hasPrefix("ASC_") { return true }
-        return ["_KEY", "_TOKEN", "_P8", "_PEM", "_SECRET"].contains { base.hasSuffix($0) || base.hasSuffix($0 + "_FILE") }
-    }
+    public static func isReservedSecret(_ name: String) -> Bool { SecretEnvironment.isKeyOrToken(name) }
 
     /// What is wrong with app.yml's `privacy` section (`path`: app.yml as issues name it). IDs are checked for their
     /// shape; one outside xless's lists is a warning (Apple adds some), `store push` checks them against Apple's own.

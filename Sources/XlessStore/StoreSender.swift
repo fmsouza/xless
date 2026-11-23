@@ -158,18 +158,7 @@ public struct StoreSender: Sendable {
     }
 
     /// Apple's error without the secret's value, wherever its answer repeated it.
-    static func scrub(_ error: ASCError, _ value: String) -> ASCError {
-        guard !value.isEmpty else { return error }
-        var e = error
-        func clean(_ s: String?) -> String? { s?.replacingOccurrences(of: value, with: HTTPTrace.placeholder) }
-        e.items = error.items.map { item in
-            var i = item
-            i.title = clean(i.title); i.detail = clean(i.detail); i.code = clean(i.code)
-            if let source = i.source { i.source = .init(pointer: clean(source.pointer), parameter: clean(source.parameter)) }
-            return i
-        }
-        return e
-    }
+    static func scrub(_ error: ASCError, _ value: String) -> ASCError { error.scrubbing(value) }
 
     struct Created: Decodable {
         struct Data: Decodable { var id: String }

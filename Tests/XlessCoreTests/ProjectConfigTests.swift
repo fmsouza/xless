@@ -143,6 +143,57 @@ func rejectsInvalidTestflight(extra: String) {
     #expect(throws: XlessError.self) { try ProjectConfig.parse(yaml: validYAML + "\n" + extra + "\n") }
 }
 
+@Test func parsesTestersAndExternalTesting() throws {
+    let c = try ProjectConfig.parse(yaml: validYAML + """
+
+    testflight:
+      groups: [Internal]
+      whatToTest: Try the editor
+      testers: [ada@example.com, {email: grace@example.com, firstName: Grace, lastName: Hopper}]
+      external:
+        groups: ["Public Beta"]
+        testers: [ext@example.com]
+        info: {description: A beta, feedbackEmail: beta@example.com, privacyPolicyUrl: "https://example.com/privacy"}
+        review:
+          contact: {firstName: Ada, lastName: Lovelace, phone: "+1 555 0100", email: review@example.com}
+          notes: Sign in with the demo account
+          demoAccount: {name: demo, required: true}
+    """)
+    let tf = try #require(c.testflight)
+    #expect(tf.testers == [TestFlightTester(email: "ada@example.com"), TestFlightTester(email: "grace@example.com", firstName: "Grace", lastName: "Hopper")])
+    let ext = try #require(tf.external)
+    #expect(ext.groups == ["Public Beta"] && ext.testers == [TestFlightTester(email: "ext@example.com")] && ext.submit)
+    #expect(ext.info?.privacyPolicyUrl == "https://example.com/privacy")
+    #expect(ext.review?.demoAccount == .init(name: "demo", passwordSecret: nil, required: true))
+}
+
+@Test func anEmptyExternalBlockNamesItsOwnKey() {
+    do { _ = try ProjectConfig.parse(yaml: validYAML + "\ntestflight: { external: { groups: [] } }\n"); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.cause == "testflight.external.groups is empty") }
+    catch { Issue.record("\(error)") }
+}
+
+@Test func externalGroupsAloneAreEnough() throws {
+    let c = try ProjectConfig.parse(yaml: validYAML + "\ntestflight: { external: { groups: [Beta], submit: false } }\n")
+    #expect(c.testflight?.groups == [] && c.testflight?.external?.submit == false)
+}
+
+@Test(arguments: [
+    "testflight: { external: { groups: [] } }",
+    "testflight: { groups: [A], external: { groups: [A], submit: false } }",
+    "testflight: { groups: [A], testers: [nope] }",
+    "testflight: { groups: [A], testers: [a@example.com, A@example.com] }",
+    "testflight: { external: { groups: [B], submit: false }, testers: [a@example.com] }",
+    "testflight: { external: { groups: [B] } }",
+    "testflight: { whatToTest: x, external: { groups: [B], info: { feedbackEmail: nope } } }",
+    "testflight: { whatToTest: x, external: { groups: [B], info: { privacyPolicyUrl: example.com } } }",
+    "testflight: { whatToTest: x, external: { groups: [B], review: { demoAccount: { required: true } } } }",
+    "testflight: { whatToTest: x, external: { groups: [B], review: { demoAccount: { name: d, passwordSecret: ASC_KEY_P8 } } } }",
+])
+func rejectsInvalidTestersAndExternalTesting(extra: String) {
+    #expect(throws: XlessError.self) { try ProjectConfig.parse(yaml: validYAML + "\n" + extra + "\n") }
+}
+
 @Test func rejectsOverlongWhatToTest() {
     let long = String(repeating: "x", count: 4001)
     #expect(throws: XlessError.self) { try ProjectConfig.parse(yaml: validYAML + "\ntestflight: { groups: [A], whatToTest: \(long) }\n") }

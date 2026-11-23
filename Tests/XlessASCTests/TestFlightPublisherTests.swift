@@ -292,3 +292,139 @@ private func query(_ r: URLRequest, _ name: String) -> String? {
     catch is XlessError {}
     #expect(t.requests.count == 3)
 }
+
+// MARK: testers and external testing (#100)
+
+private let emptyList = #"{"data":[],"links":{"self":"x"}}"#
+
+@Test func addsTheConfiguredTestersToEachInternalGroup() async throws {
+    let t = MockTransport([
+        (200, appJSON),
+        (200, usersListJSON([userJSON("U1", "ada@example.com")])),
+        (200, groups(group("G1", "Internal"))),
+        (204, ""),
+        (200, #"{"data":\#(group("G1", "Internal"))}"#),
+        (200, emptyList),                                               // the group's testers
+        (200, emptyList),                                               // no beta tester with that address yet
+        (201, #"{"data":\#(betaTesterJSON("T1", "ada@example.com"))}"#),
+        (200, testers(1)),
+    ])
+    let config = TestFlightConfig(groups: ["Internal"], testers: [TestFlightTester(email: "ada@example.com", firstName: "Ada")])
+    let result = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config)
+    #expect(t.requests.map(path) == ["GET /v1/apps", "GET /v1/users", "GET /v1/betaGroups", "POST /v1/betaGroups/G1/relationships/builds",
+                                     "GET /v1/betaGroups/G1", "GET /v1/betaTesters", "GET /v1/betaTesters", "POST /v1/betaTesters", "GET /v1/betaGroups/G1/betaTesters"])
+    #expect(result.groups == [.init(name: "Internal", id: "G1", created: false, testerCount: 1, added: ["ada@example.com"])])
+    #expect(result.summary.contains("    added: ada@example.com") && result.warnings.isEmpty)
+}
+
+@Test func anInternalTesterWhoIsNotAUserIsAWarningNotAFailure() async throws {
+    let t = MockTransport([
+        (200, appJSON),
+        (200, usersListJSON([])),
+        (200, groups(group("G1", "Internal"))),
+        (204, ""),
+        (200, #"{"data":\#(group("G1", "Internal"))}"#),
+        (200, emptyList),
+        (200, testers(0)),
+    ])
+    let config = TestFlightConfig(groups: ["Internal"], testers: [TestFlightTester(email: "stranger@example.com")])
+    let result = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config)
+    #expect(!t.requests.contains { $0.httpMethod == "POST" && $0.url!.path == "/v1/betaTesters" })
+    #expect(result.warnings.contains { $0.contains("stranger@example.com") && $0.contains("xless users invite") })
+}
+
+@Test func externalTestingCreatesTheGroupAddsTestersSetsTheInfoAndSubmits() async throws {
+    let t = MockTransport([
+        (200, appJSON),
+        (200, noLocalizations),
+        (201, #"{"data":{"type":"betaBuildLocalizations","id":"L1","attributes":{"locale":"en-US","whatsNew":"try it"}}}"#),
+        (200, emptyList),                                                                          // beta localizations
+        (201, #"{"data":{"type":"betaAppLocalizations","id":"BL1","attributes":{"locale":"en-US"}}}"#),
+        (200, emptyList),                                                                          // groups
+        (201, #"{"data":\#(group("G5", "Beta", internal: false, all: false))}"#),
+        (204, ""),                                                                                 // build → group
+        (200, #"{"data":\#(group("G5", "Beta", internal: false, all: false))}"#),
+        (200, emptyList),
+        (200, emptyList),
+        (201, #"{"data":\#(betaTesterJSON("T2", "ext@example.com"))}"#),
+        (200, testers(1)),
+        (200, emptyList),                                                                          // no submission yet
+        (201, #"{"data":{"type":"betaAppReviewSubmissions","id":"S1","attributes":{"betaReviewState":"WAITING_FOR_REVIEW"}}}"#),
+    ])
+    let config = TestFlightConfig(groups: [], whatToTest: "try it",
+                                  external: ExternalTestFlight(groups: ["Beta"], testers: [TestFlightTester(email: "ext@example.com")],
+                                                               info: .init(description: "A beta", feedbackEmail: "beta@example.com")))
+    let result = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config)
+    #expect(t.requests.map(path) == [
+        "GET /v1/apps", "GET /v1/builds/B1/betaBuildLocalizations", "POST /v1/betaBuildLocalizations",
+        "GET /v1/apps/APP1/betaAppLocalizations", "POST /v1/betaAppLocalizations", "GET /v1/betaGroups", "POST /v1/betaGroups",
+        "POST /v1/betaGroups/G5/relationships/builds", "GET /v1/betaGroups/G5", "GET /v1/betaTesters", "GET /v1/betaTesters", "POST /v1/betaTesters",
+        "GET /v1/betaGroups/G5/betaTesters", "GET /v1/betaAppReviewSubmissions", "POST /v1/betaAppReviewSubmissions",
+    ])
+    let created = body(t.requests[6])["data"] as! [String: Any]
+    #expect((created["attributes"] as! [String: Any])["isInternalGroup"] as? Bool == false)
+    #expect(result.groups == [.init(name: "Beta", id: "G5", created: true, testerCount: 1, external: true, added: ["ext@example.com"])])
+    #expect(result.betaReview?.hasPrefix("submitted (WAITING_FOR_REVIEW)") == true)
+    #expect(result.summary.contains("  group Beta (external) (created) — available to 1 tester"))
+}
+
+@Test func anInternalGroupListedAsExternalIsAnUploadError() async throws {
+    let t = MockTransport([(200, appJSON), (200, groups(group("G1", "Beta")))])
+    let config = TestFlightConfig(groups: [], external: ExternalTestFlight(groups: ["Beta"], submit: false))
+    do { _ = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config); Issue.record("expected throw") }
+    catch let e as XlessError {
+        #expect(e.stage == .upload && e.cause.contains("internal group") && e.fix.contains("already uploaded"))
+    }
+}
+
+@Test func theDemoPasswordIsReadOnlyWhenItMustBeSent() async throws {
+    let t = MockTransport([
+        (200, appJSON),
+        (200, #"{"data":\#(reviewDetailJSON(name: "demo", required: true))}"#),
+        (200, #"{"data":\#(reviewDetailJSON(name: "demo2", required: true))}"#),
+        (200, emptyList),
+        (200, #"{"data":\#(group("G5", "Beta", internal: false))}"#),
+        (204, ""),
+        (200, testers(0)),
+    ])
+    let review = ExternalTestFlight.Review(demoAccount: .init(name: "demo2", passwordSecret: "MY_DEMO", required: true))
+    let config = TestFlightConfig(groups: [], external: ExternalTestFlight(groups: ["Beta"], submit: false, review: review))
+    var asked: [String] = []
+    _ = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config) { name in asked.append(name); return "pw-123456" }
+    #expect(asked == ["MY_DEMO"])
+    #expect(path(t.requests[2]) == "PATCH /v1/betaAppReviewDetails/R1")
+    let attrs = (body(t.requests[2])["data"] as! [String: Any])["attributes"] as! [String: Any]
+    #expect(attrs["demoAccountPassword"] as? String == "pw-123456" && attrs["demoAccountName"] as? String == "demo2")
+}
+
+@Test func aTesterAppleRefusesIsAWarningAndTheRunGoesOn() async throws {
+    let t = MockTransport([
+        (200, appJSON),
+        (403, #"{"errors":[{"status":"403","code":"FORBIDDEN_ERROR"}]}"#),         // not an Admin key: no user check
+        (200, groups(group("G1", "Internal"))),
+        (204, ""),
+        (200, #"{"data":\#(group("G1", "Internal"))}"#),
+        (200, emptyList),
+        (200, emptyList),
+        (422, #"{"errors":[{"status":"422","title":"Tester is not a user"}]}"#),
+        (200, testers(0)),
+    ])
+    let config = TestFlightConfig(groups: ["Internal"], testers: [TestFlightTester(email: "stranger@example.com")])
+    let result = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config)
+    #expect(result.warnings.contains { $0.contains("stranger@example.com") && $0.contains("HTTP 422") })
+    #expect(t.requests.count == 9)
+}
+
+@Test func aMissingDemoPasswordSaysTheBuildIsUploaded() async throws {
+    let t = MockTransport([(200, appJSON), (200, #"{"data":\#(reviewDetailJSON())}"#)])
+    let review = ExternalTestFlight.Review(demoAccount: .init(name: "demo", required: true))
+    let config = TestFlightConfig(groups: [], external: ExternalTestFlight(groups: ["Beta"], submit: false, review: review))
+    do {
+        _ = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config) { name in
+            throw XlessError(.account, "missing secret \(name), the demo account's password (x); nothing was sent", fix: "store it")
+        }
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.stage == .upload && !e.cause.contains("nothing was sent") && e.fix.contains("already uploaded"))
+    }
+}

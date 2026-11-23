@@ -48,20 +48,40 @@ infoPlist: Resources/Info.plist
 testflight:
   groups: ["Internal"]
   whatToTest: "Launch screen built on Linux"
+  testers: [ada@example.com, {email: grace@example.com, firstName: Grace, lastName: Hopper}]
+  external:
+    groups: ["Public Beta"]
+    testers: [beta-tester@example.com]
+    info:
+      description: "A new editor; tell us what breaks."
+      feedbackEmail: beta@example.com
+      privacyPolicyUrl: https://example.com/privacy
+    review:
+      contact: {firstName: Ada, lastName: Lovelace, phone: "+1 555 0100", email: review@example.com}
+      notes: "Sign in with the demo account."
+      demoAccount: {name: demo@example.com, required: true}   # password: the secret XLESS_DEMO_PASSWORD
 ```
 
 | Key | Type | Required | Notes |
 |---|---|---|---|
-| `groups` | list of strings | yes | Internal TestFlight groups to deliver to. At least one, no blanks or duplicates. |
-| `whatToTest` | string | no | The build's "What to Test" text (at most 4000 characters). |
-| `locale` | string | no | Locale of `whatToTest`, BCP-47 style with a hyphen (`en-US`, not `en_US`). Default `en-US`. |
+| `groups` | list of strings | yes, unless `external.groups` | Internal TestFlight groups to deliver to. No blanks or duplicates. |
+| `whatToTest` | string | no (yes with `external.submit`) | The build's "What to Test" text (at most 4000 characters). Beta app review needs it. |
+| `locale` | string | no | Locale of `whatToTest` and `external.info`, BCP-47 style with a hyphen (`en-US`, not `en_US`). Default `en-US`. |
+| `testers` | list | no | Added to every group of `groups`: an email address, or `{email, firstName, lastName}`. They must be App Store Connect users of the team ([`xless users invite`](apple-account.md#xless-users)). |
+| `external.groups` | list of strings | yes, with `external` | External groups to deliver to (not also in `groups`). |
+| `external.testers` | list | no | Added to every external group: any address (Apple emails them), as in `testers`. |
+| `external.submit` | boolean | no | Submit the build for beta app review (default `true`): external testers get a build once Apple approves it. |
+| `external.info` | map | no | The beta information of `locale`: `description` (at most 4000 characters), `feedbackEmail`, `marketingUrl`, `privacyPolicyUrl`. |
+| `external.review` | map | no | Beta App Review's `contact` (`firstName`, `lastName`, `phone`, `email`), `notes` and `demoAccount` (`name`, `required`, `passwordSecret`: the secret holding the password, default `XLESS_DEMO_PASSWORD`; never the password itself). |
 
-After `upload` reaches `VALID`, xless (iOS only; ignored for macOS):
+After `upload` reaches `VALID`, xless (iOS, and the macOS App Store package):
 
-- reuses each group by exact (case-sensitive) name, matched client-side so names containing commas work, or creates it as an **internal** group with automatic distribution (`hasAccessToAllBuilds`). An existing external group with that name is an error. Nothing is ever deleted and existing groups are not modified;
+- reuses each group of `groups` by exact (case-sensitive) name, matched client-side so names containing commas work, or creates it as an **internal** group with automatic distribution (`hasAccessToAllBuilds`). An existing external group with that name is an error. Nothing is ever deleted and existing groups are not modified;
 - adds the new build to each group explicitly;
 - sets or updates "What to Test" for `locale` when `whatToTest` is given;
-- prints the build number, the groups and `available to N testers`, and warns about groups with 0 testers. Internal testers must be App Store Connect users ([`xless users invite`](apple-account.md#xless-users)), added to the group once in the web UI (TestFlight).
+- adds the `testers` missing from each internal group. An address that is not an App Store Connect user of the team is a warning, not a failure (the check needs an Admin key; without one, Apple decides);
+- with `external`: sets what differs in `external.info` and `external.review` (the demo account's password, read from its secret, only when the account is new, renamed or newly required), reuses or creates each external group (an internal group of that name is an error), adds the build and the missing `external.testers`, and submits the build for beta app review unless it already was or `submit: false`;
+- prints the build number, the groups and `available to N testers` (with the testers added), the beta app review state, and warns about groups with 0 testers. Afterwards, [`xless testflight`](apple-account.md#xless-testflight) manages the groups, testers, public links and the review.
 
 A failure here exits 17 as `[upload] …`; the build is already uploaded and processed, so the message says so (ship again with a higher build number, or finish in App Store Connect). One-command usage: [signing-and-testflight.md](signing-and-testflight.md#one-command-testflight).
 

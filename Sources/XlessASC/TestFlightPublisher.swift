@@ -10,8 +10,12 @@ public struct TestFlightResult: Codable, Sendable, Equatable {
         public var id: String
         public var created: Bool
         public var testerCount: Int
-        public init(name: String, id: String, created: Bool, testerCount: Int) {
-            self.name = name; self.id = id; self.created = created; self.testerCount = testerCount
+        /// True for an external group (`testflight.external.groups`); absent for an internal one.
+        public var external: Bool?
+        /// The testers this run added to the group (`testflight.testers`, `testflight.external.testers`).
+        public var added: [String]?
+        public init(name: String, id: String, created: Bool, testerCount: Int, external: Bool? = nil, added: [String]? = nil) {
+            self.name = name; self.id = id; self.created = created; self.testerCount = testerCount; self.external = external; self.added = added
         }
     }
     public var buildID: String
@@ -21,28 +25,45 @@ public struct TestFlightResult: Codable, Sendable, Equatable {
     public var whatToTestSet: Bool
     /// Delivery caveats that do not fail the run (e.g. membership of an automatic-distribution group could not be confirmed).
     public var notes: [String] = []
+    /// The beta app review submission: `submitted (WAITING_FOR_REVIEW)`, `already submitted (APPROVED)`; nil without one.
+    public var betaReview: String? = nil
+    /// The bundle identifier of the app, for the hints.
+    public var bundleID: String? = nil
 
-    /// Lines for the terminal: build, one line per group, what to test.
+    public init(buildID: String, buildNumber: String, locale: String, groups: [Group], whatToTestSet: Bool, notes: [String] = [],
+                betaReview: String? = nil, bundleID: String? = nil) {
+        self.buildID = buildID; self.buildNumber = buildNumber; self.locale = locale; self.groups = groups
+        self.whatToTestSet = whatToTestSet; self.notes = notes; self.betaReview = betaReview; self.bundleID = bundleID
+    }
+
+    /// Lines for the terminal: build, one line per group, what to test, the beta app review.
     public var summary: [String] {
         var lines = ["TestFlight: build \(buildNumber) (\(buildID))"]
         for g in groups {
-            lines.append("  group \(g.name)\(g.created ? " (created)" : "") — available to \(g.testerCount) tester\(g.testerCount == 1 ? "" : "s")")
+            let kind = g.external == true ? " (external)" : ""
+            lines.append("  group \(g.name)\(kind)\(g.created ? " (created)" : "") — available to \(g.testerCount) tester\(g.testerCount == 1 ? "" : "s")")
+            if let added = g.added, !added.isEmpty { lines.append("    added: \(added.joined(separator: ", "))") }
         }
         if whatToTestSet { lines.append("  what to test (\(locale)): set") }
+        if let betaReview { lines.append("  beta app review: \(betaReview)") }
         return lines
     }
 
     public var warnings: [String] {
-        notes + groups.filter { $0.testerCount == 0 }.map {
-            "warning: group \($0.name) has 0 testers, so nobody can install this build yet. Internal testers must be App Store Connect users (invite them with `xless users invite`): add them to the group once in the web UI (TestFlight, \($0.name), Testers)"
+        let app = bundleID ?? "<bundle id>"
+        return notes + groups.filter { $0.testerCount == 0 }.map {
+            $0.external == true
+                ? "warning: group \($0.name) has 0 testers: add them with `xless testflight testers add <email> --group \"\($0.name)\" --app \(app)`, testflight.external.testers in xless.yml, or a public link (`xless testflight public-link enable \"\($0.name)\" --app \(app)`)"
+                : "warning: group \($0.name) has 0 testers, so nobody can install this build yet. Internal testers must be App Store Connect users (invite them with `xless users invite`); add them with `xless testflight testers add <email> --group \"\($0.name)\" --app \(app)` or testflight.testers in xless.yml"
         }
     }
 }
 
-/// Delivers an uploaded, processed build to internal TestFlight groups (App Store Connect API v1).
+/// Delivers an uploaded, processed build to TestFlight groups (App Store Connect API v1): internal groups, their testers
+/// and, with `testflight.external`, external groups, their testers, the beta information and the beta app review submission.
 ///
-/// Never deletes anything and never modifies an existing group: groups are reused by exact name, or created as
-/// internal groups with automatic distribution when missing.
+/// Never deletes anything and never modifies an existing group: groups are reused by exact name, or created when missing
+/// (internal groups with automatic distribution). Testers are added, never removed.
 public struct TestFlightPublisher: Sendable {
     let client: ASCClient
 
@@ -68,7 +89,10 @@ public struct TestFlightPublisher: Sendable {
         try await uploadStep(what, fix: "see the App Store Connect error above", suffix: done, op)
     }
 
-    public func publish(bundleID: String, buildID: String, buildNumber: String, config: TestFlightConfig) async throws -> TestFlightResult {
+    /// - Parameter secret: the value of a secret by name: the demo account's password for `testflight.external.review`,
+    ///   read only when it must be sent.
+    public func publish(bundleID: String, buildID: String, buildNumber: String, config: TestFlightConfig,
+                        secret: (String) throws -> String = { name in throw XlessError(.upload, "missing secret \(name)", fix: "set \(name) or \(name)_FILE") }) async throws -> TestFlightResult {
         let done = "the build is already uploaded and processed (build \(buildNumber)); deliver it by hand in App Store Connect → TestFlight, or fix the cause and ship again with a higher build number"
 
         let apps: ASCDocument<[ASCResource<Named>]> = try await step("looking up the app record", done: done) {
@@ -86,13 +110,109 @@ public struct TestFlightPublisher: Sendable {
 
         var groups: [TestFlightResult.Group] = []
         var notes: [String] = []
+        let users: Set<String>? = config.testers.isEmpty ? nil : try await step("reading the team's users", done: done) { try await testFlight.userEmails() }
         for name in config.groups {
             let found = try await findOrCreateGroup(name, appID: app.id, done: done)
             if let note = try await attach(buildID: buildID, toGroup: found.id, name: name, automatic: found.automatic, done: done) { notes.append(note) }
+            let added = try await addTesters(config.testers, toGroup: found.id, name: name, appID: app.id, users: users, notes: &notes, done: done)
             let count = try await testerCount(groupID: found.id, name: name, done: done)
-            groups.append(.init(name: name, id: found.id, created: found.created, testerCount: count))
+            groups.append(.init(name: name, id: found.id, created: found.created, testerCount: count, added: added.isEmpty ? nil : added))
         }
-        return TestFlightResult(buildID: buildID, buildNumber: buildNumber, locale: config.locale, groups: groups, whatToTestSet: whatToTestSet, notes: notes)
+        var betaReview: String?
+        if let external = config.external {
+            betaReview = try await publishExternal(external, locale: config.locale, appID: app.id, buildID: buildID, groups: &groups,
+                                                   notes: &notes, secret: secret, done: done)
+        }
+        return TestFlightResult(buildID: buildID, buildNumber: buildNumber, locale: config.locale, groups: groups, whatToTestSet: whatToTestSet,
+                                notes: notes, betaReview: betaReview, bundleID: bundleID)
+    }
+
+    var testFlight: ASCTestFlight { ASCTestFlight(resources: ASCResources(client: client)) }
+
+    /// Apple turning one tester down (a conflict, an address it refuses): every 4xx but those about the key or the rate.
+    static func refusesTester(_ e: ASCError) -> Bool { (400..<500).contains(e.status) && ![401, 403, 429].contains(e.status) }
+
+    /// Adds `testers` to the group (those already in it are left alone). A tester Apple or xless refuses (an internal
+    /// group's tester who is not a user of the team, an address Apple turns down) is a note, not a failure: the build is
+    /// delivered either way.
+    private func addTesters(_ testers: [TestFlightTester], toGroup id: String, name: String, appID: String, users: Set<String>?,
+                            notes: inout [String], done: String) async throws -> [String] {
+        guard !testers.isEmpty else { return [] }
+        let tf = testFlight
+        let group = try await step("reading group \(name)", done: done) {
+            try await tf.resources.get("/v1/betaGroups/\(id)", as: ASCBetaGroup.self).data
+        }
+        let members = try await step("reading the testers of group \(name)", done: done) { try await tf.members(of: group) }
+        var added: [String] = []
+        for t in testers {
+            let request = BetaTesterRequest(email: t.email, firstName: t.firstName, lastName: t.lastName)
+            let what = "adding \(t.email) to group \(name)"
+            let result = try await step(what, done: done) { () async throws -> ASCTestFlight.TesterAddition? in
+                do { return try await tf.add(request, to: group, members: members, users: users) } catch let e as XlessError where e.stage == .account {
+                    notes.append("warning: \(e.cause); \(e.fix)")
+                } catch let e as ASCError where Self.refusesTester(e) {
+                    notes.append("warning: \(what): \(e.description); add them by hand (`xless testflight testers add \(t.email) --group \"\(name)\" --app \(appID)`) once the cause is fixed")
+                }
+                return nil
+            }
+            guard let result else { continue }
+            if case .alreadyInGroup = result { continue }
+            added.append(t.email)
+        }
+        return added
+    }
+
+    /// `testflight.external`: the beta information, the external groups (with the build and their testers), then the
+    /// submission. Returns the beta app review line.
+    private func publishExternal(_ external: ExternalTestFlight, locale: String, appID: String, buildID: String, groups: inout [TestFlightResult.Group],
+                                 notes: inout [String], secret: (String) throws -> String, done: String) async throws -> String? {
+        let tf = testFlight
+        if let info = external.info {
+            let text = BetaInfoText(description: info.description, feedbackEmail: info.feedbackEmail, marketingURL: info.marketingUrl,
+                                    privacyPolicyURL: info.privacyPolicyUrl)
+            _ = try await step("setting the beta app information (\(locale))", done: done) { try await tf.setLocalization(app: appID, locale: locale, text) }
+        }
+        if let review = external.review {
+            let change = BetaReviewChange(contactFirstName: review.contact?.firstName, contactLastName: review.contact?.lastName,
+                                          contactPhone: review.contact?.phone, contactEmail: review.contact?.email, notes: review.notes,
+                                          demoAccountName: review.demoAccount?.name, demoAccountRequired: review.demoAccount?.required,
+                                          passwordSecret: review.demoAccount?.passwordSecret ?? BetaReviewChange.defaultPasswordSecret)
+            let detail = try await step("reading the beta App Review details", done: done) { try await tf.reviewDetail(app: appID) }
+            // The password is read before the step: a missing secret is its own error, never an App Store Connect one.
+            var value: String?
+            if change.diff(from: detail.attributes).password {
+                do { value = try secret(change.passwordSecret) } catch let e as XlessError {
+                    throw XlessError(.upload, e.cause.replacingOccurrences(of: "; nothing was sent", with: ""), fix: "\(e.fix); \(done)")
+                }
+            }
+            let password = value
+            _ = try await step("setting the beta App Review details", done: done) {
+                do { return try await tf.updateReviewDetail(detail, change) { _ in password ?? "" } } catch let e as XlessError where e.stage == .account {
+                    throw XlessError(.upload, e.cause, fix: done)
+                }
+            }
+        }
+        let existing = try await step("reading the TestFlight groups", done: done) { try await tf.groups(app: appID) }
+        for name in external.groups {
+            let outcome = try await step("creating external group \(name)", done: done) {
+                do { return try await tf.createGroup(name: name, app: appID, external: true, existing: existing) } catch is XlessError {
+                    throw XlessError(.upload, "TestFlight group \(name) already exists and is an internal group; testflight.external.groups lists external groups",
+                                     fix: "move it to testflight.groups, or rename it in testflight.external.groups; \(done)")
+                }
+            }
+            let group = outcome.value
+            _ = try await attach(buildID: buildID, toGroup: group.id, name: name, automatic: false, done: done)
+            let added = try await addTesters(external.testers, toGroup: group.id, name: name, appID: appID, users: nil, notes: &notes, done: done)
+            let count = try await testerCount(groupID: group.id, name: name, done: done)
+            var created = false
+            if case .created = outcome { created = true }
+            groups.append(.init(name: name, id: group.id, created: created, testerCount: count, external: true, added: added.isEmpty ? nil : added))
+        }
+        guard external.submit else { return nil }
+        let submission = try await step("submitting the build for beta app review", done: done) { try await tf.submit(build: buildID) }
+        let state = submission.value.attributes.betaReviewState ?? "WAITING_FOR_REVIEW"
+        if case .unchanged = submission { return "already submitted (\(state))" }
+        return "submitted (\(state)); external testers get the build once Apple approves it (`xless testflight beta-review status \(buildID)`)"
     }
 
     /// Every item of a paged listing (`ASCResources.list`: `limit=200`, following `links.next`). A listing that does not
