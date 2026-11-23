@@ -160,7 +160,7 @@ Other things worth knowing:
   launch); `xless inspect` lists them per binary (`linkeditProblems`).
 - The App Store Connect API cannot create the app record: `xless apps create` does it through the Apple ID web session
   (undocumented, so it may break when Apple changes its pages), or create it by hand after the bundle ID is registered
-  ([bootstrap.md](bootstrap.md) steps 4 and 5).
+  ([bootstrap.md](bootstrap.md#5e-app-record)).
 
 ## Known gaps
 

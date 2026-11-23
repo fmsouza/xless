@@ -164,7 +164,7 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
   `testflight.groups` block). Only that second ship has the two keys; the DMG ship has the Developer ID key. A
   failure in either channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
 - App Store Connect refuses a package that is not signed with a Mac Installer Distribution certificate
-  (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#3b-mac-installer-distribution-key-macos-app-store-lane-only);
+  (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#5d-mac-installer-distribution-key-the-mac-app-store-package);
 - ASC processing requires the mac app to carry **App Sandbox** (an App-Store/TestFlight
   build); a mac app that is deliberately non-sandboxed must stay on the DMG channel, or ASC rejects
   it.
