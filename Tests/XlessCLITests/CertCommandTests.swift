@@ -22,14 +22,14 @@ private struct CertVault {
     let file: VaultFile
     let key: SymmetricKey
 
-    init(entries: [(String, VaultEntry.Metadata)] = []) throws {
+    init(entries: [(String, VaultEntry.Metadata)] = [], secrets: [String: String] = [:]) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-certs-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         store = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
         var (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"),
                                                    kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
         for (name, meta) in entries {
-            file.entries.append(try VaultCrypto.seal(name: name, kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: "x"), dataKey: key))
+            file.entries.append(try VaultCrypto.seal(name: name, kind: .signingKey, metadata: meta, secret: SecretBytes(utf8: secrets[name] ?? "x"), dataKey: key))
         }
         try store.create(file)
         self.file = file
@@ -493,4 +493,95 @@ private func listing(_ items: [String]) -> String { #"{"data":[\#(items.joined(s
     }
     #expect(e?.cause.hasPrefix("xless could not ask App Store Connect for the Apple Development certificate (cannot build the token)") == true)
     #expect(try vault.read().entries.isEmpty)
+}
+
+// MARK: - Linking keys to certificates by public key
+
+/// Answers the passphrase and counts how often it was asked.
+private final class CountedPassphrase: PassphrasePrompter, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _asked = 0
+    var asked: Int { lock.withLock { _asked } }
+    func askSecret(_ prompt: String) throws -> SecretBytes { lock.withLock { _asked += 1 }; return SecretBytes(utf8: "correct horse battery") }
+    func ask(_ prompt: String) throws -> String { try askSecret(prompt).utf8String() }
+    func say(_ line: String) {}
+}
+
+@Test func aCSRCertificateIsLinkedToItsStoredKeyByPublicKey() async throws {
+    let key = try SigningKey.generate()
+    let vault = try CertVault(entries: [("JUNK", .init()), ("XLESS_DIST_KEY", .init(created: Date(timeIntervalSince1970: 1_800_000_000))),
+                                        ("XLESS_DEVID_KEY@ZZZZZ99999", .init(teamID: "ZZZZZ99999")), ("LINKED", .init(certificateID: "C0"))],
+                              secrets: ["XLESS_DIST_KEY": key.pem])
+    defer { vault.cleanup() }
+    // Another team's key, and a key whose certificate is still listed, are not even candidates.
+    #expect(CertificateKeyLink.candidates(in: try vault.read(), known: ["C0", "C9"], team: team).map(\.name) == ["JUNK", "XLESS_DIST_KEY"])
+    #expect(CertificateKeyLink.candidates(in: try vault.read(), known: [], team: nil).map(\.name) == ["JUNK", "XLESS_DIST_KEY", "XLESS_DEVID_KEY@ZZZZZ99999", "LINKED"])
+    let said = Said()
+    let cert = resource("C9", der: try issue(try key.csrPEM(commonName: "hsm")))
+    let entry = await CertificateKeyLink(store: vault.store.secretStore, team: team).linkNew(cert, known: { ["C0"] }, say: { said.lines.append($0) })
+    #expect(entry == "XLESS_DIST_KEY" && said.lines.isEmpty)
+    let file = try vault.read()
+    #expect(file.entry(named: "XLESS_DIST_KEY")?.metadata == VaultEntry.Metadata(
+        teamID: team, certificateID: "C9", created: Date(timeIntervalSince1970: 1_800_000_000), expires: Date(timeIntervalSince1970: 1_900_000_000),
+        certificateType: "DISTRIBUTION"))
+    #expect(try vault.secret("XLESS_DIST_KEY") == key.pem)
+    #expect(file.entry(named: "JUNK")?.metadata == VaultEntry.Metadata())
+    #expect(file.entry(named: "XLESS_DEVID_KEY@ZZZZZ99999")?.metadata.certificateID == nil)
+    let created = CertificateCreated(certificate: cert, entry: entry, team: team, matched: true)
+    #expect(created.text.contains("its private key is in the secret store as XLESS_DIST_KEY (matched by its public key)"))
+    #expect(!(try ASCOutput.json(created)).contains("matched"))
+}
+
+@Test func nothingToLinkNeverAsksThePassphrase() async throws {
+    let vault = try CertVault(entries: [("LINKED", .init(certificateID: "C0"))])
+    defer { vault.cleanup() }
+    let prompter = CountedPassphrase()
+    let store = VaultSecretStore(store: vault.store, cache: nil, prompter: { prompter })
+    let cert = resource("C9", der: try issue(try SigningKey.generate().csrPEM(commonName: "hsm")))
+    #expect(try CertificateKeyLink(store: store, team: team).link([cert], known: ["C0", "C9"], reason: "test") == .init())
+    #expect(await CertificateKeyLink(store: store, team: team).linkNew(cert, known: { ["C0"] }, say: { _ in }) == nil)
+    #expect(prompter.asked == 0)
+    // An empty store: the certificate listing is not even read.
+    let empty = try CertVault()
+    defer { empty.cleanup() }
+    #expect(await CertificateKeyLink(store: empty.store.secretStore, team: team).linkNew(cert, known: { Issue.record("listed"); return [] }, say: { _ in }) == nil)
+    // A store that cannot be unlocked: a note, never a failure.
+    let junk = try CertVault(entries: [("XLESS_DIST_KEY", .init())])
+    defer { junk.cleanup() }
+    let said = Said()
+    let locked = VaultSecretStore(store: junk.store, cache: nil, prompter: { nil })
+    #expect(await CertificateKeyLink(store: locked, team: team).linkNew(cert, known: { [] }, say: { said.lines.append($0) }) == nil)
+    #expect(said.lines.count == 1 && said.lines[0].contains("`xless certs link` records it later"))
+}
+
+@Test func certsLinkRecordsEveryMatchAndNamesTheKeysNoCertificateMatches() async throws {
+    let dist = try SigningKey.generate(), devid = try SigningKey.generate()
+    let vault = try CertVault(entries: [("XLESS_DIST_KEY", .init()), ("XLESS_DEVID_KEY", .init(certificateID: "GONE")), ("ORPHAN", .init())],
+                              secrets: ["XLESS_DIST_KEY": dist.pem, "XLESS_DEVID_KEY": devid.pem, "ORPHAN": try SigningKey.generate().pem])
+    defer { vault.cleanup() }
+    func content(_ key: SigningKey, until: Date) throws -> String { try issue(try key.csrPEM(commonName: "x"), notAfter: until).base64EncodedString() }
+    // Two certificates for the distribution key: the later one is recorded.
+    let list = listing([
+        certJSON("D1", expires: "2027-01-01T00:00:00.000+0000", content: try content(dist, until: Date(timeIntervalSince1970: 1_798_761_600))),
+        certJSON("D2", expires: "2028-01-01T00:00:00.000+0000", content: try content(dist, until: Date(timeIntervalSince1970: 1_830_297_600))),
+        certJSON("V1", type: "DEVELOPER_ID_APPLICATION_G2", expires: "2028-01-01T00:00:00.000+0000", content: try content(devid, until: Date(timeIntervalSince1970: 1_830_297_600))),
+    ])
+    let t = FakeTransport([(200, list)])
+    let out = try await cli(t).link(store: vault.store.secretStore, team: team)
+    #expect(t.requests[0].url!.query!.contains("certificateContent"))
+    #expect(out == """
+    linked XLESS_DIST_KEY to Apple Distribution certificate D2, expires 2028-01-01
+    linked XLESS_DEVID_KEY to Developer ID Application certificate V1, expires 2028-01-01
+    no certificate of the team matches ORPHAN: if its certificate is gone, remove it with `xless secrets rm ORPHAN`
+
+    """)
+    let file = try vault.read()
+    #expect(file.entry(named: "XLESS_DIST_KEY")?.metadata.certificateID == "D2")
+    #expect(file.entry(named: "XLESS_DEVID_KEY")?.metadata.certificateType == "DEVELOPER_ID_APPLICATION_G2")
+    #expect(file.entry(named: "XLESS_DIST_KEY")?.metadata.teamID == team)
+    // Run again: nothing left but the orphan.
+    let again = try await cli(FakeTransport([(200, list)]), json: true).link(store: vault.store.secretStore, team: team)
+    struct Outcome: Decodable { let linked: [[String: String]]; let unmatched: [String] }
+    let decoded = try JSONDecoder().decode(Outcome.self, from: Data(again.utf8))
+    #expect(decoded.linked.isEmpty && decoded.unmatched == ["ORPHAN"])
 }

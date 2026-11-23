@@ -20,8 +20,10 @@ struct CertsCommand: AsyncParsableCommand {
           xless certs create --type apple-pay --merchant-id merchant.com.example.store --csr processing.csr
           xless certs download 8U3T4X5YZA --out distribution.cer
           xless certs revoke 8U3T4X5YZA
+          xless certs link
         """,
-        subcommands: [CertsListCommand.self, CertsCreateCommand.self, CertsShowCommand.self, CertsDownloadCommand.self, CertsRevokeCommand.self])
+        subcommands: [CertsListCommand.self, CertsCreateCommand.self, CertsShowCommand.self, CertsDownloadCommand.self, CertsRevokeCommand.self,
+                      CertsLinkCommand.self])
 }
 
 /// A `--type` value: an App Store Connect certificate type.
@@ -162,9 +164,16 @@ struct CertsCreateCommand: AsyncParsableCommand {
             case nil: related = nil
             }
             let creation = CertificateCreation(api: certificates, say: AppleWebCLI.say)
-            let created: CertificateCreated
+            var created: CertificateCreated
             if let csrPEM {
                 created = try await creation.run(type: type, relatedID: related, csrPEM: csrPEM)
+                // The CSR may have been made from a key the store holds (`sign bootstrap --csr-only`, then imported).
+                if let store = try? SecretStoreCLI.store(),
+                   let entry = await CertificateKeyLink(store: store, team: session.team).linkNew(
+                       created.certificate, known: { Set(try await certificates.list().map(\.id)) }, say: AppleWebCLI.say) {
+                    created.entry = entry
+                    created.matched = true
+                }
             } else {
                 created = try await creation.run(type: type, relatedID: related, entry: entry, team: session.team, keys: {
                     try APIKeyWebCLI.unlocked(reason: "storing the new certificate's private key") { CertificateKeyStore(store: $0, catalogID: $1.id) }
@@ -230,6 +239,30 @@ struct CertsRevokeCommand: AsyncParsableCommand {
     }
 }
 
+struct CertsLinkCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "link",
+        abstract: "Record with each signing key in the secret store the certificate issued for it, matched by public key.",
+        discussion: """
+        For keys the store does not link to a certificate: imported with `xless secrets import`, kept after a create whose \
+        answer was lost, or whose certificate was made from a CSR. Their certificate ID, type, expiry and team are recorded \
+        with them, so `xless certs list` and `show` name the key. Asks the passphrase only when such a key is there; keys \
+        of another team are never opened.
+        """)
+
+    @OptionGroup var team: TeamOption
+    @OptionGroup var output: JSONOption
+    @OptionGroup var trace: VerboseOption
+
+    func run() async throws {
+        try await AccountSession.run {
+            let session = try AccountSession.open(team: team.team, verbose: trace.verbose)
+            let cli = CertCLI(certificates: ASCCertificates(resources: session.resources)).with(json: output.json)
+            print(try await cli.link(store: try SecretStoreCLI.store(), team: session.team), terminator: "")
+        }
+    }
+}
+
 /// What the certificate commands do once their arguments are valid; returns what goes to standard output and says the
 /// rest (warnings, cancellations) on standard error.
 struct CertCLI {
@@ -280,6 +313,27 @@ struct CertCLI {
             throw XlessError(.account, e.cause, fix: e.fix)
         }
         return "wrote certificate \(c.id) (\(c.certificateType)\(c.expires.map { ", expires \(CertTable.day($0))" } ?? "")) to \(path)\n"
+    }
+
+    /// `certs link`: every certificate of the team (with its content) matched with the store's unlinked signing keys.
+    func link(store: any SecretStore, team: String?) async throws -> String {
+        guard try store.catalog() != nil else {
+            throw XlessError(.account, "there is no secret store, so no key to link", fix: "create it with `xless secrets init`")
+        }
+        let all = try await certificates.list(withContent: true)
+        let outcome = try CertificateKeyLink(store: store, team: team).link(all, known: Set(all.map(\.id)), reason: "matching the signing keys with their certificates")
+        if json { return try ASCOutput.json(outcome) }
+        if outcome.linked.isEmpty, outcome.unmatched.isEmpty { return "Every signing key in the secret store has its certificate recorded.\n" }
+        var text = ""
+        for l in outcome.linked {
+            let c = all.first { $0.id == l.certificate }
+            let type = c.flatMap { CertificateType(rawValue: $0.certificateType)?.displayName } ?? c?.certificateType ?? "?"
+            text += "linked \(l.entry) to \(type) certificate \(l.certificate)\(c?.expires.map { ", expires \(CertTable.day($0))" } ?? "")\n"
+        }
+        for name in outcome.unmatched {
+            text += "no certificate of the team matches \(name): if its certificate is gone, remove it with `xless secrets rm \(name)`\n"
+        }
+        return text
     }
 
     struct Revoked: Encodable {

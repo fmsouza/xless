@@ -65,7 +65,7 @@ struct CertificateKeyStore {
 
     /// Re-seals `name` with the certificate's ID and expiry, and `team` (the certificate's own, when known) over the
     /// entry's.
-    func record(name: String, secret: SecretBytes, certificateID: String, expires: Date?, team: String?) throws {
+    func record(name: String, secret: SecretBytes, certificateID: String, expires: Date?, team: String?, certificateType: String? = nil) throws {
         try store.update(reason: "recording the certificate") { file in
             guard file.id == catalogID, let entry = file.entry(named: name) else {
                 throw VaultError(.noEntry, "the entry \(name) is no longer in the secret store", fix: "re-import the key with `xless secrets import`")
@@ -73,6 +73,7 @@ struct CertificateKeyStore {
             var metadata = entry.metadata
             metadata.teamID = team ?? metadata.teamID
             metadata.certificateID = certificateID
+            metadata.certificateType = certificateType ?? metadata.certificateType
             metadata.expires = expires.map { Date(timeIntervalSince1970: $0.timeIntervalSince1970.rounded(.down)) }
             return [.replace(name: name, kind: .signingKey, metadata: metadata, secret: secret)]
         }
@@ -89,19 +90,101 @@ struct CertificateKeyStore {
     }
 }
 
+/// Links the signing keys in the secret store to their certificates by public key, where the store does not say which
+/// certificate a key has: a key imported with `xless secrets import`, kept after a create whose answer was lost, or
+/// whose certificate was made from a CSR (`xless certs create --csr`, `xless certs link`). A match is recorded on the
+/// entry (certificate ID, type, expiry and the certificate's team), as `certs create` records its own.
+struct CertificateKeyLink {
+    let store: any SecretStore
+    /// The team whose certificates are matched: another team's keys are never opened.
+    let team: String?
+
+    struct Linked: Encodable, Equatable {
+        let entry: String
+        let certificate: String
+    }
+
+    struct Outcome: Encodable, Equatable {
+        var linked: [Linked] = []
+        /// Keys without a recorded certificate that no certificate matched.
+        var unmatched: [String] = []
+    }
+
+    /// The signing keys of `team` (or of no team) with no certificate recorded, or one that is not among `known` (the
+    /// team's certificates as App Store Connect lists them: one that is gone, revoked or expired).
+    static func candidates(in catalog: some SecretEntries, known: Set<String>, team: String?) -> [VaultEntry] {
+        catalog.entries.filter { e in
+            guard e.kind == .signingKey, e.metadata.certificateID.map({ !known.contains($0) }) ?? true else { return false }
+            guard let team else { return true }
+            if let owner = e.metadata.teamID { return owner == team }
+            guard let at = e.name.split(separator: "@", maxSplits: 1).dropFirst().first else { return true }
+            return at == team
+        }
+    }
+
+    /// Opens the candidates (unlocking the store only when there is one) and records with each the certificate of
+    /// `certificates` issued for its key (the latest-expiring one when several are). `known` is every certificate ID the
+    /// team has.
+    func link(_ certificates: [ASCCertificate], known: Set<String>, reason: String) throws -> Outcome {
+        guard let catalog = try store.catalog() else { return Outcome() }
+        let open = Self.candidates(in: catalog, known: known, team: team)
+        let issued = certificates.filter { $0.der != nil }.sorted { ($0.expires ?? .distantPast) > ($1.expires ?? .distantPast) }
+        guard !open.isEmpty else { return Outcome() }
+        guard !issued.isEmpty else { return Outcome(unmatched: open.map(\.name)) }
+        try catalog.requireWritable()
+        try store.unlock(catalog, remember: nil, reason: reason)
+        let keys = CertificateKeyStore(store: store, catalogID: catalog.id)
+        var outcome = Outcome()
+        for entry in open {
+            let secret = try store.secret(entry, in: catalog, reason: reason)
+            defer { secret.wipe() }
+            guard let key = KeyMatch.publicKey(privateKeyPEM: secret.utf8String()), let certificate = KeyMatch.certificate(for: key, in: issued) else {
+                outcome.unmatched.append(entry.name)
+                continue
+            }
+            let facts = certificate.der.flatMap { CertificateFacts(der: $0) }
+            try keys.record(name: entry.name, secret: secret, certificateID: certificate.id, expires: facts?.expires ?? certificate.expires,
+                            team: facts?.teamID ?? entry.metadata.teamID, certificateType: certificate.certificateType)
+            outcome.linked.append(Linked(entry: entry.name, certificate: certificate.id))
+        }
+        return outcome
+    }
+
+    /// After `certs create --csr`: records the new certificate with its key when that key is in the store (asking the
+    /// passphrase only when a key without a recorded certificate is there). Never fails the command: returns the entry,
+    /// or nil with a note said.
+    func linkNew(_ certificate: ASCCertificate, known: () async throws -> Set<String>, say: (String) -> Void) async -> String? {
+        do {
+            guard let catalog = try store.catalog(), !Self.candidates(in: catalog, known: [], team: team).isEmpty else { return nil }
+            let ids = try await known().union([certificate.id])
+            let outcome = try link([certificate], known: ids, reason: "matching the new certificate with the keys in the secret store")
+            return outcome.linked.first?.entry
+        } catch {
+            say("note: could not check whether the secret store holds the key of certificate \(certificate.id) (\(XlessError.wrapping(error, stage: .account).cause)); `xless certs link` records it later")
+            return nil
+        }
+    }
+}
+
 /// What `certs create` reports (`--json` prints it as is: Apple's certificate resource, and where its key went).
 struct CertificateCreated: Encodable {
     let certificate: ASCCertificate
-    /// The secret-store entry holding its private key; nil for a certificate made from a CSR.
-    let entry: String?
+    /// The secret-store entry holding its private key; nil for a certificate made from a CSR whose key is not there.
+    var entry: String?
     let team: String?
+    /// The key was already in the store, found by its public key (a CSR made from it): not stored by this command.
+    var matched = false
+
+    enum CodingKeys: String, CodingKey { case certificate, entry, team }
 
     var text: String {
         let type = CertificateType(rawValue: certificate.certificateType)
         var lines = ["created \(type?.displayName ?? certificate.certificateType) certificate \(certificate.id)"
             + (certificate.attributes.name.map { " (\($0))" } ?? "")
             + (certificate.expires.map { ", expires \(CertTable.day($0))" } ?? "")]
-        if let entry {
+        if let entry, matched {
+            lines.append("its private key is in the secret store as \(entry) (matched by its public key); the certificate is recorded with it")
+        } else if let entry {
             lines.append("stored its private key in the secret store as \(entry) (it never touched the disk in clear)")
         } else {
             lines.append("its private key is wherever the CSR was made; download the certificate with `xless certs download \(certificate.id) --out <file.cer>`")

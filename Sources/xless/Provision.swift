@@ -749,8 +749,9 @@ struct ProvisionApplier {
         do {
             return try await account.create(type: type, csrPEM: try key.csrPEM(commonName: "xless"), relatedID: nil)
         } catch {
-            if ASCCertificates.isAmbiguous(error) { throw creation.ambiguous(type, error, kept: nil) }
-            throw creation.refused(type, error, removedEntry: nil, keptEntry: nil)
+            guard ASCCertificates.isAmbiguous(error) else { throw creation.refused(type, error, removedEntry: nil, keptEntry: nil) }
+            if let made = await creation.made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error) { return made }
+            throw creation.ambiguous(type, error, kept: nil)
         }
     }
 }
