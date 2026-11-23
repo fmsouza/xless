@@ -146,6 +146,8 @@ struct ReleaseCLI {
         var inheritedBundleID: String?
         var dryRun = false
         var today = Date()
+        /// Send the manifest's in-app purchases and subscriptions with the version.
+        var products = true
     }
 
     /// What to print and the exit code (0, 21 or 22).
@@ -153,7 +155,7 @@ struct ReleaseCLI {
         let t = try await target(wanted, prefer: { VersionState.editable.contains($0.state) || $0.state == VersionState.readyForReview })
         let outcome = try await ReleaseSubmission(resources: resources, privacy: privacy, say: say).run(.init(
             app: t.app, platform: t.platform, version: t.version, build: o.build, release: o.release, phased: o.phased,
-            manifestDir: o.manifestDir, inheritedBundleID: o.inheritedBundleID, dryRun: o.dryRun, today: o.today))
+            manifestDir: o.manifestDir, inheritedBundleID: o.inheritedBundleID, dryRun: o.dryRun, today: o.today, products: o.products))
         for note in outcome.notes { say("note: \(note)") }
         let exit: Int32 = switch outcome.outcome {
         case .submitted, .dryRun: 0

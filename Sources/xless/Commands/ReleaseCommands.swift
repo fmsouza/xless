@@ -145,8 +145,10 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
         Then, sending only what App Store Connect does not have yet: the build (--build), the release (--release \
         manual: `xless release publish` releases it; auto: on approval; a date such as 2026-12-01 or \
         2026-12-01T09:00:00Z: not before then), the phased release (--phased, --no-phased), and the review submission \
-        (created, the version added, submitted). A submission that stopped half-way is resumed. --dry-run runs the \
-        pre-flight and lists the steps.
+        (created, the version added, submitted). The in-app purchases and subscriptions the manifest lists (iap/, \
+        subscriptions/) go with the version: each one's version being prepared is added to the submission (one ready \
+        to submit without such a version is submitted with the app's version); --no-products leaves them out. A \
+        submission that stopped half-way is resumed. --dry-run runs the pre-flight and lists the steps.
 
         Exit codes: 0 submitted (or a dry run that passed), 21 the pre-flight failed (nothing was sent), 22 the version \
         is already in review (nothing was sent), 20 any other error.
@@ -159,6 +161,8 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
     var release: String?
     @Flag(inversion: .prefixedNo, help: "Release to users over 7 days (--no-phased removes a phased release that has not started).")
     var phased: Bool?
+    @Flag(inversion: .prefixedNo, help: "Submit the manifest's in-app purchases and subscriptions with the version (default).")
+    var products = true
     @Flag(help: "Run the pre-flight and list what would be sent; send nothing.") var dryRun = false
     @OptionGroup var team: TeamOption
     @OptionGroup var output: JSONOption
@@ -177,6 +181,7 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
         let manifest: URL? = if let m, wanted.platform == nil || wanted.platform == (m.platform ?? "IOS") { dir } else if m == nil, !FileManager.default.fileExists(atPath: dir.path) { dir } else { nil }
         var options = ReleaseCLI.SubmitOptions(build: try build.map(BuildReference.parse), release: try release.map { try ReleaseChoice.parse($0) },
                                                phased: phased, manifestDir: manifest, dryRun: dryRun)
+        options.products = products
         if manifest != nil, ManifestReader.read(dir).manifest.app.bundleID == nil {
             options.inheritedBundleID = StorePlatform.inheritedBundleID(manifestDir: dir, platform: wanted.platform)
         }
