@@ -330,8 +330,12 @@ public struct StorePush: Sendable {
         }
     }
 
-    /// Whether a change may be sent alongside its neighbours: it only uploads, deletes and orders files of one set.
-    static func goesAlongside(_ change: StoreChange) -> Bool { change.privacy == nil && change.requests.isEmpty && change.media != nil }
+    /// Whether a change may be sent alongside its neighbours: it only uploads, deletes and orders files of one set, and
+    /// deletes nothing before its uploads (a set that must be emptied first goes alone: started at once and then held
+    /// up by another file's failure, it would lose its files and get none).
+    static func goesAlongside(_ change: StoreChange) -> Bool {
+        change.privacy == nil && change.requests.isEmpty && change.media.map { !$0.deleteFirst } == true
+    }
 
     /// How many times `apply` plans again after creating.
     static let maxReplans = 3

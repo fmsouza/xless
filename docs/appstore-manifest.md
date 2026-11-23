@@ -178,8 +178,10 @@ a part the key's role may not read keeps the value `app.yml` already had, with a
   `IOS`); `--platform ios|macos|tvos|visionos` chooses.
 - **The app** is `--app` (app ID or bundle ID), else `app.yml`'s `bundleID`, else the project configuration's: the
   overlay given with `--config` (`type: tauri`, `cargo` or `react-native`; for `MAC_OS` its macOS bundle ID), else
-  the `xless.yml` next to the directory. With `--config`, the directory defaults to `appstore/` next to the overlay,
-  and the configuration's `teamID` is the team when `--team` is not given (as for `xless provision`). `validate`,
+  the `xless.yml` next to the directory. With `--config`, the directory defaults to `appstore/` next to the overlay.
+  The configuration's `teamID` (overlay or xless.yml) is the team when neither `--team` nor `--app` is given, before
+  the team `xless team use` saved; its API key is the one stored for that team, else one stored for no team (as for
+  `xless provision`). `validate`,
   `push`, `store privacy` and `xless release` take `--config` the same way. The overlay is only read, not its source.
 - **The demo account's password is never read**: xless asks App Store Connect for the review details without it, so it
   is not in memory, in a `--verbose` trace or on disk. A pulled `app.yml` keeps its `passwordSecret`; a first pull of an
@@ -324,7 +326,8 @@ whose content changed replaces the upload `media.lock` ties its path to; an uplo
 (FAILED), or one reserved and never finished (an interrupted push), is removed. An upload is App Store Connect's documented protocol: the file is reserved with its name and size,
 sent in the parts App Store Connect asks for (read from disk one part at a time, each part retried on its own, no
 credentials sent to Apple's storage), committed with its MD5, then watched until App Store Connect has processed it.
-Four files go up at a time, across every set of the push (each locale and display type), and their processing is
+Four files go up at a time, across the sets of the push (each locale and display type; a set that must be emptied
+before its new files go up is sent on its own), and their processing is
 waited for in parallel (checked less often the longer it takes, so many files stay well inside App Store Connect's
 hourly request limit); each set is then put in the directory's order, so the result is what one file at a time
 would give. A file it refuses fails the push with App Store Connect's message (the failed upload is removed, so a

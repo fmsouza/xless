@@ -113,7 +113,7 @@ private func shots(_ dir: URL, _ count: Int, _ prefix: String, size: (Int, Int) 
     let uploads = NamedUploads(routed, failing: ["01-shot1.png"])
     let slots = try shots(dir, 8, "en-US/screenshots/APP_IPHONE_67", size: (1320, 2868))
     // The failing file goes up at once; the others take a while, so the failure is known before most start.
-    let sender = mediaSender(SlowStorage(routed, delay: { $0.url!.path.contains("01-shot1") ? .zero : .milliseconds(150) }), concurrency: 2)
+    let sender = mediaSender(SlowStorage(routed, delay: { $0.url!.path.contains("01-shot1") ? .zero : .milliseconds(300) }), concurrency: 2)
     await #expect {
         try await sender.apply(StoreChange(.update, .media, "screenshots en-US APP_IPHONE_67", requests: [],
                                            media: StoreMediaWork(kind: .screenshots, container: .set("S1"), slots: [.keep("SS1")] + slots, reorder: true)))
@@ -242,4 +242,25 @@ private func push(_ dir: URL, concurrency: Int) async throws -> Pushed {
     #expect(Set(uploads.reservations.keys).isSubset(of: inLock))
     #expect(!lock.files.values.keys.contains { $0.contains("APP_IPHONE_61") })
     #expect(notes.lines.contains { $0.contains("of 5 changes") && $0.contains("sent before this failure") })
+}
+
+@Test func aSetEmptiedBeforeItsUploadsIsNotStartedAlongsideOthers() async throws {
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let routed = RoutedTransport(fakeApp())
+    _ = NamedUploads(routed, failing: ["01-shot1.png"])
+    let failing = StoreChange(.create, .media, "screenshots en-US APP_IPHONE_65", requests: [],
+                              media: StoreMediaWork(kind: .screenshots, container: .newSet(type: "APP_IPHONE_65", localization: .id("VL1")),
+                                                    slots: try shots(dir, 2, "en-US/screenshots/APP_IPHONE_65"), reorder: true))
+    let emptied = StoreChange(.update, .media, "screenshots en-US APP_IPHONE_67", requests: [],
+                              media: StoreMediaWork(kind: .screenshots, container: .set("S1"), slots: try shots(dir, 1, "en-US/screenshots/APP_IPHONE_67", size: (1320, 2868)),
+                                                    deletes: ["SS1", "SS2"], deleteFirst: true))
+    #expect(StorePush.goesAlongside(failing) && !StorePush.goesAlongside(emptied))
+    let push = StorePush(resources: ASCResources(client: ASCClient(credentials: storeCreds, transport: routed, sleep: { _ in })))
+    await #expect(throws: (any Error).self) {
+        _ = try await push.apply(StorePlan(changes: [failing, emptied]), app: fakeASCApp, manifest: StoreManifest(), dir: dir,
+                                 options: StorePush.Options(parts: [.media]), sender: mediaSender(routed))
+    }
+    #expect(!routed.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.hasPrefix("/v1/appScreenshots/SS") },
+            "the push stopped before emptying a set it could not fill")
 }

@@ -24,9 +24,8 @@ struct StoreProject: Equatable {
     static func nextTo(manifestDir: URL) -> StoreProject? {
         let file = manifestDir.deletingLastPathComponent().appendingPathComponent("xless.yml")
         guard FileManager.default.fileExists(atPath: file.path), let config = try? ProjectConfig.load(from: file) else { return nil }
-        var ids: [Platform: String] = [:]
-        for p in Platform.allCasesOrdered where config.platforms[p] != nil { ids[p] = config.bundleID(for: p) }
-        if ids.isEmpty { ids[.ios] = config.bundleID }
+        // A platform xless.yml does not build still has the project's bundle ID (one app record for both).
+        let ids = Dictionary(uniqueKeysWithValues: Platform.allCasesOrdered.map { ($0, config.bundleID(for: $0)) })
         return StoreProject(bundleIDs: ids, team: config.teamID, name: "xless.yml")
     }
 

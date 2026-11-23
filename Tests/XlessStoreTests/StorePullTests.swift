@@ -433,6 +433,7 @@ func scheduledPricing() -> [String: (Int, String)] {
         items.append(#"{"type":"appScreenshots","id":"SS\#(i)","attributes":{"fileName":"s\#(i).png","sourceFileChecksum":"apple-\#(i)","imageAsset":{"templateUrl":"\#(template)","width":1320,"height":2868},"assetDeliveryState":{"state":"COMPLETE"}}}"#)
     }
     routes["/v1/appScreenshotSets/S1/appScreenshots"] = (200, list(items))
+    routes["/v1/appPreviewSets/PS1/appPreviews"] = (200, list([#"{"type":"appPreviews","id":"PV1","attributes":{"fileName":"intro.mov","sourceFileChecksum":"apple-intro","videoUrl":"https://example.apple.com/intro.m3u8","previewFrameTimeCode":"00:00:01:00","assetDeliveryState":{"state":"COMPLETE"}}}"#]))
     let cdn = FakeCDN(cdnFiles, delay: .milliseconds(15))
     let dir = root.appendingPathComponent("appstore")
     let report = try await puller(RoutedTransport(routes), cdn).run(app: fakeASCApp, platform: nil, selection: .automatic, into: dir, today: today)
@@ -449,6 +450,7 @@ func scheduledPricing() -> [String: (Int, String)] {
         #expect(lock.files[path] == MediaLock.Entry(md5: MD5Hex.of(data), appleChecksum: "apple-\(i)", id: "SS\(i)"))
     }
     #expect(ManifestReader.read(dir).manifest.locales["de-DE"]?.previews.flatMap(\.files) ?? [] == [], "the stream-only preview is left out")
+    #expect(ManifestReader.read(dir).manifest.app.previewFrames == nil, "and so is its poster frame")
     let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0 != "appstore" }
     #expect(leftovers.isEmpty, "the staging directory is gone: \(leftovers)")
 }

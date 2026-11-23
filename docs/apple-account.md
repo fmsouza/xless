@@ -34,7 +34,7 @@ and send where, in [security.md](security.md).
 
 | Option | What it does |
 |---|---|
-| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. Keys from the environment are used as they are. |
+| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
 | `--json` | Prints JSON instead of a table (see [JSON output](#json-output)). |
 | `--yes` | Answers yes to the confirmation that every destructive call asks. Without a terminal, such a call is refused unless `--yes` is given; it never goes ahead silently. |
 | `--verbose` | Shows every HTTP exchange with Apple on standard error. The trace never shows the key, the token, a cookie or a secret field: they read `<redacted>`. |

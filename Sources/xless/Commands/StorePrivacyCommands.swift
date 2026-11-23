@@ -47,7 +47,7 @@ struct StorePrivacyPullCommand: AsyncParsableCommand {
         try await AccountSession.run {
             let project = try directory.project()
             let wanted = try StorePrivacyCLI.wantedApp(app, dir: dir, project: project)
-            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team ?? project?.team, saved: AccountSession.savedTeam()),
+            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team ?? (app == nil ? project?.team : nil), saved: AccountSession.savedTeam()),
                                                                       verbose: trace.verbose)
             defer { transport.invalidate() }
             let target = try await StorePrivacyCLI.resolve(wanted, apps: ASCWebApps(asc: session.asc))
@@ -88,7 +88,7 @@ struct StorePrivacyPushCommand: AsyncParsableCommand {
             let privacy = try StorePrivacyCLI.check(dir: dir, say: StorePushCLI.standardError)
             let project = try directory.project()
             let wanted = try StorePrivacyCLI.wantedApp(app, dir: dir, project: project)
-            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team ?? project?.team, saved: AccountSession.savedTeam()),
+            let (session, transport, _) = try await APIKeyWebCLI.open(team: AccountSession.resolveTeam(flag: team.team ?? (app == nil ? project?.team : nil), saved: AccountSession.savedTeam()),
                                                                       verbose: trace.verbose)
             defer { transport.invalidate() }
             let target = try await StorePrivacyCLI.resolve(wanted, apps: ASCWebApps(asc: session.asc))

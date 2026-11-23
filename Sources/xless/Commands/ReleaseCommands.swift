@@ -60,7 +60,8 @@ struct ReleaseTargetOptions: ParsableArguments {
                              fix: "pass --app <app ID or bundle ID> (see `xless apps list`)\(directory.config == nil ? ", or --config <overlay>" : "")")
         }
         let samePlatform = m.map { ($0.platform ?? "IOS") == (platform ?? $0.platform ?? "IOS") } ?? false
-        return ReleaseWanted(app: app, platform: platform, version: appVersion ?? (manifestVersion && samePlatform ? m?.version : nil), team: project?.team)
+        return ReleaseWanted(app: app, platform: platform, version: appVersion ?? (manifestVersion && samePlatform ? m?.version : nil),
+                             team: self.app == nil ? project?.team : nil)
     }
 }
 
@@ -76,7 +77,7 @@ enum ReleaseVersionArgument {
 /// - Parameter wanted: its `team` (the project configuration's) is the default team.
 private func runRelease(_ team: TeamOption, _ trace: VerboseOption, json: Bool, _ wanted: ReleaseWanted, _ body: (ReleaseCLI) async throws -> String) async throws {
     try await AccountSession.run {
-        let session = try AccountSession.open(team: team.team ?? wanted.team, verbose: trace.verbose)
+        let session = try AccountSession.open(team: team.team, project: wanted.team, verbose: trace.verbose)
         let out = try await body(ReleaseCLI(resources: session.resources, json: json))
         FileHandle.standardOutput.write(Data(out.utf8))
     }
@@ -187,9 +188,9 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
         if manifest != nil, ManifestReader.read(dir).manifest.app.bundleID == nil {
             options.inheritedBundleID = try target.directory.project()?.bundleID(for: wanted.platform)
         }
-        let (team, verbose, json) = (team.team ?? wanted.team, trace.verbose, output.json)
+        let (team, project, verbose, json) = (team.team, wanted.team, trace.verbose, output.json)
         let exit: Int32 = try await AccountSession.run {
-            let session = try AccountSession.open(team: team, verbose: verbose)
+            let session = try AccountSession.open(team: team, project: project, verbose: verbose)
             // App Privacy has no API: checked only through a session `xless auth login --keep` kept; never a sign-in here.
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if AppleWebCLI.cache.info() != nil {

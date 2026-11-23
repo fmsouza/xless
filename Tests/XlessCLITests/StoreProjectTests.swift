@@ -1,8 +1,10 @@
 import ArgumentParser
+import Crypto
 import Foundation
 import Testing
 import XlessCore
 import XlessStore
+import XlessVault
 @testable import xless
 
 // The app an appstore/ manifest belongs to when app.yml has no bundleID: the overlay given with --config, else the
@@ -125,4 +127,26 @@ private let unnamed = "primaryLocale: en-US\nversion: \"1.0\"\n"
     #expect(throws: XlessError.self, "an overlay that cannot be read stops the command") {
         _ = try ReleaseStatusCommand.parse(["--config", p.root.appendingPathComponent("missing.yml").path]).target.wanted()
     }
+}
+
+private final class Passphrase: PassphrasePrompter, @unchecked Sendable {
+    func askSecret(_ prompt: String) throws -> SecretBytes { SecretBytes(utf8: "correct horse battery") }
+    func ask(_ prompt: String) throws -> String { "correct horse battery" }
+    func say(_ line: String) {}
+}
+
+@Test func theProjectsTeamStillFindsAnAPIKeyStoredForNoTeam() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-store-team-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let vault = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
+    var (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"), kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
+    file.entries.append(try VaultCrypto.seal(name: "ASC_KEY_P8", kind: .ascAPIKey,
+                                             metadata: .init(keyID: "2X9R4HXF34", issuerID: "69a6de70-03db-47e3-e053-5b8c7c11a4d1"),
+                                             secret: SecretBytes(utf8: P256.Signing.PrivateKey().pemRepresentation), dataKey: key))
+    try vault.create(file)
+    let store = VaultSecretStore(store: vault, cache: nil, prompter: { Passphrase() })
+    let session = try AccountSession.open(team: nil, project: "ABCDE12345", verbose: false, env: [:], store: { store })
+    #expect(session.team == "ABCDE12345")
+    #expect(session.client.issuerID == "69a6de70-03db-47e3-e053-5b8c7c11a4d1", "the key stored for no team, as provision finds it")
 }

@@ -123,7 +123,8 @@ struct StorePullCommand: AsyncParsableCommand {
                 throw XlessError(.account, "no app to pull: no --app, no bundleID in \(directory.name)/app.yml and \(directory.noConfig)",
                                  fix: "pass --app <app ID or bundle ID> (see `xless apps list`)\(directory.config == nil ? ", or --config <overlay>" : "")")
             }
-            let session = try AccountSession.open(team: team.team ?? project?.team, verbose: trace.verbose)
+            // The project's team goes with the project's app, not with an app named by --app.
+            let session = try AccountSession.open(team: team.team, project: app == nil ? project?.team : nil, verbose: trace.verbose)
             let found = try await ASCApps(resources: session.resources).resolve(wanted)
             let client = session.client
             let pull = StorePull(resources: session.resources, download: { url, file in try await StoreDownload.fetch(url, to: file, client: client) },
@@ -313,7 +314,7 @@ struct StorePushCommand: AsyncParsableCommand {
         try await AccountSession.run {
             let project = try directory.project()
             let (manifest, bundleID) = try StorePushCLI.check(dir: dir, project: project, say: StorePushCLI.standardError)
-            let session = try AccountSession.open(team: team.team ?? project?.team, verbose: trace.verbose)
+            let session = try AccountSession.open(team: team.team, project: project?.team, verbose: trace.verbose)
             // App Privacy has no API: it goes through the Apple ID web session, opened only when app.yml has answers.
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if try StorePrivacyCLI.storePushNeedsWeb(manifest: manifest, parts: options.parts, explicit: !only.isEmpty,
@@ -362,7 +363,7 @@ struct StorePushCLI {
                              fix: "fix \(errors.count == 1 ? "it" : "them") (`xless store validate --draft` lists them), then re-run")
         }
         guard let bundleID = read.manifest.app.bundleID ?? inherited else {
-            throw XlessError(.account, "no app to push to: no bundleID in \(dir.lastPathComponent)/app.yml and no \(project?.name ?? "xless.yml next to it") bundle ID for its platform",
+            throw XlessError(.account, "no app to push to: no bundleID in \(dir.lastPathComponent)/app.yml and \(project.map { "no bundle ID in \($0.name) for its platform" } ?? "no xless.yml next to it")",
                              fix: "add `bundleID: com.example.app` to app.yml (or pass the app's overlay with --config)")
         }
         return (read.manifest, bundleID)
