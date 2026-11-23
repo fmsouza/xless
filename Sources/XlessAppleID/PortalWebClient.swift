@@ -69,26 +69,34 @@ public actor PortalWebClient {
     }
 
     /// A `v1/…` JSON:API call for the selected team. A GET goes as a POST with `X-HTTP-Method-Override: GET` and the
-    /// query in the body next to `teamId`, as the portal's pages send it; other methods send `body` (JSON:API) after
-    /// `primeCSRF()`. Returns the body of a 2xx answer.
-    public func jsonAPI(_ method: String, _ path: String, query: [(String, String)] = [], body: Data? = nil, page: String? = nil) async throws -> Data {
-        guard path.hasPrefix("v1/") else {
+    /// query in the body next to `teamId`, as the portal's pages send it (`urlQuery` stays in the URL: the portal reads
+    /// some filters there); other methods send `body` (JSON:API) after `primeCSRF()`. Returns the body of a 2xx answer.
+    public func jsonAPI(_ method: String, _ path: String, query: [(String, String)] = [], urlQuery: [(String, String)] = [],
+                        body: Data? = nil, page: String? = nil) async throws -> Data {
+        let response = try await jsonAPIResponse(method, path, query: query, urlQuery: urlQuery, body: body)
+        try check(response, method: method, path: path, page: page)
+        return response.data
+    }
+
+    /// `jsonAPI` without the status check: the answer as it came, for callers that decide on the status themselves
+    /// (`PortalFallback`).
+    public func jsonAPIResponse(_ method: String, _ path: String, query: [(String, String)] = [], urlQuery: [(String, String)] = [],
+                                body: Data? = nil) async throws -> AppleWebResponse {
+        guard path.hasPrefix("v1/"), !path.contains("?") else {
             throw XlessError(.account, "refused a portal request outside services-account/v1 (\(path))", fix: "this is a bug in xless; please report it")
         }
         let team = try requireTeam()
-        let response: AppleWebResponse
         if method == "GET" {
             let envelope = try JSONSerialization.data(withJSONObject: ["teamId": team, "urlEncodedQueryParams": Self.formEncoded(query)],
                                                       options: [.sortedKeys])
-            response = try await send("POST", path, body: envelope,
-                                      headers: ["Content-Type": "application/vnd.api+json", "X-HTTP-Method-Override": "GET"])
-        } else {
-            try await primeCSRF()
-            let target = query.isEmpty ? path : path + "?" + Self.formEncoded(query)
-            response = try await send(method, target, body: body, headers: ["Content-Type": "application/vnd.api+json"])
+            let target = urlQuery.isEmpty ? path : path + "?" + Self.formEncoded(urlQuery)
+            return try await send("POST", target, body: envelope,
+                                  headers: ["Content-Type": "application/vnd.api+json", "X-HTTP-Method-Override": "GET"])
         }
-        try check(response, method: method, path: path, page: page)
-        return response.data
+        try await primeCSRF()
+        let all = query + urlQuery
+        let target = all.isEmpty ? path : path + "?" + Self.formEncoded(all)
+        return try await send(method, target, body: body, headers: ["Content-Type": "application/vnd.api+json"])
     }
 
     /// Gets the CSRF tokens a write needs, from a one-item listing (fastlane: portal_client.rb), unless they are held.
@@ -115,7 +123,7 @@ public actor PortalWebClient {
         return response
     }
 
-    private func check(_ response: AppleWebResponse, method: String, path: String, page: String?) throws {
+    func check(_ response: AppleWebResponse, method: String, path: String, page: String?) throws {
         guard response.isSuccess else {
             throw AppleWebFailure.refused(.developerPortal, method: method, path: Self.display(path), response: response, page: page)
         }
