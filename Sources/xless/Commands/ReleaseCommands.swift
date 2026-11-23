@@ -27,7 +27,7 @@ struct ReleaseCommand: AsyncParsableCommand {
 
 /// Which app, platform and version: options first, then the manifest, then xless.yml.
 struct ReleaseTargetOptions: ParsableArguments {
-    @Option(help: ArgumentHelp("The app: app ID or bundle identifier (default: app.yml's bundleID, else xless.yml's).", valueName: "app"))
+    @Option(help: ArgumentHelp("The app: app ID or bundle identifier (default: app.yml's bundleID, else --config's or xless.yml's).", valueName: "app"))
     var app: String?
     @Option(help: ArgumentHelp("ios, macos, tvos or visionos (default: app.yml's, else the app's only platform).", valueName: "platform"))
     var platform: String?

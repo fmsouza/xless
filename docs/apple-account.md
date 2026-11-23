@@ -615,6 +615,7 @@ xless store push --dry-run                # what differs at App Store Connect
 xless store push                          # send it
 xless store privacy pull                  # App Privacy answers into app.yml (web session)
 xless store privacy push                  # send them and publish (web session)
+xless store pull --config hello.yml       # a Tauri, cargo or React Native app: its bundle ID and team from the overlay
 ```
 
 The App Store listing (text per locale, screenshots, previews, categories, age rating, App Review contact, licence
