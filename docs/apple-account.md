@@ -184,7 +184,8 @@ enables the capabilities their entitlements need ([below](#what-sign-enables)); 
   `USER_MANAGEMENT` and `APPLE_ID_AUTH` (Sign in with Apple). Other portal capabilities (App Attest, Declared Age Range,
   Family Controls, …) are not in the API: enable them on
   [developer.apple.com](https://developer.apple.com/account/resources/identifiers).
-- **Settings:** three capabilities take one, given as `--setting KEY=OPTION`; without it, the default is sent.
+- **Settings:** three capabilities take one, given as `--setting KEY=OPTION`; without it, a capability being enabled
+  gets the default and one enabled already keeps its own.
 
   | Capability | Setting | Options (default first) |
   |---|---|---|
@@ -192,8 +193,8 @@ enables the capabilities their entitlements need ([below](#what-sign-enables)); 
   | `DATA_PROTECTION` | `DATA_PROTECTION_PERMISSION_LEVEL` | `COMPLETE_PROTECTION`, `PROTECTED_UNLESS_OPEN`, `PROTECTED_UNTIL_FIRST_USER_AUTH` |
   | `APPLE_ID_AUTH` | `APPLE_ID_AUTH_APP_CONSENT` | `PRIMARY_APP_CONSENT` |
 
-- **`enable`** on a capability that is enabled already sends nothing, or changes its setting when another option is
-  given. **`disable`** asks first and sends nothing when the capability is not enabled.
+- **`enable`** on a capability that is enabled already sends nothing, or changes its setting when `--setting` names
+  another option. **`disable`** asks first and sends nothing when the capability is not enabled.
 - **Linked identifiers:** App Groups, iCloud and Apple Pay are enabled here, but the app group, iCloud container or
   merchant ID they use must still be assigned to the bundle ID on
   [developer.apple.com](https://developer.apple.com/account/resources/identifiers): the API cannot do it. `enable` says so.
@@ -210,7 +211,8 @@ prints `{"data": [capabilities]}`, `enable` prints the capability and `disable` 
 `sign` enables, on each bundle's identifier, the capability of every entitlement key that has one, with the setting
 the entitlements imply: iCloud with CloudKit (`XCODE_6`), Sign in with Apple as its own primary app, and Data Protection
 at the level `com.apple.developer.default-data-protection` names (`NSFileProtectionComplete…`; Complete otherwise). A
-capability enabled already is left as it is.
+capability enabled already is left as it is. On macOS, the profile's push environment
+(`com.apple.developer.aps-environment`) replaces the entitlements file's, as on iOS.
 
 | Capability | iOS keys | macOS keys |
 |---|---|---|
@@ -245,8 +247,12 @@ capability enabled already is left as it is.
 `IN_APP_PURCHASE` has no entitlement: enable it with `capabilities … enable`. A gated key with no API type (App Attest,
 Declared Age Range, the increased memory limit, …) is left to the portal: `sign` regenerates the profile once in case
 it was enabled by hand, then stops and names the capability to enable. When a key whose capability xless enabled is
-still missing from the profile (an iCloud container not assigned yet, say), `sign` stops with the
-`xless bundle-ids capabilities` command that shows it and what is left to assign.
+still missing from the profile, `sign` stops with the `xless bundle-ids capabilities` command that shows it. iCloud
+containers (`…icloud-container-identifiers`, `…ubiquity-container-identifiers`) and merchant IDs
+(`com.apple.developer.in-app-payments`) must also be assigned to the bundle ID, which the API cannot do: an identifier
+the profile does not list stops `sign` with the steps to create and assign it (`xless merchant-ids create` for a
+merchant ID), as for [app groups](react-native.md#capabilities). A capability Apple refuses to enable (one that needs
+its approval, or does not apply to the platform) stops `sign` with Apple's answer.
 
 ## `xless merchant-ids`
 

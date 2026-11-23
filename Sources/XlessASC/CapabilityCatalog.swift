@@ -145,6 +145,15 @@ public struct CapabilitySetting: Codable, Sendable, Equatable {
     public var options: [Option]
 
     public init(key: String, options: [Option]) { self.key = key; self.options = options }
+
+    enum CodingKeys: String, CodingKey { case key, options }
+
+    /// `options` is optional in Apple's schema: a setting without it reads as one with none.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        options = try c.decodeIfPresent([Option].self, forKey: .options) ?? []
+    }
     public init(_ key: CapabilitySettingKey, _ option: String) { self.init(key: key.rawValue, options: [Option(key: option)]) }
 
     /// What `enable` sends when no `--setting` is given: the capability's setting with its default option.
@@ -152,7 +161,8 @@ public struct CapabilitySetting: Codable, Sendable, Equatable {
         type.settingKey.map { [CapabilitySetting($0, $0.defaultOption)] } ?? []
     }
 
-    /// `KEY=OPTION` arguments (any case) for `type`; the capability's setting with its default when none is given.
+    /// `KEY=OPTION` arguments (any case) for `type`, checked against it. Only what is given: the defaults are what
+    /// `ASCBundleIDs.enable` sends when it creates the capability without settings.
     public static func parse(_ arguments: [String], for type: CapabilityType) throws -> [CapabilitySetting] {
         var chosen: [CapabilitySettingKey: String] = [:]
         for argument in arguments {
@@ -171,8 +181,7 @@ public struct CapabilitySetting: Codable, Sendable, Equatable {
             guard chosen[key] == nil else { throw CapabilitySettingError("\(key.rawValue) is given twice") }
             chosen[key] = parts[1]
         }
-        guard let key = type.settingKey else { return [] }
-        return [CapabilitySetting(key, chosen[key] ?? key.defaultOption)]
+        return chosen.map { CapabilitySetting($0.key, $0.value) }
     }
 
     /// Each setting's chosen option: the one marked enabled, else the only one listed (unless marked disabled).

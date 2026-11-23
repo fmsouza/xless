@@ -68,7 +68,9 @@ private func calls(_ t: FakeTransport) -> [String] { t.requests.map { "\($0.http
     let parsed = try enable.parsed()
     #expect(parsed.action == .enable && parsed.capability == .dataProtection)
     #expect(parsed.settings == [CapabilitySetting(.dataProtectionPermissionLevel, "PROTECTED_UNLESS_OPEN")])
-    #expect(try BundleIDsCapabilitiesCommand.parse(["B1", "enable", "APPLE_ID_AUTH"]).parsed().settings == [CapabilitySetting(.appleIDAuthAppConsent, "PRIMARY_APP_CONSENT")])
+    #expect(try BundleIDsCapabilitiesCommand.parse(["B1", "enable", "APPLE_ID_AUTH"]).parsed().settings.isEmpty)
+    #expect(throws: (any Error).self) { try BundleIDsCreateCommand.parse(["*"]) }
+    _ = try BundleIDsCreateCommand.parse(["*", "--name", "Wildcard"])
     _ = try BundleIDsCapabilitiesCommand.parse(["B1", "LIST", "--json"])
     _ = try BundleIDsCapabilitiesCommand.parse(["com.example.app", "disable", "ICLOUD", "--yes"])
 }
@@ -152,6 +154,17 @@ private func calls(_ t: FakeTransport) -> [String] { t.requests.map { "\($0.http
     #expect(try await cli(same, said: quiet).enable(.icloud, settings: [CapabilitySetting(.icloudVersion, "XCODE_6")], on: "com.example.app")
             == "ICLOUD is already enabled on com.example.app with ICLOUD_VERSION=XCODE_6; nothing was sent\n")
     #expect(same.requests.count == 2 && quiet.lines.isEmpty)
+
+    // No --setting: a new capability gets the default and says so; an enabled one keeps its option.
+    let fresh = FakeTransport([(200, listing([bundle("B1", "com.example.app")])), (200, listing([])),
+                               (201, #"{"data":\#(capability("C1", "APPLE_ID_AUTH"))}"#)])
+    #expect(try await cli(fresh).enable(.appleIDAuth, settings: [], on: "com.example.app")
+            == "enabled APPLE_ID_AUTH (Sign in with Apple) on com.example.app with APPLE_ID_AUTH_APP_CONSENT=PRIMARY_APP_CONSENT\n")
+    let xcode5 = #"[{"key":"ICLOUD_VERSION","options":[{"key":"XCODE_5","enabled":true},{"key":"XCODE_6","enabled":false}]}]"#
+    let kept = FakeTransport([(200, listing([bundle("B1", "com.example.app")])), (200, listing([capability("C1", "ICLOUD", settings: xcode5)]))])
+    #expect(try await cli(kept).enable(.icloud, settings: [], on: "com.example.app")
+            == "ICLOUD is already enabled on com.example.app with ICLOUD_VERSION=XCODE_5; nothing was sent\n")
+    #expect(kept.requests.count == 2)
 
     let change = FakeTransport([(200, listing([bundle("B1", "com.example.app")])), (200, listing([capability("C1", "ICLOUD", settings: iCloudXcode6)])),
                                 (200, #"{"data":\#(capability("C1", "ICLOUD"))}"#)])

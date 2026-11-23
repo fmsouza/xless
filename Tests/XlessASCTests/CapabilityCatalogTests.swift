@@ -32,12 +32,18 @@ import Testing
     #expect(CapabilitySettingKey.appleIDAuthAppConsent.options == ["PRIMARY_APP_CONSENT"])
 }
 
-@Test func settingsDefaultWhenNoneIsGiven() throws {
-    #expect(try CapabilitySetting.parse([], for: .icloud) == [CapabilitySetting(.icloudVersion, "XCODE_6")])
-    #expect(try CapabilitySetting.parse([], for: .dataProtection) == [CapabilitySetting(.dataProtectionPermissionLevel, "COMPLETE_PROTECTION")])
-    #expect(try CapabilitySetting.parse([], for: .appleIDAuth) == [CapabilitySetting(.appleIDAuthAppConsent, "PRIMARY_APP_CONSENT")])
-    #expect(try CapabilitySetting.parse([], for: .pushNotifications) == [])
+@Test func eachSettingHasADefault() throws {
+    #expect(CapabilitySetting.defaults(for: .icloud) == [CapabilitySetting(.icloudVersion, "XCODE_6")])
+    #expect(CapabilitySetting.defaults(for: .dataProtection) == [CapabilitySetting(.dataProtectionPermissionLevel, "COMPLETE_PROTECTION")])
+    #expect(CapabilitySetting.defaults(for: .appleIDAuth) == [CapabilitySetting(.appleIDAuthAppConsent, "PRIMARY_APP_CONSENT")])
     #expect(CapabilitySetting.defaults(for: .maps) == [])
+    // Parsing returns only what was given: an enabled capability keeps its option unless one is named.
+    for type in CapabilityType.allCases { #expect(try CapabilitySetting.parse([], for: type) == []) }
+}
+
+@Test func aSettingWithoutOptionsStillDecodes() throws {
+    let caps = try JSONDecoder().decode(ASCBundleIDCapability.self, from: Data(#"{"type":"bundleIdCapabilities","id":"C1","attributes":{"capabilityType":"ICLOUD","settings":[{"key":"ICLOUD_VERSION"}]}}"#.utf8))
+    #expect(caps.capabilityType == "ICLOUD" && caps.chosenSettings.isEmpty)
 }
 
 @Test func settingsAreParsedFromKeyEqualsOption() throws {

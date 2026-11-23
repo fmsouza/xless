@@ -142,10 +142,22 @@ func dataList(_ items: [String], next: String? = nil) -> String {
     ])]))
 }
 
-@Test func enableWithoutSettingsSendsNone() async throws {
+@Test func enableWithoutSettingsSendsNoneOrTheDefault() async throws {
     let t = MockTransport([(201, #"{"data":\#(capabilityJSON("C9", "PUSH_NOTIFICATIONS"))}"#)])
     _ = try await bundleIDs(t).enable(.pushNotifications, on: "B1", existing: [])
     #expect(t.requests.count == 1 && !compact(t.requests[0]).contains("settings"))
+
+    let siwa = MockTransport([(201, #"{"data":\#(capabilityJSON("C9", "APPLE_ID_AUTH"))}"#)])
+    _ = try await bundleIDs(siwa).enable(.appleIDAuth, on: "B1", existing: [])
+    #expect(try body(siwa.requests[0])["data"]?["attributes"]?["settings"]?[0]?["options"]?[0]?["key"] == .string("PRIMARY_APP_CONSENT"))
+}
+
+@Test func enableWithoutSettingsKeepsTheOptionAnEnabledCapabilityHas() async throws {
+    let current = try JSONDecoder().decode(ASCBundleIDCapability.self, from: Data(capabilityJSON("C1", "DATA_PROTECTION",
+        settings: #"[{"key":"DATA_PROTECTION_PERMISSION_LEVEL","options":[{"key":"COMPLETE_PROTECTION","enabled":false},{"key":"PROTECTED_UNLESS_OPEN","enabled":true}]}]"#).utf8))
+    let t = MockTransport([])
+    guard case .unchanged = try await bundleIDs(t).enable(.dataProtection, on: "B1", existing: [current]) else { Issue.record("expected unchanged"); return }
+    #expect(t.requests.isEmpty)
 }
 
 @Test func enablingWhatIsEnabledSendsNothingOrChangesTheSettings() async throws {

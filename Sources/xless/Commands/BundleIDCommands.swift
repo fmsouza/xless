@@ -107,8 +107,10 @@ struct BundleIDsCreateCommand: AsyncParsableCommand {
 
     func validate() throws {
         do {
-            _ = try BundleIdentifier.validate(identifier)
-            if let name { try PortalName.validate(name) }
+            let id = try BundleIdentifier.validate(identifier)
+            if let name { try PortalName.validate(name) } else if PortalName.from(identifier: id).isEmpty {
+                throw IdentifierInputError("\(id) has no letters or digits to name it after: give --name")
+            }
         } catch let e as IdentifierInputError { throw ValidationError(e.description) }
     }
 
@@ -146,11 +148,12 @@ struct BundleIDsCapabilitiesCommand: AsyncParsableCommand {
         discussion: """
         CAPABILITY is the App Store Connect API's name, in any case: \(CapabilityType.list).
 
-        Three take a setting, given as --setting KEY=OPTION; without it, the first option below is sent. ICLOUD: \
+        Three take a setting, given as --setting KEY=OPTION; without it, a new capability gets the first option below \
+        and an enabled one keeps its own. ICLOUD: \
         ICLOUD_VERSION=XCODE_6 (CloudKit) or XCODE_5. DATA_PROTECTION: DATA_PROTECTION_PERMISSION_LEVEL=COMPLETE_PROTECTION, \
         PROTECTED_UNLESS_OPEN or PROTECTED_UNTIL_FIRST_USER_AUTH. APPLE_ID_AUTH: APPLE_ID_AUTH_APP_CONSENT=PRIMARY_APP_CONSENT.
 
-        Enabling a capability that is enabled already sends nothing, or changes its setting when another is given. \
+        Enabling a capability that is enabled already sends nothing, or changes its setting when --setting names another. \
         App Groups, iCloud and Apple Pay also need an app group, an iCloud container or a merchant ID assigned to the \
         bundle ID, which the API cannot do. Disabling asks first (or needs --yes). Provisioning profiles made before a \
         change keep the old entitlements until they are regenerated (the sign stage regenerates its own).
@@ -275,7 +278,13 @@ struct BundleIDCLI {
     func enable(_ type: CapabilityType, settings: [CapabilitySetting], on argument: String) async throws -> String {
         let b = try await bundleIDs.resolve(argument)
         let result = try await bundleIDs.enable(type, settings: settings, on: b.id)
-        let with = Self.describe(CapabilitySetting.chosen(settings))
+        // What was sent (the default setting when none was given), or what the capability has when nothing was sent.
+        let with: String
+        switch result {
+        case .enabled: with = Self.describe(CapabilitySetting.chosen(settings.isEmpty ? CapabilitySetting.defaults(for: type) : settings))
+        case .updated: with = Self.describe(CapabilitySetting.chosen(settings))
+        case .unchanged(let c): with = Self.describe(c.chosenSettings)
+        }
         if case .unchanged = result {} else {
             if let linked = type.linkedIdentifier {
                 say("note: \(type.displayName) also needs \(linked) assigned to \(b.identifier), which the App Store Connect API cannot do: assign it at https://developer.apple.com/account/resources/identifiers (\(b.identifier) → \(type.displayName) → Configure)")

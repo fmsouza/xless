@@ -52,6 +52,8 @@ public enum Entitlements {
     /// The App Store profile's `aps-environment` wins over the entitlements file's, as when Xcode signs: a project
     /// says `development`, the distribution profile `production`.
     static let apsEnvironmentValues: Set<String> = ["development", "production"]
+    /// macOS spells it with the `com.apple.developer.` prefix; the profile's wins there too.
+    static let macAPSEnvironmentKey = "com.apple.developer.aps-environment"
 
     public static func merge(user: [String: Any], profile: [String: Any], platform: Platform,
                              teamID: String, bundleID: String) throws -> [String: Any] {
@@ -70,6 +72,8 @@ public enum Entitlements {
                let theirs = profile["aps-environment"] as? String { out["aps-environment"] = theirs }
         case .macos:
             out["com.apple.application-identifier"] = appID
+            if let mine = out[macAPSEnvironmentKey] as? String, apsEnvironmentValues.contains(mine),
+               let theirs = profile[macAPSEnvironmentKey] as? String { out[macAPSEnvironmentKey] = theirs }
         }
         return out
     }
@@ -123,12 +127,18 @@ public enum Entitlements {
     /// Keys whose values an iOS profile lists: keychain groups as team patterns (`TEAM.*`), app groups as the groups
     /// assigned to the identifier, associated domains as `*`.
     static let valueCheckedKeys: Set<String> = [keychainGroupsKey, appGroupsKey, associatedDomainsKey]
+    static let iCloudContainersKey = "com.apple.developer.icloud-container-identifiers"
+    static let ubiquityContainersKey = "com.apple.developer.ubiquity-container-identifiers"
+    static let merchantIDsKey = "com.apple.developer.in-app-payments"
+    /// Keys whose values are identifiers assigned to the bundle ID (iCloud containers, merchant IDs), on both platforms:
+    /// xless enables their capability, but the API cannot assign the identifiers, and a profile lists only those assigned.
+    static let linkedIdentifierKeys: Set<String> = [iCloudContainersKey, ubiquityContainersKey, merchantIDsKey]
 
     static func problems(user: [String: Any], profile: [String: Any], platform: Platform) -> [Problem] {
         var out: [Problem] = []
         for key in user.keys.sorted() where !managedKeys.contains(key) && !isUngated(key) {
             guard let granted = profile[key] else { out.append(.missing(key: key)); continue }
-            guard platform == .ios, valueCheckedKeys.contains(key), let value = user[key] else { continue }
+            guard (platform == .ios && valueCheckedKeys.contains(key)) || linkedIdentifierKeys.contains(key), let value = user[key] else { continue }
             let allowed = strings(granted)
             let refused = strings(value).filter { v in !allowed.contains { matches(v, pattern: $0) } }
             if !refused.isEmpty { out.append(.notAllowed(key: key, values: refused, allowed: allowed)) }
@@ -170,6 +180,14 @@ public enum Entitlements {
         case .notAllowed(let key, let values, let allowed):
             let cause = "entitlement '\(key)' value\(values.count == 1 ? "" : "s") \(values.map { "'\($0)'" }.joined(separator: ", ")) "
                 + "\(values.count == 1 ? "is" : "are") not allowed by the provisioning profile for \(bundleID) (it allows: \(allowed.isEmpty ? "nothing" : allowed.joined(separator: ", ")))"
+            if key == iCloudContainersKey || key == ubiquityContainersKey {
+                let ids = values.joined(separator: ", ")
+                return XlessError(.sign, cause, fix: "at \(portal): (1) create the container: Identifiers → + → iCloud Containers → Continue → identifier \(ids) → Register (skip one that exists); (2) \(bundleID) → iCloud → Edit → select \(ids) → Save; (3) re-run (xless regenerates the profile). \(finishFirst)")
+            }
+            if key == merchantIDsKey {
+                let ids = values.joined(separator: ", ")
+                return XlessError(.sign, cause, fix: "(1) register the merchant ID with `xless merchant-ids create <identifier> --name <name>` (\(ids); skip one that exists); (2) at \(portal): \(bundleID) → Apple Pay Payment Processing → Edit → select \(ids) → Save; (3) re-run (xless regenerates the profile). \(finishFirst)")
+            }
             if key == keychainGroupsKey {
                 return XlessError(.sign, cause, fix: "a keychain group must start with the signing team's prefix \(teamID).: write it as $(AppIdentifierPrefix)<group> in the entitlements file, or map it with the overlay's identifiers.replace")
             }
