@@ -42,6 +42,11 @@ enum SecretStoreCLI {
     /// The configured store (the vault, or the credential helper).
     static func store() throws -> any SecretStore { try backend().store }
 
+    /// Drops the vault's data key this process unlocked (`VaultSecretStore.forget`): `main` calls it before exiting.
+    static func forgetUnlock() {
+        if case .success(.vault(let vault)) = configured { vault.forget() }
+    }
+
     /// The secret-store fallback `main` installs: the configured store, or (config.yml is wrong, the helper is missing)
     /// one that reports why whenever a secret is looked up in it.
     static var fallback: any SecretFallback {

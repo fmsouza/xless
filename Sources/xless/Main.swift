@@ -26,10 +26,14 @@ enum Main {
                 try command.run()
             }
         } catch let error as XlessError {
+            SecretStoreCLI.forgetUnlock()
             FileHandle.standardError.write(Data("error: \(error.description)\n".utf8))
             exit(error.stage.exitCode)
         } catch {
+            SecretStoreCLI.forgetUnlock()
             Xless.exit(withError: error)
         }
+        // The unlocked data key (one passphrase per command, shared by every lookup and write) ends with the command.
+        SecretStoreCLI.forgetUnlock()
     }
 }
