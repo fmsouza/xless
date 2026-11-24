@@ -45,13 +45,13 @@ case "$1 ${2:-}" in
     esac ;;
   "live-check "*)
     [[ "${XLESS_LIVE_APPLE:-}" == 1 ]] || { echo "[account] live-check needs XLESS_LIVE_APPLE=1" >&2; exit 20; }
-    echo "ok    api  GET /v1/apps  1 app"; [[ "${STUB_LIVE_FAIL:-0}" == 0 ]] || { echo "FAIL  api  GET /v1/devices  bad"; leak; exit 1; }
+    echo "ok    api  GET /v1/apps  1 app"; [[ ! -e "$S/session" ]] || echo "ok    web  GET /olympus/v1/session  provider 424242421, publicProviderId present, 1 provider(s)"; [[ "${STUB_LIVE_FAIL:-0}" == 0 ]] || { echo "FAIL  api  GET /v1/devices  bad"; leak; exit 1; }
     [[ "${STUB_NO_REDACT:-0}" == 0 ]] || leak ;;
   "bundle-ids list") echo '{"data": [{"type": "bundleIds", "id": "B0", "attributes": {"identifier": "com.unannounced.secretapp"}}]}' ;;
   "certs list"|"profiles list"|"keys list")
     [[ " $* " != *" --verbose "* ]] || { trace; exit 0; }
     kind="$1"; if [[ -e "$S/provisioned" ]]; then echo "{\"data\": [{\"id\": \"OLD-$kind\"}, {\"id\": \"NEW-$kind\"}]}"; else echo "{\"data\": [{\"id\": \"OLD-$kind\"}]}"; fi ;;
-  "team list") if [[ " $* " == *" --json "* ]]; then echo '[{"teamId": "ZZZZZ99999", "name": "Ada Lovelace Personal", "isDefault": true}]'; else trace; fi ;;
+  "team list") if [[ " $* " == *" --json "* ]]; then echo '[{"teamId": "ZZZZZ99999", "name": "Ada Lovelace Personal", "providerId": 424242421, "isDefault": true}]'; else trace; fi ;;
   "apps list") trace ;;
   "provision plan")
     if [[ " $* " == *" --json "* ]]; then
@@ -123,7 +123,7 @@ calls() { grep -c -- "$2" "$t/$1/stub/log" || true; }
 clean_record() {   # NAME: nothing secret or personal reached the record
   local r="$t/$1/record.md" word
   for word in "PRIVATE KEY" MIGHAgEAMBMG eyJhbGciOi ada@example.com ZZZZZ99999 tess@example.com rev@example.com "5555 0100" Rita Reviewer \
-              "Ada Lovelace Personal" 69a6de70 com.unannounced 00008110-001A2B3C4D5E6F70 "$t"; do
+              "Ada Lovelace Personal" 424242421 69a6de70 com.unannounced 00008110-001A2B3C4D5E6F70 "$t"; do
     ! grep -qF -- "$word" "$r" || fail "$1: the record shows '$word': $(grep -nF -- "$word" "$r" | head -3)"
   done
 }
