@@ -126,3 +126,23 @@ private func json(_ r: URLRequest) -> [String: Any] { (r.httpBody.flatMap { try?
     #expect(sender.record.takeNotes() == ["en-US/previews/IPHONE_67/01-intro.mov is uploaded; App Store Connect is still processing it (PROCESSING)"])
     #expect(sender.record.takeNotes().isEmpty)
 }
+
+/// One transfer at a time goes in the directory's order, every time: the order a reader of the requests sees (the
+/// uploads' tasks start in no particular order; their permits are taken in slot order).
+@Test func oneAtATimeTransfersGoInSlotOrderEveryTime() async throws {
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let files = try (1...6).map { try upload(dir, "en-US/screenshots/APP_IPHONE_65/0\($0).png", bytes: pngHeader(1284, 2778 + $0)) }
+    for _ in 0..<40 {
+        let t = RoutedTransport(fakeApp())
+        acceptUploads(t)
+        let sender = mediaSender(t, concurrency: 1)
+        let work = StoreMediaWork(kind: .screenshots, container: .newSet(type: "APP_IPHONE_65", localization: .locale("en-US", versionID: "V2")),
+                                  slots: files.map { .upload($0) }, reorder: true)
+        try await sender.apply(StoreChange(.create, .media, "screenshots en-US APP_IPHONE_65", requests: [], media: work))
+        let reserved = t.requests.filter { $0.httpMethod == "POST" && $0.url!.path == "/v1/appScreenshots" }
+            .map { json($0)["data"].flatMap { ($0 as? [String: Any])?["attributes"] as? [String: Any] }?["fileName"] as? String ?? "?" }
+        #expect(reserved == files.map(\.fileName))
+        if reserved != files.map(\.fileName) { break }
+    }
+}
