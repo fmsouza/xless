@@ -8,7 +8,8 @@ import XlessCore
 import XlessStore
 
 // `xless live-check` (hidden; scripts/acceptance-m7.sh step 0): a read-only contract check against a real account. It
-// calls, with xless's own readers and models, every list and get endpoint the Apple account commands use, and reports
+// calls, with xless's own readers and models, the list and get endpoints the Apple account commands use (not the report
+// downloads, which need a vendor number and a day with sales, nor each in-app purchase's own reads), and reports
 // each one: so a response shape Apple changed (or one xless guessed wrong, docs/research/m7-live-checklist.md) shows up
 // before anything is written. Both halves go through guard transports that refuse to send a write.
 
@@ -84,19 +85,43 @@ struct LiveCheck {
         let apps = ASCApps(resources: r)
         var appList: [ASCApp] = []
         await run.check("api", "GET /v1/apps") { appList = try await apps.list(); return .listed(appList, "app") }
-        await run.check("api", "GET /v1/devices") { .count(try await ASCDevices(resources: r).list().count, "device") }
+        var devices: [ASCDevice] = []
+        await run.check("api", "GET /v1/devices") { devices = try await ASCDevices(resources: r).list(); return .count(devices.count, "device") }
+        if let device = devices.first {
+            await run.check("api", "GET /v1/devices/{id}") { LiveAnswer(detail: try await ASCDevices(resources: r).get(id: device.resource.id).attributes.status ?? "no status") }
+        }
         var bundles: [ASCBundleID] = []
         await run.check("api", "GET /v1/bundleIds") { bundles = try await ASCBundleIDs(resources: r).list(); return .listed(bundles, "bundle ID") }
         await run.check("api", "GET /v1/merchantIds") { .listed(try await ASCMerchantIDs(resources: r).list(), "merchant ID") }
         var certificates: [ASCCertificate] = []
         await run.check("api", "GET /v1/certificates") { certificates = try await ASCCertificates(resources: r).list(); return .listed(certificates, "certificate", ignoring: ["certificateContent"]) }
         if let certificate = certificates.first {
+            await run.check("api", "GET /v1/certificates/{id}") {
+                let full = try await ASCCertificates(resources: r).get(id: certificate.id)
+                var answer = LiveAnswer.listed([full], "certificate")
+                if full.der == nil { answer.status = .warn; answer.detail += "; no certificateContent xless can read" }
+                return answer
+            }
             await run.check("api", "GET /v1/profiles?include=certificates") {
                 .count(try await ASCCertificates(resources: r).profiles(using: certificate.id).count, "profile")
             }
         }
-        await run.check("api", "GET /v1/profiles?include=bundleId") { .listed(try await ASCProfiles(resources: r).list().profiles, "profile") }
-        await run.check("api", "GET /v1/users") { .listed(try await ASCUsers(resources: r).list().items, "user") }
+        var profiles: [ASCProfile] = []
+        await run.check("api", "GET /v1/profiles?include=bundleId") { profiles = try await ASCProfiles(resources: r).list().profiles; return .listed(profiles, "profile") }
+        if let profile = profiles.first {
+            await run.check("api", "GET /v1/profiles/{id}?include=bundleId") {
+                let (full, bundle) = try await ASCProfiles(resources: r).get(id: profile.id, withContent: true)
+                var answer = LiveAnswer.listed([full], "profile")
+                if full.content == nil { answer.status = .warn; answer.detail += "; no profileContent xless can read" }
+                if bundle == nil { answer.status = .warn; answer.detail += "; no bundle ID included" }
+                return answer
+            }
+        }
+        var users: [ASCUser] = []
+        await run.check("api", "GET /v1/users") { users = try await ASCUsers(resources: r).list().items; return .listed(users, "user") }
+        if let user = users.first {
+            await run.check("api", "GET /v1/users/{id}") { .listed([try await ASCUsers(resources: r).get(id: user.id)], "user") }
+        }
         await run.check("api", "GET /v1/userInvitations") { .listed(try await ASCUsers(resources: r).invitations().items, "invitation") }
         await run.check("api", "GET /v1/sandboxTesters") { .listed(try await ASCSandboxTesters(resources: r).list(), "sandbox tester") }
         let store = StoreASC(resources: r)
@@ -202,15 +227,29 @@ struct LiveCheck {
         await run.check("web", "POST QH65B2/account/listTeams.action") { .count(try await s.portal.teams().count, "team") }
         await run.check("web", "app groups (listApplicationGroups.action)") { .count(try await PortalAppGroups(portal: s.portal).list().count, "app group") }
         await run.check("web", "iCloud containers (v1/cloudContainers)") { .count(try await PortalCloudContainers(portal: s.portal).list().count, "container") }
+        var authKeys: [PortalAuthKey] = []
         await run.check("web", "auth keys (account/auth/key/list)") {
-            let keys = try await PortalAuthKeys(portal: s.portal).list()
-            let unknown = keys.filter { $0.services == nil }.count
-            return LiveAnswer(status: unknown == 0 ? .ok : .warn, detail: "\(keys.count) key(s)\(unknown == 0 ? "" : ", \(unknown) without services")")
+            authKeys = try await PortalAuthKeys(portal: s.portal).list()
+            let unknown = authKeys.filter { $0.services == nil }.count
+            return LiveAnswer(status: unknown == 0 ? .ok : .warn, detail: "\(authKeys.count) key(s)\(unknown == 0 ? "" : ", \(unknown) without services")")
         }
+        if let key = authKeys.first {
+            await run.check("web", "auth key (account/auth/key/get)") {
+                let full = try await PortalAuthKeys(portal: s.portal).get(id: key.id)
+                return LiveAnswer(status: full.services == nil ? .warn : .ok, detail: full.services == nil ? "no services" : full.serviceNames)
+            }
+        }
+        var apiKeys: [ASCAPIKeyInfo] = []
         await run.check("web", "GET /iris/v1/apiKeys") {
-            let keys = try await ASCAPIKeys(asc: s.asc).list()
-            let noCreator = keys.filter { $0.createdBy == nil }.count
-            return LiveAnswer(status: noCreator == 0 ? .ok : .warn, detail: "\(keys.count) key(s)\(noCreator == 0 ? "" : ", \(noCreator) without createdBy")")
+            apiKeys = try await ASCAPIKeys(asc: s.asc).list()
+            let noCreator = apiKeys.filter { $0.createdBy == nil }.count
+            return LiveAnswer(status: noCreator == 0 ? .ok : .warn, detail: "\(apiKeys.count) key(s)\(noCreator == 0 ? "" : ", \(noCreator) without createdBy")")
+        }
+        if let key = apiKeys.first {
+            await run.check("web", "GET /iris/v1/apiKeys/{id}") {
+                let full = try await ASCAPIKeys(asc: s.asc).get(id: key.id)
+                return LiveAnswer(detail: "roles \(full.roles.joined(separator: ",")), \(full.isActive ? "active" : "revoked")")
+            }
         }
         guard let bundleID else {
             run.skip("web", "the web endpoints of an app", "no app to read (re-run with --app <bundle ID> after creating one)")

@@ -95,10 +95,19 @@ need() { [[ -n "$2" ]] || die "set $1 first (see --help)"; }
 # values: the Apple ID, the team, the tester, the review contact, the device. Without that command (an older xless),
 # a fallback hides PEM blocks, JWTs and the same values.
 HIDE_VARS=()
-hide() {   # VALUE: never shown in the record
-  [[ -n "$1" ]] || return 0
+hide() {   # VALUE: never shown in the record (values under 3 characters would mangle the text: left alone)
+  [[ ${#1} -ge 3 ]] || return 0
+  local n
+  for n in ${HIDE_VARS[@]+"${HIDE_VARS[@]}"}; do [[ "${!n}" != "$1" ]] || return 0; done
   local name="M7_HIDE_${#HIDE_VARS[@]}"
   export "$name=$1"; HIDE_VARS+=("$name")
+}
+# The values learnt from Apple along the way (state: appleid, issuer, teamname.N): hidden from then on, and every part
+# of the record is redacted again when it is rendered, so they are hidden in what came before they were known too.
+hide_learnt() {
+  local key
+  [[ -f "$STATE" ]] || return 0
+  while IFS= read -r key; do hide "$(state_get "$key")"; done < <(awk -F= '$1 == "appleid" || $1 == "issuer" || $1 ~ /^teamname\./ { print $1 }' "$STATE")
 }
 have_redact=""
 redact() { redact_secrets | tidy_paths; }
@@ -138,7 +147,8 @@ frag() { printf '%s/record/%02d.md' "$DIR" "$STEP"; }
 note() { printf '%s\n' "$*" | redact >> "$(frag)"; printf '%s\n' "$*" >&2; }
 
 # Runs a command with its output on the terminal, and appends `$ command`, the output and the exit code, redacted, to
-# the step's part. The output never reaches the disk unredacted. Returns the command's exit code.
+# the step's part. A secret never reaches the disk unredacted (personal values learnt later, such as the Apple ID of a
+# first sign-in, are hidden when the record is rendered). Returns the command's exit code.
 record() {
   local shown rc=0
   shown="$(printf '%q ' "$@")"; shown="${shown% }"
@@ -172,7 +182,7 @@ result() {   # STEP PASS|FAIL|PENDING|SKIPPED NOTE
 }
 
 step_titles=(
-  "Live contract check: every list and get endpoint xless reads, decoded (read-only)"
+  "Live contract check: the list and get endpoints xless reads, decoded (read-only)"
   "Fresh Linux machine, xless from the release candidate, no ~/.config/xless, no key files"
   "xless auth login; xless auth api-key create (key in the store); xless auth logout"
   "A new sample app: never-registered bundle ID, push entitlement, appstore/ with two locales and screenshots"
@@ -265,9 +275,17 @@ session_kept() {
   [[ "$(json "$out" 'd["session"]["state"]')" == kept ]] && { remember_apple_id "$out"; rm -f "$out"; return 0; }
   rm -f "$out"; return 1
 }
-remember_apple_id() {
-  local id; id="$(json "$1" 'd["session"].get("appleID")')"
+remember_apple_id() {   # STATUS-JSON: the Apple ID, and the names of its teams (an individual's team is their name)
+  local id i=0 name out="$DIR/tmp.teams.json"
+  id="$(json "$1" 'd["session"].get("appleID")')"
   [[ -z "$id" ]] || { state_set appleid "$id"; hide "$id"; }
+  [[ -z "$(state_get teamname.0)" ]] || return 0
+  "$XLESS" team list --json > "$out" 2>/dev/null || true
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    state_set "teamname.$i" "$name"; hide "$name"; i=$((i + 1))
+  done < <(json "$out" '[t.get("name") for t in d if isinstance(t, dict) and t.get("name")]')
+  rm -f "$out"
 }
 sign_in() {   # keeps a session for the steps that use the web session (xless asks the Apple ID, password and code)
   session_kept && return 0
@@ -402,9 +420,12 @@ step1() {
   xl --version || true
   record uname -srm || true
   if [[ "$version" == 0.0.0-dev* || "$version" == unknown ]]; then note "xless $version is not a release: install the release candidate (README.md#install)."; ok=0; fi
-  if [[ -e "${XDG_CONFIG_HOME:-$HOME/.config}/xless" ]]; then
-    note "${XDG_CONFIG_HOME:-$HOME/.config}/xless exists:"; record ls -la "${XDG_CONFIG_HOME:-$HOME/.config}/xless" || true; ok=0
-  else note "No ${XDG_CONFIG_HOME:-~/.config}/xless."; fi
+  # `xless setup` leaves toolchain-meta.json there: only the account's files count (the saved team, the secrets file).
+  local config="${XDG_CONFIG_HOME:-$HOME/.config}/xless" f
+  for f in config.yml testflight.env; do
+    if [[ -e "$config/$f" ]]; then note "$config/$f exists."; ok=0; fi
+  done
+  if [[ -d "$config" ]]; then note "$config holds: $(find "$config" -mindepth 1 -maxdepth 1 -printf '%f ' | sort)"; else note "No $config."; fi
   if [[ -e "$(vault_file)" ]]; then note "A secret store already exists: $(vault_file)."; ok=0; else note "No secret store."; fi
   found="$(secret_files)"
   if [[ -n "$found" ]]; then note "Key files under \$HOME:"; printf '%s\n' "$found" | redact >> "$(frag)"; ok=0; else note "No key file under \$HOME."; fi
@@ -423,7 +444,8 @@ step2() {
     if ! xl_keep "$out" auth api-key create --name "xless M7 acceptance" --role ADMIN --team "$TEAM" --json; then
       rm -f "$out"; result 2 FAIL "xless auth api-key create failed"; return 1
     fi
-    key="$(json "$out" 'd["keyID"]')"; rm -f "$out"
+    key="$(json "$out" 'd["keyID"]')"
+    state_set issuer "$(json "$out" 'd.get("issuerID")')"; hide_learnt; rm -f "$out"
     [[ -n "$key" ]] || { result 2 FAIL "no key ID in the answer of xless auth api-key create"; return 1; }
     state_set api_key_id "$key"
   fi
@@ -462,10 +484,13 @@ PY
   record cat "$APP/xless.yml" "$APP/ios.entitlements" || true
   # Never registered: neither a bundle ID nor an app has it yet (skipped once step 4 made them).
   if [[ -z "$(state_get step.4.started)" ]]; then
-    if xl_keep "$out" bundle-ids list --team "$TEAM" --json && grep -q "\"$BUNDLE\"" "$out"; then
+    # (not recorded: the listing names every app of the team)
+    "$XLESS" bundle-ids list --team "$TEAM" --json > "$out" 2>/dev/null || { rm -f "$out"; result 3 FAIL "xless bundle-ids list failed"; return 1; }
+    if [[ -n "$(json "$out" "[x for x in d.get('data', []) if x.get('attributes', {}).get('identifier') == '$BUNDLE']")" ]]; then
       rm -f "$out"; result 3 FAIL "$BUNDLE is already registered: set another XLESS_M7_BUNDLE_ID and remove $DIR"; return 1
     fi
     rm -f "$out"
+    note "\`xless bundle-ids list --json\` (not recorded: it names every app of the team): $BUNDLE is not registered."
   fi
   xl store validate --dir "$APP/appstore" || { result 3 FAIL "xless store validate refused the manifest"; return 1; }
   result 3 PASS "$BUNDLE, push entitlement, en-US and pt-BR, iPhone 6.9\" and iPad 13\" screenshots, free, every territory"
@@ -500,7 +525,7 @@ step4() {
   [[ -f "$DIR/before.certs" ]] || snapshot before
   if [[ -n "$UDID" && -z "$(state_get device_id)" ]]; then
     if xl_keep "$out" devices register "${DEVICE_NAME:-xless M7 device}" "$UDID" --team "$TEAM" --json; then
-      dev="$(json "$out" 'd.get("id") or d.get("device", {}).get("id") or d.get("data", {}).get("id")')"
+      dev="$(json "$out" '(d.get("registered") or [{}])[0].get("id")')"   # never one that was there before
       [[ -z "$dev" ]] || state_set device_id "$dev"
     fi
     rm -f "$out"
@@ -523,6 +548,15 @@ step4() {
   result 4 PASS "provisioned; a second apply had nothing to do (plan: 0 steps)"
 }
 
+# A build number never used by this run before: minutes since 1970 (as scripts/testflight.sh counts), at least one more
+# than the last one taken.
+next_build() {
+  local n last
+  n=$(( $(date +%s) / 60 )); last="$(state_get build.last)"
+  [[ -z "$last" || $n -gt $last ]] || n=$(( last + 1 ))
+  state_set build.last "$n"; printf '%s' "$n"
+}
+
 secret_env_names() { env | awk -F= -v re="$SECRET_NAME_RE" '$1 ~ re && $1 !~ /_FILE$/ && $1 != "XLESS_NO_SECRET_STORE" && $2 != "" { print $1 }' | sort; }
 
 step5() {
@@ -530,15 +564,17 @@ step5() {
   bad="$(env | awk -F= '$1 ~ /^(ASC_KEY_ID|ASC_ISSUER_ID|ASC_KEY_P8|XLESS_DIST_KEY|XLESS_DEVID_KEY|XLESS_INSTALLER_KEY|XLESS_DEMO_PASSWORD)(_FILE)?$/ { print $1 }')"
   [[ -z "$bad" ]] || { result 5 FAIL "the environment sets $(echo "$bad" | tr '\n' ' ')— only the store may provide them"; return 1; }
   [[ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/xless/testflight.env" ]] || { result 5 FAIL "${XDG_CONFIG_HOME:-$HOME/.config}/xless/testflight.env exists: only the store may provide the secrets"; return 1; }
-  if [[ "$(state_get build.5)" == "" ]]; then
-    state_set build.5 "$(( $(date +%s) / 60 ))"
+  [[ -n "$(state_get build.5)" ]] || state_set build.5 "$(next_build)"
+  if [[ -z "$(state_get shipped.5)" ]]; then
+    start_watch "$watch"
+    set +e; XLESS_BUILD_NUMBER="$(state_get build.5)" xl run "$APP"; rc=$?; set -e
+    stop_watch
+    state_set watch.5 "$(grep -c '^FOUND ' "$watch" || true)"
+    watch_summary "$watch" || true
+    # a failed run takes a new build number next time (Apple refuses one it has, if the upload got through)
+    [[ $rc == 0 ]] || { state_set build.5 ""; result 5 FAIL "xless run exited with $rc (run the script again: step 5 starts again)"; return 1; }
+    state_set shipped.5 1
   fi
-  start_watch "$watch"
-  set +e; XLESS_BUILD_NUMBER="$(state_get build.5)" xl run "$APP"; rc=$?; set -e
-  stop_watch
-  state_set watch.5 "$(grep -c '^FOUND ' "$watch" || true)"
-  watch_summary "$watch" || true
-  [[ $rc == 0 ]] || { result 5 FAIL "xless run exited with $rc (re-run the script: step 5 starts again)"; return 1; }
   if [[ -z "$(state_get tester_added)" ]]; then
     xl testflight testers add "$TESTER" --group "$GROUP" --app "$BUNDLE" --team "$TEAM" --yes || { result 5 FAIL "xless testflight testers add failed"; return 1; }
     state_set tester_added 1
@@ -550,9 +586,9 @@ step5() {
   result 5 PASS "build $(state_get build.5) shipped with the store only, tester added to \"$GROUP\", installed on a device"
 }
 
-release_state() {   # prints the version state, or nothing
+release_state() {   # prints the version state, or nothing (not recorded: the caller notes the state)
   local out="$DIR/tmp.release.json"
-  xl_keep "$out" release status --dir "$APP/appstore" --team "$TEAM" --json >/dev/null 2>&1 || true
+  "$XLESS" release status --dir "$APP/appstore" --team "$TEAM" --json > "$out" 2>/dev/null || true
   json "$out" '(lambda v: v.get("appVersionState") or v.get("appStoreState"))(d["version"]["attributes"])'
   rm -f "$out"
 }
@@ -560,8 +596,12 @@ release_state() {   # prints the version state, or nothing
 step6() {
   local rc st
   if [[ -z "$(state_get submitted)" ]]; then
-    xl release submit --dir "$APP/appstore" --team "$TEAM" --release manual --dry-run || true
-    set +e; xl release submit --dir "$APP/appstore" --team "$TEAM" --release manual; rc=$?; set -e
+    # step 5's build (the version's build number from xless.yml, the build number the run used)
+    local version build
+    version="$(awk -F': *' '$1 == "version" { v = $2; sub(/[[:space:]]*#.*$/, "", v); gsub(/["\047[:space:]]/, "", v); print v }' "$APP/xless.yml")"
+    build="$version+$(state_get build.5)"
+    xl release submit --dir "$APP/appstore" --team "$TEAM" --build "$build" --release manual --dry-run || true
+    set +e; xl release submit --dir "$APP/appstore" --team "$TEAM" --build "$build" --release manual; rc=$?; set -e
     case "$rc" in
       0|22) state_set submitted "$(date -u +%Y-%m-%dT%H:%MZ)" ;;
       21) result 6 FAIL "the pre-flight refused the submission (nothing was sent): fix what it lists, then re-run"; return 1 ;;
@@ -574,7 +614,7 @@ step6() {
     case "$st" in
       PENDING_DEVELOPER_RELEASE) break ;;
       READY_FOR_SALE|READY_FOR_DISTRIBUTION|PROCESSING_FOR_DISTRIBUTION) state_set published 1; break ;;
-      PREPARE_FOR_SUBMISSION|READY_FOR_REVIEW|"")
+      PREPARE_FOR_SUBMISSION|READY_FOR_REVIEW)
         state_set submitted ""
         result 6 FAIL "the version is not in review (${st:-no state read}): run the script again to submit it"
         return 1 ;;
@@ -584,7 +624,7 @@ step6() {
         return $EX_REJECTED ;;
       *)
         if [[ $WAIT == 1 ]]; then sleep "$POLL"; continue; fi
-        result 6 PENDING "in App Review (${st:-unknown}): run the script again later (or with --wait)"
+        result 6 PENDING "in App Review (${st:-state not read this time}): run the script again later (or with --wait)"
         return $EX_LATER ;;
     esac
   done
@@ -664,20 +704,26 @@ step8() {
     note "The image $image is missing."
     pause "Build the images once: xless setup --docker --xcode <Xcode.xip> (README.md#build-in-docker-instead)" || { result 8 FAIL "no xless images"; return 1; }
   done
-  [[ -n "$(state_get build.8)" ]] || state_set build.8 "$(( $(date +%s) / 60 + 1 ))"
+  [[ -n "$(state_get build.8)" ]] || state_set build.8 "$(next_build)"
   local build; build="$(state_get build.8)"
   # An xless.yml project runs in one container that gets the secrets when it signs (scripts/testflight.sh); split it,
   # so the container that runs the app's build has none: build to finalize, then sign, package and upload.
   for half in build sign; do
+    [[ -z "$(state_get "shipped.8.$half")" ]] || continue
     local args=(--to finalize); [[ $half == build ]] || args=(--from sign)
     start_watch "$watch.$half"; start_container_watch "$containers.$half"
     set +e; XLESS_BUILD_NUMBER="$build" xl run --docker "$APP" "${args[@]}"; rc=$?; set -e
     stop_watch
     note "Containers of the $half half:"; redact < "$containers.$half" >> "$(frag)"
     watch_summary "$watch.$half" || ok=0
-    [[ $rc == 0 ]] || { result 8 FAIL "xless run --docker ${args[*]} exited with $rc"; return 1; }
+    if [[ $rc != 0 ]]; then
+      # again from the build, with a new build number (Apple refuses one it has)
+      state_set shipped.8.build ""; state_set build.8 ""
+      result 8 FAIL "xless run --docker ${args[*]} exited with $rc (run the script again: step 8 starts again)"; return 1
+    fi
+    state_set "shipped.8.$half" 1
   done
-  state_set watch.8 "$(cat "$watch.build" "$watch.sign" | grep -c '^FOUND ' || true)"
+  state_set watch.8 "$(cat "$watch.build" "$watch.sign" 2>/dev/null | grep -c '^FOUND ' || true)"
   if [[ ! -s "$containers.build" ]]; then note "No build container was seen (sampled every second)."; ok=0; fi
   if grep -q -E 'mounts=[^ ]*/secrets|secrets=[^-]|material=[^-]' "$containers.build"; then note "A build container had a secret mount or variable."; ok=0; fi
   if [[ $ok == 1 ]]; then result 8 PASS "build $build: the build container had no secret mount or variable; only the signing container read the store"
@@ -703,17 +749,23 @@ cleanup() {
   fi
   id="$(state_get device_id)"
   if [[ -n "$id" ]]; then xl devices disable "$id" --team "$TEAM" --yes && state_set device_id "" || true; fi
+  # A provision that stopped half-way never compared its snapshots: compare them now.
+  if [[ -f "$DIR/before.certs" && ! -f "$DIR/made.certs" ]]; then
+    snapshot after
+    for kind in certs profiles keys; do made "$kind"; done
+  fi
   for kind in profiles certs keys; do
     [[ -f "$DIR/made.$kind" ]] || continue
-    while IFS= read -r id; do
+    : > "$DIR/left.$kind"
+    while IFS= read -r -u 3 id; do
       [[ -n "$id" ]] || continue
       case "$kind" in
-        profiles) xl profiles delete "$id" --team "$TEAM" --yes || true ;;
-        certs) xl certs revoke "$id" --team "$TEAM" --yes || true ;;
-        keys) xl keys revoke "$id" --team "$TEAM" --yes || true ;;
-      esac
-    done < "$DIR/made.$kind"
-    : > "$DIR/made.$kind"
+        profiles) xl profiles delete "$id" --team "$TEAM" --yes ;;
+        certs) xl certs revoke "$id" --team "$TEAM" --yes ;;
+        keys) xl keys revoke "$id" --team "$TEAM" --yes ;;
+      esac || echo "$id" >> "$DIR/left.$kind"   # kept for the next --cleanup
+    done 3< "$DIR/made.$kind"
+    mv "$DIR/left.$kind" "$DIR/made.$kind"
   done
   id="$(state_get api_key_id)"
   if [[ -n "$id" ]]; then xl auth api-key revoke "$id" --team "$TEAM" --yes && state_set api_key_id "" || true; fi
@@ -784,6 +836,7 @@ TEAM="$(setting team XLESS_M7_TEAM)"
 need XLESS_M7_TEAM "$TEAM"
 [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || die "XLESS_M7_TEAM=$TEAM is not a 10-character team ID"
 BUNDLE="$(setting bundle XLESS_M7_BUNDLE_ID "dev.xless.m7.a$RANDOM_PART")"
+[[ "$BUNDLE" =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]] || die "XLESS_M7_BUNDLE_ID=$BUNDLE is not a bundle ID (letters, digits, hyphens and dots)"
 NAME="$(setting name XLESS_M7_APP_NAME "xless M7 $RANDOM_PART")"
 SKU="$(setting sku XLESS_M7_SKU "XLESSM7$(printf '%s' "$RANDOM_PART" | tr '[:lower:]' '[:upper:]')")"
 COMPANY="$(setting company XLESS_M7_COMPANY)"
@@ -793,7 +846,8 @@ DEVICE_NAME="$(setting device_name XLESS_M7_DEVICE_NAME)"
 M7_FIRST="$(setting contact_first XLESS_M7_CONTACT_FIRST)"; M7_LAST="$(setting contact_last XLESS_M7_CONTACT_LAST)"
 M7_PHONE="$(setting contact_phone XLESS_M7_CONTACT_PHONE)"; M7_EMAIL="$(setting contact_email XLESS_M7_CONTACT_EMAIL)"
 export M7_FIRST M7_LAST M7_PHONE M7_EMAIL
-for v in "$TEAM" "$TESTER" "$UDID" "$M7_FIRST" "$M7_LAST" "$M7_PHONE" "$M7_EMAIL" "$(state_get appleid)" "$DEVICE_NAME" "$COMPANY"; do hide "$v"; done
+for v in "$TEAM" "$TESTER" "$UDID" "$M7_FIRST" "$M7_LAST" "$M7_PHONE" "$M7_EMAIL" "$DEVICE_NAME" "$COMPANY"; do hide "$v"; done
+hide_learnt
 # Secret-like variables already in this shell are the user's, not the run's: listed once, not counted.
 BASELINE_SECRETS="$(secret_env_names | tr '\n' ' ')"
 
@@ -806,12 +860,14 @@ need XLESS_M7_CONTACT_PHONE "$M7_PHONE"; need XLESS_M7_CONTACT_EMAIL "$M7_EMAIL"
 [[ -n "$BASELINE_SECRETS" ]] && say "note: this shell already has $BASELINE_SECRETS(yours: not counted by the checks)" || true
 render
 
-for STEP in 0 1 2 3 4 5 6 7 8 9; do
+# Step 8 (Docker) runs before step 6: once App Review approves the version, Apple takes no more builds of it. Step 7
+# reads what the watchers of steps 5 and 8 found.
+for STEP in 0 1 2 3 4 5 8 6 7 9; do
   if done_step "$STEP"; then say "step $STEP: done before, skipped"; continue; fi
   say "step $STEP: ${step_titles[$STEP]}"
   printf '\n_%s_\n' "$(date -u +%Y-%m-%dT%H:%MZ)" >> "$(frag)"
   set +e; ( set -e; if [[ $STEP == 0 ]]; then step0 "" sign-in; else "step$STEP"; fi ); rc=$?; set -e
-  hide "$(state_get appleid)"
+  hide_learnt
   if [[ $rc != 0 ]]; then render; say "stopped at step $STEP (exit $rc): run the script again to continue from there"; exit "$rc"; fi
   # The contract check again once a key (after step 2) and the app (after step 4) exist, before more is written.
   if [[ $STEP == 2 || $STEP == 4 ]]; then

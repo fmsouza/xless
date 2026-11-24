@@ -10,7 +10,7 @@ and link it.
 Where each one is answered:
 
 - **live-check**: `XLESS_LIVE_APPLE=1 xless live-check` (`scripts/acceptance-m7.sh --contract`, and step 0 of the
-  run), read-only. It calls every list and get endpoint xless reads, with xless's own readers, and prints `ok`,
+  run), read-only. It calls the list and get endpoints xless reads (not the report downloads), with xless's own readers, and prints `ok`,
   `warn` (it decoded, but fields xless reads never came back: read the line), `FAIL` (an error, or an answer xless
   cannot read) or `skip`. It runs again after step 2 (with the new API key) and after step 4 (with the app).
 - **step N**: the kit's step N of #105, recorded in [acceptance-m7.md](../acceptance-m7.md).

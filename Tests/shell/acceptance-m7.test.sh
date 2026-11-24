@@ -24,6 +24,7 @@ cat > "$t/bin/xless" <<'STUB'
 set -u
 S="$STUB_DIR"
 [[ "$1 ${2:-}" == "secrets redact" ]] || echo "$*" >> "$S/log"
+[[ "$1" != run ]] || echo "run-build ${XLESS_BUILD_NUMBER:-}" >> "$S/log"
 leak() { printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgLEAKED' '-----END PRIVATE KEY-----' "token eyJhbGciOi.eyJpc3MiOi.c2lnbmF0" "Signed in to Apple as ada@example.com." "team ZZZZZ99999, tester tess@example.com, contact rev@example.com +55 11 5555 0100"; }
 trace() { printf '%s\n' "> GET https://api.appstoreconnect.apple.com/v1/apps" "> Authorization: <redacted>" "< Set-Cookie: <redacted>" >&2
           [[ "${STUB_LEAK_TRACE:-0}" == 0 ]] || echo "> Authorization: Bearer abcdef" >&2; }
@@ -35,7 +36,7 @@ case "$1 ${2:-}" in
   "auth status")
     if [[ -e "$S/session" ]]; then state=kept; else state=none; fi
     if [[ " $* " == *" --json "* ]]; then echo "{\"session\": {\"state\": \"$state\", \"appleID\": \"ada@example.com\"}}"; else echo "session: $state"; fi ;;
-  "auth login") touch "$S/session"; echo "Signed in to Apple as ada@example.com."; [[ " $* " != *" --verbose "* ]] || trace ;;
+  "auth login") touch "$S/session"; printf 'Signed in to Apple as ada@example.com.\nTEAM ID     NAME\nZZZZZ99999  Ada Lovelace Personal\n'; [[ " $* " != *" --verbose "* ]] || trace ;;
   "auth logout") rm -f "$S/session"; echo "Signed out." ;;
   "auth api-key")
     case "$3" in
@@ -46,31 +47,38 @@ case "$1 ${2:-}" in
     [[ "${XLESS_LIVE_APPLE:-}" == 1 ]] || { echo "[account] live-check needs XLESS_LIVE_APPLE=1" >&2; exit 20; }
     echo "ok    api  GET /v1/apps  1 app"; [[ "${STUB_LIVE_FAIL:-0}" == 0 ]] || { echo "FAIL  api  GET /v1/devices  bad"; leak; exit 1; }
     [[ "${STUB_NO_REDACT:-0}" == 0 ]] || leak ;;
-  "bundle-ids list") echo '{"data": []}' ;;
+  "bundle-ids list") echo '{"data": [{"type": "bundleIds", "id": "B0", "attributes": {"identifier": "com.unannounced.secretapp"}}]}' ;;
   "certs list"|"profiles list"|"keys list")
     [[ " $* " != *" --verbose "* ]] || { trace; exit 0; }
     kind="$1"; if [[ -e "$S/provisioned" ]]; then echo "{\"data\": [{\"id\": \"OLD-$kind\"}, {\"id\": \"NEW-$kind\"}]}"; else echo "{\"data\": [{\"id\": \"OLD-$kind\"}]}"; fi ;;
-  "team list"|"apps list") trace ;;
+  "team list") if [[ " $* " == *" --json "* ]]; then echo '[{"teamId": "ZZZZZ99999", "name": "Ada Lovelace Personal", "isDefault": true}]'; else trace; fi ;;
+  "apps list") trace ;;
   "provision plan")
     if [[ " $* " == *" --json "* ]]; then
       if [[ -e "$S/applied2" ]]; then echo '{"team": "ZZZZZ99999", "steps": []}'; else echo '{"team": "ZZZZZ99999", "steps": [{"area": "app"}]}'; fi
     else echo "Plan: 9 steps"; fi ;;
   "provision apply") if [[ -e "$S/provisioned" ]]; then touch "$S/applied2"; echo "Nothing to do."; else touch "$S/provisioned"; echo "Done: 9 steps."; fi ;;
   "run "*)
+    [[ ! -e "$S/approved" ]] || { echo "ERROR ITMS-90186: Invalid Pre-Release Train. The train version '1.0' is closed for new build submissions" >&2; exit 1; }
     if [[ " $* " == *" --docker "* ]]; then
       half=build; [[ " $* " != *" --from sign "* ]] || half=sign
       echo "$half" > "$S/container"; sleep 2.5; rm -f "$S/container"
       echo "==> TestFlight: build number $XLESS_BUILD_NUMBER ($half)"
     else
       env | grep -q '^ASC_KEY_P8=' && { echo "a secret in my environment" >&2; exit 9; }
+      if [[ "${STUB_RUN_FAIL_ONCE:-0}" == 1 && ! -e "$S/failed-once" ]]; then touch "$S/failed-once"; echo "upload failed" >&2; exit 1; fi
       if [[ "${STUB_LEAK_ENV:-0}" == 1 ]]; then env ASC_KEY_P8=leaked sleep 2; else sleep 1.5; fi
       echo "==> TestFlight: build number $XLESS_BUILD_NUMBER"; leak
     fi ;;
-  "release submit") [[ " $* " == *" --dry-run "* ]] && echo "pre-flight passed" || { touch "$S/submitted"; echo "submitted"; } ;;
+  "release submit")
+    [[ " $* " =~ \ --build\ 1\.0\+[0-9]+\  ]] || { echo "[account] the pre-flight failed: version 1.0 has no build" >&2; exit 21; }
+    [[ " $* " == *" --dry-run "* ]] && echo "pre-flight passed" || { touch "$S/submitted"; echo "submitted"; } ;;
   "release status")
     st="$(cat "$S/review" 2>/dev/null || echo WAITING_FOR_REVIEW)"
+    [[ "$st" != PENDING_DEVELOPER_RELEASE && "$st" != READY_FOR_SALE ]] || touch "$S/approved"
     if [[ " $* " == *" --json "* ]]; then echo "{\"version\": {\"type\": \"appStoreVersions\", \"id\": \"V1\", \"attributes\": {\"appVersionState\": \"$st\"}}, \"submissions\": []}"; else echo "STATE $st"; fi ;;
   "release publish") echo READY_FOR_SALE > "$S/review"; echo "released" ;;
+  "devices register") echo '{"registered": [{"type": "devices", "id": "DEV1"}], "existing": []}' ;;
   *) echo "stub xless: unexpected $*" >&2; exit 99 ;;
 esac
 STUB
@@ -107,30 +115,35 @@ kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub acc
     XLESS_M7_CONTACT_FIRST=Rita XLESS_M7_CONTACT_LAST=Reviewer XLESS_M7_CONTACT_PHONE="+55 11 5555 0100" \
     XLESS_M7_CONTACT_EMAIL=rev@example.com \
     STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
-    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" \
+    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" \
+    ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} \
     bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
 }
 calls() { grep -c -- "$2" "$t/$1/stub/log" || true; }
 clean_record() {   # NAME: nothing secret or personal reached the record
   local r="$t/$1/record.md" word
-  for word in "PRIVATE KEY" MIGHAgEAMBMG eyJhbGciOi ada@example.com ZZZZZ99999 tess@example.com rev@example.com "5555 0100" Rita Reviewer; do
+  for word in "PRIVATE KEY" MIGHAgEAMBMG eyJhbGciOi ada@example.com ZZZZZ99999 tess@example.com rev@example.com "5555 0100" Rita Reviewer \
+              "Ada Lovelace Personal" 69a6de70 com.unannounced 00008110-001A2B3C4D5E6F70 "$t"; do
     ! grep -qF -- "$word" "$r" || fail "$1: the record shows '$word': $(grep -nF -- "$word" "$r" | head -3)"
   done
 }
 
-# 1. The first run: steps 0 to 5, then App Review is pending (exit 75).
-kit main
+# 1. The first run: steps 0 to 5 and 8 (Docker, before App Review: Apple takes no build of an approved version), then
+#    App Review is pending (exit 75).
+DEVICE=00008110-001A2B3C4D5E6F70 kit main
 [[ $code == 75 ]] || fail "first run: exit $code, expected 75: $(tail -20 "$t/main/err")"
 r="$t/main/record.md"
 { grep -q '^How to run it.$' "$r" && grep -q '^After the record.$' "$r"; } || fail "the text around the markers changed"
 ! grep -q 'not run yet' "$r" || fail "the old record is still there"
-for i in 0 1 2 3 4 5; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is not PASS: $(grep "^| $i |" "$r")"; done
+for i in 0 1 2 3 4 5 8; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is not PASS: $(grep "^| $i |" "$r")"; done
 grep -q '^| 6 | .* | \*\*PENDING\*\* — in App Review' "$r" || fail "step 6 is not pending: $(grep '^| 6 |' "$r")"
 grep -q '^\$ xless provision apply --project ' "$r" || fail "the commands are not recorded"
 grep -q 'build number' "$r" || fail "the output of xless run is not recorded"
 clean_record main
 [[ $(calls main 'live-check') == 3 ]] || fail "the contract check ran $(calls main 'live-check') times, expected 3 (start, after steps 2 and 4)"
 [[ $(calls main '^release submit .* --release manual$') == 1 ]] || fail "not submitted once"
+[[ $(calls main '^devices register .* 00008110-001A2B3C4D5E6F70') == 1 ]] || fail "the device was not registered"
+grep -q 'not recorded: it names every app' "$r" || fail "the bundle ID check is not noted"
 app="$t/main/state/app"
 { grep -q '^bundleID: dev.xless.m7.test$' "$app/xless.yml" && grep -q '^teamID: ZZZZZ99999$' "$app/xless.yml"; } || fail "xless.yml placeholders: $(head -5 "$app/xless.yml")"
 { grep -q 'firstName: "Rita"' "$app/appstore/app.yml" && grep -q '^bundleID: dev.xless.m7.test$' "$app/appstore/app.yml"; } || fail "app.yml placeholders"
@@ -149,7 +162,7 @@ new="$(tail -n +"$((before + 1))" "$t/main/stub/log")"
 echo PENDING_DEVELOPER_RELEASE > "$t/main/stub/review"
 kit main
 [[ $code == 0 ]] || fail "third run: exit $code: $(tail -20 "$t/main/err")"
-for i in 6 7 8 9; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is not PASS: $(grep "^| $i |" "$r")"; done
+for i in 6 7 9; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is not PASS: $(grep "^| $i |" "$r")"; done
 [[ $(calls main '^release submit .* --release manual$') == 1 ]] || fail "submitted again"
 [[ $(calls main '^release publish') == 1 ]] || fail "not published once"
 { grep -q 'run --docker .* --to finalize' "$t/main/stub/log" && grep -q 'run --docker .* --from sign' "$t/main/stub/log"; } || fail "the docker run was not split"
@@ -169,7 +182,7 @@ grep -q ' 9\. PASS' "$t/main/out" || fail "--status: $(cat "$t/main/out")"
 [[ $(wc -l < "$t/main/stub/log") == "$before" ]] || fail "--dry-run or --status ran xless: $(tail -n +"$((before + 1))" "$t/main/stub/log")"
 kit main --cleanup
 [[ $code == 0 ]] || fail "--cleanup: exit $code: $(tail -5 "$t/main/err")"
-for c in 'certs revoke NEW-certs' 'profiles delete NEW-profiles' 'keys revoke NEW-keys' 'auth api-key revoke KEY1234567' 'testflight testers remove tess@example.com'; do
+for c in 'devices disable DEV1' 'certs revoke NEW-certs' 'profiles delete NEW-profiles' 'keys revoke NEW-keys' 'auth api-key revoke KEY1234567' 'testflight testers remove tess@example.com'; do
   grep -q "^$c" "$t/main/stub/log" || fail "--cleanup did not run '$c'"
 done
 ! grep -q 'OLD-' <(grep 'revoke\|delete' "$t/main/stub/log") || fail "--cleanup touched what was there before"
@@ -198,5 +211,20 @@ STUB_NO_REDACT=1 kit fallback --contract
 [[ $code == 0 ]] || fail "--contract with the fallback redaction: exit $code: $(tail -5 "$t/fallback/err")"
 grep -q 'build number\|ok    api' "$t/fallback/record.md" || fail "the fallback recorded nothing"
 clean_record fallback
+
+# 7. A run of step 5 that fails takes a new build number next time; a rejection (76) resubmits once fixed.
+mkdir -p "$t/retry/stub"; echo REJECTED > "$t/retry/stub/review"
+STUB_RUN_FAIL_ONCE=1 kit retry
+[[ $code == 1 ]] || fail "retry: exit $code, expected 1"
+grep -q '^| 5 | .* | \*\*FAIL\*\*' "$t/retry/record.md" || fail "the failed run is not recorded"
+STUB_RUN_FAIL_ONCE=1 kit retry
+[[ $code == 76 ]] || fail "rejected: exit $code, expected 76: $(tail -5 "$t/retry/err")"
+mapfile -t builds < <(grep '^run-build ' "$t/retry/stub/log" | head -2)
+[[ ${#builds[@]} == 2 && "${builds[0]}" != "${builds[1]}" ]] || fail "step 5 ran again with the same build number: ${builds[*]}"
+grep -q '^| 6 | .* | \*\*PENDING\*\* — Apple rejected it (REJECTED)' "$t/retry/record.md" || fail "the rejection is not recorded"
+echo PENDING_DEVELOPER_RELEASE > "$t/retry/stub/review"
+kit retry
+[[ $code == 0 ]] || fail "after the fix: exit $code: $(tail -5 "$t/retry/err")"
+[[ $(calls retry '^release submit .* --release manual$') == 2 ]] || fail "not resubmitted after the rejection"
 
 echo "acceptance-m7: ok"

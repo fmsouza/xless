@@ -2,7 +2,7 @@
 # com.example.xless.m7 (XLESS_M7_BUNDLE_ID: a bundle ID never registered before) and ABCDE12345 (XLESS_M7_TEAM).
 bundleID: com.example.xless.m7
 teamID: ABCDE12345
-version: 1.0.0
+version: "1.0"            # the App Store version of appstore/app.yml: release submit attaches this build to it
 build: 1
 platforms:
   ios: { minimumOS: "17.0", product: M7Acceptance, entitlements: ios.entitlements }

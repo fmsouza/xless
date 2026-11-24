@@ -60,6 +60,7 @@ private func account() -> RoutedGets {
         "/v1/apps/6470000001": (200, one("apps", "6470000001", app)),
         "/v1/bundleIds": (200, list("bundleIds", "BID1", #"{"identifier": "com.example.hello", "name": "Hello", "platform": "IOS"}"#)),
         "/v1/certificates": (200, list("certificates", "CERT1", #"{"name": "Apple Distribution", "certificateType": "DISTRIBUTION"}"#)),
+        "/v1/certificates/CERT1": (200, one("certificates", "CERT1", #"{"name": "Apple Distribution", "certificateType": "DISTRIBUTION", "certificateContent": "MIIB"}"#)),
         "/v1/apps/6470000001/appInfos": (200, list("appInfos", "INFO1", #"{"state": "PREPARE_FOR_SUBMISSION"}"#)),
         "/v1/apps/6470000001/appStoreVersions": (200, list("appStoreVersions", "VER1", #"{"platform": "IOS", "versionString": "1.0", "appVersionState": "PREPARE_FOR_SUBMISSION"}"#)),
         "/v1/appStoreVersions/VER1/appStoreVersionLocalizations": (200, list("appStoreVersionLocalizations", "LOC1", #"{"locale": "en-US"}"#)),
@@ -86,7 +87,7 @@ private func account() -> RoutedGets {
     #expect(failures.isEmpty, "\(failures)")
     #expect(t.requests.allSatisfy { ($0.httpMethod ?? "GET") == "GET" })
     let checks = Set(lines.map(\.check))
-    for wanted in ["GET /v1/apps", "GET /v1/certificates", "GET /v1/profiles?include=certificates", "GET /v1/builds/{id}?include=…",
+    for wanted in ["GET /v1/apps", "GET /v1/certificates", "GET /v1/certificates/{id}", "GET /v1/profiles?include=certificates", "GET /v1/builds/{id}?include=…",
                    "GET /v1/reviewSubmissions/{id}/items", "GET /v1/appStoreVersionLocalizations/{id}/appScreenshotSets",
                    "GET /v1/bundleIds/{id}/bundleIdCapabilities", "GET /v1/apps/{id}/webhooks"] {
         #expect(checks.contains(wanted), "\(wanted) not checked")

@@ -10,7 +10,8 @@ struct LiveCheckCommand: AsyncParsableCommand {
         abstract: "Read every App Store Connect and Apple ID web endpoint xless uses on a real account, and report each answer (maintainer tool).",
         discussion: """
         A read-only contract check for the maintainer (scripts/acceptance-m7.sh runs it first, before anything is \
-        written): it calls every list and get endpoint the Apple account commands use, with xless's own readers, and \
+        written): it calls the list and get endpoints the Apple account commands use (not the report downloads, nor \
+        each in-app purchase's own reads), with xless's own readers, and \
         prints one line per endpoint: ok, warn (it decoded, but fields xless reads never came back: read them), FAIL \
         (an error or an answer xless cannot read) or skip. Nothing is written at Apple: both connections refuse to send \
         anything but a read.
@@ -39,7 +40,9 @@ struct LiveCheckCommand: AsyncParsableCommand {
         let verbose = trace.verbose
         var check = LiveCheck(app: app)
         do {
-            let session = try AccountSession.open(team: team.team, verbose: verbose, transport: ReadOnlyTransport(inner: URLSessionTransport()))
+            // The guard outside the trace: a refused request never shows in a --verbose trace as if it had been sent.
+            let wire: HTTPTransport = verbose ? TracingTransport(URLSessionTransport(), trace: .standardError) : URLSessionTransport()
+            let session = try AccountSession.open(team: team.team, verbose: false, transport: ReadOnlyTransport(inner: wire))
             check.api = session.resources
         } catch {
             check.apiSkip = "no API key: " + XlessError.wrapping(error, stage: .account).cause

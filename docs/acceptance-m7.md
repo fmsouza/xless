@@ -15,8 +15,8 @@ of it. Until then the record says it has not been run.
 - [`scripts/acceptance-m7.sh`](../scripts/acceptance-m7.sh): walks #105's checklist in order, records every command and
   its output into this page (between the record markers below, redacted), and is resumable: a step that finished is
   skipped when the script runs again, one that failed starts again.
-- `xless live-check` (hidden; `XLESS_LIVE_APPLE=1`): the read-only contract check. It reads every list and get
-  endpoint xless uses with xless's own readers and reports each answer, so a response shape Apple changed, or one xless
+- `xless live-check` (hidden; `XLESS_LIVE_APPLE=1`): the read-only contract check. It reads the list and get
+  endpoints the account commands use (not the report downloads) with xless's own readers and reports each answer, so a response shape Apple changed, or one xless
   guessed wrong, shows up before anything is written. Its connections refuse to send anything but a read.
 - [research/m7-live-checklist.md](research/m7-live-checklist.md): every question the M7 pull requests left open, with
   the step (or the command) that answers it.
@@ -65,9 +65,9 @@ The steps (each row of the record's table is one):
 | 3 | The sample copied and filled in; its bundle ID checked unregistered; `xless store validate` | — |
 | 4 | `xless provision plan`, `xless provision apply --yes`, again, then `xless provision plan --json` must have no step | The sign-in (app record, APNs key, App Privacy use the web session) |
 | 5 | `xless run <app>` with nothing in the environment (the store only), its processes watched; `xless testflight testers add` | Installing the build from TestFlight on a device |
-| 6 | `xless release submit --release manual` (`--dry-run` first), `xless release status` until *Pending Developer Release*, `xless release publish` | Waiting for App Review (days): the script stops with exit code 75; run it again later, or with `--wait` |
+| 6 | `xless release submit --build <step 5's build> --release manual` (`--dry-run` first), `xless release status` until *Pending Developer Release*, `xless release publish` | Waiting for App Review (days): the script stops with exit code 75; run it again later, or with `--wait` |
 | 7 | Key files under `$HOME`; `strings` on the store; the environments of steps 5 and 8; `coredumpctl`; the `--verbose` traces of a sign-in, `team list`, `keys list` and `apps list`, scanned (only the findings are recorded); `xless secrets lock`, `xless auth logout`, then the kernel keyring | The sign-in of the traced login |
-| 8 | `xless run --docker <app> --to finalize`, then `--from sign`, every container inspected (mounts, variable names) | — |
+| 8 | `xless run --docker <app> --to finalize`, then `--from sign`, every container inspected (mounts, variable names). It runs right after step 5: once App Review approves the version, Apple takes no more builds of it. An xless.yml project in Docker is one container that gets the store's secrets when it signs (scripts/testflight.sh), so the run is split where the build ends | — |
 | 9 | — | The answer: was a portal opened in a browser? |
 
 When Apple rejects the version, step 6 stops with exit code 76: read the reason in Apple's email (not in App Store
@@ -79,8 +79,9 @@ the script again.
 ## What is recorded, and what is not
 
 Every command and its output, through `xless secrets redact` (the rules of `--verbose` traces: keys, tokens, cookies,
-session headers, secret fields, presigned URLs) and with the run's personal values hidden: the Apple ID, the team ID,
-the tester, the review contact and the device. Paths show the state directory as `<kit>` and the home directory as
+session headers, secret fields, presigned URLs) and with the run's personal values hidden: the Apple ID, the team ID
+and the names of the Apple ID's teams (an individual's team is their name), the API key's issuer ID, the tester, the
+review contact and the device. The team's bundle IDs are checked without being recorded. Paths show the state directory as `<kit>` and the home directory as
 `~`. The `--verbose` traces of step 7 are scanned as they come and never written; only their line counts and findings
 are. The watchers of steps 5 and 8 record variable names and process names, never a value. Read the record before
 committing it all the same.
