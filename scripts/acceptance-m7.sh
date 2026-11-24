@@ -383,6 +383,8 @@ except Exception:
     sys.exit(0)
 env = c.get("Config", {}).get("Env") or []
 names = sorted(e.split("=", 1)[0] for e in env)
+# not a secret: the swift base image names the public key its tarballs are verified with (a fingerprint, nothing else)
+env = [e for e in env if not re.fullmatch(r"SWIFT_SIGNING_KEY=[0-9A-F]{40}", e)]
 secret = [e.split("=", 1)[0] for e in env if re.search(sys.argv[1], e.split("=", 1)[0]) and not e.split("=", 1)[0].endswith("_FILE")]
 material = [e.split("=", 1)[0] for e in env if "PRIVATE KEY" in e or re.search(r"eyJ[\w-]*\.[\w-]+\.", e)]
 mounts = sorted(m.get("Destination", "") for m in c.get("Mounts") or [])
@@ -735,7 +737,11 @@ step8() {
   if [[ ! -s "$containers.build" ]]; then note "No build container was seen (sampled every second)."; ok=0; fi
   if grep -q -E 'mounts=[^ ]*/secrets|secrets=[^-]|material=[^-]' "$containers.build"; then note "A build container had a secret mount or variable."; ok=0; fi
   if [[ $ok == 1 ]]; then result 8 PASS "build $build: the build container had no secret mount or variable; only the signing container read the store"
-  else result 8 FAIL "see the containers above"; return 1; fi
+  else
+    # again from the build: what these containers showed would fail it every time
+    state_set shipped.8.build ""; state_set shipped.8.sign ""; state_set build.8 ""
+    result 8 FAIL "see the containers above (run the script again: step 8 starts again)"; return 1
+  fi
 }
 
 step9() {
