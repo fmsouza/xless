@@ -477,7 +477,7 @@ open(p, "w").write(s)
 PY
   for f in "$APP"/appstore/*/name.txt; do printf '%s\n' "$NAME" > "$f"; done
   if command -v git >/dev/null 2>&1; then
-    git -C "$APP" init -q && git -C "$APP" add -A && git -C "$APP" -c user.name=xless -c user.email=xless@localhost commit -qm "M7 acceptance app" || true
+    { git -C "$APP" init -q && git -C "$APP" add -A && git -C "$APP" -c user.name=xless -c user.email=xless@localhost commit -qm "M7 acceptance app"; } || true
   fi
   note "The app's files:"
   { printf '```text\n'; (cd "$APP" && find . -path ./.git -prune -o -type f -print | sort); printf '```\n'; } | redact >> "$(frag)"
@@ -745,10 +745,10 @@ cleanup() {
   note "Cleanup of $(date -u +%Y-%m-%dT%H:%MZ):"
   sign_in
   if [[ -n "$(state_get tester_added)" ]]; then
-    xl testflight testers remove "$TESTER" --app "$BUNDLE" --team "$TEAM" --yes && state_set tester_added "" || true
+    if xl testflight testers remove "$TESTER" --app "$BUNDLE" --team "$TEAM" --yes; then state_set tester_added ""; fi
   fi
   id="$(state_get device_id)"
-  if [[ -n "$id" ]]; then xl devices disable "$id" --team "$TEAM" --yes && state_set device_id "" || true; fi
+  if [[ -n "$id" ]] && xl devices disable "$id" --team "$TEAM" --yes; then state_set device_id ""; fi
   # A provision that stopped half-way never compared its snapshots: compare them now.
   if [[ -f "$DIR/before.certs" && ! -f "$DIR/made.certs" ]]; then
     snapshot after
@@ -768,7 +768,7 @@ cleanup() {
     mv "$DIR/left.$kind" "$DIR/made.$kind"
   done
   id="$(state_get api_key_id)"
-  if [[ -n "$id" ]]; then xl auth api-key revoke "$id" --team "$TEAM" --yes && state_set api_key_id "" || true; fi
+  if [[ -n "$id" ]] && xl auth api-key revoke "$id" --team "$TEAM" --yes; then state_set api_key_id ""; fi
   xl secrets list || true
   xl auth logout || true
   note "Left in place (Apple has no delete for them): the app record of $BUNDLE and its bundle ID, the TestFlight group, the uploaded builds (they expire after 90 days)."
@@ -810,7 +810,7 @@ status() {
   echo "App: $(state_get cfg.bundle) \"$(state_get cfg.name)\", team $(state_get cfg.team)"
   for i in "${!step_titles[@]}"; do
     r="$(state_get "result.$i")"
-    printf '%2s. %-8s %s\n' "$i" "$( [[ -n "$r" ]] && echo "${r%%|*}" || echo '-')" "${step_titles[$i]}"
+    printf '%2s. %-8s %s\n' "$i" "${r:+${r%%|*}}${r:--}" "${step_titles[$i]}"
   done
 }
 
@@ -857,7 +857,7 @@ if [[ "$mode" == contract ]]; then STEP=0; step0 "on its own" sign-in; exit $?; 
 need XLESS_M7_TESTER "$TESTER"
 need XLESS_M7_CONTACT_FIRST "$M7_FIRST"; need XLESS_M7_CONTACT_LAST "$M7_LAST"
 need XLESS_M7_CONTACT_PHONE "$M7_PHONE"; need XLESS_M7_CONTACT_EMAIL "$M7_EMAIL"
-[[ -n "$BASELINE_SECRETS" ]] && say "note: this shell already has $BASELINE_SECRETS(yours: not counted by the checks)" || true
+if [[ -n "$BASELINE_SECRETS" ]]; then say "note: this shell already has $BASELINE_SECRETS(yours: not counted by the checks)"; fi
 render
 
 # Step 8 (Docker) runs before step 6: once App Review approves the version, Apple takes no more builds of it. Step 7

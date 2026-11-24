@@ -72,7 +72,7 @@ case "$1 ${2:-}" in
     fi ;;
   "release submit")
     [[ " $* " =~ \ --build\ 1\.0\+[0-9]+\  ]] || { echo "[account] the pre-flight failed: version 1.0 has no build" >&2; exit 21; }
-    [[ " $* " == *" --dry-run "* ]] && echo "pre-flight passed" || { touch "$S/submitted"; echo "submitted"; } ;;
+    if [[ " $* " == *" --dry-run "* ]]; then echo "pre-flight passed"; else touch "$S/submitted"; echo "submitted"; fi ;;
   "release status")
     st="$(cat "$S/review" 2>/dev/null || echo WAITING_FOR_REVIEW)"
     [[ "$st" != PENDING_DEVELOPER_RELEASE && "$st" != READY_FOR_SALE ]] || touch "$S/approved"
