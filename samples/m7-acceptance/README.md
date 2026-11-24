@@ -4,7 +4,8 @@ The app [#105](https://github.com/fmsouza/xless/issues/105) takes from zero to t
 by [`scripts/acceptance-m7.sh`](../../scripts/acceptance-m7.sh) ([docs/acceptance-m7.md](../../docs/acceptance-m7.md)).
 A one-screen SwiftUI iOS app that needs a capability (push notifications: `ios.entitlements`), with an
 [`appstore/`](appstore) listing in two languages (en-US, pt-BR), screenshots for the iPhone 6.9" and iPad 13" displays,
-App Privacy ("Data Not Collected"), a free price and every territory.
+App Privacy ("Data Not Collected"), a free price and every territory but China mainland (its
+declarations have no API).
 
 Placeholders, replaced by the script in its own copy of this directory (never here):
 

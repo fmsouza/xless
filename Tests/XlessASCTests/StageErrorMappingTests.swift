@@ -121,3 +121,24 @@ private let refusedVersion = #"""
         #expect(e?.cause == "GET /v1/x: App Store Connect HTTP 409 — C: T: D", "\(meta): \(String(describing: e?.cause))")
     }
 }
+
+@Test func theChinaMainlandDeclarationsAreExplained() async throws {
+    // App Store Connect's answer for a new app sold in China mainland with its App Compliance forms unanswered (#105).
+    let form = { (code: String) in
+        #"{"status":"409","code":"STATE_ERROR.PPM.compliance.form.\#(code).enforcement.PENDING_COLLECT.NEW_APP_SUBMISSION_BLOCK","title":"App submission blocked","detail":"Cannot submit version due to unfulfilled compliance requirement."}"#
+    }
+    func fix(_ codes: [String]) async -> String? {
+        let body = #"{"errors":[{"status":"409","code":"STATE_ERROR.ENTITY_STATE_INVALID","title":"T","detail":"D","meta":{"associatedErrors":{"/v1/appInfos/1":[\#(codes.map(form).joined(separator: ","))]}}}]}"#
+        let client = ASCClient(credentials: testCreds, transport: MockTransport([(409, body)]), sleep: { _ in })
+        return await mapped(.account) { let _: ASCDocument<[ASCRef]> = try await client.get("/v1/reviewSubmissionItems") }?.fix
+    }
+    for codes in [["SECURITYASF395E", "AIGENERATEFD1DE"], ["SECURITYASF395E"], ["AIGENERATEFD1DE"]] {
+        let text = try #require(await fix(codes))
+        #expect(text.contains("China mainland") && text.contains("App Compliance") && text.contains("CHN") && text.contains("availability.territories"), "\(text)")
+    }
+    // A form xless does not know: where to answer it, without a country.
+    let unknown = try #require(await fix(["OTHERFORM1234"]))
+    #expect(unknown.contains("App Compliance") && !unknown.contains("CHN") && !unknown.contains("China"), "\(unknown)")
+    let mixed = try #require(await fix(["SECURITYASF395E", "OTHERFORM1234"]))
+    #expect(mixed.contains("App Compliance") && !mixed.contains("CHN"), "\(mixed)")
+}

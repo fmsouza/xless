@@ -174,6 +174,7 @@ reports its own errors as `[config]`, exit 10.
 
 | Symptom | What to do |
 |---|---|
+| `xless release submit`: `… PPM.compliance.form.SECURITYASF395E …`, `… AIGENERATEFD1DE …` | Since November 2026 a new app sold in China mainland cannot be submitted until its Security Assessment and AI-Generated or Synthetic Content declarations are answered. They have no App Store Connect API: answer them in App Store Connect (the app → General → App Compliance), or list `availability.territories` without `CHN` and run `xless store push`. Then run `xless release submit` again. |
 | `missing secret ASC_KEY_ID — set ASC_KEY_ID or ASC_KEY_ID_FILE, or keep the API key in the secret store …` | No API key resolves: create one (`xless auth api-key create`), import yours (`xless auth api-key import`), or set the variables. `xless auth status` shows what resolves, from where, without reading a secret. |
 | `there is no secret store at …` (exit 10) | `xless secrets init` first ([secrets.md](secrets.md)). |
 | `the secret store is locked and there is no terminal to ask its passphrase on` | The command runs without a terminal (a script, `nohup`, CI). Run it in a terminal, or unlock first in the same login session: `xless secrets unlock --remember 30m` (Linux). CI uses `NAME` / `NAME_FILE` variables instead of the store. |
