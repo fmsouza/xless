@@ -178,7 +178,7 @@ before=$(wc -l < "$t/main/stub/log")
 kit main --dry-run; [[ $code == 0 ]] || fail "--dry-run: exit $code"
 grep -q 'xless provision apply' "$t/main/out" || fail "--dry-run does not list the commands"
 kit main --status; [[ $code == 0 ]] || fail "--status: exit $code"
-grep -q ' 9\. PASS' "$t/main/out" || fail "--status: $(cat "$t/main/out")"
+grep -q '^ 9\. PASS  *Neither' "$t/main/out" || fail "--status: $(cat "$t/main/out")"
 [[ $(wc -l < "$t/main/stub/log") == "$before" ]] || fail "--dry-run or --status ran xless: $(tail -n +"$((before + 1))" "$t/main/stub/log")"
 kit main --cleanup
 [[ $code == 0 ]] || fail "--cleanup: exit $code: $(tail -5 "$t/main/err")"

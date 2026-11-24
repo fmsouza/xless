@@ -817,8 +817,8 @@ status() {
   echo "State: $STATE; record: $RECORD"
   echo "App: $(state_get cfg.bundle) \"$(state_get cfg.name)\", team $(state_get cfg.team)"
   for i in "${!step_titles[@]}"; do
-    r="$(state_get "result.$i")"
-    printf '%2s. %-8s %s\n' "$i" "${r:+${r%%|*}}${r:--}" "${step_titles[$i]}"
+    r="$(state_get "result.$i")"; r="${r%%|*}"   # PASS|FAIL|PENDING|SKIPPED, without the note
+    printf '%2s. %-8s %s\n' "$i" "${r:--}" "${step_titles[$i]}"
   done
 }
 
