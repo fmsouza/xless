@@ -47,7 +47,7 @@ private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> URL {
     let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
     let app = try makeApp(root)
     let dmg = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64],
-                                   outputDir: root.appendingPathComponent("out")) { _ in }
+                                   outputDir: root.appendingPathComponent("out"), pin: { _, _ in }) { _ in }
     #expect(dmg.lastPathComponent == "Hello_1.0.0_aarch64.dmg")
 }
 
@@ -95,19 +95,80 @@ private func macApp(_ root: URL, executable: Data) throws -> URL {
     let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
     let app = try makeApp(root)
     nonisolated(unsafe) var ran: [[String]] = []
-    let dmg = try DmgBuilder.build(signedApp: app, volumeName: "Hello Tauri é", version: "1.0.0", outputDir: root.appendingPathComponent("out")) { ran.append($0) }
+    let dmg = try DmgBuilder.build(signedApp: app, volumeName: "Hello Tauri é", version: "1.0.0", outputDir: root.appendingPathComponent("out"),
+                                   pin: { image, pinned in ran.append(["pin", image.lastPathComponent, pinned.path]) }) { ran.append($0) }
     #expect(dmg.lastPathComponent == "Hello Tauri é_1.0.0_universal.dmg")
-    #expect(ran.map { $0[0] } == ["chmod", "dd", "mkfs.hfsplus", "hfsplus", "hfsplus", "dmg"])
+    // The volume's dates are pinned once every tool that stamps one has run, before it is compressed.
+    #expect(ran.map { $0[0] } == ["chmod", "dd", "mkfs.hfsplus", "hfsplus", "hfsplus", "pin", "dmg"])
+    #expect(ran[5] == ["pin", "img.hfs", app.path])
     #expect(ran[0].prefix(3) == ["chmod", "-R", "u=rwX,go=rX"])
     #expect(ran[2][2] == "Hello Tauri é")
     #expect(ran.last?.last == dmg.path.replacingOccurrences(of: "/out/", with: "/out.partial/"))
+}
+
+/// The tree `hfsplus addall` copies modes from is normalised whatever the builder's umask: the stage is loosened here as a
+/// umask of 002 creates it (775 directories, 664 files) before the real chmod runs, and read back when addall would run.
+@Test func theStageIsNormalisedWhateverTheUmask() throws {
+    let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    nonisolated(unsafe) var modes: [String: UInt16] = [:]
+    _ = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", outputDir: root.appendingPathComponent("out"),
+                             pin: { _, _ in }) { argv in
+        if argv[0] == "chmod", let stage = argv.last {
+            let fm = FileManager.default
+            _ = chmod(stage, 0o775)
+            for rel in try fm.subpathsOfDirectory(atPath: stage) {
+                let path = "\(stage)/\(rel)", info = try PkgBuilder.lstatInfo(path)
+                if !info.isSymlink { _ = chmod(path, info.isDirectory || info.mode & 0o100 != 0 ? 0o775 : 0o664) }
+            }
+            try Shell.run(argv[0], Array(argv.dropFirst()), stage: .package)
+        }
+        if argv.contains("addall"), let stage = argv.last {
+            modes["."] = try PkgBuilder.lstatInfo(stage).mode
+            for rel in try FileManager.default.subpathsOfDirectory(atPath: stage) {
+                let info = try PkgBuilder.lstatInfo("\(stage)/\(rel)")
+                if !info.isSymlink { modes[rel] = info.mode }
+            }
+        }
+    }
+    let base = "Hello Tauri.app/Contents"
+    #expect(modes == [".": 0o755, "Hello Tauri.app": 0o755, base: 0o755, "\(base)/MacOS": 0o755, "\(base)/MacOS/x": 0o755,
+                      "\(base)/Frameworks": 0o755, "\(base)/Frameworks/F.framework": 0o755,
+                      "\(base)/Frameworks/F.framework/Versions": 0o755, "\(base)/Frameworks/F.framework/Versions/A": 0o755,
+                      "\(base)/Frameworks/F.framework/Versions/A/F": 0o644])
+}
+
+/// `sourceDate` reads each entry's date from the signed app itself (a symlink's own), the app's date for what the app
+/// does not hold; a path outside the app (`Applications` next to it) is never read.
+@Test func sourceDateReadsOnlyInsideTheSignedApp() throws {
+    let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    let appDate = Date(timeIntervalSince1970: 1_767_225_600), exeDate = Date(timeIntervalSince1970: 1_748_779_200)
+    let linkDate = Date(timeIntervalSince1970: 1_740_787_200)
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("Applications"), withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000_000)],
+                                          ofItemAtPath: root.appendingPathComponent("Applications").path)
+    try FileManager.default.setAttributes([.modificationDate: exeDate], ofItemAtPath: app.appendingPathComponent("Contents/MacOS/x").path)
+    try PkgBuilder.setLinkDate(app.appendingPathComponent("Contents/Frameworks/F.framework/Versions/Current").path, linkDate)
+    try FileManager.default.setAttributes([.modificationDate: appDate], ofItemAtPath: app.path)
+    var asked: [String: Date?] = [:]
+    for rel in ["Hello Tauri.app", "Hello Tauri.app/Contents/MacOS/x", "Hello Tauri.app/Contents/Frameworks/F.framework/Versions/Current",
+                "Hello Tauri.app/Contents/Nope", "Applications", "Hello Tauri.appx"] {
+        asked.updateValue(DmgBuilder.sourceDate(rel, app: app), forKey: rel)
+    }
+    #expect(asked["Hello Tauri.app"] == appDate)
+    #expect(asked["Hello Tauri.app/Contents/MacOS/x"] == exeDate)
+    #expect(asked["Hello Tauri.app/Contents/Frameworks/F.framework/Versions/Current"] == linkDate)
+    #expect(asked["Hello Tauri.app/Contents/Nope"] == .some(nil))
+    #expect(asked["Applications"] == .some(nil))
+    #expect(asked["Hello Tauri.appx"] == .some(nil))
 }
 
 @Test func missingToolPointsAtTheTauriImage() throws {
     let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
     let app = try makeApp(root)
     do {
-        _ = try DmgBuilder.build(signedApp: app, volumeName: "X", version: "1", outputDir: root.appendingPathComponent("out")) { argv in
+        _ = try DmgBuilder.build(signedApp: app, volumeName: "X", version: "1", outputDir: root.appendingPathComponent("out"), pin: { _, _ in }) { argv in
             if argv[0] == "dmg" { throw XlessError(.package, "cannot start dmg: nope", fix: "install dmg or check PATH") }
         }
         Issue.record("expected throw")
@@ -175,6 +236,31 @@ func realDmgKeepsFrameworkSymlinksAndHasApplicationsLink() throws {
     #expect(macos.split(separator: "\n").contains { $0.contains("100755") && $0.hasSuffix(" x") })   // 0700 source normalised
 }
 
+/// Runs only where the DMG tools exist: the same app gives the same DMG bytes built a second and more later, the stage
+/// loosened the way a umask of 002 creates it, and the volume carries the app's own dates.
+@Test(.enabled(if: onPath("dmg") && onPath("hfsplus") && onPath("mkfs.hfsplus")))
+func realDmgIsTheSameBytesLaterAndUnderAnotherUmask() throws {
+    let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    let date = Date(timeIntervalSince1970: 1_767_225_600)
+    for rel in try FileManager.default.subpathsOfDirectory(atPath: app.path).reversed() + [""] {
+        try PkgBuilder.setLinkDate(rel.isEmpty ? app.path : app.appendingPathComponent(rel).path, date)
+    }
+    let first = try DmgBuilder.build(signedApp: app, volumeName: "Hello Tauri é", version: "1.0.0", outputDir: root.appendingPathComponent("a"))
+    Thread.sleep(forTimeInterval: 1.1)
+    let second = try DmgBuilder.build(signedApp: app, volumeName: "Hello Tauri é", version: "1.0.0", outputDir: root.appendingPathComponent("b"),
+                                      run: { argv in
+        if argv[0] == "chmod", let stage = argv.last { try Shell.run("chmod", ["-R", "g+w", stage], stage: .package) }
+        try DmgBuilder.shell(argv)
+    })
+    #expect(try Data(contentsOf: first) == Data(contentsOf: second))
+    let img = root.appendingPathComponent("extracted.hfs")
+    try Shell.run("dmg", ["extract", first.path, img.path], stage: .package)
+    let snapshot = try HFSPlusDates.read(image: img)
+    #expect(snapshot.entries["Hello Tauri.app/Contents/MacOS/x"]?[1] == HFSPlusDates.hfsDate(date))
+    #expect(snapshot.volumeDates[0] == HFSPlusDates.hfsDate(date))
+}
+
 @Test func captureToKeepsTheFullOutputPastTheErrorTail() throws {
     let log = scratch()
     defer { try? FileManager.default.removeItem(at: log) }
@@ -234,6 +320,6 @@ func signedButUnstapledRealDmgFailsTheStapleCheck() throws {
     let app = try makeApp(root)
     let dSYMs = try makeDSYMs(root, name: "Hello Tauri.app")
     let out = root.appendingPathComponent("out")
-    _ = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64], outputDir: out, dSYMs: dSYMs) { _ in }
+    _ = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64], outputDir: out, dSYMs: dSYMs, pin: { _, _ in }) { _ in }
     #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("Hello Tauri.app.dSYM.zip").path))
 }

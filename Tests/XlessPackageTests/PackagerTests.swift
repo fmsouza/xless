@@ -38,6 +38,29 @@ private func makeApp(_ root: URL) throws -> URL {
     #expect(!listing.contains("._"))
 }
 
+/// The same app zips to the same .ipa bytes two seconds and more later (zip dates in 2 s steps): every entry carries the
+/// app's own date, never the time of the copy, and `Payload/` is 755 whatever the umask (run under umask 002 locally).
+@Test func ipaIsTheSameBytesLaterAndCarriesTheAppsDates() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = try makeApp(root)
+    let date = Date(timeIntervalSince1970: 1_767_225_600)          // 2026-01-01 00:00:00 UTC, an even second
+    for rel in try FileManager.default.subpathsOfDirectory(atPath: app.path).sorted(by: >) + [""] {
+        try PkgBuilder.setLinkDate(rel.isEmpty ? app.path : app.appendingPathComponent(rel).path, date)
+    }
+    let first = try Packager.ipa(signedApp: app, outputDir: root.appendingPathComponent("a"))
+    Thread.sleep(forTimeInterval: 2.1)
+    let second = try Packager.ipa(signedApp: app, outputDir: root.appendingPathComponent("b"))
+    #expect(try Data(contentsOf: first) == Data(contentsOf: second))
+    // zipinfo -T prints each entry's date as yyyymmdd.hhmmss in the local time zone, as zip stored it.
+    let format = DateFormatter()
+    format.locale = Locale(identifier: "en_US_POSIX"); format.timeZone = .current; format.dateFormat = "yyyyMMdd.HHmmss"
+    let lines = try Shell.run("zipinfo", ["-T", first.path], stage: .package).stdout.split(separator: "\n").filter { $0.contains("Payload") }
+    #expect(lines.count == 8, "\(lines)")   // Payload, X.app, X, Frameworks, F.framework, Current, Versions, A
+    for line in lines { #expect(line.contains(" \(format.string(from: date)) "), "\(line)") }
+    #expect(lines.contains { $0.hasPrefix("drwxr-xr-x") && $0.hasSuffix(" Payload/") })
+}
+
 private func ipaWithVersions(_ version: String, _ build: String) throws -> URL {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
     let app = try makeApp(root)
