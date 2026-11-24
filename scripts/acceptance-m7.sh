@@ -503,7 +503,7 @@ PY
     note "\`xless bundle-ids list --json\` (not recorded: it names every app of the team): $BUNDLE is not registered."
   fi
   xl store validate --dir "$APP/appstore" || { result 3 FAIL "xless store validate refused the manifest"; return 1; }
-  result 3 PASS "$BUNDLE, push entitlement, en-US and pt-BR, iPhone 6.9\" and iPad 13\" screenshots, free, every territory"
+  result 3 PASS "$BUNDLE, push entitlement, en-US and pt-BR, iPhone 6.9\" and iPad 13\" screenshots, free, every territory but China mainland"
 }
 
 # What exists before provisioning, so --cleanup removes only what this run made. A listing that fails is marked, and

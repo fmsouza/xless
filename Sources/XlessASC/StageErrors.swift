@@ -36,6 +36,8 @@ extension ASCError: StageReportableError {
                 fix = "App Store Connect needs a value for `\(field)`, which the request did not have: add it"
             } else if let field = conflictField {
                 fix = "App Store Connect refused the value of `\(field)` (it conflicts with an existing resource or is not allowed): change it, or update the existing resource instead"
+            } else if let forms = complianceFix {
+                fix = forms
             } else if items.contains(where: { !$0.reasons.isEmpty }) {
                 fix = "App Store Connect refused the request for the reasons above: fix each, then re-run"
             } else {
@@ -61,6 +63,26 @@ extension ASCError: StageReportableError {
         guard let item = items.first(where: { $0.code?.hasSuffix("ATTRIBUTE.REQUIRED") == true }),
               let pointer = item.source?.pointer, pointer.hasPrefix("/data/attributes/") else { return nil }
         return pointer.split(separator: "/").last.map(String.init)
+    }
+
+    /// The declarations App Store Connect asks of a new app sold in China mainland, by the code in its refusal.
+    static let chinaMainlandForms = ["SECURITYASF395E": "Security Assessment", "AIGENERATEFD1DE": "AI-Generated or Synthetic Content"]
+
+    /// What to do about the App Compliance forms a 409's reasons name (`….PPM.compliance.form.<form>.enforcement.…`).
+    var complianceFix: String? {
+        let marker = ".PPM.compliance.form."
+        let reasons = items.flatMap { ($0.meta?.associatedErrors ?? [:]).values.flatMap { $0 } }
+        let forms = reasons.compactMap { reason -> String? in
+            guard let code = reason.code, let at = code.range(of: marker) else { return nil }
+            return String(code[at.upperBound...].prefix { $0 != "." })
+        }
+        guard !forms.isEmpty else { return nil }
+        let others = forms.count < reasons.count ? ", and fix the other reasons above" : ""
+        let names = Set(forms).sorted().compactMap { Self.chinaMainlandForms[$0] }
+        guard names.count == Set(forms).count else {
+            return "App Store Connect wants App Compliance forms answered, which have no API: answer them in App Store Connect (the app → General → App Compliance)\(others), then re-run"
+        }
+        return "App Store Connect wants the app's China mainland declarations (\(names.joined(separator: "; "))), which have no API: answer them in App Store Connect (the app → General → App Compliance), or leave CHN out of availability.territories in app.yml and run `xless store push`\(others); then re-run"
     }
 
     /// The attribute or relationship a 409 points at (`/data/attributes/name` → `name`).
