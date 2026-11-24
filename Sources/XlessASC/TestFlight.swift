@@ -43,7 +43,7 @@ public struct ASCBetaTesterAttributes: ASCAttributes, Equatable {
     public init() {}
 }
 
-/// A beta tester of the team (one per email address, across apps).
+/// A beta tester (an email address has one per app).
 public typealias ASCBetaTester = ASCKeptResource<ASCBetaTesterAttributes>
 
 extension ASCKeptResource where A == ASCBetaTesterAttributes {
@@ -355,9 +355,10 @@ public struct ASCTestFlight: Sendable {
         try await resources.list("/v1/betaTesters", query: ASCQuery(filters: [("betaGroups", group.id)]), as: ASCBetaTester.self).items
     }
 
-    /// The team's beta tester with this address (compared without regard to case), in any app.
-    public func findTester(email: String) async throws -> ASCBetaTester? {
-        let found = try await resources.list("/v1/betaTesters", query: ASCQuery(filters: [("email", email)]), as: ASCBetaTester.self).items
+    /// The app's beta tester with this address (compared without regard to case). An address has one tester record per
+    /// app, and another app's record cannot be put into this app's groups (409 "Tester(s) cannot be assigned").
+    public func findTester(email: String, app appID: String) async throws -> ASCBetaTester? {
+        let found = try await resources.list("/v1/betaTesters", query: ASCQuery(filters: [("email", email), ("apps", appID)]), as: ASCBetaTester.self).items
         return found.first { UserEmail.same($0.email, email) }
     }
 
@@ -382,18 +383,19 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
-    /// Adds someone to the group: nothing when they are among `members` already; an existing tester is linked; a new
+    /// Adds someone to the group: nothing when they are among `members` already; a tester of the app is linked; a new
     /// one is created with the group (sent once; a 409 is settled by looking the address up and linking it).
     /// - Parameters:
+    ///   - appID: the group's app: only its own tester records can be linked.
     ///   - members: the group's testers (`members(of:)`), read once for several additions.
     ///   - users: for an internal group, the team's user addresses (`userEmails()`), lower-cased; nil skips the check.
-    public func add(_ request: BetaTesterRequest, to group: ASCBetaGroup, members: [ASCBetaTester], users: Set<String>?) async throws -> TesterAddition {
+    public func add(_ request: BetaTesterRequest, to group: ASCBetaGroup, app appID: String, members: [ASCBetaTester], users: Set<String>?) async throws -> TesterAddition {
         if let member = members.first(where: { UserEmail.same($0.email, request.email) }) { return .alreadyInGroup(member) }
         if group.isInternal, let users, !users.contains(request.email.lowercased()) {
             throw XlessError(.account, "\(request.email) is not an App Store Connect user of this team, and the testers of an internal group (\(group.name)) must be",
                              fix: "invite them with `xless users invite \(request.email) --first-name <name> --last-name <name> --role developer --all-apps`, and add them once they accept; or use an external group")
         }
-        if let tester = try await findTester(email: request.email) {
+        if let tester = try await findTester(email: request.email, app: appID) {
             try await link(tester, to: group)
             return .added(tester)
         }
@@ -405,7 +407,7 @@ public struct ASCTestFlight: Sendable {
                 relationships: Relationships(betaGroups: ASCToMany([ASCRef(type: "betaGroups", id: group.id)])))
             return .created(created.data)
         } catch let e as ASCError where e.status == 409 {
-            guard let tester = try await findTester(email: request.email) else { throw e }
+            guard let tester = try await findTester(email: request.email, app: appID) else { throw e }
             if try await self.members(of: group).contains(where: { $0.id == tester.id }) { return .alreadyInGroup(tester) }
             try await link(tester, to: group)
             return .added(tester)

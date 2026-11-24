@@ -6,7 +6,7 @@ import Testing
 import XlessCore
 @testable import XlessASC
 
-private func testFlight(_ t: MockTransport) -> ASCTestFlight {
+private func testFlight(_ t: any HTTPTransport) -> ASCTestFlight {
     ASCTestFlight(resources: ASCResources(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in })))
 }
 private func call(_ r: URLRequest) -> String { r.httpMethod! + " " + r.url!.path }
@@ -108,7 +108,7 @@ private func tester(_ json: String) throws -> ASCBetaTester {
     let t = MockTransport([])
     let member = try tester(betaTesterJSON("T1", "Ada@Example.com"))
     let result = try await testFlight(t).add(BetaTesterRequest(email: "ada@example.com"), to: try group(betaGroupJSON("G1", "Beta", internal: false)),
-                                             members: [member], users: nil)
+                                             app: "APP1", members: [member], users: nil)
     guard case .alreadyInGroup(let found) = result else { Issue.record("expected alreadyInGroup"); return }
     #expect(found.id == "T1" && t.requests.isEmpty)
 }
@@ -116,18 +116,19 @@ private func tester(_ json: String) throws -> ASCBetaTester {
 @Test func anExistingTesterIsLinkedToTheGroup() async throws {
     let t = MockTransport([(200, tfList([betaTesterJSON("T7", "ADA@example.com")])), (204, "")])
     let result = try await testFlight(t).add(BetaTesterRequest(email: "ada@example.com"), to: try group(betaGroupJSON("G1", "Beta", internal: false)),
-                                             members: [], users: nil)
+                                             app: "APP1", members: [], users: nil)
     guard case .added(let found) = result else { Issue.record("expected added"); return }
     #expect(found.id == "T7")
     #expect(t.requests.map(call) == ["GET /v1/betaTesters", "POST /v1/betaGroups/G1/relationships/betaTesters"])
     #expect(q(t.requests[0], "filter[email]") == "ada@example.com")
+    #expect(q(t.requests[0], "filter[apps]") == "APP1", "another app's tester record cannot be in this app's groups")
     #expect(try body(t.requests[1])["data"] == .array([.object(["type": .string("betaTesters"), "id": .string("T7")])]))
 }
 
 @Test func aNewTesterIsCreatedWithTheGroupOnce() async throws {
     let t = MockTransport([(200, tfList([])), (201, tfSingle(betaTesterJSON("T9", "new@example.com")))])
     let result = try await testFlight(t).add(BetaTesterRequest(email: "new@example.com", firstName: "New", lastName: "Person"),
-                                             to: try group(betaGroupJSON("G1", "Beta", internal: false)), members: [], users: nil)
+                                             to: try group(betaGroupJSON("G1", "Beta", internal: false)), app: "APP1", members: [], users: nil)
     guard case .created(let created) = result else { Issue.record("expected created"); return }
     #expect(created.id == "T9")
     #expect(call(t.requests[1]) == "POST /v1/betaTesters")
@@ -136,11 +137,35 @@ private func tester(_ json: String) throws -> ASCBetaTester {
     #expect(data?["relationships"]?["betaGroups"]?["data"]?[0]?["id"]?.string == "G1")
 }
 
+@Test func aTesterOfOtherAppsOnlyIsCreatedForThisApp() async throws {
+    // App Store Connect has one tester record per app: linking another app's record answered 409 "Tester(s) cannot be
+    // assigned" (#105).
+    final class PerApp: HTTPTransport, @unchecked Sendable {
+        var sent: [String] = []
+        func send(_ r: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            sent.append(call(r))
+            func answer(_ status: Int, _ body: String) -> (Data, HTTPURLResponse) {
+                (Data(body.utf8), HTTPURLResponse(url: r.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+            }
+            switch call(r) {
+            case "GET /v1/betaTesters": return answer(200, tfList(q(r, "filter[apps]") == "APP1" ? [] : [betaTesterJSON("T-OTHER-APP", "ada@example.com")]))
+            case "POST /v1/betaTesters": return answer(201, tfSingle(betaTesterJSON("T9", "ada@example.com")))
+            default: return answer(409, #"{"errors":[{"status":"409","code":"STATE_ERROR","title":"x","detail":"Tester(s) cannot be assigned"}]}"#)
+            }
+        }
+    }
+    let t = PerApp()
+    let result = try await testFlight(t).add(BetaTesterRequest(email: "ada@example.com"), to: try group(betaGroupJSON("G1", "Internal")),
+                                             app: "APP1", members: [], users: ["ada@example.com"])
+    guard case .created(let made) = result else { Issue.record("expected created: \(result)"); return }
+    #expect(made.id == "T9" && t.sent == ["GET /v1/betaTesters", "POST /v1/betaTesters"])
+}
+
 @Test func anInternalGroupTakesOnlyUsersOfTheTeam() async throws {
     let t = MockTransport([])
     do {
         _ = try await testFlight(t).add(BetaTesterRequest(email: "stranger@example.com"), to: try group(betaGroupJSON("G1", "Internal")),
-                                        members: [], users: ["ada@example.com"])
+                                        app: "APP1", members: [], users: ["ada@example.com"])
         Issue.record("expected throw")
     } catch let e as XlessError {
         #expect(e.cause.contains("not an App Store Connect user") && e.fix.contains("xless users invite stranger@example.com"))

@@ -124,7 +124,7 @@ struct TestFlightCLI {
         for email in emails {
             let request = BetaTesterRequest(email: email, firstName: firstName, lastName: lastName)
             let outcome: ASCTestFlight.TesterAddition
-            do { outcome = try await testFlight.add(request, to: group, members: members, users: users) } catch {
+            do { outcome = try await testFlight.add(request, to: group, app: app.id, members: members, users: users) } catch {
                 for line in lines { say(line) }
                 if !lines.isEmpty { say("(the addresses above were handled before \(email) failed)") }
                 throw error
