@@ -617,3 +617,31 @@ private func liveOnlyCopyingItalian(_ t: RoutedTransport) {
     #expect(replanned.held.isEmpty && !writes(t).contains { $0.hasPrefix("DELETE") })
     #expect(replanned.notes.contains { $0.contains("it-IT") }, "\(replanned.notes)")
 }
+
+@Test func aVersionTextAppleAddedWithTheAppInfoLocaleIsUpdated() async throws {
+    // Adding a locale to the app information makes App Store Connect add it to the version being prepared too, so the
+    // planned create of that version text meets a 409 (DUPLICATE on locale): the text Apple added is updated instead.
+    let (root, dir) = try await pulled()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try write("Exemplo\n", "pt-BR/name.txt", in: dir)
+    try write("Faz coisas.\n", "pt-BR/description.txt", in: dir)
+    let t = RoutedTransport(synced())
+    t.onRequest = { r, t in
+        guard r.httpMethod == "POST", r.url!.path == "/v1/appInfoLocalizations" else { return }
+        var versions = t.routes["/v1/appStoreVersions/V2/appStoreVersionLocalizations"]!
+        versions.1 = versions.1.replacingOccurrences(of: #""data":["#, with: #""data":[{"type":"appStoreVersionLocalizations","id":"VL5","attributes":{"locale":"pt-BR"}},"#)
+        t.routes["/v1/appStoreVersions/V2/appStoreVersionLocalizations"] = versions
+        t.routes["POST /v1/appStoreVersionLocalizations"] = (409, #"{"errors":[{"status":"409","code":"ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE","title":"The provided entity includes an attribute with a value that has already been used","detail":"Entity with locale: pt-BR already exists. Try updating.","source":{"pointer":"/data/attributes/locale"}}]}"#)
+    }
+    let push = pusher(t)
+    let m = manifest(dir)
+    let (plan, _) = try await push.plan(app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.text]))
+    #expect(plan.changes.map(\.subject) == ["app info pt-BR", "version text pt-BR"])
+    let applied = try await push.apply(plan, app: fakeASCApp, manifest: m, dir: dir, options: .init(parts: [.text]), sender: sender(t))
+    #expect(applied.sent.count == 2)
+    #expect(writes(t) == ["POST /v1/appInfoLocalizations", "POST /v1/appStoreVersionLocalizations", "PATCH /v1/appStoreVersionLocalizations/VL5"])
+    let update = try #require(request(t, "PATCH /v1/appStoreVersionLocalizations/VL5"))
+    #expect(attributes(update)["description"] as? String == "Faz coisas.")
+    #expect(attributes(update)["locale"] == nil, "a locale is never updated")
+    #expect((body(update)["data"] as? [String: Any])?["id"] as? String == "VL5")
+}
