@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# scripts/acceptance-m7.sh end to end against a stub xless (and stub docker, coredumpctl, keyctl), its pauses answered
+# by the harness (XLESS_M7_HUMAN=auto): the first run stops at App Review (exit 75) with steps 0 to 5 recorded; the
+# second skips what is done and finishes; the record is redacted (no key, token, Apple ID, team, tester or contact);
+# --cleanup removes only what the run made; --dry-run and --status run nothing; a secret in a child's environment, an
+# unreadable contract and an xless without `secrets redact` are each reported.
+#   Tests/shell/acceptance-m7.test.sh     (builds xless with `swift build` for `secrets redact`; XLESS_BIN=<path> uses that binary)
+set -euo pipefail
+export LC_ALL=C
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+t=$(mktemp -d)
+trap '[[ -n "${KEEP_TMP:-}" ]] || rm -rf "$t"' EXIT   # KEEP_TMP=1 keeps it, to look
+fail() { echo "FAIL: $*"; exit 1; }
+real="${XLESS_BIN:-}"
+if [[ -z "$real" ]]; then
+  (cd "$repo" && env -u DEVELOPER_DIR swift build --product xless -q)
+  real="$(cd "$repo" && env -u DEVELOPER_DIR swift build --show-bin-path)/xless"
+fi
+
+mkdir -p "$t/bin" "$t/stub" "$t/home"
+cat > "$t/bin/xless" <<'STUB'
+#!/usr/bin/env bash
+# The stub: answers as xless would, logs every call to $S/log, and keeps its account in $S.
+set -u
+S="$STUB_DIR"
+[[ "$1 ${2:-}" == "secrets redact" ]] || echo "$*" >> "$S/log"
+leak() { printf '%s\n' '-----BEGIN PRIVATE KEY-----' 'MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgLEAKED' '-----END PRIVATE KEY-----' "token eyJhbGciOi.eyJpc3MiOi.c2lnbmF0" "Signed in to Apple as ada@example.com." "team ZZZZZ99999, tester tess@example.com, contact rev@example.com +55 11 5555 0100"; }
+trace() { printf '%s\n' "> GET https://api.appstoreconnect.apple.com/v1/apps" "> Authorization: <redacted>" "< Set-Cookie: <redacted>" >&2
+          [[ "${STUB_LEAK_TRACE:-0}" == 0 ]] || echo "> Authorization: Bearer abcdef" >&2; }
+case "$1 ${2:-}" in
+  "--version "*) echo 0.9.0 ;;
+  "secrets redact") [[ "${STUB_NO_REDACT:-0}" == 0 ]] || exit 64; exec "$REAL_XLESS" "$@" ;;
+  "secrets init") mkdir -p "$XDG_DATA_HOME/xless/vault"; echo '{"version":2,"entries":[{"name":"ASC_KEY_P8@ZZZZZ99999","sealed":"q83vEjRWeJA="}]}' > "$XDG_DATA_HOME/xless/vault/secrets.vault" ;;
+  "secrets list"|"secrets lock"|"team use"|"store validate"|"store push"|"testflight testers"|"builds list"|"devices disable"|"profiles delete"|"certs revoke"|"keys revoke") echo "ok: $*" ;;
+  "auth status")
+    if [[ -e "$S/session" ]]; then state=kept; else state=none; fi
+    if [[ " $* " == *" --json "* ]]; then echo "{\"session\": {\"state\": \"$state\", \"appleID\": \"ada@example.com\"}}"; else echo "session: $state"; fi ;;
+  "auth login") touch "$S/session"; echo "Signed in to Apple as ada@example.com."; [[ " $* " != *" --verbose "* ]] || trace ;;
+  "auth logout") rm -f "$S/session"; echo "Signed out." ;;
+  "auth api-key")
+    case "$3" in
+      create) echo '{"keyID": "KEY1234567", "issuerID": "69a6de70-0000-47e3-e053-5b8c7c11a4d1", "entry": "ASC_KEY_P8@ZZZZZ99999", "team": "ZZZZZ99999"}' ;;
+      *) echo "ok: $*" ;;
+    esac ;;
+  "live-check "*)
+    [[ "${XLESS_LIVE_APPLE:-}" == 1 ]] || { echo "[account] live-check needs XLESS_LIVE_APPLE=1" >&2; exit 20; }
+    echo "ok    api  GET /v1/apps  1 app"; [[ "${STUB_LIVE_FAIL:-0}" == 0 ]] || { echo "FAIL  api  GET /v1/devices  bad"; leak; exit 1; }
+    [[ "${STUB_NO_REDACT:-0}" == 0 ]] || leak ;;
+  "bundle-ids list") echo '{"data": []}' ;;
+  "certs list"|"profiles list"|"keys list")
+    [[ " $* " != *" --verbose "* ]] || { trace; exit 0; }
+    kind="$1"; if [[ -e "$S/provisioned" ]]; then echo "{\"data\": [{\"id\": \"OLD-$kind\"}, {\"id\": \"NEW-$kind\"}]}"; else echo "{\"data\": [{\"id\": \"OLD-$kind\"}]}"; fi ;;
+  "team list"|"apps list") trace ;;
+  "provision plan")
+    if [[ " $* " == *" --json "* ]]; then
+      if [[ -e "$S/applied2" ]]; then echo '{"team": "ZZZZZ99999", "steps": []}'; else echo '{"team": "ZZZZZ99999", "steps": [{"area": "app"}]}'; fi
+    else echo "Plan: 9 steps"; fi ;;
+  "provision apply") if [[ -e "$S/provisioned" ]]; then touch "$S/applied2"; echo "Nothing to do."; else touch "$S/provisioned"; echo "Done: 9 steps."; fi ;;
+  "run "*)
+    if [[ " $* " == *" --docker "* ]]; then
+      half=build; [[ " $* " != *" --from sign "* ]] || half=sign
+      echo "$half" > "$S/container"; sleep 2.5; rm -f "$S/container"
+      echo "==> TestFlight: build number $XLESS_BUILD_NUMBER ($half)"
+    else
+      env | grep -q '^ASC_KEY_P8=' && { echo "a secret in my environment" >&2; exit 9; }
+      if [[ "${STUB_LEAK_ENV:-0}" == 1 ]]; then env ASC_KEY_P8=leaked sleep 2; else sleep 1.5; fi
+      echo "==> TestFlight: build number $XLESS_BUILD_NUMBER"; leak
+    fi ;;
+  "release submit") [[ " $* " == *" --dry-run "* ]] && echo "pre-flight passed" || { touch "$S/submitted"; echo "submitted"; } ;;
+  "release status")
+    st="$(cat "$S/review" 2>/dev/null || echo WAITING_FOR_REVIEW)"
+    if [[ " $* " == *" --json "* ]]; then echo "{\"version\": {\"type\": \"appStoreVersions\", \"id\": \"V1\", \"attributes\": {\"appVersionState\": \"$st\"}}, \"submissions\": []}"; else echo "STATE $st"; fi ;;
+  "release publish") echo READY_FOR_SALE > "$S/review"; echo "released" ;;
+  *) echo "stub xless: unexpected $*" >&2; exit 99 ;;
+esac
+STUB
+cat > "$t/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+S="$STUB_DIR"
+case "$1" in
+  image) exit 0 ;;
+  ps) [[ -e "$S/container" ]] && echo "c0ffee$(cat "$S/container")" ; exit 0 ;;
+  inspect)
+    if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi
+    if [[ "$2" == *build && "${STUB_LEAK_DOCKER:-0}" == 1 ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; fi
+    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:local\", \"Env\": [\"PATH=/usr/bin\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
+  *) echo "stub docker: $*" >&2; exit 99 ;;
+esac
+STUB
+printf '#!/bin/sh\necho "No coredumps found."\n' > "$t/bin/coredumpctl"
+printf '#!/bin/sh\nexit 0\n' > "$t/bin/keyctl"
+chmod 755 "$t/bin/xless" "$t/bin/docker" "$t/bin/coredumpctl" "$t/bin/keyctl"
+
+record_template() {   # the committed record's shape: an introduction, then the markers
+  printf '# Milestone 7 acceptance\n\nHow to run it.\n\n<!-- acceptance-m7:record:begin -->\nnot run yet\n<!-- acceptance-m7:record:end -->\n\nAfter the record.\n' > "$1"
+}
+
+kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub account and record); exit code → $code
+  local name="$1"; shift
+  mkdir -p "$t/$name/stub" "$t/$name/home"
+  [[ -f "$t/$name/record.md" ]] || record_template "$t/$name/record.md"
+  code=0
+  env -i PATH="$t/bin:/usr/bin:/bin" HOME="$t/$name/home" XDG_DATA_HOME="$t/$name/home/.local/share" \
+    XDG_CONFIG_HOME="$t/$name/home/.config" STUB_DIR="$t/$name/stub" REAL_XLESS="$real" \
+    XLESS_M7_DIR="$t/$name/state" XLESS_M7_RECORD="$t/$name/record.md" XLESS_M7_HUMAN=auto \
+    XLESS_M7_TEAM=ZZZZZ99999 XLESS_M7_TESTER=tess@example.com XLESS_M7_BUNDLE_ID=dev.xless.m7.test \
+    XLESS_M7_CONTACT_FIRST=Rita XLESS_M7_CONTACT_LAST=Reviewer XLESS_M7_CONTACT_PHONE="+55 11 5555 0100" \
+    XLESS_M7_CONTACT_EMAIL=rev@example.com \
+    STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
+    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" \
+    bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
+}
+calls() { grep -c -- "$2" "$t/$1/stub/log" || true; }
+clean_record() {   # NAME: nothing secret or personal reached the record
+  local r="$t/$1/record.md" word
+  for word in "PRIVATE KEY" MIGHAgEAMBMG eyJhbGciOi ada@example.com ZZZZZ99999 tess@example.com rev@example.com "5555 0100" Rita Reviewer; do
+    ! grep -qF -- "$word" "$r" || fail "$1: the record shows '$word': $(grep -nF -- "$word" "$r" | head -3)"
+  done
+}
+
+# 1. The first run: steps 0 to 5, then App Review is pending (exit 75).
+kit main
+[[ $code == 75 ]] || fail "first run: exit $code, expected 75: $(tail -20 "$t/main/err")"
+r="$t/main/record.md"
+{ grep -q '^How to run it.$' "$r" && grep -q '^After the record.$' "$r"; } || fail "the text around the markers changed"
+! grep -q 'not run yet' "$r" || fail "the old record is still there"
+for i in 0 1 2 3 4 5; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is not PASS: $(grep "^| $i |" "$r")"; done
+grep -q '^| 6 | .* | \*\*PENDING\*\* — in App Review' "$r" || fail "step 6 is not pending: $(grep '^| 6 |' "$r")"
+grep -q '^\$ xless provision apply --project ' "$r" || fail "the commands are not recorded"
+grep -q 'build number' "$r" || fail "the output of xless run is not recorded"
+clean_record main
+[[ $(calls main 'live-check') == 3 ]] || fail "the contract check ran $(calls main 'live-check') times, expected 3 (start, after steps 2 and 4)"
+[[ $(calls main '^release submit .* --release manual$') == 1 ]] || fail "not submitted once"
+app="$t/main/state/app"
+{ grep -q '^bundleID: dev.xless.m7.test$' "$app/xless.yml" && grep -q '^teamID: ZZZZZ99999$' "$app/xless.yml"; } || fail "xless.yml placeholders: $(head -5 "$app/xless.yml")"
+{ grep -q 'firstName: "Rita"' "$app/appstore/app.yml" && grep -q '^bundleID: dev.xless.m7.test$' "$app/appstore/app.yml"; } || fail "app.yml placeholders"
+grep -q '^xless M7 ' "$app/appstore/pt-BR/name.txt" || fail "name placeholder: $(cat "$app/appstore/pt-BR/name.txt")"
+! grep -rq 'com\.example\.xless\.m7\|ABCDE12345\|XLESSM7SKU' "$app" --exclude-dir=.git --exclude=README.md || fail "a placeholder was left"
+[[ "$(stat -c %a "$t/main/state")" == 700 ]] || fail "the state directory is not private"
+
+# 2. Run again while still in review: nothing before step 6 runs again; still 75.
+before=$(wc -l < "$t/main/stub/log")
+kit main
+[[ $code == 75 ]] || fail "second run in review: exit $code"
+new="$(tail -n +"$((before + 1))" "$t/main/stub/log")"
+! grep -q '^provision\|^run \|^auth api-key create\|^testflight testers add' <<< "$new" || fail "finished steps ran again: $new"
+
+# 3. Approved: the run finishes (publish, security, docker, the question).
+echo PENDING_DEVELOPER_RELEASE > "$t/main/stub/review"
+kit main
+[[ $code == 0 ]] || fail "third run: exit $code: $(tail -20 "$t/main/err")"
+for i in 6 7 8 9; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is not PASS: $(grep "^| $i |" "$r")"; done
+[[ $(calls main '^release submit .* --release manual$') == 1 ]] || fail "submitted again"
+[[ $(calls main '^release publish') == 1 ]] || fail "not published once"
+{ grep -q 'run --docker .* --to finalize' "$t/main/stub/log" && grep -q 'run --docker .* --from sign' "$t/main/stub/log"; } || fail "the docker run was not split"
+grep -q 'container c0ffeebuild .*mounts=/work env=' "$r" || fail "the build container was not inspected: $(grep -n container "$r")"
+grep -q 'trace line(s), 0 finding(s)' "$r" || fail "the traces were not scanned"
+grep -q 'no xless key after secrets lock and auth logout' "$r" || fail "the keyring was not checked"
+clean_record main
+kit main
+[[ $code == 0 ]] || fail "a run after everything is done: exit $code"
+
+# 4. --dry-run and --status run nothing; --cleanup removes only what the run made.
+before=$(wc -l < "$t/main/stub/log")
+kit main --dry-run; [[ $code == 0 ]] || fail "--dry-run: exit $code"
+grep -q 'xless provision apply' "$t/main/out" || fail "--dry-run does not list the commands"
+kit main --status; [[ $code == 0 ]] || fail "--status: exit $code"
+grep -q ' 9\. PASS' "$t/main/out" || fail "--status: $(cat "$t/main/out")"
+[[ $(wc -l < "$t/main/stub/log") == "$before" ]] || fail "--dry-run or --status ran xless: $(tail -n +"$((before + 1))" "$t/main/stub/log")"
+kit main --cleanup
+[[ $code == 0 ]] || fail "--cleanup: exit $code: $(tail -5 "$t/main/err")"
+for c in 'certs revoke NEW-certs' 'profiles delete NEW-profiles' 'keys revoke NEW-keys' 'auth api-key revoke KEY1234567' 'testflight testers remove tess@example.com'; do
+  grep -q "^$c" "$t/main/stub/log" || fail "--cleanup did not run '$c'"
+done
+! grep -q 'OLD-' <(grep 'revoke\|delete' "$t/main/stub/log") || fail "--cleanup touched what was there before"
+grep -q '^### Cleanup' "$r" || fail "the cleanup is not recorded"
+clean_record main
+
+# 5. A secret in the environment of a process of the run fails step 7; a build container with a secret fails step 8.
+mkdir -p "$t/leak/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/leak/stub/review"
+STUB_LEAK_ENV=1 kit leak
+[[ $code == 1 ]] || fail "leak: exit $code, expected 1"
+grep -q '^| 7 | .* | \*\*FAIL\*\*' "$t/leak/record.md" || fail "a secret in a child's environment passed step 7"
+grep -q 'FOUND sleep(.*environment variable ASC_KEY_P8' "$t/leak/record.md" || fail "the finding is not recorded"
+! grep -q 'leaked' "$t/leak/record.md" || fail "the value was recorded"
+mkdir -p "$t/dock/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dock/stub/review"
+STUB_LEAK_DOCKER=1 kit dock
+[[ $code == 1 ]] || fail "docker leak: exit $code"
+grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dock/record.md" || fail "a build container with the store passed step 8"
+
+# 6. --contract alone: a FAIL from live-check stops with 1, recorded; without `secrets redact` the fallback redacts.
+STUB_LIVE_FAIL=1 kit contract --contract
+[[ $code == 1 ]] || fail "--contract with a failing endpoint: exit $code"
+grep -q '^| 0 | .* | \*\*FAIL\*\*' "$t/contract/record.md" || fail "the contract failure is not recorded"
+[[ $(calls contract 'provision\|api-key') == 0 ]] || fail "--contract wrote something"
+clean_record contract
+STUB_NO_REDACT=1 kit fallback --contract
+[[ $code == 0 ]] || fail "--contract with the fallback redaction: exit $code: $(tail -5 "$t/fallback/err")"
+grep -q 'build number\|ok    api' "$t/fallback/record.md" || fail "the fallback recorded nothing"
+clean_record fallback
+
+echo "acceptance-m7: ok"

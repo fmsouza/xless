@@ -6,7 +6,8 @@ import Foundation
 ///
 /// - a PEM private key block, whole (an unterminated one hides the rest of the text); certificates stay;
 /// - a JWT (`eyJ….….…`) and whatever follows `Bearer `;
-/// - the value of a header line (`> Cookie: …`, `Authorization: …`) whose name `HTTPTrace` hides;
+/// - the value of a trace's header line (`> Cookie: …`) whose name `HTTPTrace` hides, and of any line naming a
+///   credential header (`Authorization: …`, `Set-Cookie: …`);
 /// - the value of a JSON string field (`"password": "…"`) or a `name=value` pair (a form, an environment line) whose
 ///   name `HTTPTrace.isSecretField` hides, or that names a secret variable (`SecretEnvironment`, not its `_FILE` form);
 /// - the query of a URL on any host but the documented API's (a presigned upload's signature);
@@ -51,11 +52,14 @@ public enum TextRedaction {
     static func redactLine(_ line: String) -> String {
         var line = line
         let p = HTTPTrace.placeholder
-        // A header line: the whole value, when HTTPTrace would hide it.
+        // A header line: the whole value, when HTTPTrace would hide it (a trace's `> `/`< ` line), or when it is one of
+        // the headers that carry credentials (any other line: "session: kept" is no header).
         if let m = header.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
            let name = Range(m.range(at: 2), in: line).map({ String(line[$0]) }),
            let value = Range(m.range(at: 3), in: line), line[value] != p,
-           HTTPTrace.redact(headers: [name: "x"]).first == "\(name): \(p)" {
+           m.range(at: 1).location != NSNotFound
+               ? HTTPTrace.redact(headers: [name: "x"]).first == "\(name): \(p)"
+               : HTTPTrace.secretHeaders.contains(name.lowercased()) {
             line.replaceSubrange(value, with: p)
             return line
         }

@@ -41,6 +41,8 @@ final class TextRedactionTests: XCTestCase {
         XCTAssertEqual(TextRedaction.redact("< scnt: AAAA"), "< scnt: \(r)")
         XCTAssertEqual(TextRedaction.redact("< X-Apple-ID-Session-Id: 123"), "< X-Apple-ID-Session-Id: \(r)")
         XCTAssertEqual(TextRedaction.redact("< Content-Type: application/json"), "< Content-Type: application/json")
+        XCTAssertEqual(TextRedaction.redact("Set-Cookie: myacinfo=abc"), "Set-Cookie: \(r)")
+        XCTAssertEqual(TextRedaction.redact("session: kept until 10:42"), "session: kept until 10:42", "a line that is no trace keeps a word that is no credential header")
     }
 
     func testSecretJSONAndFormFields() {
