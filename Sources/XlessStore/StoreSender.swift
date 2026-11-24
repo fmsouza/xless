@@ -61,7 +61,7 @@ public struct StoreSender: Sendable {
                     request.body = .object(doc)
                 }
             }
-            let id = try await send(request, path: request.path)
+            let id = try await sendAdopting(request)
             if created == nil { created = id }
             // A media file deleted (--prune) leaves media.lock.
             if request.method == "DELETE", let type = request.path.split(separator: "/").dropFirst().first,
@@ -192,6 +192,29 @@ public struct StoreSender: Sendable {
                                  fix: "push the text part too (it creates the locale), then re-run `xless store push`")
             }
             return found.id
+        }
+    }
+
+    /// Sends the request; a version text App Store Connect already has for the locale is updated instead of created.
+    /// Adding a locale to the app information makes App Store Connect add it to the version being prepared, so the
+    /// create planned before that answers 409 (DUPLICATE on `locale`).
+    func sendAdopting(_ request: StoreRequest) async throws -> String? {
+        do {
+            return try await send(request, path: request.path)
+        } catch let error as ASCError {
+            let type = "appStoreVersionLocalizations"
+            guard request.method == "POST", request.path == "/v1/\(type)", error.status == 409,
+                  error.items.contains(where: { $0.code?.hasSuffix("DUPLICATE") == true && $0.source?.pointer == "/data/attributes/locale" }),
+                  case .object(let doc)? = request.body, case .object(let data)? = doc["data"],
+                  case .object(var attributes)? = data["attributes"], case .string(let locale)? = attributes["locale"],
+                  case .object(let relationships)? = data["relationships"], case .object(let version)? = relationships["appStoreVersion"],
+                  case .object(let linkage)? = version["data"], case .string(let versionID)? = linkage["id"]
+            else { throw error }
+            let id = try await resolve(.locale(locale, versionID: versionID))
+            attributes["locale"] = nil
+            let update = StoreRequest.update(type, id: id, attributes: attributes)
+            _ = try await send(update, path: update.path)
+            return id
         }
     }
 
