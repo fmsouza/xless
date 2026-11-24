@@ -89,3 +89,11 @@ func account403NamesTheRoleNeeded(path: String, role: String) async {
     #expect(e?.fix.contains("Admin role") == true)
     #expect(e?.cause.hasPrefix("App Store Connect HTTP 403") == true)
 }
+
+@Test func aRequiredAttributeIsSaidToBeMissingNotRefused() async throws {
+    // App Store Connect's answer to an age rating without the social media question (#105).
+    let item = ASCErrorItem(status: "409", code: "ENTITY_ERROR.ATTRIBUTE.REQUIRED", title: "The provided entity is missing a required attribute",
+                            detail: "You must provide a value for the attribute 'socialMedia' with this request", source: .init(pointer: "/data/attributes/socialMedia"))
+    let e = await mapped(.account) { throw ASCError(status: 409, items: [item], method: "PATCH", path: "/v1/ageRatingDeclarations/1") }
+    #expect(e?.fix == "App Store Connect needs a value for `socialMedia`, which the request did not have: add it")
+}
