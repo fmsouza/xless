@@ -172,6 +172,7 @@ public struct StoreSender: Sendable {
             if halt.isSet { throw Halted() }
             id = try await uploader.transfer(asset)
         } catch {
+            if !(error is Halted) { halt.set() }   // before the permit goes to the next file, which checks it
             await limiter.releasePermit()
             throw error
         }
