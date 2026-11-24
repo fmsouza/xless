@@ -92,6 +92,36 @@ final class URLSessionAppleTransportTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    /// swift-corelibs-foundation aborts the process ("_MultiHandle deallocated with non-zero retain count") when a
+    /// session's curl multi handle is freed while curl still watches one of its sockets (`xless live-check` died that
+    /// way after its last line, on a real account). A session that ends lives on until the process exits instead.
+    func testAnEndedTransportIsNeverDeallocated() async throws {
+        let server = try LoopbackServer { _ in LoopbackServer.reply("200 OK", body: Data("ok".utf8)) }
+        weak var ended: URLSessionAppleTransport?
+        do {
+            let t = URLSessionAppleTransport()
+            _ = try await t.send(URLRequest(url: server.url("/a")))
+            t.invalidate()
+            ended = t
+        }
+        try await Task.sleep(nanoseconds: 500_000_000) // the session finishes invalidating on its own queue
+        XCTAssertNotNil(ended, "the transport, and so its session, must outlive invalidate() until the process exits")
+    }
+
+    func testInvalidateCancelsARequestInFlight() async throws {
+        let server = try LoopbackServer { _ in Thread.sleep(forTimeInterval: 3); return LoopbackServer.reply("200 OK") }
+        let t = URLSessionAppleTransport()
+        let request = Task { try await t.send(URLRequest(url: server.url("/slow"))) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        t.invalidate()
+        do {
+            _ = try await request.value
+            XCTFail("a request in flight when the transport ends must fail")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .cancelled)
+        }
+    }
+
     func testOKReplacesTheFileAndReportsProgress() async throws {
         let body = big
         let server = try LoopbackServer { _ in LoopbackServer.reply("200 OK", ["Content-Type": "application/octet-stream"], body: body) }

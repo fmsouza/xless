@@ -56,8 +56,14 @@ public final class URLSessionAppleTransport: NSObject, AppleTransport, URLSessio
         session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
     }
 
-    /// Ends the session (it holds this delegate strongly until invalidated).
-    public func invalidate() { session.invalidateAndCancel() }
+    /// Ends the transport's work: every request still in flight is cancelled. The session itself is never invalidated,
+    /// so it and this delegate (which it holds strongly) live until the process exits: on Linux, freeing a session's
+    /// curl multi handle while curl still watches one of its sockets aborts the process in swift-corelibs-foundation
+    /// ("_MultiHandle deallocated with non-zero retain count", swiftlang/swift-corelibs-foundation#5203). The API
+    /// transport's session (`NoRedirectSession.shared`) already lives that long.
+    public func invalidate() {
+        session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+    }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         try await run(request, file: nil, progress: nil)
