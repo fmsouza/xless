@@ -187,6 +187,7 @@ struct APIProvisionAccount: ProvisionAccount {
     }
 
     func findApp(bundleID: String) async throws -> AppSummary? { try await ASCApps(resources: resources).find(bundleID: bundleID).map(AppSummary.init) }
+    func showsApp(id: String) async throws -> Bool { try await ASCApps(resources: resources).shows(id: id) }
     func hasBundleID(_ identifier: String) async throws -> Bool { try await bundleID(identifier) != nil }
     func registerBundleID(_ identifier: String) async throws { _ = try await register(bundleID: identifier) }
 

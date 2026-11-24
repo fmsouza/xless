@@ -166,6 +166,14 @@ public struct ASCApps: Sendable {
         return single.data
     }
 
+    /// Whether the key can read this app (false when App Store Connect answers 404).
+    public func shows(id: String) async throws -> Bool {
+        do {
+            _ = try await get(id: id)
+            return true
+        } catch let e as ASCError where e.status == 404 { return false }
+    }
+
     /// The app with exactly this bundle identifier.
     public func find(bundleID: String) async throws -> ASCApp? {
         let listing = try await resources.list(Self.path, query: ASCQuery(filters: [("bundleId", bundleID)]), as: ASCApp.self)
