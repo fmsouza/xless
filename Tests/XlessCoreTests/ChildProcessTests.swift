@@ -69,14 +69,12 @@ func aChildStartedDirectlyByChildProcessStartsInAnEmptySessionKeyring() throws {
     defer { try? KernelKeyring.revoke(key) }
     let probe = try probeScript()
     defer { try? FileManager.default.removeItem(at: probe) }
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: python3!)
-    p.arguments = ["-I", probe.path, name]
     let pipe = Pipe()
-    p.standardOutput = pipe
-    try ChildProcess.start(p, stage: .build)
+    let p = try ChildProcess.start(python3!, ["-I", probe.path, name], environment: ProcessInfo.processInfo.environment,
+                                   stdout: pipe.fileHandleForWriting.fileDescriptor, stage: .build)
+    try pipe.fileHandleForWriting.close()
     let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    p.waitUntilExit()
+    #expect(p.wait() == 0)
     #expect(out == "missing \(name)\n")
     #expect(try KernelKeyring.find(name: name) == key)
 }
@@ -99,4 +97,60 @@ func aChildStartedDirectlyByChildProcessStartsInAnEmptySessionKeyring() throws {
     #if os(Linux)
     #expect(SecretScope.isDumpable == false)
     #endif
+}
+
+/// A tool is in a POSIX session of its own, and so is everything it starts: a process can only leave a session for a
+/// new one, so nothing a build runs is ever again in the terminal's session, which is what the xless agent serves.
+@Test func aToolRunsInASessionOfItsOwnWithItsDescendants() throws {
+    let pipe = Pipe()
+    let tool = try ChildProcess.start("/bin/sh", ["-c", "sleep 60 & echo $!; wait"], environment: ["PATH": "/usr/bin:/bin"],
+                                      stdout: pipe.fileHandleForWriting.fileDescriptor, stage: .build)
+    try pipe.fileHandleForWriting.close()
+    defer { kill(-tool.processIdentifier, SIGKILL); _ = tool.wait() }
+    let line = String(decoding: pipe.fileHandleForReading.availableData, as: UTF8.self)
+    let grandchild = try #require(pid_t(line.trimmingCharacters(in: .whitespacesAndNewlines)))
+    #expect(getsid(tool.processIdentifier) == tool.processIdentifier)
+    #expect(getsid(grandchild) == tool.processIdentifier)
+    #expect(getsid(tool.processIdentifier) != getsid(0))
+}
+
+@Test func aToolGetsItsDirectoryEnvironmentOutputAndStatus() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-tool-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let out = Pipe(), err = Pipe()
+    let tool = try ChildProcess.start("/bin/sh", ["-c", "pwd -P; echo \"$KEEP\"; echo oops >&2; exit 7"], environment: ["PATH": "/usr/bin:/bin", "KEEP": "a b"],
+                                      cwd: dir, stdout: out.fileHandleForWriting.fileDescriptor, stderr: err.fileHandleForWriting.fileDescriptor, stage: .build)
+    try out.fileHandleForWriting.close()
+    try err.fileHandleForWriting.close()
+    let real = try #require(realpath(dir.path, nil))
+    defer { free(real) }
+    #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "\(String(cString: real))\na b\n")
+    #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "oops\n")
+    #expect(tool.wait() == 7)
+    #expect(tool.wait() == 7) // asked again, the same answer
+}
+
+@Test func aToolKilledByASignalReportsTheSignalAndAMissingOneIsAnError() throws {
+    let tool = try ChildProcess.start("/bin/sh", ["-c", "kill -KILL $$"], environment: ["PATH": "/usr/bin:/bin"], stage: .build)
+    #expect(tool.wait() == SIGKILL)
+    #expect(throws: (any Error).self) { try ChildProcess.start("/nonexistent/tool", [], environment: [:], stage: .build) }
+    #expect(throws: (any Error).self) {
+        try ChildProcess.start("/bin/sh", ["-c", "true"], environment: [:], cwd: URL(fileURLWithPath: "/nonexistent"), stage: .build)
+    }
+}
+
+/// A tool inherits stdin, stdout and stderr, and no other descriptor of xless's.
+@Test func aToolInheritsNoOtherDescriptor() throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("xless-fd-\(UUID().uuidString)")
+    _ = FileManager.default.createFile(atPath: file.path, contents: Data("secret".utf8))
+    defer { try? FileManager.default.removeItem(at: file) }
+    let fd = open(file.path, O_RDONLY) // without close-on-exec
+    defer { close(fd) }
+    let out = Pipe()
+    let tool = try ChildProcess.start("/bin/sh", ["-c", "cat /dev/fd/\(fd) 2>/dev/null || echo closed"], environment: ["PATH": "/usr/bin:/bin"],
+                                      stdout: out.fileHandleForWriting.fileDescriptor, stage: .build)
+    try out.fileHandleForWriting.close()
+    #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "closed\n")
+    _ = tool.wait()
 }

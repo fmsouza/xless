@@ -15,6 +15,9 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <spawn.h>
+#endif
 #ifdef __linux__
 #include <sys/prctl.h>
 #include <sys/vfs.h>
@@ -258,5 +261,103 @@ int xless_reap(int pid, int nohang, int *code) {
     if (WIFEXITED(status)) *code = WEXITSTATUS(status);
     else if (WIFSIGNALED(status)) *code = 128 + WTERMSIG(status);
     else *code = -1;
+    return 1;
+}
+
+#if !defined(__APPLE__)
+/// Closes every descriptor from 3 up but `keep`, in a child between fork and exec.
+static void close_from_3(int keep) {
+#if defined(__linux__)
+    // close_range(2), Linux 5.9; its number is the same on every architecture.
+    if (keep < 3) {
+        if (syscall(436, 3u, ~0u, 0u) == 0) return;
+    } else if ((keep == 3 || syscall(436, 3u, (unsigned)keep - 1, 0u) == 0) && syscall(436, (unsigned)keep + 1, ~0u, 0u) == 0) {
+        return;
+    }
+#endif
+    long max_fd = sysconf(_SC_OPEN_MAX);
+    if (max_fd < 0 || max_fd > 65536) max_fd = 65536;
+    for (long fd = 3; fd < max_fd; fd++) if (fd != keep) close((int)fd);
+}
+#endif
+
+int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+#if defined(__APPLE__)
+    posix_spawnattr_t attr;
+    posix_spawn_file_actions_t actions;
+    int e;
+    if ((e = posix_spawnattr_init(&attr)) != 0) return e;
+    if ((e = posix_spawn_file_actions_init(&actions)) != 0) { posix_spawnattr_destroy(&attr); return e; }
+    sigset_t none, all;
+    sigemptyset(&none);
+    sigfillset(&all);
+    e = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_CLOEXEC_DEFAULT);
+    if (!e) e = posix_spawnattr_setsigdefault(&attr, &all);
+    if (!e) e = posix_spawnattr_setsigmask(&attr, &none);
+    // Descriptors this process does not have open stay closed in the child.
+    if (!e && fcntl(0, F_GETFD) >= 0) e = posix_spawn_file_actions_addinherit_np(&actions, 0);
+    if (!e && (out_fd >= 0 || fcntl(1, F_GETFD) >= 0)) e = posix_spawn_file_actions_adddup2(&actions, out_fd >= 0 ? out_fd : 1, 1);
+    if (!e && (err_fd >= 0 || fcntl(2, F_GETFD) >= 0)) e = posix_spawn_file_actions_adddup2(&actions, err_fd >= 0 ? err_fd : 2, 2);
+    if (!e && cwd != NULL) e = posix_spawn_file_actions_addchdir_np(&actions, cwd);
+    pid_t child = 0;
+    if (!e) e = posix_spawn(&child, path, &actions, &attr, argv, envp);
+    posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attr);
+    if (!e) *pid = child;
+    return e;
+#else
+    int status[2], e;
+    if ((e = cloexec_pipe(status)) != 0) return e;
+    pid_t child = fork();
+    if (child < 0) {
+        e = errno;
+        close(status[0]); close(status[1]);
+        return e;
+    }
+    if (child == 0) {
+        // Only async-signal-safe calls from here to execve.
+        int report = status[1];
+        if (setsid() < 0) { e = errno; goto failed; }
+        for (int sig = 1; sig < NSIG; sig++) {
+            if (sig == SIGKILL || sig == SIGSTOP) continue;
+            signal(sig, SIG_DFL);
+        }
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        if (report < 3 && (report = fcntl(report, F_DUPFD_CLOEXEC, 3)) < 0) _exit(127); // xless started with stdio closed
+        // Out of the slots they go to, then into them.
+        int out = out_fd < 0 ? -1 : fcntl(out_fd, F_DUPFD_CLOEXEC, 3);
+        int err = err_fd < 0 ? -1 : fcntl(err_fd, F_DUPFD_CLOEXEC, 3);
+        if ((out_fd >= 0 && (out < 0 || dup2(out, 1) < 0)) || (err_fd >= 0 && (err < 0 || dup2(err, 2) < 0))) { e = errno; goto failed; }
+        if (cwd != NULL && chdir(cwd) != 0) { e = errno; goto failed; }
+        close_from_3(report);
+        execve(path, argv, envp);
+        e = errno;
+    failed:
+        while (write(report, &e, sizeof e) < 0 && errno == EINTR) {}
+        _exit(127);
+    }
+    close(status[1]);
+    int child_errno = 0;
+    ssize_t n;
+    do { n = read(status[0], &child_errno, sizeof child_errno); } while (n < 0 && errno == EINTR);
+    close(status[0]);
+    if (n > 0) {
+        int ignored;
+        xless_wait(child, &ignored);
+        return child_errno ? child_errno : EIO;
+    }
+    *pid = child;
+    return 0;
+#endif
+}
+
+int xless_wait(int pid, int *status) {
+    int s = 0;
+    pid_t r;
+    do { r = waitpid((pid_t)pid, &s, 0); } while (r < 0 && errno == EINTR);
+    if (r < 0) return -1;
+    *status = WIFEXITED(s) ? WEXITSTATUS(s) : WIFSIGNALED(s) ? WTERMSIG(s) : -1;
     return 1;
 }

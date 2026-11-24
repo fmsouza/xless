@@ -203,11 +203,3 @@ extension CredentialHelper {
         return fd
     }
 }
-
-/// `body` with `strings` as a NULL-terminated C array.
-private func withCStrings<R>(_ strings: [String], _ body: (UnsafePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
-    var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { strdup($0) }
-    pointers.append(nil)
-    defer { for p in pointers { free(p) } }
-    return pointers.withUnsafeBufferPointer { body($0.baseAddress!) }
-}
