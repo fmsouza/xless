@@ -148,7 +148,7 @@ public struct TestFlightPublisher: Sendable {
             let request = BetaTesterRequest(email: t.email, firstName: t.firstName, lastName: t.lastName)
             let what = "adding \(t.email) to group \(name)"
             let result = try await step(what, done: done) { () async throws -> ASCTestFlight.TesterAddition? in
-                do { return try await tf.add(request, to: group, members: members, users: users) } catch let e as XlessError where e.stage == .account {
+                do { return try await tf.add(request, to: group, app: appID, members: members, users: users) } catch let e as XlessError where e.stage == .account {
                     notes.append("warning: \(e.cause); \(e.fix)")
                 } catch let e as ASCError where Self.refusesTester(e) {
                     notes.append("warning: \(what): \(e.description); add them by hand (`xless testflight testers add \(t.email) --group \"\(name)\" --app \(appID)`) once the cause is fixed")

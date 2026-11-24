@@ -24,7 +24,7 @@ https://developer.apple.com/sample-code/app-store-connect/app-store-connect-open
 | Purpose | Request | Notes |
 |---|---|---|
 | An app's (or a group's) testers | `GET /v1/betaTesters?filter[apps]=<app>[&filter[betaGroups]=<group>]&include=betaGroups` | `fields[betaGroups]=name`, `limit[betaGroups]=50`. |
-| A tester by address | `GET /v1/betaTesters?filter[email]=<email>` | Compared again client-side without regard to case; addresses with a comma are refused (array filter). |
+| An app's tester by address | `GET /v1/betaTesters?filter[email]=<email>&filter[apps]=<app>` | An address has one tester record per app; linking another app's answers `409 STATE_ERROR` ("Tester(s) cannot be assigned", #105). Compared again client-side without regard to case; addresses with a comma are refused (array filter). |
 | Create a tester in a group | `POST /v1/betaTesters` | `BetaTesterCreateRequest`: `email*`, `firstName`, `lastName`, relationships `betaGroups`; sent once, a `409` is settled by looking the address up. |
 | Add / remove testers of a group | `POST` / `DELETE /v1/betaGroups/{id}/relationships/betaTesters` | `[ {type: betaTesters, id} ]`. |
 | Remove testers from an app | `DELETE /v1/apps/{id}/relationships/betaTesters` | Every group and build of the app. |
