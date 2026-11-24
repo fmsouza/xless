@@ -105,6 +105,14 @@ private func account() -> RoutedGets {
     #expect(certificates.detail.contains("expirationDate"))
 }
 
+@Test func anAppWithoutABetaLicenseAgreementIsRead() async throws {
+    let t = account()
+    t.routes["/v1/apps/6470000001/betaLicenseAgreement"] = (200, #"{"data": null, "links": {"self": "x"}}"#)
+    let licence = try #require(await LiveCheck(api: resources(t)).run().first { $0.check == "GET /v1/apps/{id}/betaLicenseAgreement" })
+    #expect(licence.status == .ok, "\(licence)")
+    #expect(licence.detail == "none")
+}
+
 @Test func anAnswerXlessCannotReadFailsThatCheckOnly() async throws {
     let t = account()
     t.routes["/v1/devices"] = (200, #"{"data": "not a list"}"#)

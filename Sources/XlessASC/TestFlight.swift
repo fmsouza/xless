@@ -575,8 +575,9 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
-    public func license(app appID: String) async throws -> ASCBetaLicense {
-        try await resources.get("/v1/apps/\(appID)/betaLicenseAgreement", as: ASCBetaLicense.self).data
+    /// The app's beta license agreement; nil when it has none (`{"data": null}`, as for a new app).
+    public func license(app appID: String) async throws -> ASCBetaLicense? {
+        try await resources.get("/v1/apps/\(appID)/betaLicenseAgreement", as: ASCBetaLicense?.self).data
     }
 
     /// Replaces the beta license agreement's text; nil when it already is that text.

@@ -248,7 +248,7 @@ struct TestFlightCLI {
 
     // MARK: Beta information
 
-    struct BetaInfo: Encodable { var localizations: [ASCBetaAppLocalization]; var reviewDetail: ASCBetaReviewDetail; var licenseAgreement: ASCBetaLicense }
+    struct BetaInfo: Encodable { var localizations: [ASCBetaAppLocalization]; var reviewDetail: ASCBetaReviewDetail; var licenseAgreement: ASCBetaLicense? }
 
     func betaInfo(app argument: String, locale: String?) async throws -> String {
         let app = try await apps.resolve(argument)
@@ -270,7 +270,7 @@ struct TestFlightCLI {
                  ["review contact email", r.contactEmail ?? ""], ["review contact phone", r.contactPhone ?? ""],
                  ["review notes", r.notes ?? ""], ["demo account", r.demoAccountName ?? ""],
                  ["demo account required", r.demoAccountRequired == true ? "yes" : "no"],
-                 ["license agreement", license.attributes.agreementText.map { "\($0.count) characters" } ?? "Apple's standard"]]
+                 ["license agreement", license.map { $0.attributes.agreementText.map { "\($0.count) characters" } ?? "Apple's standard" } ?? "none"]]
         return TextTable(["APP", "\(app.bundleID) (\(app.id))"], rows).rendered
     }
 
@@ -279,6 +279,14 @@ struct TestFlightCLI {
     func setBetaInfo(app argument: String, locale: String, text: BetaInfoText, review: BetaReviewChange?, license: String?,
                      password: (String) throws -> String) async throws -> String {
         let app = try await apps.resolve(argument)
+        var current: ASCBetaLicense?
+        if license != nil {
+            current = try await testFlight.license(app: app.id)
+            guard current != nil else {
+                throw XlessError(.account, "\(app.bundleID) has no beta license agreement yet, and the API cannot create one; nothing was sent",
+                                 fix: "re-run without --license-file")
+            }
+        }
         var lines: [String] = []
         var detail = try await testFlight.reviewDetail(app: app.id)
         if let review {
@@ -303,8 +311,7 @@ struct TestFlightCLI {
             case .unchanged?, nil: lines.append("the beta information for \(locale) already matches; nothing was sent")
             }
         }
-        if let license {
-            let current = try await testFlight.license(app: app.id)
+        if let license, let current {
             lines.append(try await testFlight.updateLicense(current, text: license) == nil
                          ? "the beta license agreement is already this text; nothing was sent" : "updated the beta license agreement")
         }
