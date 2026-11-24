@@ -224,6 +224,11 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
 }
 
 long xless_write_nosigpipe(int fd, const void *bytes, size_t length) {
+#if defined(__APPLE__)
+    // macOS raises SIGPIPE for the process, not for the writing thread, so blocking it on this thread does not stop it.
+    (void)fcntl(fd, F_SETNOSIGPIPE, 1);
+    return (long)write(fd, bytes, length);
+#else
     sigset_t pipe_only, old;
     sigemptyset(&pipe_only);
     sigaddset(&pipe_only, SIGPIPE);
@@ -236,18 +241,12 @@ long xless_write_nosigpipe(int fd, const void *bytes, size_t length) {
     if (n < 0 && e == EPIPE && !was_pending) {
         // Consume the SIGPIPE this write raised (it is pending on this thread, blocked) before unblocking.
         struct timespec zero = { 0, 0 };
-#if defined(__APPLE__)
-        int sig;
-        sigpending(&pending);
-        if (sigismember(&pending, SIGPIPE)) sigwait(&pipe_only, &sig);
-#else
         while (sigtimedwait(&pipe_only, NULL, &zero) < 0 && errno == EINTR) {}
-#endif
-        (void)zero;
     }
     pthread_sigmask(SIG_SETMASK, &old, NULL);
     errno = e;
     return n;
+#endif
 }
 
 int xless_reap(int pid, int nohang, int *code) {

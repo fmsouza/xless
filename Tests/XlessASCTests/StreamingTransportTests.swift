@@ -17,7 +17,11 @@ final class LoopbackServer: @unchecked Sendable {
     private let fd: Int32
 
     init(respond: @escaping @Sendable (String) -> (Int, Data)) throws {
+        #if canImport(Darwin)
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        #else
         let listener = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        #endif
         guard listener >= 0 else { throw POSIXError(.EIO) }
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)

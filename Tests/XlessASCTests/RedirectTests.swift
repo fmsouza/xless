@@ -21,7 +21,11 @@ final class RecordingServer: @unchecked Sendable {
     var requests: [Request] { lock.withLock { seen } }
 
     init(respond: @escaping @Sendable (Request) -> (Int, [String: String], Data)) throws {
+        #if canImport(Darwin)
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        #else
         let listener = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        #endif
         guard listener >= 0 else { throw POSIXError(.EIO) }
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)

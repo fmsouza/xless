@@ -213,7 +213,9 @@ private let pem = "-----BEGIN PRIVATE KEY-----\nMIG\"quote\\back/slash\té\n----
     try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: dir.bin.path)
     #expect(throws: VaultError.self) { try dir.store("files") }
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.bin.path)
-    #expect(try dir.store("files").helper.executable == helper.resolvingSymlinksInPath().path)
+    let real = try #require(realpath(helper.path, nil)) // resolvingSymlinksInPath drops macOS's /private
+    defer { free(real) }
+    #expect(try dir.store("files").helper.executable == String(cString: real))
     // Relative PATH entries are never searched.
     #expect(throws: VaultError.self) { try CredentialHelper.find(name: "files", env: ["PATH": "bin:.", "HOME": dir.home.path]) }
     // A name is never a path.
