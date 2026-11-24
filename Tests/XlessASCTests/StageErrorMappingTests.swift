@@ -97,3 +97,27 @@ func account403NamesTheRoleNeeded(path: String, role: String) async {
     let e = await mapped(.account) { throw ASCError(status: 409, items: [item], method: "PATCH", path: "/v1/ageRatingDeclarations/1") }
     #expect(e?.fix == "App Store Connect needs a value for `socialMedia`, which the request did not have: add it")
 }
+
+/// App Store Connect's answer to adding a version that is not ready to a review submission (#105): the reasons are in
+/// `meta.associatedErrors`, by the path of the resource each is about.
+private let refusedVersion = #"""
+{"errors":[{"status":"409","code":"STATE_ERROR.ENTITY_STATE_INVALID","title":"appStoreVersions with id 'V1' is not in valid state.","detail":"This resource cannot be reviewed, please check associated errors to see why.","meta":{"associatedErrors":{"/v1/b/":[{"id":"1","status":"409","code":"STATE_ERROR.TWO","title":"Second.","detail":"Second detail."}],"/v1/a/":[{"id":"2","status":"409","code":"ENTITY_ERROR.ONE","title":"First.","detail":"First detail.","source":{"pointer":"/data/attributes/x"}}]}}}]}
+"""#
+
+@Test func theReasonsOfARefusalAreSaid() async throws {
+    let client = ASCClient(credentials: testCreds, transport: MockTransport([(409, refusedVersion)]), sleep: { _ in })
+    let e = await mapped(.account) { let _: ASCDocument<[ASCRef]> = try await client.get("/v1/reviewSubmissionItems") }
+    let cause = try #require(e?.cause)
+    #expect(cause.contains("please check associated errors to see why."), "\(cause)")
+    #expect(cause.contains("/v1/a/: ENTITY_ERROR.ONE: First.: First detail. (/data/attributes/x)"), "\(cause)")
+    #expect(cause.contains("/v1/b/: STATE_ERROR.TWO: Second.: Second detail."), "\(cause)")
+    #expect(e?.fix.contains("the reasons above") == true, "\(String(describing: e?.fix))")
+}
+
+@Test func anUnreadableMetaKeepsTheError() async throws {
+    for meta in [#""text""#, #"{"associatedErrors":"text"}"#, #"{"associatedErrors":{"/v1/a/":["text"]}}"#, #"{"other":1}"#, "null"] {
+        let client = ASCClient(credentials: testCreds, transport: MockTransport([(409, #"{"errors":[{"status":"409","code":"C","title":"T","detail":"D","meta":\#(meta)}]}"#)]), sleep: { _ in })
+        let e = await mapped(.account) { let _: ASCDocument<[ASCRef]> = try await client.get("/v1/x") }
+        #expect(e?.cause == "GET /v1/x: App Store Connect HTTP 409 — C: T: D", "\(meta): \(String(describing: e?.cause))")
+    }
+}

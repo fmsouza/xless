@@ -36,6 +36,8 @@ extension ASCError: StageReportableError {
                 fix = "App Store Connect needs a value for `\(field)`, which the request did not have: add it"
             } else if let field = conflictField {
                 fix = "App Store Connect refused the value of `\(field)` (it conflicts with an existing resource or is not allowed): change it, or update the existing resource instead"
+            } else if items.contains(where: { !$0.reasons.isEmpty }) {
+                fix = "App Store Connect refused the request for the reasons above: fix each, then re-run"
             } else {
                 fix = "App Store Connect refused the request as conflicting with the resource's current state; see the detail above"
             }

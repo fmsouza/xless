@@ -15,6 +15,29 @@ public struct ASCErrorItem: Codable, Sendable {
     public var title: String?
     public var detail: String?
     public var source: Source? = nil
+    public var meta: Meta? = nil
+
+    /// Why, for an error that only says to look: the errors of the resources the refused one depends on, by path.
+    /// A shape this does not know reads as none, so it never hides the error itself.
+    public struct Meta: Codable, Sendable {
+        public var associatedErrors: [String: [ASCErrorItem]]
+        public init(associatedErrors: [String: [ASCErrorItem]] = [:]) { self.associatedErrors = associatedErrors }
+        public init(from decoder: any Decoder) throws {
+            let values = try? decoder.container(keyedBy: CodingKeys.self)
+            associatedErrors = (try? values?.decode([String: [ASCErrorItem]].self, forKey: .associatedErrors)) ?? [:]
+        }
+    }
+
+    var text: String {
+        let text = [code, title, detail].compactMap { $0 }.joined(separator: ": ")
+        guard let at = source?.pointer ?? source?.parameter else { return text }
+        return text + " (\(at))"
+    }
+
+    /// The associated errors: `<path>: <error>` each.
+    var reasons: [String] {
+        (meta?.associatedErrors ?? [:]).sorted { $0.key < $1.key }.flatMap { path, errors in errors.map { "\(path): \($0.text)" } }
+    }
 }
 
 public struct ASCError: Error, CustomStringConvertible, Sendable {
@@ -32,9 +55,7 @@ public struct ASCError: Error, CustomStringConvertible, Sendable {
 
     public var description: String {
         let msgs = items.map { item in
-            let text = [item.code, item.title, item.detail].compactMap { $0 }.joined(separator: ": ")
-            guard let at = item.source?.pointer ?? item.source?.parameter else { return text }
-            return text + " (\(at))"
+            item.reasons.isEmpty ? item.text : "\(item.text) [\(item.reasons.joined(separator: "; "))]"
         }
         return "App Store Connect HTTP \(status)" + (msgs.isEmpty ? "" : " — " + msgs.joined(separator: "; "))
     }
