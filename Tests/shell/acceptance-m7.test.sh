@@ -91,7 +91,9 @@ case "$1" in
   inspect)
     if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi
     if [[ "$2" == *build && "${STUB_LEAK_DOCKER:-0}" == 1 ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; fi
-    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:local\", \"Env\": [\"PATH=/usr/bin\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
+    # as the swift base image has it: the fingerprint of the public key its tarballs are verified with
+    key="${STUB_SIGNING_KEY:-52BB7E3DE28A71BE22EC05FFEF80A866B47A981F}"
+    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:local\", \"Env\": [\"PATH=/usr/bin\", \"SWIFT_SIGNING_KEY=$key\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
   *) echo "stub docker: $*" >&2; exit 99 ;;
 esac
 STUB
@@ -115,7 +117,7 @@ kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub acc
     XLESS_M7_CONTACT_FIRST=Rita XLESS_M7_CONTACT_LAST=Reviewer XLESS_M7_CONTACT_PHONE="+55 11 5555 0100" \
     XLESS_M7_CONTACT_EMAIL=rev@example.com \
     STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
-    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" \
+    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" \
     ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} \
     bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
 }
@@ -200,6 +202,15 @@ mkdir -p "$t/dock/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dock/stub/review"
 STUB_LEAK_DOCKER=1 kit dock
 [[ $code == 1 ]] || fail "docker leak: exit $code"
 grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dock/record.md" || fail "a build container with the store passed step 8"
+kit dock   # step 8 starts again: its failure is not judged a second time from the old containers
+[[ $code == 0 ]] || fail "step 8 again without the leak: exit $code: $(tail -5 "$t/dock/err")"
+mapfile -t builds < <(grep '^run-build ' "$t/dock/stub/log" | tail -4)   # two halves, then two halves
+[[ ${#builds[@]} == 4 && "${builds[0]}" == "${builds[1]}" && "${builds[2]}" == "${builds[3]}" && "${builds[1]}" != "${builds[2]}" ]] ||
+  fail "step 8 did not run again with a new build number: ${builds[*]}"
+mkdir -p "$t/dockkey/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dockkey/stub/review"
+STUB_SIGNING_KEY=not-a-fingerprint kit dockkey
+[[ $code == 1 ]] || fail "SWIFT_SIGNING_KEY holding something else: exit $code"
+grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dockkey/record.md" || fail "SWIFT_SIGNING_KEY holding something else passed step 8"
 
 # 6. --contract alone: a FAIL from live-check stops with 1, recorded; without `secrets redact` the fallback redacts.
 STUB_LIVE_FAIL=1 kit contract --contract
