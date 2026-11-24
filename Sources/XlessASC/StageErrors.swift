@@ -32,7 +32,9 @@ extension ASCError: StageReportableError {
         case 404:
             fix = "App Store Connect has no such resource: check the ID and the path (and that the key's team owns it)"
         case 409:
-            if let field = conflictField {
+            if let field = missingField {
+                fix = "App Store Connect needs a value for `\(field)`, which the request did not have: add it"
+            } else if let field = conflictField {
                 fix = "App Store Connect refused the value of `\(field)` (it conflicts with an existing resource or is not allowed): change it, or update the existing resource instead"
             } else {
                 fix = "App Store Connect refused the request as conflicting with the resource's current state; see the detail above"
@@ -50,6 +52,13 @@ extension ASCError: StageReportableError {
             fix = "see the App Store Connect error above"
         }
         return XlessError(.account, cause, fix: fix)
+    }
+
+    /// The attribute a 409 says the request lacks (`ENTITY_ERROR.ATTRIBUTE.REQUIRED`).
+    var missingField: String? {
+        guard let item = items.first(where: { $0.code?.hasSuffix("ATTRIBUTE.REQUIRED") == true }),
+              let pointer = item.source?.pointer, pointer.hasPrefix("/data/attributes/") else { return nil }
+        return pointer.split(separator: "/").last.map(String.init)
     }
 
     /// The attribute or relationship a 409 points at (`/data/attributes/name` → `name`).
