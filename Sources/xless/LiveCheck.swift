@@ -195,7 +195,9 @@ struct LiveCheck {
         await run.check("api", "GET /v1/betaTesters?filter[apps]") { .listed(try await testflight.testers(app: app.id).items, "tester") }
         await run.check("api", "GET /v1/apps/{id}/betaAppLocalizations") { .listed(try await testflight.localizations(app: app.id), "localization") }
         await run.check("api", "GET /v1/apps/{id}/betaAppReviewDetail") { .listed([try await testflight.reviewDetail(app: app.id)], "review detail") }
-        await run.check("api", "GET /v1/apps/{id}/betaLicenseAgreement") { .listed([try await testflight.license(app: app.id)], "licence") }
+        await run.check("api", "GET /v1/apps/{id}/betaLicenseAgreement") {
+            try await testflight.license(app: app.id).map { .listed([$0], "licence") } ?? LiveAnswer(detail: "none")
+        }
         let release = ASCRelease(resources: r)
         await run.check("api", "GET /v1/apps/{id}/appStoreVersions (release)") { .listed(try await release.versions(app: app.id, platform: "IOS"), "version") }
         var submissions: [ASCReviewSubmission] = []

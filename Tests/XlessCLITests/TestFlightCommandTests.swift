@@ -180,6 +180,27 @@ private func body(_ r: URLRequest) throws -> JSONValue { try JSONDecoder().decod
     #expect(try body(t.requests[2])["data"]?["attributes"]?["demoAccountPassword"]?.string == "pw-1234")
 }
 
+// A new app has no beta license agreement: App Store Connect answers `{"data": null}` (#105).
+
+@Test func betaInfoOfAnAppWithoutALicenseAgreementIsShown() async throws {
+    let responses = [(200, appJSON), (200, list([])), (200, single(#"{"type":"betaAppReviewDetails","id":"R1","attributes":{"demoAccountRequired":false}}"#)), (200, single("null"))]
+    let shown = try await cli(FakeTransport(responses)).betaInfo(app: appID, locale: nil)
+    #expect(shown.split(separator: "\n").contains { $0.hasPrefix("license agreement") && $0.hasSuffix("none") }, "\(shown)")
+    let doc = try JSONDecoder().decode(JSONValue.self, from: Data(try await cli(FakeTransport(responses), json: true).betaInfo(app: appID, locale: nil).utf8))
+    #expect(doc["reviewDetail"]?["id"]?.string == "R1")
+}
+
+@Test func aLicenseForAnAppWithoutAnAgreementSendsNothing() async throws {
+    let t = FakeTransport([(200, appJSON), (200, single("null"))])
+    do {
+        _ = try await cli(t).setBetaInfo(app: appID, locale: "en-US", text: BetaInfoText(), review: BetaReviewChange(demoAccountName: "demo"), license: "Be nice.") { _ in "" }
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.cause.contains("has no beta license agreement") && e.cause.contains("nothing was sent"), "\(e.cause)")
+    }
+    #expect(t.requests.allSatisfy { $0.httpMethod == "GET" })
+}
+
 @Test func anInternalGroupHasNoPublicLink() async throws {
     let t = FakeTransport([(200, appJSON), (200, list([group("G1", "Internal")]))])
     await #expect(throws: XlessError.self) { _ = try await cli(t).publicLink(.enable, group: "Internal", app: appID, limit: nil, yes: true) }
