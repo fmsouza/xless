@@ -1,0 +1,7 @@
+A one-screen sample app from xless, the toolchain that builds, signs and ships Apple-platform apps from Linux.
+
+This app was registered, provisioned, built, signed, uploaded, tested on TestFlight and submitted for review from a
+Linux terminal, without opening a web portal. Tap "Allow notifications" to see the push notification capability it was
+provisioned with at work.
+
+It collects no data and needs no account.

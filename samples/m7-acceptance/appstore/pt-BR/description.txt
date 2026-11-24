@@ -1,0 +1,7 @@
+Um app de exemplo do xless, a ferramenta que compila, assina e publica apps para plataformas da Apple a partir do Linux.
+
+Este app foi registrado, provisionado, compilado, assinado, enviado, testado no TestFlight e submetido para revisão a
+partir de um terminal Linux, sem abrir nenhum portal na web. Toque em "Allow notifications" para ver em ação a
+capacidade de notificações push com que ele foi provisionado.
+
+Ele não coleta nenhum dado e não precisa de conta.
