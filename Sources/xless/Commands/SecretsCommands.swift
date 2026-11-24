@@ -26,7 +26,7 @@ struct SecretsCommand: AsyncParsableCommand {
         """,
         subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self,
                       SecretsExportCommand.self, SecretsRmCommand.self, SecretsUnlockCommand.self, SecretsLockCommand.self,
-                      SecretsPasswdCommand.self, SecretsMaterializeCommand.self, SecretsNamedByCommand.self])
+                      SecretsPasswdCommand.self, SecretsMaterializeCommand.self, SecretsNamedByCommand.self, SecretsRedactCommand.self])
 }
 
 /// What the `secrets` commands share.
@@ -434,6 +434,31 @@ struct SecretsMaterializeCommand: ParsableCommand {
             // Unbuffered: the script reads this line even when the command is stopped half-way.
             _ = try materializer.write(parsed, base: base) { FileHandle.standardOutput.write(Data("\($0.path)\n".utf8)) }
         }
+    }
+}
+
+struct SecretsRedactCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "redact",
+        abstract: "Copy standard input to standard output with secrets replaced by <redacted> (used by scripts/acceptance-m7.sh).",
+        discussion: """
+        The rules of --verbose traces, applied to any text: PEM private key blocks, JWTs and bearer tokens, the values of \
+        secret header lines (Cookie, Authorization, scnt…), of secret JSON fields and name=value pairs (passwords, \
+        tokens, keys, sessions, the secret variables but their _FILE forms) and the query strings of URLs outside the \
+        App Store Connect API. --hide-env NAME also hides the value of the environment variable NAME (an Apple ID, say) \
+        wherever it appears. It reads no secret store and contacts nothing.
+        """,
+        shouldDisplay: false)
+
+    @Option(name: .customLong("hide-env"), help: ArgumentHelp("Also hide the value of this environment variable (repeatable).", valueName: "name"))
+    var hideEnvName: [String] = []
+
+    func run() throws {
+        let env = ProcessInfo.processInfo.environment
+        let hidden = hideEnvName.compactMap { env[$0] }
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        let text = String(decoding: input, as: UTF8.self)
+        FileHandle.standardOutput.write(Data(TextRedaction.redact(text, hiding: hidden).utf8))
     }
 }
 
