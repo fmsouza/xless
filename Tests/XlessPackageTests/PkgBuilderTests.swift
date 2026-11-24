@@ -18,8 +18,8 @@ private func clean(root: URL) { try? FileManager.default.removeItem(at: root) }
 /// A bundle with an executable, a versioned framework (`Versions/Current` and `F` are symlinks) and a name with a
 /// space — the same shape DmgBuilderTests build — plus a resource file. Modes and mtimes are set explicitly so
 /// every Bom field is expectable (chmod does not change mtime; directory mtimes are set last, after the
-/// children). Symlink mtimes cannot be set portably (they are the link's own, read back like the walk does).
-private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> (app: URL, symlinks: [String: Date]) {
+/// children), the symlinks' too (the links' own): a build at any later time must still give the same Bom.
+private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> URL {
     let fm = FileManager.default
     let app = root.appendingPathComponent("\(name).app")
     let fw = app.appendingPathComponent("Contents/Frameworks/F.framework")
@@ -31,11 +31,7 @@ private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> (app: 
     try touch(app.appendingPathComponent("Contents/Resources/res.bin"), data: Data("res".utf8), mode: 0o644)
     try fm.createSymbolicLink(atPath: fw.appendingPathComponent("Versions/Current").path, withDestinationPath: "A")
     try fm.createSymbolicLink(atPath: fw.appendingPathComponent("F").path, withDestinationPath: "Versions/Current/F")
-    var symlinkDates: [String: Date] = [:]
-    for (rel, link) in [("F", "\(fw.path)/F"), ("Current", "\(fw.path)/Versions/Current")] {
-        let attrs = try FileManager.default.attributesOfItem(atPath: link)
-        symlinkDates[rel] = attrs[.modificationDate] as? Date ?? mtime
-    }
+    for link in ["\(fw.path)/F", "\(fw.path)/Versions/Current"] { try PkgBuilder.setLinkDate(link, mtime) }
     var directories = (try fm.subpathsOfDirectory(atPath: app.path)).map { app.appendingPathComponent($0) }
     directories.append(app)
     for d in directories {
@@ -43,7 +39,7 @@ private func makeApp(_ root: URL, name: String = "Hello Tauri") throws -> (app: 
         guard fm.fileExists(atPath: d.path, isDirectory: &isDir), isDir.boolValue else { continue }
         try fm.setAttributes([.modificationDate: mtime], ofItemAtPath: d.path)
     }
-    return (app, symlinkDates)
+    return app
 }
 
 private func touch(_ url: URL, data: Data, mode: mode_t) throws {
@@ -86,13 +82,13 @@ private func member(_ nodes: [Xar.Node], _ path: String) throws -> Data {
 /// `./` paths, children sorted byte-wise in each directory, normalized modes (755 dirs and
 /// executables, 644 others, 777 symlinks), uid 0, gid 80 (root:admin, the /Applications group),
 /// digests from the contents (cksum CRC-32; the target string for symlinks), and the tree's mtimes.
-private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] {
+private func expectedEntries(app: URL) -> [Bom.Entry] {
     let base = "./\(app.lastPathComponent)"
     let fw = "\(base)/Contents/Frameworks/F.framework"
     func entry(_ path: String, _ kind: Bom.Kind, _ mode: UInt16, _ size: UInt64, _ checksum: UInt32,
-               linkTarget: String? = nil, date: Date = mtime) -> Bom.Entry {
+               linkTarget: String? = nil) -> Bom.Entry {
         Bom.Entry(path: path, kind: kind, mode: mode, userID: 0, groupID: 80,
-                  modificationDate: date, size: size, checksum: checksum, linkTarget: linkTarget)
+                  modificationDate: mtime, size: size, checksum: checksum, linkTarget: linkTarget)
     }
     func cksum(_ text: String) -> UInt32 { Bom.cksum(Data(text.utf8)) }
     return [
@@ -102,12 +98,12 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
         entry("\(base)/Contents/Frameworks", .directory, 0o755, 0, 0),
         entry("\(fw)", .directory, 0o755, 0, 0),
         entry("\(fw)/F", .symlink, 0o777, UInt64("Versions/Current/F".utf8.count),
-              cksum("Versions/Current/F"), linkTarget: "Versions/Current/F", date: symlinks["F"] ?? mtime),
+              cksum("Versions/Current/F"), linkTarget: "Versions/Current/F"),
         entry("\(fw)/Versions", .directory, 0o755, 0, 0),
         entry("\(fw)/Versions/A", .directory, 0o755, 0, 0),
         entry("\(fw)/Versions/A/F", .file, 0o644, UInt64("fw".utf8.count), cksum("fw")),
         entry("\(fw)/Versions/Current", .symlink, 0o777, UInt64("A".utf8.count),
-              cksum("A"), linkTarget: "A", date: symlinks["Current"] ?? mtime),
+              cksum("A"), linkTarget: "A"),
         entry("\(base)/Contents/MacOS", .directory, 0o755, 0, 0),
         entry("\(base)/Contents/MacOS/x", .file, 0o755, UInt64("bin".utf8.count), cksum("bin")),
         entry("\(base)/Contents/Resources", .directory, 0o755, 0, 0),
@@ -123,7 +119,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 /// directories, and the TOC order (Distribution first, then the component's Bom, Payload, PackageInfo).
 @Test func buildRunsThePayloadPipelineThenArchivesInOrder() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, _) = try makeApp(root)
+    let app = try makeApp(root)
     nonisolated(unsafe) var ran: [(argv: [String], cwd: URL)] = []
     nonisolated(unsafe) var archived: (nodes: [Xar.Node], out: URL, modified: Date)?
     let pkgURL = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
@@ -154,18 +150,23 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 }
 
 /// The Bom the archive packs must be byte-identical with `Bom.data(for:)` over the tree's entries, and
-/// parse back to the same preorder paths.
+/// parse back to the same preorder paths: whatever the builder's umask, and a second or more after the app was made
+/// (the staged copy's symlinks are made anew).
 @Test func theBomSlotIsTheWriterOutputForTheTree() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, symlinks) = try makeApp(root)
+    let app = try makeApp(root)
     nonisolated(unsafe) var bom: Data?
     _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
-        // The chmod step runs for real: the Bom must describe the staged, normalized tree.
-        if argv[0] == "chmod" { try Shell.run(argv[0], Array(argv.dropFirst()), stage: .package) }
+        // The chmod step runs for real: the Bom must describe the staged, normalized tree. The staging root is
+        // loosened first, as a umask of 002 creates it (the Bom's "." entry must still say 755).
+        if argv[0] == "chmod" {
+            _ = chmod(cwd.appendingPathComponent("payload").path, 0o775)
+            try Shell.run(argv[0], Array(argv.dropFirst()), stage: .package)
+        }
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
             .appendingPathComponent("\(component)/Payload").path, contents: Data("payload".utf8)) }
     }, pack: { nodes, _, _ in bom = try member(nodes, "\(component)/Bom") })
-    let wanted = expectedEntries(app: app, symlinks: symlinks)
+    let wanted = expectedEntries(app: app)
     let wantedBytes = try Bom.data(for: wanted)
     #expect(bom == wantedBytes)
     // Parsing gives mkbom's listing order ((parent, name)-sorted leaves, not the input preorder); the set
@@ -177,7 +178,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 /// (755 on directories and the executable, 644 on the resource — the staging copy, not the source).
 @Test func thePayloadPipelineRunsOverANormalizedAppCopy() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, _) = try makeApp(root)
+    let app = try makeApp(root)
     modes = [:]
     nonisolated(unsafe) var appCopy = ""
     _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
@@ -209,7 +210,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 /// href rewritten the way productbuild rewrites it (`#<bundle-id>.pkg`).
 @Test func distributionIsTheAppStoreTemplate() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, _) = try makeApp(root)
+    let app = try makeApp(root)
     nonisolated(unsafe) var distribution = ""
     _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
@@ -242,7 +243,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 /// values the finalize stage of this run stamped into the app's Info.plist — not from a re-read.
 @Test func packageInfoSummarizesTheComponent() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, _) = try makeApp(root)
+    let app = try makeApp(root)
     nonisolated(unsafe) var packageInfo = ""
     _ = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(), run: { argv, cwd in
         if argv[0] == "sh" { FileManager.default.createFile(atPath: cwd.deletingLastPathComponent()
@@ -279,7 +280,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 /// A hostile (or accidental) runaway nesting is refused, never walked to a stack overflow.
 @Test func deepNestingIsRefused() throws {
     let root = scratch(); defer { clean(root: root) }
-    let bundle = try makeApp(root).app
+    let bundle = try makeApp(root)
     var dir = bundle
     let fm = FileManager.default
     for _ in 0...(PkgBuilder.maxDepth + 2) {
@@ -305,7 +306,7 @@ private func expectedEntries(app: URL, symlinks: [String: Date]) -> [Bom.Entry] 
 @Test(.enabled(if: onPath("xar") && onPath("cpio") && onPath("gzip")))
 func realAssemblyIsParsedByAppleTools() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, symlinks) = try makeApp(root)
+    let app = try makeApp(root)
     let pkgURL = try PkgBuilder.build(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config())
     #expect(FileManager.default.fileExists(atPath: pkgURL.path))
     let toc = try Shell.run("xar", ["-tf", pkgURL.path], stage: .package).stdout.split(separator: "\n").map(String.init)
@@ -314,13 +315,13 @@ func realAssemblyIsParsedByAppleTools() throws {
     try FileManager.default.createDirectory(at: expand, withIntermediateDirectories: true)
     try Shell.run("xar", ["-x", "-f", pkgURL.path], cwd: expand, stage: .package)
     let archivedBom = try Data(contentsOf: expand.appendingPathComponent("\(component)/Bom"))
-    let wantedBom = try Bom.data(for: expectedEntries(app: app, symlinks: symlinks))
+    let wantedBom = try Bom.data(for: expectedEntries(app: app))
     #expect(archivedBom == wantedBom)
     // The payload: odc cpio, gzipped, listing every Bom path (including the root dot) as its own line.
     let payload = expand.appendingPathComponent("\(component)/Payload").path
     let listing = try Shell.run("sh", ["-c", "exec gzip -dc \"$1\" | cpio -it", "sh", payload], cwd: expand, stage: .package).stdout
     let lines = listing.split(separator: "\n").map(String.init)
-    let wanted = expectedEntries(app: app, symlinks: symlinks).map { $0.path }   // "." is the list's head
+    let wanted = expectedEntries(app: app).map { $0.path }   // "." is the list's head
     #expect(lines == wanted)
 }
 
@@ -328,7 +329,7 @@ func realAssemblyIsParsedByAppleTools() throws {
 /// was signed with, and its certificate is looked up as `MAC_INSTALLER_DISTRIBUTION`.
 @Test func packageStageNeedsTheInstallerKeyNotTheDistributionKey() async throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, _) = try makeApp(root)
+    let app = try makeApp(root)
     do {
         _ = try await PkgBuilder.appStore(signedApp: app, outputDir: root.appendingPathComponent("out"), config: try config(),
                                           secrets: Secrets(env: ["XLESS_DIST_KEY": "unused"]))
@@ -341,7 +342,7 @@ func realAssemblyIsParsedByAppleTools() throws {
 
 @Test func buildZipsTheDSYMsNextToThePkg() throws {
     let root = scratch(); defer { clean(root: root) }
-    let (app, _) = try makeApp(root)
+    let app = try makeApp(root)
     let dSYMs = try makeDSYMs(root, name: "Hello Tauri.app")
     let out = root.appendingPathComponent("out")
     _ = try PkgBuilder.build(signedApp: app, outputDir: out, config: try config(), dSYMs: dSYMs, run: { argv, cwd in
@@ -350,3 +351,4 @@ func realAssemblyIsParsedByAppleTools() throws {
     }, pack: { _, _, _ in })
     #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("Hello Tauri.app.dSYM.zip").path))
 }
+

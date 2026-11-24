@@ -74,8 +74,7 @@ private func fakeToolchain(version: String, line: String) throws -> SwiftToolcha
     let root = try tempDir("sdkcheck-tc")
     let swiftc = root.appendingPathComponent("usr/bin/swiftc")
     try FileManager.default.createDirectory(at: swiftc.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try "#!/bin/sh\necho '\(line)'\n".write(to: swiftc, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swiftc.path)
+    try ExecutableFile.write("#!/bin/sh\necho '\(line)'\n", to: swiftc, stage: .build)
     return SwiftToolchain(version: version, root: root.path)
 }
 

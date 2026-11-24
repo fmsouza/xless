@@ -10,9 +10,9 @@ private func scratch(_ tag: String) -> URL {
     fm.temporaryDirectory.appendingPathComponent("\(tag)-\(UUID().uuidString)", isDirectory: true)
 }
 
-private func write(_ text: String, _ url: URL) throws {
+private func write(_ text: String, _ url: URL, executable: Bool = false) throws {
     try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try text.write(to: url, atomically: true, encoding: .utf8)
+    if executable { try ExecutableFile.write(text, to: url, stage: .build) } else { try text.write(to: url, atomically: true, encoding: .utf8) }
 }
 
 /// A Darwin SDK stand-in with the iPhoneOS and MacOSX 27.0 SDKs and their libclang_rt (what the cargo environments
@@ -20,8 +20,7 @@ private func write(_ text: String, _ url: URL) throws {
 private func fakeSDK(dsymutil: Bool = true) throws -> DarwinSDK {
     let bundle = scratch("sdk").appendingPathComponent("darwin.xtoolsdk", isDirectory: true)
     if dsymutil {
-        try write("#!/bin/sh\nexit 0\n", bundle.appendingPathComponent("toolset/bin/dsymutil"))
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundle.appendingPathComponent("toolset/bin/dsymutil").path)
+        try write("#!/bin/sh\nexit 0\n", bundle.appendingPathComponent("toolset/bin/dsymutil"), executable: true)
     }
     for platform in ["MacOSX", "iPhoneOS"] {
         try write(#"{"Version":"27.0"}"#, bundle.appendingPathComponent("Developer/Platforms/\(platform).platform/Developer/SDKs/\(platform)27.0.sdk/SDKSettings.json"))
@@ -129,10 +128,8 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
             *) echo "unexpected cargo $*" >&2; exit 1 ;;
             esac
 
-            """, bin.appendingPathComponent("cargo"))
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("cargo").path)
-        try write("#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/rustup.log\"\n", bin.appendingPathComponent("rustup"))
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("rustup").path)
+            """, bin.appendingPathComponent("cargo"), executable: true)
+        try write("#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/rustup.log\"\n", bin.appendingPathComponent("rustup"), executable: true)
 
         let overlay = try CargoOverlay.parse(yaml: """
             type: cargo

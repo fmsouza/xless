@@ -112,9 +112,9 @@ public struct StoreSender: Sendable {
         }
     }
 
-    /// Uploads the set's new files at once (transfers bounded by `limiter`), each waited for as soon as it is committed;
-    /// their IDs by slot index. Every file App Store Connect accepted is recorded, even when another failed; the first
-    /// failure (in the set's order) is then thrown and the others are noted.
+    /// Uploads the set's new files at once (transfers bounded by `limiter`, started in slot order), each waited for as
+    /// soon as it is committed; their IDs by slot index. Every file App Store Connect accepted is recorded, even when
+    /// another failed; the first failure (in the set's order) is then thrown and the others are noted.
     func uploadAll(_ slots: [StoreMediaWork.Slot], kind: StoreMediaKind, holder: String) async throws -> [Int: String] {
         let uploads = slots.enumerated().compactMap { i, slot -> (Int, StoreUpload)? in
             if case .upload(let u) = slot { return (i, u) }
@@ -123,6 +123,9 @@ public struct StoreSender: Sendable {
         guard !uploads.isEmpty else { return [:] }
         let outcomes = await withTaskGroup(of: (Int, StoreUpload, Result<AssetUploadResult, any Error>).self) { group in
             for (index, u) in uploads {
+                // The permit is taken here, before the file's task starts, so transfers start in slot order (one at a
+                // time: exactly that order) whatever order the tasks run in; the task gives it back.
+                await limiter.acquirePermit()
                 group.addTask {
                     do {
                         return (index, u, .success(try await upload(u, kind: kind, holder: holder)))
@@ -158,15 +161,22 @@ public struct StoreSender: Sendable {
         return ids
     }
 
-    /// One file: transferred once a permit is free (unless the push already failed), then waited for without one.
+    /// One file, holding the permit `uploadAll` took for it: transferred (unless the push already failed), the permit
+    /// given back, then waited for without one.
     func upload(_ u: StoreUpload, kind: StoreMediaKind, holder: String) async throws -> AssetUploadResult {
         let asset = AssetUpload(type: kind.itemType, file: u.file, fileName: u.fileName, fileSize: u.fileSize, md5: u.md5,
                                 relationship: kind.parent.relationship, parentType: kind.parent.type, parentID: holder,
                                 commit: u.commit, display: u.path)
-        let id = try await limiter.run { () async throws -> String in
+        let id: String
+        do {
             if halt.isSet { throw Halted() }
-            return try await uploader.transfer(asset)
+            id = try await uploader.transfer(asset)
+        } catch {
+            if !(error is Halted) { halt.set() }   // before the permit goes to the next file, which checks it
+            await limiter.releasePermit()
+            throw error
         }
+        await limiter.releasePermit()
         return try await uploader.wait(id: id, asset: asset)
     }
 

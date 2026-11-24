@@ -38,8 +38,7 @@ private struct WrapperRun {
     }
 
     static func script(_ text: String, to url: URL) throws {
-        try (text + "\n").write(to: url, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        try ExecutableFile.write(text + "\n", to: url, stage: .build)
     }
 
     /// An object file: with `dwarf`, one that names a `__debug_info` section, as rustc's are with debug info.

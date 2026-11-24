@@ -9,9 +9,9 @@ private var fm: FileManager { .default }
 /// The repository root (Tests/XlessTauriTests/<this file> → ../..).
 private let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
-private func write(_ text: String, _ url: URL) throws {
+private func write(_ text: String, _ url: URL, executable: Bool = false) throws {
     try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try text.write(to: url, atomically: true, encoding: .utf8)
+    if executable { try ExecutableFile.write(text, to: url, stage: .build) } else { try text.write(to: url, atomically: true, encoding: .utf8) }
 }
 
 private func scratch(_ tag: String) -> URL {
@@ -431,8 +431,7 @@ private func fakeMacSDK() throws -> DarwinSDK {
             *) echo "unexpected cargo $*" >&2; exit 1 ;;
             esac
 
-            """, bin.appendingPathComponent("cargo"))
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("cargo").path)
+            """, bin.appendingPathComponent("cargo"), executable: true)
 
         let overlay = try TauriOverlay.parse(yaml: "type: tauri\nbundleID: com.example.demo\nteamID: ABCDE12345\n", name: "demo")
         let resolved = try TauriProject.resolveMac(overlay: overlay, source: root)

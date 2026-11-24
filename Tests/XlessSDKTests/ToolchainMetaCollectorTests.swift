@@ -30,9 +30,8 @@ func makeFakeXcode() throws -> URL {
     }
     let swift = root.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
     try fm.createDirectory(at: swift.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try "#!/bin/sh\necho 'swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)'\necho 'Target: arm64-apple-macosx27.0'\n"
-        .write(to: swift, atomically: true, encoding: .utf8)
-    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: swift.path)
+    try ExecutableFile.write("#!/bin/sh\necho 'swift-driver version: 1.168.6 Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)'\necho 'Target: arm64-apple-macosx27.0'\n",
+                             to: swift, stage: .sdk)
     return root
 }
 

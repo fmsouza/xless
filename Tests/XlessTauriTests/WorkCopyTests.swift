@@ -173,8 +173,8 @@ private func exists(_ root: URL, _ path: String) -> Bool {
 /// A PATH holding a fake `git` (`script` is its body), then the real PATH, so rsync still resolves.
 private func fakeGitEnv(_ script: String) throws -> [String: String] {
     let bin = tmp()
-    try write(bin, "git", "#!/bin/sh\n" + script)
-    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("git").path)
+    try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+    try ExecutableFile.write("#!/bin/sh\n" + script, to: bin.appendingPathComponent("git"), stage: .prepare)
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = bin.path + ":" + (env["PATH"] ?? "/usr/bin:/bin")
     return env

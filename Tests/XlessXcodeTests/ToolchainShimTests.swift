@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import XlessMachO
+import XlessCore
 @testable import XlessXcode
 
 // MARK: strip
@@ -107,8 +108,7 @@ private func fat(_ slices: [Data]) -> Data {
     defer { try? FileManager.default.removeItem(at: dir) }
     func script(_ name: String, _ body: String) throws -> String {
         let url = dir.appendingPathComponent(name)
-        try ("#!/bin/sh\n" + body + "\n").write(to: url, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        try ExecutableFile.write("#!/bin/sh\n" + body + "\n", to: url, stage: .build)
         return url.path
     }
     // A stand-in llvm-strip: copies for `-o` (the copy phase), leaves the file for `-T` (in place).

@@ -47,6 +47,11 @@ Before you push, run what you can locally: `swift test`, `make test-linux` (the 
 `bash Tests/shell/<name>.test.sh`, and `python3 -I scripts/check-doc-links.py README.md CONTRIBUTING.md docs/*.md`
 after editing the documentation.
 
+The tests pass as root and as a regular user, under any umask and locale, and run in parallel. A test (or code) that
+writes a script or stand-in tool and runs it writes it with `ExecutableFile.write` (XlessCore), never with `Data.write`
+and a chmod: a file written in-process can still be open for writing in a child another thread is starting, and Linux
+then refuses to run it ("Text file busy"). A shell test that lists or sorts names sets `LC_ALL=C`.
+
 ## Versions and releases
 
 A release workflow runs every night at 03:00 UTC. It looks at the titles of the commits on `main` since the last

@@ -89,17 +89,23 @@ public enum PkgBuilder {
         if let mtime = (try? fm.attributesOfItem(atPath: signedApp.path)[.modificationDate]) as? Date {
             try? fm.setAttributes([.modificationDate: mtime], ofItemAtPath: payloadStage.path)
         }
-        // copyItem keeps the whole tree's mtimes on macOS but drops the files' on Linux: apply the
-        // source tree's own dates back over the copy, deepest first (so a directory is dated after
-        // its children), skipping symlinks — a symlink's date is its own and copyItem preserves it.
-        // Without this the Bom and the cpio payload carry the copy's wall clock, not the tree's.
+        // copyItem keeps the whole tree's mtimes on macOS but drops the files' on Linux, and on Linux it
+        // makes every symlink anew (dated now): apply the source tree's own dates back over the copy,
+        // deepest first (so a directory is dated after its children), a symlink's to the link itself.
+        // Without this the Bom and the cpio payload carry the copy's wall clock, not the tree's, and the
+        // same app packs to other bytes a second later.
         let stagedApp = payloadStage.appendingPathComponent(appName, isDirectory: true)
         for node in try walk(signedApp, checksums: false).reversed() {
             let path = node.path == "." ? stagedApp : stagedApp.appendingPathComponent(String(node.path.dropFirst("./".count)))
-            guard node.kind != .symlink else { continue }
-            try fm.setAttributes([.modificationDate: node.modificationDate], ofItemAtPath: path.path)
+            if node.kind == .symlink {
+                try setLinkDate(path.path, node.modificationDate)
+            } else {
+                try fm.setAttributes([.modificationDate: node.modificationDate], ofItemAtPath: path.path)
+            }
         }
-        try run(["chmod", "-R", "u=rwX,go=rX", payloadStage.appendingPathComponent(appName).path], work)
+        // The whole staging tree, its root included: the root is the Bom's and the payload's "." entry, and
+        // createDirectory gave it the builder's umask (775 under a umask of 002), not the 755 it installs with.
+        try run(["chmod", "-R", "u=rwX,go=rX", payloadStage.path], work)
 
         // The Payload: odc cpio.gz of the app tree, junk excluded the way every other archive is.
         let pkg = out.appendingPathComponent(fileName(product: pc.product))
@@ -250,6 +256,18 @@ public enum PkgBuilder {
         #endif
         return FileStat(mode: UInt16(truncatingIfNeeded: mode) & 0o7777, date: date, size: size,
                         isDirectory: typeBits == S_IFDIR, isSymlink: typeBits == S_IFLNK)
+    }
+
+    /// Dates the symlink at `path` itself (`utimensat` with `AT_SYMLINK_NOFOLLOW`), never its target: its modification
+    /// and access times both become `date` (UTIME_OMIT is a C macro Swift does not import on Linux).
+    static func setLinkDate(_ path: String, _ date: Date) throws {
+        let seconds = date.timeIntervalSince1970.rounded(.down)
+        let time = timespec(tv_sec: Int(seconds), tv_nsec: Int((date.timeIntervalSince1970 - seconds) * 1e9))
+        var times = [time, time]
+        guard utimensat(AT_FDCWD, path, &times, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw XlessError(.package, "cannot date the link \(path): \(String(cString: strerror(errno)))",
+                             fix: "re-run from package")
+        }
     }
 
     /// The directory's entry names via `readdir` (sorted by the caller). Foundation's `contentsOfDirectory`

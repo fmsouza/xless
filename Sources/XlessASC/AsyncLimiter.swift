@@ -20,6 +20,14 @@ public actor AsyncLimiter {
         if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }
     }
 
+    /// Waits for a permit and keeps it until `releasePermit()`, for a caller that takes permits in an order of its own
+    /// (it awaits each before starting the next piece of work) and gives them back elsewhere. Every `acquirePermit()`
+    /// needs exactly one `releasePermit()`, on every path.
+    public nonisolated func acquirePermit() async { await acquire() }
+
+    /// Gives back a permit taken with `acquirePermit()`, exactly once.
+    public nonisolated func releasePermit() async { await release() }
+
     public nonisolated func run<T>(_ operation: () async throws -> T) async throws -> T {
         await acquire()
         do {
