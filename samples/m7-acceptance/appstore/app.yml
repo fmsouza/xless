@@ -28,6 +28,7 @@ ageRating:
   profanityOrCrudeHumor: NONE
   sexualContentGraphicAndNudity: NONE
   sexualContentOrNudity: NONE
+  socialMedia: false
   unrestrictedWebAccess: false
   userGeneratedContent: false
   violenceCartoonOrFantasy: NONE
