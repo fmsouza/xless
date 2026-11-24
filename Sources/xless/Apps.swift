@@ -98,6 +98,8 @@ struct AppCreation {
     var web: () async throws -> any AppCreationWeb
     var confirm: (_ question: String, _ action: String) throws -> Bool
     var say: (String) -> Void
+    /// Waits between lookups of a new app (tests do not).
+    var pause: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 
     /// nil when the user declined to register the bundle ID (nothing was sent).
     func run(_ request: AppCreateRequest) async throws -> AppCreated? {
@@ -122,6 +124,7 @@ struct AppCreation {
         }
         switch await web.create(request) {
         case .created(let app):
+            if let api { try await awaitVisible(app.id, bundle, api) }
             return AppCreated(created: [AppSummary(app)], existing: [])
         case .refused(_, let error):
             throw error
@@ -139,6 +142,22 @@ struct AppCreation {
             say("note: \(why), but the app for \(bundle) exists")
             return AppCreated(created: [found], existing: [])
         }
+    }
+
+    /// How often, and how many times, a new app is looked up with the API key.
+    static let visibleEvery: Duration = .seconds(10)
+    static let visibleTries = 18
+
+    /// Waits until the API key finds the app the web session created: App Store Connect's API answers 404 for it for a
+    /// minute or so, and what comes next (`xless store push`, provision's listing) goes through the key. An app it still
+    /// does not show is noted, not refused: it was created.
+    private func awaitVisible(_ id: String, _ bundle: String, _ api: any AppCreationAPI) async throws {
+        for attempt in 1...Self.visibleTries {
+            if try await api.findApp(bundleID: bundle)?.id == id { return }
+            if attempt == 1 { say("waiting for the App Store Connect API to show app \(id) (it can take a minute)") }
+            if attempt < Self.visibleTries { try await pause(Self.visibleEvery) }
+        }
+        say("note: the App Store Connect API does not show app \(id) yet; wait a minute before `xless store push` or `xless provision apply`")
     }
 
     /// The app after an unclear answer: through the web session, else through the API key.

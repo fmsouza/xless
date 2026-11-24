@@ -27,11 +27,16 @@ private let made = AppSummary(id: "1234567890", name: "Example", bundleId: "com.
 /// The documented API's side, scripted.
 private final class FakeAPI: AppCreationAPI, @unchecked Sendable {
     var app: AppSummary?
+    /// Answers the first lookups, in turn, before `app` does.
+    var first: [AppSummary?] = []
     var hasBundle = true
     var calls: [String] = []
     let issuerID = "69a6de70-0000-47e3-e053-5b8c7c11a4d1"
     init(app: AppSummary? = nil, hasBundle: Bool = true) { self.app = app; self.hasBundle = hasBundle }
-    func findApp(bundleID: String) async throws -> AppSummary? { calls.append("find \(bundleID)"); return app }
+    func findApp(bundleID: String) async throws -> AppSummary? {
+        calls.append("find \(bundleID)")
+        return first.isEmpty ? app : first.removeFirst()
+    }
     func hasBundleID(_ identifier: String) async throws -> Bool { calls.append("has \(identifier)"); return hasBundle }
     func registerBundleID(_ identifier: String) async throws { calls.append("register \(identifier)"); hasBundle = true }
 }
@@ -61,7 +66,7 @@ private final class FakeWeb: AppCreationWeb, @unchecked Sendable {
 }
 
 private func creation(api: FakeAPI?, web: FakeWeb, answer: Bool = true, said: Said = Said(), asked: Said = Said()) -> AppCreation {
-    AppCreation(api: api, web: { web }, confirm: { q, _ in asked.lines.append(q); return answer }, say: { said.lines.append($0) })
+    AppCreation(api: api, web: { web }, confirm: { q, _ in asked.lines.append(q); return answer }, say: { said.lines.append($0) }, pause: { _ in })
 }
 
 // MARK: - Arguments
@@ -154,21 +159,23 @@ private func creation(api: FakeAPI?, web: FakeWeb, answer: Bool = true, said: Sa
 }
 
 @Test func withAKeyTheAppIsCreatedOnceThroughTheWebSession() async throws {
-    let api = FakeAPI()
+    let api = FakeAPI(app: made)
+    api.first = [nil]
     let web = FakeWeb()
     let result = try #require(try await creation(api: api, web: web).run(request))
     #expect(result.created == [made])
-    #expect(api.calls == ["find com.example.app", "has com.example.app"])
+    #expect(api.calls == ["find com.example.app", "has com.example.app", "find com.example.app"], "found again once created")
     #expect(web.calls == ["create com.example.app"], "the key did the lookups; the web session only creates")
     #expect(result.text == "created app Example (1234567890) for com.example.app, SKU EX1\n")
 }
 
 @Test func aMissingBundleIDIsOfferedAndRegisteredFirst() async throws {
-    let api = FakeAPI(hasBundle: false)
+    let api = FakeAPI(app: made, hasBundle: false)
+    api.first = [nil]
     let web = FakeWeb()
     let asked = Said()
     _ = try await creation(api: api, web: web, asked: asked).run(request)
-    #expect(api.calls == ["find com.example.app", "has com.example.app", "register com.example.app"])
+    #expect(api.calls == ["find com.example.app", "has com.example.app", "register com.example.app", "find com.example.app"])
     #expect(asked.lines.first?.contains("Register it now (universal, named \"xless com example app\")") == true)
     #expect(web.calls == ["create com.example.app"])
 
@@ -301,4 +308,33 @@ private let shown = #"{"data":\#(app("9", "com.example.app"))}"#
     #expect(throws: (any Error).self) { try AppsPricePointsCommand.parse(["com.example.app", "--price", "$1"]) }
     let ok = try AppsPricePointsCommand.parse(["com.example.app", "--territory", "jpn", "--price", "free"])
     #expect(ok.territory == "jpn" && ok.price == "free")
+}
+
+// MARK: - The API catching up
+
+@Test func aCreatedAppIsWaitedForUntilTheKeySeesIt() async throws {
+    // App Store Connect's API answers 404 for an app the web session just created, for a minute or so: what comes next
+    // (the listing, with the key) waits until the key finds it.
+    let api = FakeAPI(app: made)
+    api.first = [nil, nil, nil]
+    let said = Said()
+    var c = creation(api: api, web: FakeWeb(), said: said)
+    var pauses: [Duration] = []
+    c.pause = { pauses.append($0) }
+    let result = try #require(try await c.run(request))
+    #expect(result.created.map(\.id) == ["1234567890"])
+    #expect(api.calls == ["find com.example.app", "has com.example.app", "find com.example.app", "find com.example.app", "find com.example.app"])
+    #expect(pauses.count == 2)
+}
+
+@Test func anAppTheKeyNeverSeesIsStillReportedCreatedWithANote() async throws {
+    let api = FakeAPI()
+    let said = Said()
+    var c = creation(api: api, web: FakeWeb(), said: said)
+    var pauses: [Duration] = []
+    c.pause = { pauses.append($0) }
+    let result = try #require(try await c.run(request))
+    #expect(result.created.map(\.id) == ["1234567890"])
+    #expect(pauses.reduce(.zero, +) >= .seconds(120), "waits a couple of minutes: \(pauses)")
+    #expect(said.lines.contains { $0.contains("does not show app 1234567890 yet") }, "\(said.lines)")
 }
