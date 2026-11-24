@@ -102,12 +102,13 @@ hide() {   # VALUE: never shown in the record (values under 3 characters would m
   local name="M7_HIDE_${#HIDE_VARS[@]}"
   export "$name=$1"; HIDE_VARS+=("$name")
 }
-# The values learnt from Apple along the way (state: appleid, issuer, teamname.N): hidden from then on, and every part
-# of the record is redacted again when it is rendered, so they are hidden in what came before they were known too.
+# The values learnt from Apple along the way (state: appleid, issuer, teamname.N, provider.N): hidden from then on, and
+# every part of the record is redacted again when it is rendered, so they are hidden in what came before they were known
+# too.
 hide_learnt() {
   local key
   [[ -f "$STATE" ]] || return 0
-  while IFS= read -r key; do hide "$(state_get "$key")"; done < <(awk -F= '$1 == "appleid" || $1 == "issuer" || $1 ~ /^teamname\./ { print $1 }' "$STATE")
+  while IFS= read -r key; do hide "$(state_get "$key")"; done < <(awk -F= '$1 == "appleid" || $1 == "issuer" || $1 ~ /^(teamname|provider)\./ { print $1 }' "$STATE")
 }
 have_redact=""
 redact() { redact_secrets | tidy_paths; }
@@ -275,16 +276,23 @@ session_kept() {
   [[ "$(json "$out" 'd["session"]["state"]')" == kept ]] && { remember_apple_id "$out"; rm -f "$out"; return 0; }
   rm -f "$out"; return 1
 }
-remember_apple_id() {   # STATUS-JSON: the Apple ID, and the names of its teams (an individual's team is their name)
+# STATUS-JSON: the Apple ID, the names of its teams (an individual's team is their name) and their App Store Connect
+# provider IDs (live-check prints the current one).
+remember_apple_id() {
   local id i=0 name out="$DIR/tmp.teams.json"
   id="$(json "$1" 'd["session"].get("appleID")')"
   [[ -z "$id" ]] || { state_set appleid "$id"; hide "$id"; }
-  [[ -z "$(state_get teamname.0)" ]] || return 0
+  [[ -z "$(state_get teamname.0)" || -z "$(state_get provider.0)" ]] || return 0
   "$XLESS" team list --json > "$out" 2>/dev/null || true
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     state_set "teamname.$i" "$name"; hide "$name"; i=$((i + 1))
   done < <(json "$out" '[t.get("name") for t in d if isinstance(t, dict) and t.get("name")]')
+  i=0
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    state_set "provider.$i" "$name"; hide "$name"; i=$((i + 1))
+  done < <(json "$out" '[str(t["providerId"]) for t in d if isinstance(t, dict) and t.get("providerId")]')
   rm -f "$out"
 }
 sign_in() {   # keeps a session for the steps that use the web session (xless asks the Apple ID, password and code)
