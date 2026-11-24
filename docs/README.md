@@ -58,9 +58,12 @@ Measurements and decisions behind the code, in [research/](research/):
 - [Asset and storyboard tools by Xcode version](research/xcode-tools-by-version.md)
 - [ibtool's invocation](research/ib-invocation.md) and [the NIB encoding](research/nib-encoding.md)
 - [The React Native iOS contract](research/react-native-ios-contract.md) and [the Tauri iOS contract](research/tauri-ios-contract.md)
+- [What M7 has not verified against a real Apple account](research/m7-live-checklist.md), and where #105 checks it
 
 ## Acceptance records
 
 What each milestone checked, and how: [m2a](acceptance-m2a.md), [m2b](acceptance-m2b.md), [m2c](acceptance-m2c.md),
 [m3](acceptance-m3.md), [m4](acceptance-m4.md), [m5](acceptance-m5.md) (releases, and setup from a `.xip` on a fresh Linux VM),
-[m6](acceptance-m6.md) (plain Cargo apps: a checklist for the maintainer, not yet run).
+[m6](acceptance-m6.md) (plain Cargo apps: a checklist for the maintainer, not yet run),
+[m7](acceptance-m7.md) (an Apple account from the terminal: a guided, recorded run of `scripts/acceptance-m7.sh` for the
+maintainer, not yet run).

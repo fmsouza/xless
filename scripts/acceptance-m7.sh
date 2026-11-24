@@ -772,8 +772,11 @@ command -v python3 >/dev/null 2>&1 || die "python3 is needed (it reads xless's J
 command -v "$XLESS" >/dev/null 2>&1 || die "no xless on PATH: install the release candidate (README.md#install), or set XLESS"
 mkdir -p "$DIR/record"; chmod 700 "$DIR"
 [[ -n "$(state_get started)" ]] || { state_set started "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; state_set started_local "$(date '+%Y-%m-%d %H:%M:%S')"; }
-[[ -n "$(state_get machine)" ]] || state_set machine "$( (# shellcheck disable=SC1091
-. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-Linux}") || uname -s), $(uname -m), kernel $(uname -r)"
+machine() {
+  local os; os="$(awk -F= '$1 == "PRETTY_NAME" { gsub(/"/, "", $2); print $2 }' /etc/os-release 2>/dev/null || true)"
+  printf '%s, %s, kernel %s' "${os:-$(uname -s)}" "$(uname -m)" "$(uname -r)"
+}
+[[ -n "$(state_get machine)" ]] || state_set machine "$(machine)"
 [[ -n "$(state_get xless_version)" ]] || state_set xless_version "$("$XLESS" --version 2>/dev/null || echo unknown)"
 
 RANDOM_PART="$(state_get random)"; [[ -n "$RANDOM_PART" ]] || { RANDOM_PART="$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"; state_set random "$RANDOM_PART"; }
