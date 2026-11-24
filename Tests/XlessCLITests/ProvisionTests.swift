@@ -107,6 +107,7 @@ private struct FakeAccount: ProvisionAccount {
         return p
     }
     func findApp(bundleID: String) async throws -> AppSummary? { world.apps.first { $0.bundleId == bundleID } }
+    func showsApp(id: String) async throws -> Bool { world.apps.contains { $0.id == id } }
     func hasBundleID(_ identifier: String) async throws -> Bool { world.bundles[identifier] != nil }
     func registerBundleID(_ identifier: String) async throws { _ = try await register(bundleID: identifier) }
     func betaGroups(app appID: String) async throws -> [ProvisionGroup] { world.groups[appID] ?? [] }

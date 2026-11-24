@@ -32,6 +32,8 @@ protocol AppCreationAPI {
     /// The key's issuer ID: its App Store Connect team.
     var issuerID: String { get }
     func findApp(bundleID: String) async throws -> AppSummary?
+    /// Whether the key can read the app by its ID (false on 404).
+    func showsApp(id: String) async throws -> Bool
     func hasBundleID(_ identifier: String) async throws -> Bool
     /// Registers the identifier as a universal bundle ID, as the sign stage does.
     func registerBundleID(_ identifier: String) async throws
@@ -57,6 +59,7 @@ struct KeyAppCreationAPI: AppCreationAPI {
     }
 
     func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
+    func showsApp(id: String) async throws -> Bool { try await apps.shows(id: id) }
     func hasBundleID(_ identifier: String) async throws -> Bool { try await bundleIDs.find(identifier: identifier) != nil }
     func registerBundleID(_ identifier: String) async throws {
         _ = try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal)
@@ -98,6 +101,8 @@ struct AppCreation {
     var web: () async throws -> any AppCreationWeb
     var confirm: (_ question: String, _ action: String) throws -> Bool
     var say: (String) -> Void
+    /// Waits between lookups of a new app (tests do not).
+    var pause: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 
     /// nil when the user declined to register the bundle ID (nothing was sent).
     func run(_ request: AppCreateRequest) async throws -> AppCreated? {
@@ -122,6 +127,7 @@ struct AppCreation {
         }
         switch await web.create(request) {
         case .created(let app):
+            if let api { try await awaitVisible(app.id, api) }
             return AppCreated(created: [AppSummary(app)], existing: [])
         case .refused(_, let error):
             throw error
@@ -139,6 +145,22 @@ struct AppCreation {
             say("note: \(why), but the app for \(bundle) exists")
             return AppCreated(created: [found], existing: [])
         }
+    }
+
+    /// How often, and how many times, a new app is read with the API key.
+    static let visibleEvery: Duration = .seconds(10)
+    static let visibleTries = 18
+
+    /// Waits until the API key can read the app the web session created: `GET /v1/apps/{id}` has answered 404 right after
+    /// the create (#165), and what comes next (`xless store push`, provision's listing) goes through it. The app exists,
+    /// so one that still does not show, or a lookup that fails, is never an error here.
+    private func awaitVisible(_ id: String, _ api: any AppCreationAPI) async throws {
+        for attempt in 1...Self.visibleTries {
+            do { if try await api.showsApp(id: id) { return } } catch let e where !(e is CancellationError) {}
+            if attempt == 1 { say("waiting for the App Store Connect API to show app \(id)") }
+            if attempt < Self.visibleTries { try await pause(Self.visibleEvery) }
+        }
+        say("note: the App Store Connect API does not show app \(id) yet; wait a few minutes before `xless store push` or `xless provision apply`")
     }
 
     /// The app after an unclear answer: through the web session, else through the API key.
