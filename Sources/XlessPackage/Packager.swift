@@ -7,7 +7,9 @@ public enum Packager {
     static let junkExclusions = ["*.DS_Store", "*/._*", "._*"]
 
     /// The `.ipa`, and `<name>.app.dSYM.zip` of `dSYMs` (the build's debug symbols) when it has any, as
-    /// fastlane's `gym` names it.
+    /// fastlane's `gym` names it. The same app zips to the same bytes at any time and under any umask: the staged copy
+    /// takes the app's own dates back (`PkgBuilder.copyDates`), `Payload/` is 755 and dated like the app, and `zip -X`
+    /// leaves out the extra fields that would carry access times and the builder's uid and gid.
     public static func ipa(signedApp: URL, outputDir: URL, dSYMs: URL? = nil) throws -> URL {
         let name = signedApp.deletingPathExtension().lastPathComponent
         return try Files.atomicOutput(outputDir) { out in
@@ -15,9 +17,12 @@ public enum Packager {
             let staging = out.appendingPathComponent(".staging")
             let payload = staging.appendingPathComponent("Payload")
             try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: payload.path)   // not the umask's
             try FileManager.default.copyItem(at: signedApp, to: payload.appendingPathComponent(signedApp.lastPathComponent))
+            try PkgBuilder.copyDates(from: signedApp, to: payload.appendingPathComponent(signedApp.lastPathComponent))
+            try PkgBuilder.setLinkDate(payload.path, try PkgBuilder.lstatInfo(signedApp.path).date)
             let ipa = out.appendingPathComponent("\(name).ipa")
-            try Shell.run("zip", ["-qry", ipa.path, "Payload", "-x"] + junkExclusions, cwd: staging, stage: .package)
+            try Shell.run("zip", ["-qryX", ipa.path, "Payload", "-x"] + junkExclusions, cwd: staging, stage: .package)
             try FileManager.default.removeItem(at: staging)
             return ipa
         }

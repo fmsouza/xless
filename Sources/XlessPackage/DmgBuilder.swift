@@ -40,7 +40,7 @@ public enum DmgBuilder {
     /// `--symlinks clone_link` keeps symlinks inside the .app (framework `Versions/Current`); `--special-modes no` stops hfsplus
     /// from applying its iOS-restore chmod rules; modes come from the staged files.
     public static func commands(app: URL, volumeName: String, work: URL, out: URL, sizeKB: Int) -> [[String]] {
-        let img = work.appendingPathComponent("img.hfs").path, stage = stageDir(work).path
+        let img = imageFile(work).path, stage = stageDir(work).path
         _ = app   // the app is copied into `stage` by `build`; `addall` reads it from there
         return [
             ["dd", "if=/dev/zero", "of=\(img)", "bs=1k", "count=\(sizeKB)", "status=none"],
@@ -52,6 +52,7 @@ public enum DmgBuilder {
     }
 
     static func stageDir(_ work: URL) -> URL { work.appendingPathComponent("stage", isDirectory: true) }
+    static func imageFile(_ work: URL) -> URL { work.appendingPathComponent("img.hfs") }
 
     /// Content size + 30 % + 4 MiB for the catalog/extents B-trees and the volume headers, in KiB. Content is counted in
     /// 4 KiB blocks per entry (files, directories and symlinks), which never undercounts.
@@ -70,19 +71,42 @@ public enum DmgBuilder {
     }
 
     /// Copies the signed app into a container-local stage (modes normalised the way create-dmg ends up: directories and
-    /// executables 755, other files 644, because `addall` copies each `st_mode` as is), then builds `<outputDir>/<name>.dmg`.
+    /// executables 755, other files 644, because `addall` copies each `st_mode` as is; the whole stage, so the builder's
+    /// umask never shows), then builds `<outputDir>/<name>.dmg`. Before the volume is compressed, `pin` gives it the app's
+    /// own dates and a volume UUID from its content (`pinDates`), so the same app makes the same DMG bytes at any time.
     /// `architectures` name the DMG (`fileName`). The dSYMs (`dSYMs`, when there are any) are zipped next to it
     /// (`Packager.zipDSYMs`).
     @discardableResult
     public static func build(signedApp: URL, volumeName: String, version: String, architectures: [MacArchitecture] = MacArchitecture.allCases,
-                             outputDir: URL, dSYMs: URL? = nil, run: ([String]) throws -> Void = DmgBuilder.shell) throws -> URL {
+                             outputDir: URL, dSYMs: URL? = nil, pin: (_ image: URL, _ app: URL) throws -> Void = DmgBuilder.pinDates,
+                             run: ([String]) throws -> Void = DmgBuilder.shell) throws -> URL {
         try Files.atomicOutput(outputDir) { out in
-            try buildInto(out, signedApp: signedApp, volumeName: volumeName, version: version, architectures: architectures, dSYMs: dSYMs, run: run)
+            try buildInto(out, signedApp: signedApp, volumeName: volumeName, version: version, architectures: architectures, dSYMs: dSYMs,
+                          pin: pin, run: run)
         }
     }
 
+    /// mkfs.hfsplus and libdmg's `hfsplus` date the volume and every entry with the time of the run (libdmg never reads
+    /// the source's mtimes), and mkfs draws a random volume UUID: pins each entry to its date in the signed app
+    /// (`sourceDate`), everything else to the app's own date (`HFSPlusDates.pin`).
+    public static func pinDates(image: URL, app: URL) throws {
+        let appDate = try PkgBuilder.lstatInfo(app.path).date
+        try HFSPlusDates.pin(image: image, fallback: appDate) { sourceDate($0, app: app) }
+    }
+
+    /// The modification date (a symlink's own) of the volume entry at `path` (relative to the volume root, where the
+    /// stage puts the app under its own name), read from the signed app; nil for a path outside the app or not in it.
+    static func sourceDate(_ path: String, app: URL) -> Date? {
+        let name = app.lastPathComponent
+        guard path == name || path.hasPrefix(name + "/") else { return nil }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+        guard !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
+        return try? PkgBuilder.lstatInfo(parts.reduce(app) { $0.appendingPathComponent(String($1)) }.path).date
+    }
+
     static func buildInto(_ out: URL, signedApp: URL, volumeName: String, version: String, architectures: [MacArchitecture],
-                          dSYMs: URL? = nil, run: ([String]) throws -> Void) throws -> URL {
+                          dSYMs: URL? = nil, pin: (_ image: URL, _ app: URL) throws -> Void = DmgBuilder.pinDates,
+                          run: ([String]) throws -> Void) throws -> URL {
         try Packager.zipDSYMs(dSYMs, app: signedApp, into: out)
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("xless-dmg-\(UUID().uuidString)")
@@ -94,6 +118,7 @@ public enum DmgBuilder {
         let steps = [["chmod", "-R", "u=rwX,go=rX", stage.path]]
             + commands(app: signedApp, volumeName: volumeName, work: work, out: dmg, sizeKB: sizeKB(of: stage))
         for argv in steps {
+            if argv[0] == "dmg" { try pin(imageFile(work), signedApp) }
             do { try run(argv) } catch {
                 if "\(error)".contains("cannot start "), ["dmg", "hfsplus", "mkfs.hfsplus"].contains(argv[0]) {
                     throw XlessError(.package, "cannot start \(argv[0]) to build the DMG",
