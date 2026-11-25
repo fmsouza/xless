@@ -17,8 +17,9 @@ import Foundation
 /// - **`XLESS_NO_SECRET_STORE=1`**, so an xless the build runs never opens the store (and leaves the keyring too).
 /// - **No `XLESS_SESSION`**: it is not told where what an `xless session` holds is (it would be refused there too).
 /// - **No secret variable**: `Shell.scrubbedEnvironment` (the registered secrets and every name the run resolved).
-/// - **On the kernel of WSL, kept from Windows' own sockets** (`Filter.windows`): a seccomp filter, for good, for it and all that
-///   it starts. Without it a build could start Windows programs, `wsl.exe -u root` among them, and mount the Windows drives.
+/// - **On the kernel of WSL, no socket of Windows' own** (`Filter.windows`): a seccomp filter, for good, for it and all that it
+///   starts. With one a build could start Windows programs, `wsl.exe -u root` among them, and mount the Windows drives, also where
+///   interop and automount are off. Where they are on it has other ways (docs/security.md#in-wsl).
 /// - **xless is not dumpable** (`SecretScope`): the child cannot attach to xless or read its memory or its environment
 ///   (`/proc/<pid>/environ`, which holds the secret variables it was started with).
 public enum ChildProcess {
@@ -73,7 +74,7 @@ public enum ChildProcess {
                                        filter: filter)
             } catch let error as ToolProcess.Unconfined {
                 let name = ((executable == "/usr/bin/env" ? arguments.first ?? executable : executable) as NSString).lastPathComponent
-                throw XlessError(stage, "cannot keep \(name) from Windows (seccomp: \(String(cString: strerror(error.code)))), so it is not started",
+                throw XlessError(stage, "cannot close the sockets of Windows to \(name) (seccomp: \(String(cString: strerror(error.code)))), so it is not started",
                                  fix: "WSL 1 has no such filter: move to WSL 2 (wsl --set-version <distribution> 2); see docs/security.md#in-wsl")
             }
         }

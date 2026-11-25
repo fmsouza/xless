@@ -211,6 +211,40 @@ const struct xless_filter *xless_windows_filter(void) {
 #endif
 }
 
+int xless_keep_orphans(int on) {
+#ifdef __linux__
+    return prctl(36 /* PR_SET_CHILD_SUBREAPER */, (unsigned long)(on != 0), 0ul, 0ul, 0ul);
+#else
+    (void)on;
+    return -1;
+#endif
+}
+
+#ifdef __linux__
+enum { ANY_CHILD = 0x40000000 /* __WALL */ };
+#endif
+
+int xless_has_children(void) {
+#ifdef __linux__
+    siginfo_t info;
+    int r;
+    do { r = waitid(P_ALL, 0, &info, WEXITED | WNOHANG | WNOWAIT | ANY_CHILD); } while (r < 0 && errno == EINTR);
+    return r == 0 ? 1 : errno == ECHILD ? 0 : -1;
+#else
+    return -1;
+#endif
+}
+
+int xless_reap_orphan(int pid) {
+#ifdef __linux__
+    int status;
+    return pid > 0 && waitpid((pid_t)pid, &status, WNOHANG | ANY_CHILD) == (pid_t)pid;
+#else
+    (void)pid;
+    return 0;
+#endif
+}
+
 int xless_is_wsl_release(const char *release) { return strcasestr(release, "microsoft") != NULL; }
 
 int xless_is_wsl_kernel(void) {

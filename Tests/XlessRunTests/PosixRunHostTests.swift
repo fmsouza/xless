@@ -21,8 +21,8 @@ import Testing
         #expect(Set(names) == ["PATH", "ONLY"])
     }
 
-    /// On the kernel of WSL a confined step, and no other, is kept from Windows; elsewhere none.
-    @Test func aConfinedStepIsKeptFromWindows() throws {
+    /// On the kernel of WSL a confined step, and no other, is under the filter; elsewhere none.
+    @Test func aConfinedStepIsUnderTheFilter() throws {
         func state(wsl: Bool, confined: Bool) throws -> String {
             let host = PosixRunHost(isWSL: wsl)
             #expect(host.isWSL == wsl)
@@ -34,9 +34,13 @@ import Testing
         let own = try String(contentsOfFile: "/proc/self/status", encoding: .utf8).split(separator: "\n").filter { $0.hasPrefix("NoNewPrivs:") || $0.hasPrefix("Seccomp:") }.joined(separator: "\n") + "\n"
         for (wsl, confined) in [(true, false), (false, true), (false, false)] { #expect(try state(wsl: wsl, confined: confined) == own) }
         #else
-        #expect(!PosixRunHost().isWSL)
         #expect(throws: (any Error).self) { try state(wsl: true, confined: true) } // there is no such filter here
         #endif
+    }
+
+    @Test func theHostIsOnTheKernelThatItIsOn() {
+        #expect(PosixRunHost().isWSL == (xless_is_wsl_kernel() == 1))
+        if !PosixRunHost().isWSL { #expect(PosixRunHost().windowsInReach == WindowsReach()) }
     }
 
     /// Fails closed, and says why.
@@ -49,11 +53,70 @@ import Testing
             do {
                 _ = host.finish(try host.start(RunStep(["sh", "-c", "echo ran > \(file)"], environment: environment, confined: true)))
                 Issue.record("it was started")
-            } catch { #expect("\(error)".hasPrefix("it cannot be kept from Windows (seccomp: "), "\(error)") }
+            } catch { #expect("\(error)".hasPrefix("the sockets of Windows cannot be closed to it (seccomp: "), "\(error)") }
             #expect(try Data(contentsOf: URL(fileURLWithPath: file)).isEmpty)
             #expect(try host.finish(host.start(RunStep(["true"], environment: environment))).code == 0)
         }
     }
+
+    #if os(Linux)
+    /// All that a step left, whatever session it is in and whoever started it; and nothing else.
+    @Test func whatAStepLeavesIsEnded() async {
+        await #expect(processExitsWith: .success) {
+            let host = PosixRunHost(isWSL: true), environment = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"]
+            func start(_ text: String) throws -> StartedStep { try host.start(RunStep(["sh", "-c", text], environment: environment, output: .captured, confined: true)) }
+            func ids(_ file: String) -> [Int32] { ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { Int32($0) } }
+            func runs(_ pid: Int32) -> Bool { kill(pid, 0) == 0 }
+            let file = try host.temporaryFile()
+            defer { host.removeFile(file) }
+            let own = try start("exec sleep 300 >/dev/null")
+            guard host.keepOrphans() else { exit(1) }
+            // one in the background; one in a session of its own that a shell in between left; one that does not listen; one that has
+            // others, in another session each; one that is stopped; one that ended by itself
+            let step = try start("""
+            exec >/dev/null
+            (sleep 301 & echo $! >> \(file))
+            (setsid sh -c 'echo $$ >> \(file); exec sleep 302' &)
+            (setsid sh -c 'trap "" TERM HUP INT; echo $$ >> \(file); while :; do sleep 1; done' &)
+            (setsid sh -c 'echo $$ >> \(file); setsid sh -c "echo \\$\\$ >> \(file); trap \\"\\" TERM; sleep 303 & sleep 304" & wait' &)
+            (sh -c 'echo $$ >> \(file); kill -STOP $$' &)
+            (/bin/true &)
+            """)
+            guard host.finish(step).code == 0 else { exit(2) }
+            for _ in 0..<500 where ids(file).count < 6 { host.pause(0.01) }
+            let left = ids(file)
+            guard left.count == 6, left.allSatisfy(runs) else { exit(3) }
+            host.pause(0.2)
+            let (ended, staying) = host.endOrphans(within: 10)
+            guard staying.isEmpty, ended.count >= 6, ended.contains("sleep"), ended.contains("sh"), !ended.contains("true") else { exit(4) }
+            guard !left.contains(where: runs) else { exit(5) }
+            guard runs(own.pid) else { exit(6) } // it was there before
+            kill(own.pid, SIGKILL)
+            _ = host.finish(own)
+            guard xless_has_children() == 0 else { exit(7) }
+            // and no more from here on
+            let (none, _) = host.endOrphans(within: 1)
+            guard none.isEmpty else { exit(8) }
+            let after = try start("exec >/dev/null; (setsid sleep 2 &)")
+            guard host.finish(after).code == 0, xless_has_children() == 0 else { exit(9) }
+        }
+    }
+
+    /// Those that start others as fast as they can are ended, or it is said that they are not; it is not waited for longer than that.
+    @Test func whatGoesOnStartingOthersIsNotMissed() async {
+        await #expect(processExitsWith: .success) {
+            let host = PosixRunHost(isWSL: true), environment = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"]
+            guard host.keepOrphans() else { exit(1) }
+            let step = try host.start(RunStep(["sh", "-c", "trap '' TERM; (f() { sleep 0.02; n=$1; [ $n -gt 100 ] || (f $((n+1)) &); }; f 0 &)"], environment: environment, confined: true))
+            guard host.finish(step).code == 0 else { exit(2) }
+            let start = Date(), (_, left) = host.endOrphans(within: 5)
+            guard Date().timeIntervalSince(start) < 8 else { exit(3) }
+            guard left.isEmpty == (xless_has_children() == 0) else { exit(4) }
+        }
+    }
+    #else
+    @Test func elsewhereNothingIsKept() { #expect(!PosixRunHost().keepOrphans() && xless_has_children() == -1 && xless_reap_orphan(1) == 0) }
+    #endif
 
     /// What is not UTF-8 in this process's environment is the same bytes in a step's.
     @Test func variablesThatAreNotUTF8ReachAStepAsTheyAre() async {

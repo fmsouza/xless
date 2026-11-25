@@ -11,11 +11,11 @@ import Glibc
 #endif
 
 /// macOS and Linux.
-public final class PosixRunHost: RunHost, @unchecked Sendable { // (`filter` points at what never changes)
+public final class PosixRunHost: RunHost {
     struct Failure: Error, CustomStringConvertible {
         let code: Int32
         var description: String {
-            code < 0 ? "it cannot be kept from Windows (seccomp: \(String(cString: strerror(-code)))); see docs/security.md#in-wsl" : String(cString: strerror(code))
+            code < 0 ? "the sockets of Windows cannot be closed to it (seccomp: \(String(cString: strerror(-code)))); see docs/security.md#in-wsl" : String(cString: strerror(code))
         }
     }
 
@@ -63,13 +63,16 @@ public final class PosixRunHost: RunHost, @unchecked Sendable { // (`filter` poi
 
     public let isWSL: Bool
     /// What a confined step runs under.
-    private let filter: UnsafePointer<xless_filter>?
+    private let filter: Filter?
+    private struct Filter: @unchecked Sendable { let pointer: UnsafePointer<xless_filter> } // (it points at what never changes)
+    /// The children that this process has from before `keepOrphans`.
+    private let ownChildren = Children()
 
     public convenience init() { self.init(isWSL: xless_is_wsl_kernel() == 1) }
 
     init(isWSL: Bool, filter: UnsafePointer<xless_filter> = xless_windows_filter()) {
         self.isWSL = isWSL
-        self.filter = isWSL ? filter : nil
+        self.filter = isWSL ? Filter(pointer: filter) : nil
         let given = Self.strings(UnsafePointer(CommandLine.unsafeArgv))
         words = Dictionary(zip(Self.texts(given).map { Array($0.utf8) }, given)) { first, _ in first }.filter { $0.key != $0.value }
         variables = Dictionary(grouping: Self.strings(xless_environment())) { String(decoding: Self.name($0), as: UTF8.self) }
@@ -79,6 +82,8 @@ public final class PosixRunHost: RunHost, @unchecked Sendable { // (`filter` poi
         // Ignored (xless may have been started so), the system would keep no step's exit code.
         signal(SIGCHLD, SIG_DFL)
     }
+
+    public var windowsInReach: WindowsReach { isWSL ? .look() : WindowsReach() }
 
     public var processID: Int32 { getpid() }
     public var now: Date { Date() }
@@ -187,7 +192,7 @@ public final class PosixRunHost: RunHost, @unchecked Sendable { // (`filter` poi
         var pid: Int32 = 0
         let code = withStrings(bytes(step.words)) { words in
             withStrings(bytes(step.environment)) { environment in
-                xless_spawn_step(path, words, environment, step.directory, out, quiet, step.confined ? filter : nil, &pid)
+                xless_spawn_step(path, words, environment, step.directory, out, quiet, step.confined ? filter?.pointer : nil, &pid)
             }
         }
         guard code == 0 else {
@@ -334,6 +339,69 @@ public final class PosixRunHost: RunHost, @unchecked Sendable { // (`filter` poi
         let step = RunStep(["ps"] + arguments, environment: ["PATH": path, "LC_ALL": "C", "TZ": "UTC0"], output: .captured, quiet: true)
         guard let started = try? start(step) else { return "" }
         return finish(started).output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private final class Children: @unchecked Sendable {
+        private let lock = NSLock()
+        private var all: Set<Int32> = []
+        var known: Set<Int32> {
+            get { lock.withLock { all } }
+            set { lock.withLock { all = newValue } }
+        }
+    }
+
+    public func keepOrphans() -> Bool {
+        guard let now = Self.ownChildren(), xless_keep_orphans(1) == 0 else { return false }
+        ownChildren.known = now
+        return true
+    }
+
+    /// Asks first (SIGTERM), for a second. A child's number is its own until it is waited for, which nothing but this does.
+    public func endOrphans(within seconds: Double) -> (ended: [String], left: [String]) {
+        defer { _ = xless_keep_orphans(0) }
+        let before = ownChildren.known, start = xless_clock_awake_ms()
+        var names: [Int32: String] = [:], order: [Int32] = []
+        while true {
+            let late = Double(xless_clock_awake_ms() - start) / 1000
+            guard let children = Self.ownChildren()?.subtracting(before) else { return (order.compactMap { names[$0] }, ["a process that cannot be told"]) }
+            // Those that the kernel's list has are all there are when it has none but the own ones, and nothing can have been missed.
+            if children.isEmpty, !before.isEmpty || xless_has_children() == 0 { return (order.compactMap { names[$0] }, []) }
+            if late >= seconds { return (order.compactMap { names[$0] }, children.isEmpty ? ["a process that cannot be told"] : children.sorted().map(Self.name)) }
+            for child in children {
+                if names[child] == nil, !Self.isDead(child) {
+                    names[child] = Self.name(child)
+                    order.append(child)
+                    kill(child, SIGTERM)
+                } else if late >= 1 { kill(child, SIGKILL) }
+            }
+            for child in children { _ = xless_reap_orphan(child) }
+            pause(0.01)
+        }
+    }
+
+    /// The children of every thread of this process; nil: they cannot be told.
+    private static func ownChildren() -> Set<Int32>? {
+        guard let threads = try? FileManager.default.contentsOfDirectory(atPath: "/proc/self/task"), !threads.isEmpty else { return nil }
+        var out: Set<Int32> = []
+        for thread in threads {
+            guard let text = try? String(contentsOfFile: "/proc/self/task/\(thread)/children", encoding: .utf8) else {
+                if FileManager.default.fileExists(atPath: "/proc/self/task/\(thread)") { return nil }
+                continue
+            }
+            out.formUnion(text.split(separator: " ").compactMap { Int32($0) })
+        }
+        return out
+    }
+
+    private static func name(_ pid: Int32) -> String {
+        let name = ((try? String(contentsOfFile: "/proc/\(pid)/comm", encoding: .utf8)) ?? "").split(separator: "\n").first.map(String.init) ?? ""
+        return name.isEmpty ? "\(pid)" : name
+    }
+
+    /// Dead, and not waited for.
+    private static func isDead(_ pid: Int32) -> Bool {
+        guard let text = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8), let end = text.lastIndex(of: ")") else { return false }
+        return ["Z", "X"].contains(text[text.index(after: end)...].split(separator: " ").first)
     }
 
     public func terminate(_ pid: Int32) { if pid > 1 { kill(pid, SIGTERM) } }

@@ -263,7 +263,7 @@ variable points at nothing once it has ended. A shell that outlived it, in a tmu
 <a id="while-xless-run-builds"></a>
 
 `xless run` asks the passphrase up front, so that nothing is asked once its first step has started (but not [in WSL](#in-wsl),
-where it asks after the build). The price, natively:
+where it asks after the build and unlocks nothing before). The price, natively:
 **the store's data key is in the lease's agent while the build's code runs**, on the same machine, as the same user. (With
 `--docker` it is not: the build is in a container, and what its steps need is on a tmpfs, mounted into the containers that
 sign and upload.) What keeps that code from it:
@@ -481,33 +481,46 @@ one that is not there: the run stops.
 
 ### In WSL
 
-The Linux xless runs in a WSL 2 distribution as on any Linux. What is different there, as read in WSL's own source and in
-Microsoft's documentation (**none of it was tried**, xless has no Windows machine to try it on):
+**On a WSL distribution as it is installed, a build can reach Windows, and be root in the distribution, whatever xless does.** Turn
+interop and automount [off](#a-distribution-for-builds) for code that you do not trust; a native `xless run` says in one line
+when one of them is on. What xless adds below counts with them off. The Linux xless runs in a WSL 2 distribution as on any
+Linux. What is different there is as read in WSL's own source and in Microsoft's documentation (**none of it was tried**, xless has no
+Windows machine to try it on):
 
 1. Every program in WSL can start Windows programs as your Windows user ("interop", on unless you turn it off). One of them is
    `wsl.exe -u root`, which asks for no password. So code of a build can become **root** in the distribution, and root reads the
    memory of every process, of the xless agent too: being non-dumpable does not keep root out.
-2. Windows' drives and its starting of programs are services on Hyper-V sockets (`AF_VSOCK`), which every process may open
-   without a right. `[interop] enabled=false` and `[automount] enabled=false` in `/etc/wsl.conf` take the convenience away; as far
-   as we found, the services do not look at who connects.
-3. A container has no such socket by itself: Docker's default seccomp profile refuses `AF_VSOCK` (Docker Engine 23.0 and later; 20.10
+2. Windows' drives are mounted (`/mnt/c`, unless you turn it off), to be read and written as your Windows user, with ordinary
+   file calls: your Startup folder, a PowerShell profile, `.wslconfig`.
+3. Behind both are services on Hyper-V sockets (`AF_VSOCK`), which every process may open without a right. `/etc/wsl.conf` takes the
+   ways to them away; as far as we found, the services do not look at who connects.
+4. A container has no such socket by itself: Docker's default seccomp profile refuses `AF_VSOCK` (Docker Engine 23.0 and later; 20.10
    does not, and Podman's does not). It lets `socketcall(2)` be, which a 32-bit program has on x86_64, and which takes the same.
-4. A crash is given to WSL's own handler (`core_pattern` is a program), which writes the dump to your Windows user's `%Temp%`, in
+5. A crash is given to WSL's own handler (`core_pattern` is a program), which writes the dump to your Windows user's `%Temp%`, in
    clear.
-5. All distributions are in one virtual machine, with one kernel. They are no boundary between each other.
+6. All distributions are in one virtual machine, with one kernel. They are no boundary between each other.
 
 What xless does, when the kernel's release says that it is WSL's (`…microsoft…`, in a container too):
 
+- **It looks what of Windows is in reach** of a native `xless run` that builds (interop: the sockets in `/run/WSL` and
+  `/etc/wsl.conf`; a Windows drive that is mounted to be written), starting nothing of Windows, and says it. With that, and with the
+  store unlocked or an Apple ID session kept in this terminal, it does not run: `xless lock` first. Without, it says what is held.
+  It does not look into other terminals.
 - **The build and the signature are two processes** (`xless run <dir>`, natively), as [on a Mac](#the-build-and-your-secrets): the
   first has no secret variable and no store, the second runs after it, in `/`, with the xless.yml that the run read first or not at
-  all. The run unlocks nothing before the first has ended: no agent, no keyring. The price: the passphrase is asked after the build
-  (and before it too by an overlay's run that asks App Store Connect for a build number: that step keeps nothing, whatever
-  `unlock:` in config.yml says). With `--no-input` and a locked store such a run stops there, after the build.
-- **The tools are kept from Windows' sockets.** Every tool that xless starts, natively and in its containers, and everything that those
+  all. The run unlocks nothing before the first has ended: no agent, no keyring. An overlay's run that asks App Store Connect for a
+  build number asks the passphrase before it too; that step keeps nothing, whatever `unlock:` in config.yml says.
+- **What the build left running is ended** before the second begins, in whatever session it is and however often it was left (the run
+  is the child subreaper of its steps): asked first (SIGTERM), for a second, then killed. It says which. If something cannot be ended,
+  nothing is signed and nothing is asked. A daemon that a tool of the run started for later (a Gradle daemon, a gpg-agent of
+  a credential helper's) is ended with it.
+- **The price: the passphrase is typed after the code of the build has run**, on the same terminal, once per step that needs
+  it. With `--no-input` and a locked store such a run is refused before it builds.
+- **The tools get no socket of Windows'.** Every tool that xless starts, natively and in its containers, and everything that those
   start, runs with `no_new_privs` and under a seccomp filter, for good: `socket(AF_VSOCK)` and `io_uring_setup` are refused, and a
   program of another architecture (a 32-bit one, with its `socketcall`) or of the x32 ABI is killed. A tool that cannot be put
-  under it is not started (in WSL 1, which as far as we know has no such filter, xless builds nothing). WSL's own starter of Windows programs
-  listens on such a socket, and Windows connects to it before it starts anything: by WSL's source, it starts none under the filter.
+  under it is not started (in WSL 1, which as far as we know has no such filter, xless builds nothing). `sudo` and setuid
+  programs give a build no more rights.
 - **A crash of a tool is dumped nowhere** ([above](#process-hardening)).
 
 Not under the filter, because they run no code of the project and may need a Windows program: xless itself, the docker client
@@ -516,18 +529,30 @@ session`. The [limits](troubleshooting.md#in-wsl) for a build are in troubleshoo
 
 **What this does not close.** The filter is on what xless starts, not on the user it runs as:
 
-- WSL's interop itself, which is asked over a Unix socket (`/run/WSL`): code that speaks to that directly would have to name a
-  port on which some other program listens for such a connection. Turn interop off (below), and there is nothing to ask.
-- Anything of yours that runs outside of it, or that you start later, and does what build code wrote or asks for: your shell's startup
-  files, an editor, a tmux server, your user's systemd, a docker socket (who may use it is root). WSL's kernel 5.15 lets any
-  process of yours attach to another one (it has no Yama).
+- **Interop.** It is asked over Unix sockets (`/run/WSL`), which the filter lets be, as it must: every program has Unix sockets. The
+  starter that WSL has for Windows programs fails under the filter (it listens on a Hyper-V socket of its own), so a `.exe` does not
+  start by its name. But by WSL's source, code that speaks to those sockets directly needs only the number of any Hyper-V port that
+  something in WSL listens on, and its own file server and its localhost relay do. So take it that with interop on a build can
+  start Windows programs, and be root. With interop off, WSL has no connection to pass such a request on.
+- **The Windows drives.** Reading and writing files takes no socket. With `/mnt/c` mounted a build can leave a program that Windows
+  starts for you, or a `.wslconfig` with another kernel or its command line, and read every file of yours there.
+- **What is not started by the run, and does what build code wrote or asks for**, at once or later: your shell's startup files,
+  `xless` or a credential helper in a directory of yours (`~/.local/bin`: the signing step is started, and asks the passphrase, after
+  the build), docker's plugins and its `credHelpers` (`~/.docker`), an editor, a tmux server, your user's systemd, a docker
+  socket (who may use it is root). Such a process is not found or ended. It may have opened the terminal before the question, and read
+  what is typed there: a terminal is open to every process of its user. Two things were looked at and left out, as they close
+  nothing of this: a terminal that the build's output cannot be read from (it opens the terminal by its name), and an exclusive
+  one while xless asks (who opened it before keeps it, and one that is killed while it asks would leave it shut). WSL's kernel
+  5.15 lets any process of yours attach to another one (it has no Yama).
 - A program in Windows, and any other distribution that has interop, can be root in this one (`wsl -d <name> -u root`).
-- A run in an `xless session` or in a terminal with the store unlocked: what that holds is there while it builds. `xless ship` by hand
-  is one process. A key in an exported variable is in your shell's and in `xless run`'s memory.
+- `xless ship` by hand is one process. A key in an exported variable is in your shell's and in `xless run`'s memory.
+- WSLg, the network and the clipboard: whatever of Windows answers there.
 - A kernel of your own (`.wslconfig`, `kernel=`) whose name does not say `microsoft` is taken for any other Linux.
 
-So for code you do not trust, use a distribution for builds alone, without interop, and without sudo for its user, and
-turn the Windows side off too. In its `/etc/wsl.conf`:
+#### A distribution for builds
+
+For code you do not trust, use a distribution for builds alone, without interop, without the Windows drives, and without
+sudo for its user. In its `/etc/wsl.conf`:
 
 ```ini
 [interop]
@@ -538,9 +563,13 @@ appendWindowsPath=false
 enabled=false
 ```
 
-Neither the settings (2) nor the filter is a boundary by itself; together they leave a build no direct way to Windows that we know of.
-They do not close `wsl -u root` from Windows or from another distribution. Keep the project and the store in the distribution's own
+Then, in Windows, `wsl --terminate <name>`: the file is read when the distribution starts. Neither these settings (3) nor
+the filter is enough by itself; together they leave a build no direct way to Windows that we know of. They do not
+close `wsl -u root` from Windows or from another distribution. Keep the project and the store in the distribution's own
 file system, not in `/mnt/c`, where every file has one mode for everybody.
+
+And to type the passphrase on a terminal that the build never had: `xless run <dir> --to finalize`, `wsl --terminate <name>`, then
+`xless run <dir> --from sign`.
 
 ## The build and your secrets
 
@@ -570,7 +599,12 @@ An app's build runs code you did not write. What that code can reach depends on 
   variable and unable to open the store, and the second signs, packages and uploads what it left, in `/`, with the secrets. Each takes
   only the xless.yml that the run read when it began, by its SHA-256, and the run looks at it between them too: when it is another
   one, nothing is signed. (What it says is compared; it may be a link, if it was one.) Of a Mac, more is in
-  [With an installed Xcode](#with-an-installed-xcode).
+  [With an installed Xcode](#with-an-installed-xcode). "After the build" is after the process that built, not after all that its
+  code started. **On a Mac nothing ends what that leaves running** (in WSL the run [does](#in-wsl)): it runs on as you while the second
+  process signs, and reads what is typed on a terminal of yours from then on, by opening it. On a Mac the store's passphrase is
+  typed before the build starts, so that is what a later step asks: after the Mac slept or its screen was locked during the build,
+  where nothing can be held, and in whatever you type there next. To have nothing typed on a terminal that a build knew, run the
+  steps apart, with the store locked, the second one after you logged out and in again.
 
 **Which image a container runs in.** An image with toolchains of other languages never holds a secret. The table is
 each step of `xless run --docker`:

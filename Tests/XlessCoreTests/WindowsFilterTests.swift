@@ -112,8 +112,9 @@ import Testing
         }
         for release in ["", "6.11.0-1018-azure", "6.10.14-linuxkit", "6.8.0-48-generic", "27.2.0", "6.6.0-micro-soft"] { #expect(xless_is_wsl_release(release) == 0) }
         #if os(Linux)
-        let release = (try? String(contentsOfFile: "/proc/sys/kernel/osrelease", encoding: .utf8)) ?? ""
-        #expect((xless_is_wsl_kernel() == 1) == release.lowercased().contains("microsoft"))
+        // CI's step that takes its kernel for WSL's (.github/workflows/pr.yml) changes `xless_is_wsl_kernel`, and says so.
+        let release = (try? String(contentsOfFile: "/proc/sys/kernel/osrelease", encoding: .utf8)) ?? "", taken = ProcessInfo.processInfo.environment["XLESS_TEST_TAKEN_FOR_WSL"] == "1"
+        #expect((xless_is_wsl_kernel() == 1) == (taken || release.lowercased().contains("microsoft")))
         #else
         #expect(xless_is_wsl_kernel() == 0)
         #endif
@@ -124,16 +125,19 @@ import Testing
         #expect(ChildProcess.Filter.on(wsl: false) == nil)
     }
 
-    /// The docker client is the one tool that is let be.
+    /// The docker client is the one tool that is let be; and Foundation's way to start a program, which knows no filter, is that of the
+    /// shims alone, which run inside a build, under the filter of what started them.
     @Test func noOtherToolIsLetBe() throws {
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
-        var found: [String] = []
+        var found: [String] = [], others: Set<String> = []
         for case let file as URL in FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)! where file.pathExtension == "swift" {
-            for line in try String(contentsOf: file, encoding: .utf8).split(separator: "\n") where line.contains("confined: false") && !line.contains("///") {
-                found.append("\(file.lastPathComponent): \(line.trimmingCharacters(in: .whitespaces))")
+            for line in try String(contentsOf: file, encoding: .utf8).split(separator: "\n").map({ $0.trimmingCharacters(in: .whitespaces) }) where !line.hasPrefix("//") {
+                if line.replacingOccurrences(of: " ", with: "").contains("confined:false") { found.append("\(file.lastPathComponent): \(line)") }
+                if line.contains("Process()") || line.contains("Process.run(") || line.contains("posix_spawn(") { others.insert(file.lastPathComponent) }
             }
         }
         #expect(found.count == 1 && found[0].hasPrefix("Shell.swift: try run(\"docker\", "), "\(found)")
+        #expect(others == ["ShimCommands.swift", "ToolchainShims.swift"], "\(others)")
     }
 
     // MARK: - A tool
@@ -149,7 +153,7 @@ import Testing
                 try ChildProcess.start("/bin/sh", ["-c", "touch ran"], environment: ["PATH": "/usr/bin:/bin"], cwd: directory, filter: .init(pointer: none), stage: .build).wait()
                 Issue.record("it was started")
             } catch let error as XlessError {
-                #expect(error.exitCode == 12 && error.cause.contains("cannot keep sh from Windows (seccomp: ") && error.fix.contains("WSL 2"), "\(error)")
+                #expect(error.exitCode == 12 && error.cause.contains("cannot close the sockets of Windows to sh (seccomp: ") && error.fix.contains("WSL 2"), "\(error)")
             } catch { Issue.record(error) }
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
@@ -184,6 +188,13 @@ import Testing
     @Test(.enabled(if: xless_is_wsl_kernel() == 0, "the kernel is WSL's: every tool is under the filter")) func aToolIsAsItWasElsewhere() throws {
         let text = try Shell.run("cat", ["/proc/self/status"], stage: .build).stdout, own = try String(contentsOfFile: "/proc/self/status", encoding: .utf8)
         for name in ["NoNewPrivs", "Seccomp", "Seccomp_filters"] { #expect(status(name, in: text) == status(name, in: own), "\(name)") }
+    }
+
+    /// On WSL's: by the way that all of xless takes.
+    @Test(.enabled(if: xless_is_wsl_kernel() == 1, "the kernel is not WSL's")) func aToolIsUnderItThere() throws {
+        let text = try Shell.run("cat", ["/proc/self/status"], stage: .build).stdout
+        #expect(status("NoNewPrivs", in: text) == ["1"] && status("Seccomp", in: text) == ["2"])
+        #expect(ChildProcess.Filter.here != nil)
     }
 
     private static let python = ["/usr/bin/python3", "/usr/local/bin/python3"].first { FileManager.default.isExecutableFile(atPath: $0) }

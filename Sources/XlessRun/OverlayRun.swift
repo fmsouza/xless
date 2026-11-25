@@ -74,7 +74,11 @@ extension ProjectRun {
         }
         if next { try nextBuild(overlay, steps) }
         sayBuildNumber(overlay)
-        if span.from <= .finalize, let end = build(overlay, steps) { return end }
+        if span.from <= .finalize {
+            let end = build(overlay, steps)
+            try endBuild(goesOn: end == nil && signs)
+            if let end { return end }
+        }
         if signs { return macos ? try shipMac(overlay, steps) : ship(overlay, steps) }
         return stoppedEarly(span)
     }

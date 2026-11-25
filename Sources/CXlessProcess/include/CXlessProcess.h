@@ -68,6 +68,14 @@ const struct xless_filter *xless_windows_filter(void);
 const struct xless_filter *xless_windows_filter_x86_64(void);
 const struct xless_filter *xless_windows_filter_arm64(void);
 
+/// From here on (`on`), or no more: this process is the parent of what its descendants leave behind when they end
+/// (PR_SET_CHILD_SUBREAPER). 0, or -1 (always, but on Linux).
+int xless_keep_orphans(int on);
+/// Whether this process has any child, one that has ended and was not waited for too. -1: it cannot be told (but on Linux).
+int xless_has_children(void);
+/// Waits for `pid`, a child, if it has ended: 1 when it had. Of any kind (one that was cloned with another signal too), on Linux.
+int xless_reap_orphan(int pid);
+
 /// Whether the release of a kernel, as uname(2) has it, says that it is WSL's.
 int xless_is_wsl_release(const char *release);
 /// Whether this system's kernel is WSL's, as the kernel says (a container's too).

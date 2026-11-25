@@ -52,16 +52,20 @@ come from the same release (the share's `VERSION` file) whenever it reads the sh
 
 ## In WSL
 
-The tools that xless starts on the kernel of WSL are kept from Windows, and cannot get more rights than you have
-([why](security.md#in-wsl)). In a build:
+The tools that xless starts on the kernel of WSL get no socket of Windows', and cannot get more rights than you have
+([why, and what that does not close](security.md#in-wsl)). In a build:
 
 | Symptom | What to do |
 |---|---|
 | `sudo: … the "no new privileges" flag is set …`, `effective uid is not 0`, a program installed with snap does not start, `ping` or `newuidmap` is refused | A build cannot become another user there. Do what needs it before the run; install the tool without snap. |
-| A `.exe` (`git-credential-manager.exe`, `op.exe`, `ssh.exe`, `powershell.exe`) cannot be started by a build, or git asks for a user name | A build cannot start Windows programs there. Fetch what is private before the run (`swift package resolve`, `git fetch`), or use a credential helper or an SSH key of the distribution's own. |
+| A `.exe` (`git-credential-manager.exe`, `op.exe`, `ssh.exe`, `powershell.exe`) does not start in a build, or git asks for a user name | WSL's way to start Windows programs does not work there. Fetch what is private before the run (`swift package resolve`, `git fetch`), or use a credential helper or an SSH key of the distribution's own. |
 | `Bad system call` (status 159, signal 31) | A 32-bit program. Use a 64-bit one of the distribution's architecture. |
-| `cannot keep … from Windows (seccomp: …), so it is not started` | WSL 1, or an xless that another architecture's emulator runs: neither has the filter. `wsl --set-version <distribution> 2`, and the xless (or image) of your processor. |
-| The passphrase is asked after the build | Nothing is unlocked while the project's code runs there. For a run that nobody waits for: `xless run <dir> --to finalize`, then `xless run <dir> --from sign`. |
+| `cannot close the sockets of Windows to … (seccomp: …), so it is not started` | WSL 1, or an xless that another architecture's emulator runs: neither has the filter. `wsl --set-version <distribution> 2`, and the xless (or image) of your processor. |
+| `note: Windows is in reach of the project's code here …` | [A distribution for builds](security.md#a-distribution-for-builds): interop and automount off in `/etc/wsl.conf`, then `wsl --terminate <name>` in Windows. |
+| `the secret store is unlocked, and in WSL with Windows in its reach …` | `xless lock`, and run it again: what is needed is asked after the build. (`unlock: { keep: never }` in config.yml has none kept.) Or the line above. |
+| The passphrase is asked after the build, or `--no-input` is refused | The run unlocks nothing while the project's code runs there. For a run that nobody waits for: `xless run <dir> --to finalize` (an overlay: with `--build-number`), then `xless unlock`, then `xless run <dir> --from sign`. |
+| `ended what the build left running: …` | That is meant: nothing of a build may run while the passphrase is asked. Start a daemon that you want to keep (a Metro server, a Gradle daemon) yourself, before the run. |
+| `what the build left running cannot be ended, so nothing is signed or asked here` | Close the terminal (or `wsl --terminate <name>` in Windows), then `xless run <dir> --from sign` in another one. |
 
 ## `xless setup`
 

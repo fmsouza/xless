@@ -187,20 +187,73 @@ extension ProjectRun {
     /// In WSL nothing is unlocked for a run that `builds`: code of the project may become root there, and read what an agent holds.
     /// Each step asks by itself, when it needs it.
     func unlockStore(builds: @autoclosure () throws -> Bool) throws {
+        let store = try host.isWSL && !dryRun && builds() ? lookBeforeBuild() : nil
         guard !secrets.sets.isEmpty else { return }
         let code = step([xself, "secrets", "materialize", "--check"] + secrets.team + setTexts, .nothing).code
         guard code == 0 else { throw RunStop(code: code) }
         var needed: [String] = []
         for name in secrets.sets.flatMap(\.names) where !name.hasPrefix("?") && !needed.contains(name) { needed.append(name) }
         guard !context.unlocked, context.session == nil, !needed.isEmpty, !dryRun else { return }
-        if host.isWSL, try builds() {
-            host.say("note: in WSL nothing is unlocked while the project's code is built: what the store holds is read after that, and the passphrase asked then")
+        if let store {
+            if !["", "0"].contains(environment[InputGate.variable] ?? ""), store.isLocked, secrets.sets.contains(where: { $0.name != "next" }) {
+                throw XlessError(.input, "\(InputGate.option) (\(InputGate.variable)): xless would ask for the secret store's passphrase after the build, as in WSL this run unlocks nothing before it",
+                                 fix: "build first (the same command with --to finalize and a --build-number), then xless unlock, then the same command with --from sign")
+            }
+            if !store.isUnlocked { host.say("note: in WSL this run unlocks nothing before the project's code is built: the passphrase is asked after that") }
             return
         }
         cleanup.finish()
         let words = [xself, "session", "--if-possible", "--purpose", "xless run", "--reason", "reading \(needed.joined(separator: ", "))", "--"] + context.again
         let why = host.become(words, environment: context.environment.merging(["XLESS_RUN_UNLOCKED": "1"]) { $1 })
         throw RunStop(code: 127, message: "testflight: cannot run \(xself): \(why)")
+    }
+
+    /// What `auth status` says of this terminal.
+    private struct Held {
+        var store = "", session = ""
+        var isLocked: Bool { ["locked", "unavailable"].contains(store) }
+        var isUnlocked: Bool { store == "unlocked" }
+        var isKnown: Bool { !store.isEmpty && !session.isEmpty }
+        var what: String { ((isUnlocked ? ["the secret store is unlocked"] : []) + (session == "kept" ? ["an Apple ID session is kept"] : [])).joined(separator: " and ") }
+    }
+
+    /// Natively in WSL, before anything of a project that is built: what of Windows is in its reach, and what is held in an agent
+    /// that it could read then, is said; both together stop the run. From here on what it leaves running is found (`endBuild`).
+    private func lookBeforeBuild() throws -> Held {
+        guard host.keepOrphans() else {
+            throw RunStop(code: Stage.build.exitCode, message: "testflight: what the build leaves running could not be found here (no child subreaper, or no /proc), so nothing is built")
+        }
+        endsOrphans = true
+        let reach = host.windowsInReach
+        if let note = reach.note { host.say(note) }
+        var held = Held()
+        let status = step([xself, "auth", "status", "--json"], .nothing, told: true, output: .captured)
+        if status.code == 0, let all = try? JSONSerialization.jsonObject(with: Data(status.output.utf8)) as? [String: Any] {
+            func state(_ name: String) -> String { (all[name] as? [String: Any])?["state"] as? String ?? "" }
+            held = Held(store: state("store"), session: state("session"))
+        }
+        if !held.what.isEmpty {
+            guard !reach.isThere else {
+                throw XlessError(.config, "\(held.what), and in WSL with Windows in its reach the project's code could be root and read that",
+                                 fix: "xless lock, then run it again (what is needed is asked after the build); or turn off what is in reach (docs/security.md#in-wsl)")
+            }
+            host.say("note: \(held.what) already, and stays so while the project's code is built (`xless lock` ends it)")
+        } else if !held.isKnown { host.say("note: what is unlocked already stays so while the project's code is built (`xless lock` ends it)") }
+        return held
+    }
+
+    /// The build has ended: what it left running is, too. A run that `goesOn` asks no passphrase on a terminal that something of it may read.
+    func endBuild(goesOn: Bool) throws {
+        guard endsOrphans else { return }
+        endsOrphans = false
+        let (ended, left) = host.endOrphans(within: 10)
+        func list(_ names: [String]) -> String { names.map(RunText.printable).joined(separator: ", ") }
+        if !ended.isEmpty { host.say("note: ended what the build left running: \(list(ended))") }
+        guard !left.isEmpty else { return }
+        let what = "what the build left running cannot be ended"
+        guard goesOn else { return host.say("note: \(what): \(list(left))") }
+        throw RunStop(code: Stage.build.exitCode, message: "testflight: \(list(left)): \(what), so nothing is signed or asked here. "
+            + "Close this terminal (or wsl --terminate this distribution), and in another one run the same command with --from sign")
     }
 
     /// Docker: the store's secrets, written once for the whole run (one passphrase) by the host's xless into a fresh

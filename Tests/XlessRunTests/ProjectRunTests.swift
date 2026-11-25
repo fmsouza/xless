@@ -157,10 +157,13 @@ import XlessCore
         let host = FakeRunHost(isWSL: true, answer: home.answer())
         #expect(try home.run([home.project, "--build-number", "7"], docker: false, host: host) == 0)
         #expect(host.became == nil)
-        #expect(host.lines.contains { $0.contains("in WSL nothing is unlocked while the project's code is built") })
+        #expect(host.lines.contains("note: in WSL this run unlocks nothing before the project's code is built: the passphrase is asked after that"))
         let expected = ["--expect-config", RunText.sha256(try String(contentsOfFile: "\(home.project)/xless.yml", encoding: .utf8))]
         let names = host.allSteps.map { $0.words.prefix(3).joined(separator: " ") }
-        #expect(names == ["xless secrets named-by", "xless secrets materialize", "xless ship --platform", "xless ship --project"] || names == ["xless secrets materialize", "xless ship --platform", "xless ship --project"], "\(names)")
+        #expect(names.filter { $0 != "xless secrets named-by" } == ["xless auth status", "xless secrets materialize", "xless ship --platform", "xless ship --project"], "\(names)")
+        // what the build leaves is this run's to find, from before anything of the project's is run, and is ended before the signature
+        let ship = names.firstIndex(of: "xless ship --platform") ?? 0
+        #expect(host.orphanLog == ["keep after \(ship - 2)", "end after \(ship + 1)"], "\(host.orphanLog)")
         #expect(host.allSteps.first { $0.words.contains("materialize") }?.words.contains("--check") == true) // the names alone
         let ships = host.allSteps.filter { $0.words.contains("ship") }
         try #require(ships.count == 2)
@@ -175,6 +178,140 @@ import XlessCore
         try #require(two.count == 2)
         #expect(secretsIn(two[0], secrets).isEmpty && two[1].environment["XLESS_DIST_KEY"] == "DIST-VALUE")
         #expect(!given.lines.contains { $0.contains("in WSL") }) // nothing is asked
+        #expect(given.orphanLog.count == 2)
+    }
+
+    @Test func inWSLWhatABuildLeavesIsEndedOrNothingIsSigned() throws {
+        let host = FakeRunHost(isWSL: true, answer: home.answer())
+        host.orphans = ["node", "e\u{1B}[2Jvil"]
+        #expect(try home.run([home.project], docker: false, host: host) == 0)
+        #expect(host.lines.contains("note: ended what the build left running: node, e?[2Jvil"))
+        for target in [[home.project], ["--config", home.overlay], ["--config", home.overlay, "--platform", "macos"]] {
+            let stays = FakeRunHost(isWSL: true, answer: home.answer())
+            stays.stayingOrphans = ["stuck"]
+            #expect(try home.run(target, docker: false, host: stays) == 12, "\(target)")
+            #expect(!stays.allSteps.contains { $0.line.contains("--from sign") })
+            #expect(stays.lines.contains { $0.contains("stuck") && $0.contains("cannot be ended, so nothing is signed or asked") && $0.contains("--from sign") })
+            // where nothing follows, it is said
+            let alone = FakeRunHost(isWSL: true, answer: home.answer())
+            alone.stayingOrphans = ["stuck"]
+            #expect(try home.run(target + ["--to", "finalize"], docker: false, host: alone) == 0)
+            #expect(alone.lines.contains { $0.contains("stuck") && $0.contains("note: ") } && alone.orphanLog.count == 2)
+            // also after a build that failed
+            let failed = FakeRunHost(isWSL: true, answer: home.answer { $0.line.contains("--to finalize") ? (9, "") : nil })
+            failed.orphans = ["node"]
+            #expect(try home.run(target, docker: false, host: failed) == 9 && failed.orphanLog.count == 2 && failed.lines.contains { $0.contains("left running: node") })
+            // nothing is built when it could not be found
+            let cannot = FakeRunHost(isWSL: true, answer: home.answer())
+            cannot.keepsOrphans = false
+            #expect(try home.run(target, docker: false, host: cannot) == 12 && !cannot.allSteps.contains { $0.words.contains("ship") })
+        }
+        // only there: neither elsewhere, nor in containers, nor for a run that builds nothing, nor in a dry run
+        for other in [FakeRunHost(answer: home.answer()), FakeRunHost(isMac: true, answer: home.answer())] {
+            _ = try home.run([home.project], docker: false, host: other, unlocked: true)
+            #expect(other.orphanLog.isEmpty && !other.allSteps.contains { $0.words.contains("status") })
+        }
+        let container = FakeRunHost(isWSL: true, answer: home.answer()), later = FakeRunHost(isWSL: true, answer: home.answer()), dry = FakeRunHost(isWSL: true, answer: home.answer())
+        for host in [container, later, dry] { host.windowsInReach = WindowsReach(interop: true) }
+        #expect(try home.run([home.project], docker: true, host: container, session: "/agent") == 0)
+        #expect(try home.run([home.project, "--from", "sign"], docker: false, host: later, unlocked: true) == 0)
+        #expect(try home.run([home.project, "--dry-run"], docker: false, host: dry) == 0)
+        for host in [container, later, dry] { #expect(host.orphanLog.isEmpty && !host.lines.contains { $0.contains("Windows") }) }
+    }
+
+    @Test func inWSLItSaysThatWindowsIsInReach() throws {
+        for target in [[home.project], [home.project, "--to", "finalize"], ["--config", home.overlay]] {
+            let host = FakeRunHost(isWSL: true, answer: home.answer())
+            host.windowsInReach = WindowsReach(interop: true, drives: ["/mnt/c"])
+            #expect(try home.run(target, docker: false, host: host) == 0)
+            #expect(host.lines.filter { $0 == host.windowsInReach.note } .count == 1)
+        }
+        let without = FakeRunHost(isWSL: true, answer: home.answer())
+        #expect(try home.run([home.project], docker: false, host: without) == 0 && !without.lines.contains { $0.contains("Windows") })
+    }
+
+    /// What is unlocked already is in an agent while the code is built. Where that code may be root, the run stops.
+    @Test func inWSLAnUnlockThatIsThereAlreadyIsNotHidden() throws {
+        let home = home
+        func host(_ status: String, code: Int32 = 0, reach: Bool) -> FakeRunHost {
+            let host = FakeRunHost(isWSL: true, answer: home.answer { $0.words.contains("status") ? (code, status) : nil })
+            host.windowsInReach = WindowsReach(interop: reach)
+            return host
+        }
+        for (status, what) in [(#"{"session":{"state":"none"},"store":{"state":"unlocked"}}"#, "the secret store is unlocked"),
+                               (#"{"session":{"state":"kept"},"store":{"state":"locked"}}"#, "an Apple ID session is kept"),
+                               (#"{"session":{"state":"kept"},"store":{"state":"unlocked"}}"#, "the secret store is unlocked and an Apple ID session is kept")] {
+            for target in [[home.project], ["--config", home.overlay], [home.project, "--to", "finalize"]] {
+                let alone = host(status, reach: false)
+                #expect(try home.run(target, docker: false, host: alone) == 0)
+                #expect(alone.lines.contains { $0.contains("note: \(what) already, and stays so while the project's code is built (`xless lock` ends it)") }, "\(alone.lines)")
+                let reached = host(status, reach: true)
+                do {
+                    let code = try home.run(target, docker: false, host: reached)
+                    Issue.record("it ran: \(code)")
+                } catch let error as XlessError {
+                    #expect(error.cause.contains(what) && error.fix.contains("xless lock"), "\(error)")
+                }
+                #expect(!reached.allSteps.contains { $0.words.contains("ship") })
+            }
+        }
+        // what cannot be told is said to be possible
+        for (status, code) in [("", 0), ("no JSON", 0), ("{}", 0), (#"{"session":{"state":"none"},"store":{"state":"locked"}}"#, 1)] as [(String, Int32)] {
+            let unknown = host(status, code: code, reach: true)
+            #expect(try home.run([home.project], docker: false, host: unknown) == 0)
+            #expect(unknown.lines.contains { $0.contains("what is unlocked already stays so while the project's code is built (`xless lock` ends it)") })
+        }
+        // it is told of the session, whose agent is looked at too
+        let session = host(#"{"session":{"state":"none"},"store":{"state":"unlocked"}}"#, reach: false)
+        #expect(try home.run([home.project], docker: false, host: session, session: "/agent") == 0)
+        #expect(session.allSteps.first { $0.words.contains("status") }?.environment["XLESS_SESSION"] == "/agent" && session.lines.contains { $0.contains("unlocked already") })
+        #expect(!session.lines.contains { $0.contains("asked after that") })
+    }
+
+    /// Not after the whole build.
+    @Test func inWSLARunThatMayNotAskIsRefusedBeforeTheBuild() throws {
+        let home = home
+        func host(_ store: String) -> FakeRunHost { FakeRunHost(isWSL: true, answer: home.answer { $0.words.contains("status") ? (0, #"{"session":{"state":"none"},"store":{"state":"\#(store)"}}"#) : nil }) }
+        for store in ["locked", "unavailable"] {
+            for target in [[home.project], ["--config", home.overlay]] {
+                let refused = host(store)
+                do {
+                    let code = try home.run(target, docker: false, host: refused, environment: ["XLESS_NO_INPUT": "1"])
+                    Issue.record("it ran: \(code)")
+                } catch let error as XlessError {
+                    #expect(error.exitCode == 23 && error.fix.contains("--to finalize") && error.fix.contains("xless unlock") && error.fix.contains("--from sign"), "\(error)")
+                }
+                #expect(!refused.allSteps.contains { $0.words.contains("ship") || $0.words.contains("next-build") })
+            }
+            #expect(try home.run([home.project, "--to", "finalize"], docker: false, host: host(store), environment: ["XLESS_NO_INPUT": "1"]) == 0)
+            #expect(try home.run([home.project], docker: false, host: host(store), environment: ["XLESS_NO_INPUT": "0"]) == 0)
+            // nothing of the store's is needed
+            #expect(try home.run([home.project], docker: false, host: host(store), environment: try home.files().merging(["XLESS_NO_INPUT": "1"]) { $1 }) == 0)
+        }
+        // an overlay's build number is asked before the build: that step answers for itself
+        let number = host("locked")
+        #expect(try home.run(["--config", home.overlay, "--to", "finalize"], docker: false, host: number, environment: ["XLESS_NO_INPUT": "1"]) == 0)
+        #expect(number.allSteps.contains { $0.words.contains("next-build") && $0.environment["XLESS_NO_INPUT"] == "1" })
+        for store in ["unlocked", "helper"] { #expect(try home.run([home.project], docker: false, host: host(store), environment: ["XLESS_NO_INPUT": "1"]) == 0) }
+    }
+
+    /// In WSL every step that runs code of the project, or reads what is in it, is confined: what is not is an xless of its own or docker.
+    @Test func inWSLWhatRunsTheProjectIsConfined() throws {
+        try home.write("ov/rn.yml", "type: react-native\nsource: ../src\nteamID: ABCDE12345\n")
+        var confined: [String] = []
+        for target in [[home.project], [home.project, "--to", "finalize"], [home.project, "--to", "package"], ["--config", home.overlay], ["--config", home.overlay, "--to", "finalize"],
+                       ["--config", home.overlay, "--platform", "macos"], ["--config", "\(home.root)/ov/rn.yml"], ["--config", "\(home.root)/ov/rn.yml", "--destination", "simulator"]] {
+            for docker in [false, true] {
+                let host = FakeRunHost(programs: ["docker", "xless", "git"], isWSL: true, answer: home.answer())
+                _ = try home.run(target, docker: docker, host: host, session: docker ? "/agent" : nil)
+                for step in host.allSteps {
+                    let builds = step.words.contains("ship") && !step.line.contains("--from sign") && step.words[0] == "xless"
+                    #expect(step.confined == (builds || !["xless", "docker"].contains(step.words[0])), "\(step.line)")
+                    if step.confined { confined.append(step.words[0]) }
+                }
+            }
+        }
+        #expect(Set(confined) == ["xless", "git"])
     }
 
     @Test func inWSLARunThatBuildsNothingIsAsElsewhere() throws {

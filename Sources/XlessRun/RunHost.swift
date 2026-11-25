@@ -18,8 +18,8 @@ public struct RunStep: Sendable, Equatable {
     public var output = Output.shown
     /// Its standard error goes nowhere: a question whose answer is its exit code.
     public var quiet = false
-    /// On the kernel of WSL it, and all that it starts, has no way to Windows (docs/security.md#in-wsl): a step that builds, and a
-    /// program that reads the project. Not the docker client, and not an xless that may ask a credential helper, which either may be
+    /// On the kernel of WSL it, and all that it starts, gets no socket of Windows' (docs/security.md#in-wsl): a step that builds, and
+    /// a program that reads the project. Not the docker client, and not an xless that may ask a credential helper, which either may be
     /// or may start a program of Windows (the tools of every xless are, whatever it is itself).
     public var confined = false
 
@@ -58,6 +58,14 @@ public protocol RunHost: AnyObject, Sendable {
     var isMac: Bool { get }
     /// The kernel is that of WSL, where what a build does natively may become root (docs/security.md#in-wsl).
     var isWSL: Bool { get }
+    /// What of Windows a native build gets at all the same, in WSL.
+    var windowsInReach: WindowsReach { get }
+    /// From here on this process is the parent of what its descendants leave behind when they end (a Linux child subreaper): all that
+    /// a step started can be found, whatever session it is in. False: not here.
+    func keepOrphans() -> Bool
+    /// Ends every process that this one became the parent of since, those that they leave too, and is none's parent any more: the
+    /// names of what still ran, and of what could not be ended in this time.
+    func endOrphans(within seconds: Double) -> (ended: [String], left: [String])
     var now: Date { get }
     /// The directory a relative path starts at, as the user sees it (`$PWD`).
     var currentDirectory: String { get }

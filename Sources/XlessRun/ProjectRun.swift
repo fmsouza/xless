@@ -58,6 +58,8 @@ public final class ProjectRun {
     /// Where the settings of `environment` may come from, for the messages.
     let environmentFile: String
     var dryRun = false
+    /// What the build leaves running is this run's to end (`endBuild`).
+    var endsOrphans = false
     var docker = false
     var xself: String
     var secrets = RunSecrets()
@@ -350,6 +352,7 @@ public final class ProjectRun {
             if host.splitsNative, stages.from <= .finalize {
                 let expected = [RunConfiguration.option, RunConfiguration.digest(pinned)]
                 code = step([xself, "ship", "--platform", "ios", "--from", stages.from.name, "--to", "finalize"] + expected + stages.extra, .nothing, directory: project, adding: noStore, confined: true).code
+                try endBuild(goesOn: code == 0)
                 if code == 0, !dryRun, !configurationIsWhatItWas {
                     throw RunStop.usage("\(pinFile) is not what it was when this run began, so nothing is signed. Look at what changed it, then run this project again")
                 }
@@ -360,6 +363,7 @@ public final class ProjectRun {
             if code == 0 { code = step(words, .everything, told: true, directory: directory).code }
         } else {
             code = step([xself, "ship", "--platform", "ios"] + span.extra, .nothing, directory: project, adding: noStore, confined: true).code
+            try endBuild(goesOn: false)
         }
         if code == 0, !signs {
             host.say("==> TestFlight: stopped after \(span.to.name) (--to), nothing delivered")
