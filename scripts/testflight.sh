@@ -60,8 +60,8 @@
 #   $XLESS_TESTFLIGHT_ENV, default ~/.config/xless/testflight.env   (keep it out of git; it holds paths and IDs only)
 # The secret store (`xless secrets`, docs/secrets.md#xless-run-and-docker-builds): a secret whose *_FILE is not set
 #   comes from it (the API key and its IDs together: set ASC_KEY_P8_FILE, ASC_KEY_ID and the issuer, or none of them).
-#   Natively xless reads it (the script checks first, by name, that it holds them all; step 2 gets
-#   XLESS_NO_SECRET_STORE=1). In docker the host's xless (`xless secrets materialize`, $XLESS_SELF else PATH) writes
+#   Natively xless reads it (the script checks first, by name, that it holds them all, and then starts again inside
+#   `xless session`, which asks the passphrase once, for every step; step 2 gets XLESS_NO_SECRET_STORE=1). In docker the host's xless (`xless secrets materialize`, $XLESS_SELF else PATH) writes
 #   them once, before step 1, to a fresh $XDG_RUNTIME_DIR/xless/<random>/ (a tmpfs; with --allow-disk-secrets, any
 #   file system, else ~/.cache/xless/secrets/), one directory per container: next (step 1), sign (step 3, or the
 #   project's container, or the DMG ship), appstore (the mac App-Store ship). Each is mounted read-only at
@@ -109,6 +109,8 @@
 #   prepare and build; nothing is signed with a distribution identity or uploaded.
 # The exit code is xless's (2 for a usage or configuration error in this script).
 set -euo pipefail
+arguments=("$@")
+unlocked="${XLESS_RUN_UNLOCKED:-}"; unset XLESS_RUN_UNLOCKED   # this run's own second start, below
 
 die() { echo "testflight: $*" >&2; exit 2; }
 
@@ -615,9 +617,21 @@ fi
 # (next, sign, appstore: see store_sets), each mounted read-only at /secrets/store into its container only and removed
 # when that container ends; whatever is left goes when the run ends, on an error and when it is stopped (cleanup).
 if [[ ${#store_sets[@]} -gt 0 && $use_docker == 0 ]]; then
-  # Natively each step's xless reads the store itself (the run's one process asks the passphrase once; with --config,
-  # steps 1 and 3 are two). Check now, without the passphrase, that it holds them all, not after the build.
+  # Natively each step's xless reads the store itself. Check now, without the passphrase, that it holds them all, not
+  # after the build; then ask the passphrase, once, for all of them: the script starts again inside `xless session`, which
+  # drops the unlock when it ends. The build (step 2, and the tools of every step) is outside: its xless does not look for
+  # an unlock, and its tools are in POSIX sessions of their own, which the session's agent refuses.
   run "$xself" secrets materialize --check ${team_arg[@]+"${team_arg[@]}"} "${store_sets[@]}" || exit $?
+  if [[ -z "$unlocked" && -z "${XLESS_SESSION:-}" && "${store_sets[*]}" =~ [=,][^?] && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
+    needs=()
+    for s in "${store_sets[@]}"; do
+      IFS=, read -r -a words <<<"${s#*=}"
+      for n in "${words[@]}"; do [[ "$n" == \?* ]] || has "$n" ${needs[@]+"${needs[@]}"} || needs+=("$n"); done
+    done
+    why="$(printf ', %s' ${needs[@]+"${needs[@]}"})"
+    cleanup   # exec runs no EXIT trap
+    XLESS_RUN_UNLOCKED=1 exec "$xself" session --if-possible --purpose "xless run" --reason "reading ${why:2}" -- bash "$0" "${arguments[@]}"
+  fi
 fi
 next_store=(); sign_store=(); appstore_store=()
 store_words() {   # SET: words=(the set's read-only mount, and NAME_FILE=/secrets/store/NAME for each of its secrets)
@@ -804,6 +818,7 @@ else
   # (the list is xless's SecretEnvironment.entries; a test keeps them equal), and with the secret store closed to it
   scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY XLESS_INSTALLER_KEY XLESS_DEMO_PASSWORD; do scrub+=(-u "$v" -u "${v}_FILE"); done
   for v in ${demo_names[@]+"${demo_names[@]}"}; do scrub+=(-u "$v" -u "${v}_FILE"); done   # a passwordSecret of the user's own
+  scrub+=(-u XLESS_SESSION)   # what a session holds, the build does not
   scrub+=(XLESS_NO_SECRET_STORE=1)
 fi
 bn=(); [[ -z "${XLESS_BUILD_NUMBER:-}" ]] || bn=(-e XLESS_BUILD_NUMBER)
