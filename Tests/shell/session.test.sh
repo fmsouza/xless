@@ -171,6 +171,21 @@ rc, shown, n = a.run("XDG_DATA_HOME=$T/elsewhere $X session -- echo it ran")
 check(rc == 0 and n == 0 and "it ran" in shown and "no secret store" in shown, "with no store there is nothing to unlock, and the script runs", shown)
 rc, shown, n = a.run("$X session --no-input -- touch $T/ran")
 check(rc == 23 and n == 0 and not os.path.exists(t + "/ran"), "with --no-input a locked store ends it before the script starts", (rc, shown))
+# Where no agent can start: found before anything is asked. `xless run` (--if-possible) goes on, each step asking by itself.
+os.makedirs(t + "/" + "long" * 30, 0o700)
+os.makedirs(t + "/open/xless-agent", 0o755)
+os.chmod(t + "/open/xless-agent", 0o755)
+os.makedirs(t + "/never/xless", 0o700)
+with open(t + "/never/xless/config.yml", "w") as f: f.write("unlock: { keep: never }\n") # a kernel keyring would be offered
+blocked = {"a path that is too long for a socket": t + "/" + "long" * 30, "a directory that is not there": t + "/nowhere", "a directory others can use": t + "/open"}
+for what, run in blocked.items():
+    rc, shown, n = a.run(f"XDG_RUNTIME_DIR={run} $X session -- touch $T/ran")
+    check(rc == 10 and n == 0 and not os.path.exists(t + "/ran"), f"{what}: it ends before anything is asked", (rc, shown))
+    rc, shown, n = a.run(f"XDG_RUNTIME_DIR={run} $X session --if-possible --purpose 'xless run' -- echo it ran")
+    check(rc == 0 and n == 0 and "it ran" in shown and "note: each step asks by itself here" in shown, f"{what}: with --if-possible the script runs, and is told of nothing", (rc, shown))
+    rc, shown, n = a.run(f"XDG_CONFIG_HOME=$T/never XDG_RUNTIME_DIR={run} $X session --if-possible -- $X secrets export NOTE --out $T/if-possible", PASS)
+    check(rc == 0 and n == 1 and open(t + "/if-possible").read() == VALUE, f"{what}: and its commands ask by themselves", (rc, shown))
+    os.unlink(t + "/if-possible")
 rc, shown, n = a.run("$X session --sign-in -- touch $T/ran", PASS, "")
 check(rc == 20 and n == 2 and not os.path.exists(t + "/ran") and not agents(), "--sign-in signs in before the script starts", (rc, shown))
 check("xless session signs in to Apple for the xless commands of touch" in shown, "and says for what", shown)

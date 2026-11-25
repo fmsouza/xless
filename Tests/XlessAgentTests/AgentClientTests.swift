@@ -75,6 +75,19 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     _ = box
 }
 
+@Test func whatIsWrongWithTheDirectoryIsAnObstacleToo() throws {
+    let (box, directory) = sharedDirectory()
+    #expect(client(directory).obstacle == nil)
+    let long = AgentDirectory(path: box.path + "/" + String(repeating: "x", count: 100)), starts = Starts()
+    let c = client(long, starts)
+    #expect(c.obstacle?.kind == .unavailable)
+    #expect(throws: AgentError.self) { try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)]) }
+    #expect(starts.count == 0)
+    try directory.prepare()
+    chmod(directory.path, 0o755)
+    #expect(client(directory).obstacle?.kind == .unsafePath)
+}
+
 @Test func aSecondTerminalsUnlockJoinsTheAgentAndRenewsIt() throws {
     let agent = try TestAgent(grant: [far], items: [("xless-vault:1", keyText), ("xless-apple-session", "cookies")])
     let starts = Starts()

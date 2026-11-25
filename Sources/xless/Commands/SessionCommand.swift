@@ -79,36 +79,44 @@ struct SessionCommand: AsyncParsableCommand {
         let hold = SecretHold(seconds: settings.maximum, idle: settings.maximum, maximum: settings.maximum)
         let outer = XlessSession.agent != nil && HeldSecrets.agents.isInSession
         let client = outer ? HeldSecrets.agents : AgentClient(terms: HeldSecrets.terms)
-        if !outer, let obstacle = AgentLauncher.obstacle(lease: true) {
-            guard ifPossible else {
-                throw XlessError(.config, "nothing can be held for a script here: \(obstacle.cause)", fix: "run the command without `xless session` (each xless command asks by itself), or \(obstacle.fix)")
-            }
-            HeldSecrets.say("note: each step asks by itself here: \(obstacle.cause)")
-            return nil
-        }
-        let seed = try SecretStoreCLI.run { try seed(hold) }
+        let store = try SecretStoreCLI.run { try store() }
+        guard store != nil || signIn else { return nil }
+        // The agent first, empty: where none can be, nothing is asked.
         var lease: AgentLease?
         do {
-            let seeds = seed.map { [$0] } ?? []
-            if outer {
-                if !seeds.isEmpty { try client.put(seeds) }
-            } else if !seeds.isEmpty || signIn {
-                lease = try client.lease(seeds)
+            if !outer {
+                if let obstacle = client.leaseObstacle { throw obstacle }
+                lease = try client.lease([])
             }
+            let session = lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path) } ?? client
+            if let (vault, file) = store { try session.put([try SecretStoreCLI.run { try seed(vault, file, hold) }]) }
+            if signIn { try await signInNow(hold, in: session) }
+            return lease
         } catch let e as AgentError {
-            throw XlessError(.config, "nothing can be held for a script here: \(e.cause)", fix: e.fix)
+            lease?.end()
+            guard ifPossible else {
+                throw XlessError(.config, "nothing can be held for a script here: \(e.cause)", fix: "run the command without `xless session` (each xless command asks by itself), or \(e.fix)")
+            }
+            HeldSecrets.say("note: each step asks by itself here: \(e.cause)")
+            return nil
+        } catch {
+            lease?.end()
+            throw error
         }
-        if signIn { try await signInNow(hold, in: lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path) } ?? client) }
-        return lease
     }
 
-    /// The store's key, as the session's agent holds it.
-    private func seed(_ hold: SecretHold) throws -> AgentSeed? {
-        guard case .vault(let vault) = try SecretStoreCLI.backend() else { return nil } // a helper has its own lock
+    /// The store there is to unlock; nil: none, or a helper, which has its own lock.
+    private func store() throws -> (VaultSecretStore, VaultFile)? {
+        guard case .vault(let vault) = try SecretStoreCLI.backend() else { return nil }
         guard let file = try vault.vault.read() else {
             HeldSecrets.say("note: there is no secret store to unlock (\(vault.vault.location.file.path))")
             return nil
         }
+        return (vault, file)
+    }
+
+    /// The store's key, as the session's agent holds it.
+    private func seed(_ vault: VaultSecretStore, _ file: VaultFile, _ hold: SecretHold) throws -> AgentSeed {
         // Held already: for no longer than it may be since it was typed. Held since nobody knows when: typed again.
         let held = SecretStoreCLI.cache.held(id: file.id)
         if let held, (held.typedAgo ?? hold.maximum) >= hold.maximum { _ = try SecretStoreCLI.cache.forget(id: file.id) }
@@ -125,7 +133,12 @@ struct SessionCommand: AsyncParsableCommand {
             let (session, _) = try await AppleWebCLI.session(web, offering: purpose != nil) { try AppleWebCLI.prompter() }
             if session.kept == nil {
                 let cache = AppleSessionCache(store: HeldSessionStore(agents: client, witness: { nil }), saved: nil, maximum: { HeldSecrets.maximum })
-                try await cache.keep(web, appleID: session.appleID, hold: hold)
+                do {
+                    try await cache.keep(web, appleID: session.appleID, hold: hold)
+                } catch {
+                    guard ifPossible else { throw error }
+                    HeldSecrets.say("note: each step signs in by itself here: \(XlessError.wrapping(error, stage: .account).cause)")
+                }
             }
             await session.end()
         }

@@ -43,9 +43,17 @@ enum HeldSecrets {
     static func name(ofVault id: String) -> String { vaultPrefix + id }
     static let vaultPrefix = "xless-vault:"
 
-    /// Why nothing can be kept where there is neither.
+    /// Whether anything can be kept: in an agent, or where none can run in the keyring. What is wrong with an agent that
+    /// could run is put right, not worked round with what keeps less.
+    static func canKeep(_ agents: any AgentHolding, keyring: Bool) -> Bool {
+        guard let obstacle = agents.obstacle else { return true }
+        return obstacle.kind == .unavailable && keyring
+    }
+
+    /// Why nothing can be kept.
     static func reason(_ agents: any AgentHolding) -> String {
-        "there is no kernel keyring here (macOS, or a container that blocks it), and \(agents.obstacle?.cause ?? "the xless agent cannot be used")"
+        if let obstacle = agents.obstacle, obstacle.kind != .unavailable { return obstacle.cause }
+        return "there is no kernel keyring here (macOS, or a container that blocks it), and \(agents.obstacle?.cause ?? "the xless agent cannot be used")"
     }
 
     /// What the kernel keyring holds instead of the agent, and what does not end it there.
@@ -97,7 +105,7 @@ struct HeldKeyCache: VaultKeyCache {
         self.say = SayOnce(say)
     }
 
-    var isAvailable: Bool { !isOff && (keyring.isAvailable || agents.obstacle == nil) }
+    var isAvailable: Bool { !isOff && HeldSecrets.canKeep(agents, keyring: keyring.isAvailable) }
 
     func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes? {
         guard !isOff else { return nil }
@@ -127,7 +135,7 @@ struct HeldKeyCache: VaultKeyCache {
     func require(_ hold: SecretHold) throws {
         guard isAvailable else {
             throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(agents))",
-                             fix: "run without it; each command that needs the store asks the passphrase")
+                             fix: agents.obstacle.flatMap { $0.kind == .unavailable ? nil : $0.fix } ?? "run without it; each command that needs the store asks the passphrase")
         }
         if let obstacle = agents.obstacle, hold.idleAsked { throw Self.noIdle(obstacle) }
     }
@@ -198,7 +206,7 @@ struct HeldSessionStore: SessionKeyStore {
         self.say = SayOnce(say)
     }
 
-    var isAvailable: Bool { !isOff && (keyring.isAvailable || agents.obstacle == nil) }
+    var isAvailable: Bool { !isOff && HeldSecrets.canKeep(agents, keyring: keyring.isAvailable) }
 
     /// Why a session cannot be kept.
     var obstacle: String { isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(agents) }

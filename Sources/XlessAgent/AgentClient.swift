@@ -90,8 +90,8 @@ public final class AgentClient: @unchecked Sendable {
         startAgent = start
     }
 
-    /// Why no agent can be started here; nil when one can.
-    public var obstacle: AgentError? { findObstacle() }
+    /// Why no agent can be started here; nil when one can, as far as that can be told before one is.
+    public var obstacle: AgentError? { findObstacle() ?? directory.obstacle() }
 
     /// Why an agent that is there could not be used, the last time one was looked for.
     public var problem: AgentError? { lock.withLock { lastProblem } }
@@ -265,6 +265,9 @@ public final class AgentClient: @unchecked Sendable {
             return again.map { $0.links.isEmpty && $0.busy.isEmpty } ?? true ? .gone : .unanswered
         }
     }
+
+    /// Why no lease can be started here.
+    public var leaseObstacle: AgentError? { AgentLauncher.obstacle(lease: true) ?? directory.obstacle() }
 
     /// Starts an agent for this process alone to keep: it ends with it, or with `end()`.
     public func lease(_ seeds: [AgentSeed]) throws -> AgentLease {

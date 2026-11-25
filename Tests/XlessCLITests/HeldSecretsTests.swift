@@ -190,6 +190,23 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         }
     }
 
+    /// Found before anything is asked: the same, whatever the keyring could hold.
+    @Test func whereAnAgentIsKeptFromRunningTheKeyringIsNotItsStandInEither() throws {
+        for kind in [.unsafePath, .failed] as [AgentError.Kind] {
+            let agents = FakeAgents(), keyring = FakeKeyring(), notes = Notes()
+            agents.obstacle = AgentError(kind, "what is wrong", fix: "put it right")
+            let c = cache(agents, keyring, notes)
+            #expect(!c.isAvailable)
+            let before = #expect(throws: VaultError.self) { try c.require(half) }
+            #expect(before?.cause.contains("what is wrong") == true && before?.cause.contains("keyring") == false && before?.fix == "put it right")
+            #expect(throws: VaultError.self) { try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0) }
+            let s = HeldSessionStore(agents: agents, keyring: keyring, isOff: false, witness: { nil }, say: notes.say)
+            #expect(!s.isAvailable && s.obstacle == "what is wrong")
+            #expect(throws: (any Error).self) { try s.put("xless-apple-session", key(1), hold: half) }
+            #expect(keyring.names.isEmpty && notes.lines.isEmpty)
+        }
+    }
+
     @Test func anIdleTimeAskedForIsRefusedWhereItIsNotKept() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         agents.obstacle = AgentError(.unavailable, "no session here", fix: "-")
