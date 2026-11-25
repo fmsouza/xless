@@ -100,6 +100,11 @@ even when it fails (exit 20). Details: [`xless provision`](apple-account.md#xles
 xless run .                             # build, sign, upload, deliver to the TestFlight groups of xless.yml
 ```
 
+`sign` prints what it makes on the account (a bundle ID, a capability, a profile) before it makes it, and after `provision
+apply` that is nothing; `--no-provisioning-updates` refuses instead
+([what `sign` changes](signing-and-testflight.md#what-sign-changes-on-the-account)). At its end the run prints the
+`xless release submit` command of the build it uploaded.
+
 The build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own and
 without the secret variables: a held unlock or a kept Apple ID session is out of their reach
 ([security.md](security.md#the-build-and-your-secrets)). The keys come from the store: one passphrase per run, nothing in a secrets file
@@ -107,7 +112,17 @@ without the secret variables: a held unlock or a kept Apple ID session is out of
 (`xless secrets export ASC_KEY_P8@ABCDE12345 --out key.p8`, and the same for `XLESS_DIST_KEY@…`), put the contents into
 the CI's secret store, and delete the files ([CI](signing-and-testflight.md#continuous-integration)).
 
-When the app is ready for the App Store, see [Release a version](#release-a-version).
+**6. The App Store.** Complete the listing and send the build you tested:
+
+```sh
+xless store push                        # the listing and the App Store version of appstore/
+xless release submit --dry-run          # the pre-flight: every problem at once; names the build
+xless release submit                    # to App Review
+```
+
+Nothing is sent to App Review but by that command: not by `run`, `ship` or `provision`. Without `--build` it takes the
+build the version carries, else the one this project uploaded last, when that is the version's newest valid build
+([Release a version](#release-a-version)).
 
 ### An app record without `provision`
 
@@ -236,10 +251,9 @@ The listing lives in `appstore/`: change it there, review it like code, push it.
 xless store validate                          # what a submission needs, offline
 xless store push --dry-run                    # what would change on App Store Connect
 xless store push                              # sends only what differs; asks before deleting anything
-xless run .                                   # build and upload 1.1 (42)
-xless builds wait 1.1+42 --app com.example.app
-xless release submit --build 1.1+42 --release manual --dry-run   # the pre-flight: every problem at once
-xless release submit --build 1.1+42 --release manual
+xless run .                                   # build 1.1 (42), upload it, deliver it to TestFlight; ends once it is processed
+xless release submit --release manual --dry-run   # the pre-flight: every problem at once; names the build it would send
+xless release submit --release manual             # the build the testers have
 xless release status                          # waiting for review, in review, approved…
 xless release publish                         # once approved, when you choose
 ```
@@ -247,7 +261,10 @@ xless release publish                         # once approved, when you choose
 `store push` creates the App Store version from app.yml's `version` when it does not exist yet (`xless release create
 1.1` does it on its own). `release submit` checks first, and sends nothing when something is missing: the listing in
 every locale, screenshots, App Privacy published, a price and territories, the build valid with its export compliance
-answered, the App Review contact. Run it again after fixing: it resumes where it stopped. `--release auto` releases on
+answered, the App Review contact. Run it again after fixing: it resumes where it stopped. The build is the one `--build 1.1+42`
+names (`xless run` prints the command), else the one attached to the version (`xless release attach`), else the one
+uploaded last from this project, if App Store Connect says that it is the version's newest valid build; it is named
+before anything is sent. `--release auto` releases on
 approval, a date (`2026-12-01`) not before then, and `--phased` spreads an update over seven days (`xless release phased
 pause|resume|complete`). App Review's reasons for a rejection are not in the API: Apple emails them
 ([`xless release`](apple-account.md#xless-release)).

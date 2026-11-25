@@ -129,19 +129,20 @@ struct ProductCLI {
     func pricePoints(_ kind: Product, _ argument: String, app appArgument: String, territory: String, price: String?) async throws -> String {
         let app = try await apps.resolve(appArgument)
         let points = ASCPricePoints(resources: resources)
-        let path: String
+        let product: ASCPricePoints.Product
+        let id: String
         let command: String
         switch kind {
         case .iap:
             let iap = try await products.resolveIAP(argument, app: app.id)
-            path = "/v2/inAppPurchases/\(iap.id)/pricePoints"
+            (product, id) = (.inAppPurchase, iap.id)
             command = "xless iap price-points \(argument) --app \(appArgument)"
         case .subscription:
             let s = try await products.resolveSubscription(argument, app: app.id).subscription
-            path = "/v1/subscriptions/\(s.id)/pricePoints"
+            (product, id) = (.subscription, s.id)
             command = "xless subscriptions price-points \(argument) --app \(appArgument)"
         }
-        let list = try await points.list(path: path, territory: territory)
+        let list = try await points.list(product, id, territory: territory)
         guard let price else {
             if json { return try ASCOutput.json(Listing(data: list)) }
             if list.isEmpty { return "App Store Connect lists no price point in \(territory) for \(argument)\n" }
@@ -149,8 +150,7 @@ struct ProductCLI {
         }
         let point = try ASCPricePoints.resolve(price, in: list, territory: territory, app: appArgument, command: command)
         // In-app purchase points follow the base price automatically; a subscription's are set per territory.
-        let equal = kind == .subscription ? try await points.equalizations(path: "/v1/subscriptionPricePoints/\(point.id)/equalizations")
-            : try await points.equalizations(path: "/v1/inAppPurchasePricePoints/\(point.id)/equalizations")
+        let equal = try await points.equalizations(product, of: point.id)
         if json { return try ASCOutput.json(AppCLI.PricePoint(pricePoint: point, equalizations: equal)) }
         var out = "\(CustomerPrice.display(point.customerPrice)) in \(territory)\(point.currency.map { " (\($0))" } ?? ""): price point \(point.id)"
         out += point.proceeds.map { ", proceeds \($0)\n" } ?? "\n"

@@ -209,11 +209,23 @@ struct TestFlightCLI {
             if b.build.isExpired { throw XlessError(.account, "build \(b.name) (\(b.id)) is expired: testers can no longer install it", fix: "upload a new build") }
             let missing = groups.filter { !current.contains($0.id) }
             guard !missing.isEmpty else { return report(b, "build \(b.name) is already in \(names(groups)); nothing was sent") }
-            try await testFlight.addBuild(b.id, to: missing)
-            if missing.contains(where: { !$0.isInternal }) {
+            var added: [ASCBetaGroup] = [], automatic: [ASCBetaGroup] = []
+            for g in missing {
+                do {
+                    let addition = try await testFlight.addBuild(b.id, to: g, app: appID, current: current)
+                    if let note = addition.note(build: b.id, group: g.name) { say(note); automatic.append(g) }
+                    if case .added = addition { added.append(g) }
+                } catch {
+                    if !added.isEmpty { say("note: build \(b.name) (\(b.id)) was added to \(names(added)) before this error") }
+                    throw error
+                }
+            }
+            if added.contains(where: { !$0.isInternal }) {
                 say("note: external testers get the build once Apple approves it: `xless testflight beta-review submit \(b.id)`")
             }
-            return report(b, "added build \(b.name) (\(b.id)) to \(names(missing))")
+            if !added.isEmpty { return report(b, "added build \(b.name) (\(b.id)) to \(names(added))") }
+            if !automatic.isEmpty { return report(b, "build \(b.name) (\(b.id)) was not added to \(names(automatic)), which gets it by automatic distribution") }
+            return report(b, "build \(b.name) is already in \(names(groups)); nothing was sent")
         }
         let present = groups.filter { current.contains($0.id) }
         guard !present.isEmpty else { return report(b, "build \(b.name) is in none of \(names(groups)); nothing was sent") }

@@ -61,7 +61,7 @@ private let ladder = [("P0", "0.0"), ("P1", "0.99"), ("P2", "1.29"), ("P3", "1.9
         (200, #"{"data":[\#(pricePointJSON("P2", "1.29", proceeds: "0.91")),\#(pricePointJSON("P0", "0.0"))],"included":[\#(territoryJSON("USA", "USD"))],"links":{"self":"x","next":"https://api.appstoreconnect.apple.com/v1/apps/123/appPricePoints?cursor=2"}}"#),
         (200, page([pricePointJSON("P1", "0.99", proceeds: "0.7")])),
     ])
-    let list = try await points(t).list(app: "123", territory: "USA")
+    let list = try await points(t).list(.app, "123", territory: "USA")
     #expect(list.map(\.id) == ["P0", "P1", "P2"])
     #expect(list.allSatisfy { $0.territory == "USA" && $0.currency == "USD" })
     #expect(list[2].proceeds == "0.91")
@@ -72,7 +72,7 @@ private let ladder = [("P0", "0.0"), ("P1", "0.99"), ("P2", "1.29"), ("P3", "1.9
 @Test func equalizationsAreThePointInEveryOtherTerritory() async throws {
     let t = MockTransport([(200, page([pricePointJSON("Q2", "150", territory: "JPN"), pricePointJSON("Q1", "0.99", territory: "GBR")],
                                       included: [territoryJSON("JPN", "JPY"), territoryJSON("GBR", "GBP")]))])
-    let list = try await points(t).equalizations(of: "P1")
+    let list = try await points(t).equalizations(.app, of: "P1")
     #expect(list.map { "\($0.territory) \($0.currency ?? "") \($0.customerPrice)" } == ["GBR GBP 0.99", "JPN JPY 150"])
     #expect(t.requests[0].url!.path == "/v3/appPricePoints/P1/equalizations")
     #expect(query(t.requests[0]) == ["fields[territories]=currency", "include=territory", "limit=200"])

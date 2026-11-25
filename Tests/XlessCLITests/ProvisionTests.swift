@@ -24,9 +24,9 @@ private struct Failure: Error {}
 /// One in-memory Apple account: the documented API's resources, the web session's, and what was written.
 private final class World: @unchecked Sendable {
     var bundles: [String: String] = [:]
-    var capabilities: [String: [ProvisionCapability]] = [:]
+    var capabilities: [String: [SigningCapability]] = [:]
     var certificates: [ASCCertificate] = []
-    var profiles: [ProvisionProfile] = []
+    var profiles: [SigningProfile] = []
     var apps: [AppSummary] = []
     var groups: [String: [ProvisionGroup]] = [:]
     var portal: [PortalLinkedKind: [PortalIdentifier]] = [:]
@@ -82,11 +82,11 @@ private struct FakeAccount: ProvisionAccount {
         world.bundles[identifier] = id
         return id
     }
-    func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability] { world.capabilities[bundleResourceID] ?? [] }
+    func capabilities(of bundleResourceID: String) async throws -> [SigningCapability] { world.capabilities[bundleResourceID] ?? [] }
     func enable(_ request: CapabilityRequest, on bundleResourceID: String, identifier: String) async throws {
         try world.write("enable", "\(request.type.rawValue) \(identifier)")
         world.capabilities[bundleResourceID, default: []].removeAll { $0.type == request.type.rawValue }
-        world.capabilities[bundleResourceID, default: []].append(ProvisionCapability(id: world.next("CAP"), type: request.type.rawValue,
+        world.capabilities[bundleResourceID, default: []].append(SigningCapability(id: world.next("CAP"), type: request.type.rawValue,
                                                                                    settings: CapabilitySetting.chosen(request.settings)))
     }
     func list(types: [CertificateType], withContent: Bool) async throws -> [ASCCertificate] {
@@ -98,13 +98,13 @@ private struct FakeAccount: ProvisionAccount {
         world.certificates.append(cert)
         return cert
     }
-    func profiles(named name: String, type: ProfileType) async throws -> [ProvisionProfile] {
+    func profiles(named name: String, type: ProfileType) async throws -> [SigningProfile] {
         world.profiles.filter { $0.name == name && $0.type == type.rawValue }
     }
-    func createProfile(name: String, type: ProfileType, bundleResourceID: String, certificateID: String) async throws -> ProvisionProfile {
+    func createProfile(name: String, type: ProfileType, bundleResourceID: String, bundleID: String, certificateID: String) async throws -> SigningProfile {
         try world.write("createProfile", name)
         let identifier = world.bundles.first { $0.value == bundleResourceID }!.key
-        let p = ProvisionProfile(id: world.next("P"), name: name, type: type.rawValue, state: "ACTIVE", expires: now.addingTimeInterval(300 * 86_400),
+        let p = SigningProfile(id: world.next("P"), name: name, type: type.rawValue, state: "ACTIVE", expires: now.addingTimeInterval(300 * 86_400),
                                  bundleID: bundleResourceID, certificateIDs: [certificateID],
                                  content: world.content(bundleID: identifier, platform: type == .iosAppStore ? .ios : .macos))
         world.profiles.append(p)
@@ -268,9 +268,9 @@ private nonisolated(unsafe) let entitlements: [String: Any] = [
 
 /// An iOS App Store app and its Developer ID macOS app under one bundle ID, internal and external TestFlight groups.
 private func inputs(ios: Bool = true, macDistribution: Distribution = .developerID) -> ProvisionInputs {
-    var targets: [ProvisionTarget] = []
-    if ios { targets.append(ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: entitlements)) }
-    targets.append(ProvisionTarget(platform: .macos, distribution: macDistribution, bundleID: bundle, entitlements: [:]))
+    var targets: [SigningTarget] = []
+    if ios { targets.append(SigningTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: entitlements)) }
+    targets.append(SigningTarget(platform: .macos, distribution: macDistribution, bundleID: bundle, entitlements: [:]))
     return ProvisionInputs(team: team, targets: targets, version: "1.0",
                            testflight: TestFlightConfig(groups: ["Internal"], whatToTest: "Everything", external: ExternalTestFlight(groups: ["Beta"])))
 }
@@ -564,8 +564,8 @@ private final class TypingPassphrase: PassphrasePrompter {
     _ = try await s.apply(try await s.plan())
     let resource = try #require(s.world.bundles[bundle])
     // An extra capability with an entitlement, one Apple enables by itself, an extra app group, a profile gone stale.
-    s.world.capabilities[resource]!.append(ProvisionCapability(id: "X1", type: "HEALTHKIT", settings: [:]))
-    s.world.capabilities[resource]!.append(ProvisionCapability(id: "X2", type: "IN_APP_PURCHASE", settings: [:]))
+    s.world.capabilities[resource]!.append(SigningCapability(id: "X1", type: "HEALTHKIT", settings: [:]))
+    s.world.capabilities[resource]!.append(SigningCapability(id: "X2", type: "IN_APP_PURCHASE", settings: [:]))
     s.world.portal[.appGroup]!.append(PortalIdentifier(id: "OLD", identifier: "group.com.example.old", name: "Old"))
     s.world.linked[.appGroup]![bundle]!.append("OLD")
     let i = try #require(s.world.profiles.firstIndex { $0.type == "IOS_APP_STORE" })
@@ -590,6 +590,65 @@ private final class TypingPassphrase: PassphrasePrompter {
     let plan = try await s.plan()
     #expect(subjects(plan) == ["capabilities: enable PUSH_NOTIFICATIONS (Push Notifications) on com.example.app", "keys: create APNs key"], "\(plan.text)")
     #expect(plan.drift.first?.message.contains("it lacks aps-environment") == true, "\(plan.text)")
+}
+
+/// `provision` and `sign` send a create again by one rule: only after reading shows nothing was made.
+@Test func provisionAndSignSettleAFailedCreateTheSameWay() async throws {
+    let none = #"{"data":[]}"#, made = #"{"data":{"type":"bundleIds","id":"B1","attributes":{"identifier":"com.example.app"}}}"#
+    let on = #"{"data":{"type":"bundleIdCapabilities","id":"C1","attributes":{"capabilityType":"PUSH_NOTIFICATIONS"}}}"#
+    let profile = #"{"data":{"type":"profiles","id":"P1","attributes":{"name":"n"}}}"#
+    func requests(_ account: (ASCResources) -> any SigningAccount) async throws -> [String] {
+        let t = FakeTransport([(200, none), (503, ""), (200, none), (201, made),           // the bundle ID
+                               (200, none), (503, ""), (200, none), (201, on),             // a capability
+                               (503, ""), (200, none), (201, profile)])                    // the profile
+        let creds = try ASCCredentials.fromSecrets(Secrets(env: fakeKeyEnv, fallback: nil), stage: .account)
+        let a = account(ASCResources(client: ASCClient(credentials: creds, transport: t, sleep: { _ in })))
+        _ = try await a.register(bundleID: "com.example.app")
+        try await a.enable(CapabilityRequest(.pushNotifications), on: "B1", identifier: "com.example.app")
+        _ = try await a.createProfile(name: "n", type: .iosAppStore, bundleResourceID: "B1", bundleID: "com.example.app", certificateID: "C1")
+        #expect(t.responses.isEmpty)
+        return t.requests.map { "\($0.httpMethod!) \($0.url!.path)" }
+    }
+    let sign = try await requests { APISigningAccount(resources: $0, stage: .sign) }
+    #expect(sign == ["GET /v1/bundleIds", "POST /v1/bundleIds", "GET /v1/bundleIds", "POST /v1/bundleIds",
+                     "GET /v1/bundleIds/B1/bundleIdCapabilities", "POST /v1/bundleIdCapabilities", "GET /v1/bundleIds/B1/bundleIdCapabilities", "POST /v1/bundleIdCapabilities",
+                     "POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles"])
+    #expect(try await requests { APIProvisionAccount(resources: $0) } == sign)
+}
+
+/// The names in a plan are the project's and Apple's: none of them clears, hides or forges a line of it.
+@Test func nothingInAProvisionPlanDrivesTheTerminal() throws {
+    let hostile = "\u{1B}[2J\r\n  + create\u{202E}\u{200B}"
+    var plan = ProvisionPlan(team: team)
+    plan.add(.bundleIDs, .create, "com.example.\(hostile)", ["named \(hostile)"], .bundleID("com.example.x"))
+    plan.add(.listing, .push, "appstore/", ["~ name\n    \(hostile.replacingOccurrences(of: "\r\n", with: ""))"], .listing)
+    plan.drift = [ProvisionDrift(area: .profiles, subject: hostile, message: hostile, fix: hostile)]
+    plan.blockers = [ProvisionBlocker(area: .app, message: hostile, fix: hostile)]
+    plan.notes = [hostile]
+    #expect(TerminalText.escaped(plan.text, keepingLines: true) == plan.text)
+    #expect(plan.text.split(separator: "\n").count == 13, "\(plan.text)")
+    #expect(throws: XlessError(.account, #"\u{1B}[2J\u{D}\u{A}  + create\u{202E}\u{200B}; nothing was sent"#,
+                               fix: #"\u{1B}[2J\u{D}\u{A}  + create\u{202E}\u{200B}"#)) { try plan.requireUnblocked() }
+    let json = try ASCOutput.json(plan)
+    #expect(try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))["notes"] == .array([.string(hostile)]), "JSON keeps the values")
+}
+
+/// What `apply` says as it goes, and the error it stops with, are one line each, whatever the names in them.
+@Test func nothingThatApplySaysStartsALineOfItsOwn() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    var plan = ProvisionPlan(team: team)
+    plan.add(.bundleIDs, .create, "com.example.a", [], .bundleID("com.example.app.a"))
+    plan.add(.appGroups, .create, "group.x\n2/2 forged\u{1B}", [], web: true, .bundleID("com.example.app.b"))
+    let lines = Lines()
+    let applier = ProvisionApplier(inputs: s.inputs, account: s.account, web: { throw XlessError(.account, "no\nerror: forged", fix: "a\nb") },
+                                   vault: s.vault.vault, store: s.store, say: { lines.add($0) }, now: now)
+    do { _ = try await applier.apply(plan); Issue.record("expected throw") }
+    catch let f as ProvisionApplyFailure {
+        #expect(!f.error.description.contains("\n") && f.error.cause.contains(#"group.x\u{A}2/2 forged\u{1B}: no\u{A}error: forged (0 of 2 "#), "\(f.error)")
+    }
+    #expect(lines.all.count == 2 && lines.all.allSatisfy { TerminalText.escaped($0) == $0 } && lines.all[1].contains(#"group.x\u{A}2/2 forged"#), "\(lines.all)")
 }
 
 @Test func blockersStopApplyBeforeAnythingIsSent() async throws {

@@ -151,8 +151,8 @@ struct APICall {
             if !listing.included.isEmpty { document["included"] = try JSONValue.array(listing.included.map { try $0.jsonValue() }) }
             return try ASCOutput.json(JSONValue.object(document))
         }
-        let response = try await resources.client.request(request.method, request.path, query: request.query, body: request.body,
-                                                          maxAttempts: request.method == "POST" ? 1 : ASCClient.maxAttempts)
+        let response = try await ASCDirectRequests(resources: resources).request(request.method, request.path, query: request.query, body: request.body,
+                                                                                 maxAttempts: request.method == "POST" ? 1 : ASCClient.maxAttempts)
         guard !response.data.isEmpty else { return "" }
         guard let json = try? JSONDecoder().decode(JSONValue.self, from: response.data) else {
             return String(decoding: response.data, as: UTF8.self) + "\n"

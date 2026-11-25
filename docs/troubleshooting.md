@@ -2,7 +2,8 @@
 
 xless errors read `[stage] cause — fix`: the last part says what to do. Exit codes: 2 is `xless run`'s own
 (arguments, a missing file or secret), 10 config, 11 SDK and `xless setup`, 19 prepare, 12 build, 13 assets,
-14 finalize, 15 sign, 16 package, 17 upload ([pipeline.md](pipeline.md#stages)); the Apple account commands exit 20
+14 finalize, 15 sign (24 when it needs changes on the account and
+[provisioning updates are off](signing-and-testflight.md#what-sign-changes-on-the-account)), 16 package, 17 upload ([pipeline.md](pipeline.md#stages)); the Apple account commands exit 20
 (`xless release submit` also 21 and 22), `xless secrets` exits 10 ([below](#apple-account-commands)), and any command
 that would have to ask something with `--no-input` exits 23. Tauri and React Native apps have
 their own tables: [tauri.md](tauri.md#troubleshooting), [react-native.md](react-native.md#troubleshooting).
@@ -141,7 +142,9 @@ and must be one `versions.env` supports. Nothing is exported, so the disk check 
 ## App Store Connect
 
 `xless upload` maps App Store Connect errors to explanations; unknown codes are printed verbatim. Network calls retry
-only on HTTP 5xx, 429 and transport errors (at most 5 attempts); nothing else is retried.
+only on HTTP 5xx, 429 and transport errors (at most 5 attempts); nothing else is retried. A create is sent again only
+after a wait and a reading that shows nothing was made (a TestFlight group or a profile, of which Apple may make two, once at
+most after an unclear answer), and one that could not be found again (a certificate, a key, an invitation) never is.
 
 | Symptom | Meaning and fix |
 |---|---|

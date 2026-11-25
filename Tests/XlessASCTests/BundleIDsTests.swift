@@ -109,6 +109,19 @@ func dataList(_ items: [String], next: String? = nil) -> String {
     #expect(e.id == "B1" && known.requests.count == 1)
 }
 
+/// Sent again only after reading shows nothing was made; made by a request whose answer was lost, it is found.
+@Test func aFailedRegistrationIsLookedUpBeforeItIsSentAgain() async throws {
+    let known = dataList([bundleIDJSON("B9", "com.example.app")])
+    let again = MockTransport([(200, dataList([])), (503, ""), (200, dataList([])), (201, #"{"data":\#(bundleIDJSON("B9", "com.example.app"))}"#)])
+    guard case .created = try await bundleIDs(again).create(identifier: "com.example.app", name: "X", platform: .universal) else { Issue.record("expected created"); return }
+    #expect(again.requests.map(\.httpMethod) == ["GET", "POST", "GET", "POST"])
+    let lost = MockTransport([(200, dataList([])), (503, ""), (200, known)])
+    guard case .created(let b) = try await bundleIDs(lost).create(identifier: "com.example.app", name: "X", platform: .universal) else { Issue.record("expected created"); return }
+    #expect(b.id == "B9" && lost.requests.filter { $0.httpMethod == "POST" }.count == 1)
+    let race = MockTransport([(200, dataList([])), (409, "{}"), (200, known)])
+    guard case .existing = try await bundleIDs(race).create(identifier: "com.example.app", name: "X", platform: .universal) else { Issue.record("expected existing"); return }
+}
+
 @Test func deletingABundleIDSendsDelete() async throws {
     let t = MockTransport([(204, "")])
     let b = ASCBundleID(resource: ASCAnyResource(type: "bundleIds", id: "B1"))
@@ -144,6 +157,38 @@ func dataList(_ items: [String], next: String? = nil) -> String {
             "key": .string("ICLOUD_VERSION"), "options": .array([.object(["key": .string("XCODE_6"), "enabled": .bool(true)])])])])]),
         "relationships": .object(["bundleId": .object(["data": .object(["type": .string("bundleIds"), "id": .string("B1")])])]),
     ])]))
+}
+
+@Test func aFailedEnableIsLookedUpBeforeItIsSentAgain() async throws {
+    let on = dataList([capabilityJSON("C9", "PUSH_NOTIFICATIONS")])
+    let again = MockTransport([(503, ""), (200, dataList([])), (201, #"{"data":\#(capabilityJSON("C9", "PUSH_NOTIFICATIONS"))}"#)])
+    guard case .enabled = try await bundleIDs(again).enable(.pushNotifications, on: "B1", existing: []) else { Issue.record("expected enabled"); return }
+    let lost = MockTransport([(503, ""), (200, on)])
+    guard case .enabled(let c) = try await bundleIDs(lost).enable(.pushNotifications, on: "B1", existing: []) else { Issue.record("expected enabled"); return }
+    #expect(c.id == "C9" && lost.requests.filter { $0.httpMethod == "POST" }.count == 1)
+    // Apple's refusal is its answer, once reading shows that it is not because the capability is on.
+    let refused = MockTransport([(409, "{}"), (200, dataList([]))])
+    await #expect(throws: ASCError.self) { _ = try await bundleIDs(refused).enable(.pushNotifications, on: "B1", existing: []) }
+    #expect(refused.requests.count == 2)
+}
+
+/// A capability that someone enabled meanwhile with another option is not what was asked for.
+@Test func anEnableThatFindsOtherSettingsIsNotUnchanged() async throws {
+    func on(_ option: String) -> String {
+        dataList([capabilityJSON("C9", "DATA_PROTECTION", settings: #"[{"key":"DATA_PROTECTION_PERMISSION_LEVEL","options":[{"key":"\#(option)","enabled":true}]}]"#)])
+    }
+    func enable(_ t: MockTransport, _ settings: [CapabilitySetting] = [CapabilitySetting(.dataProtectionPermissionLevel, "COMPLETE_PROTECTION")]) async throws -> ASCBundleIDs.Enabling {
+        try await bundleIDs(t).enable(.dataProtection, settings: settings, on: "B1", existing: [])
+    }
+    let other = MockTransport([(409, "{}"), (200, on("PROTECTED_UNTIL_FIRST_USER_AUTH"))])
+    do { _ = try await enable(other); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 409) }
+    #expect(other.steps.isEmpty)
+    let lost = MockTransport([(503, ""), (200, on("PROTECTED_UNTIL_FIRST_USER_AUTH")), (409, "{}"), (200, on("PROTECTED_UNTIL_FIRST_USER_AUTH"))])
+    do { _ = try await enable(lost); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 409) }
+    // The same option, or none asked for.
+    guard case .unchanged = try await enable(MockTransport([(409, "{}"), (200, on("COMPLETE_PROTECTION"))])) else { Issue.record("expected unchanged"); return }
+    guard case .enabled = try await enable(MockTransport([(503, ""), (200, on("COMPLETE_PROTECTION"))])) else { Issue.record("expected enabled"); return }
+    guard case .unchanged = try await enable(MockTransport([(409, "{}"), (200, on("PROTECTED_UNLESS_OPEN"))]), []) else { Issue.record("expected unchanged"); return }
 }
 
 @Test func enableWithoutSettingsSendsNoneOrTheDefault() async throws {

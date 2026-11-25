@@ -76,6 +76,19 @@ private func page(_ ids: [String], next: String? = nil) -> String {
     #expect(t.requests[2].url!.absoluteString.contains("cursor=XYZ"))
 }
 
+/// The order check needs every number: an answer it cannot read is an error, never a shorter list.
+@Test(arguments: [#"{"version":42}"#, #"{"version":{"a":1}}"#, "{}", #"{"version":null}"#])
+func aBuildWhoseNumberCannotBeReadIsNotLeftOut(attributes: String) async throws {
+    let app = (200, #"{"data":[{"type":"apps","id":"app1","attributes":{"bundleId":"com.example.app"}}]}"#)
+    let t = MockTransport([app, (200, #"{"data":[{"type":"builds","id":"b1","attributes":{"version":"1.0.0.2026101501"}},{"type":"builds","id":"b2","attributes":\#(attributes)}]}"#)])
+    let client = ASCClient(credentials: testCreds, transport: t)
+    await #expect(throws: DecodingError.self) { try await DatedBuildNumber.existingBuilds(client: client, bundleID: "com.example.app", version: "1.0.0") }
+
+    let unreadable = MockTransport([(200, #"{"data":[{"type":"apps","id":"app1","attributes":{"bundleId":7}}]}"#)])
+    let other = ASCClient(credentials: testCreds, transport: unreadable)
+    await #expect(throws: DecodingError.self) { try await DatedBuildNumber.existingBuilds(client: other, bundleID: "com.example.app", version: "1.0.0") }
+}
+
 @Test func noAppRecordMeansNoBuildsYet() async throws {
     // First run: the bundle ID is registered at `sign` and `upload` reports the missing record, so this must not fail.
     let t = MockTransport([(200, #"{"data":[]}"#)])

@@ -74,7 +74,7 @@ struct KeyRescue: Sendable {
         case .notSaved(let reason):
             return lost("\(why); it could not be saved to a file either (\(reason))")
         case .saved(let path, let temporary):
-            let command = (["xless", "secrets", "import", entry, "--file", path] + importOptions).map(Self.shellWord).joined(separator: " ")
+            let command = (["xless", "secrets", "import", entry, "--file", path] + importOptions).map(ShellWord.quoted).joined(separator: " ")
             return XlessError(.account, "\(noun) \(keyID) was created, but \(why); its private key is saved in \(path) (mode 0600\(temporary ? "; $XDG_RUNTIME_DIR is emptied when you log out" : ""))",
                               fix: "put it into the secret store now: `\(command)` (it offers to delete the file afterwards); if you do not want the key, delete the file and revoke it (`\(revoke)`)")
         }
@@ -119,11 +119,5 @@ struct KeyRescue: Sendable {
             return .failed(why)
         }
         return .written
-    }
-
-    /// `word` as one shell word: as is when it is made of safe characters, else single-quoted.
-    static func shellWord(_ word: String) -> String {
-        let safe = !word.isEmpty && word.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "_./@:=+,-".unicodeScalars.contains($0)) }
-        return safe ? word : "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

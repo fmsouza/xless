@@ -72,6 +72,7 @@ Relative paths in the overlay (`source`, `privacyManifest`) resolve against the 
 | `infoPlist` | iOS only. A plist file in the work copy used in place of the target's own Info.plist as the source of the keys merged into the generated one. The macOS build never reads it (it holds Xcode placeholders such as `$(EXECUTABLE_NAME)`); use `macos.infoPlist`. |
 | `privacyManifest` | A `PrivacyInfo.xcprivacy` copied into the app. `finalize` requires one for App Store builds. |
 | `usesNonExemptEncryption` | `ITSAppUsesNonExemptEncryption`, stamped at `finalize`. App Store Connect asks about export compliance when it is missing. |
+| `provisioningUpdates` | `false`: `sign` changes nothing on the Apple account, and fails with exit 24 and the list when it would have to ([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)). Default `true`; the key without a value is refused. |
 | `xcode` | The Xcode whose SDK must build the app, e.g. `"26.2"`; `xless run --docker` runs in the images `xless setup --docker --xcode …` made from it (`xless-tauri:local-<arch>-xcode<version>`) and `prepare` (exit 19) and `build` refuse another SDK; app code compiles with an open-source Swift release matching that Xcode's Swift ([react-native.md](react-native.md#pinning-the-xcode-sdk)). Default: the image's SDK. |
 | `linkFlags` | Extra linker flags for the app, for example `["-ObjC"]`. |
 | `binaryDependencies` | iOS only (`prepare --platform macos` does not install them). List of prebuilt dependencies that replace CocoaPods. Each has `url` (https), `sha256` (pinned, 64 hex), `extract` (path inside the archive), `to` (relative path in the work copy), optionally `fixes: { minimumOSVersion: "16.0" }` (rewrites the MinimumOSVersion of the framework's Info.plist) and `linkFlags` (flags this dependency needs). Downloads are cached by hash in `~/.cache/xless/downloads`. An `embed: true` dependency whose framework binary is a static archive is linked but not embedded (the build prints a note); rcodesign cannot sign such a framework, and the code is already in the executable. |
@@ -148,7 +149,7 @@ The top-level `infoPlist` and `binaryDependencies` are iOS-only: the macOS build
 1. `xless ship --platform macos --to finalize` with no secret file or variable: prepare, build (both architectures), assets, finalize.
 2. `xless ship --platform macos --from sign --to package` with `XLESS_DEVID_KEY_FILE` and the App Store Connect key: sign, then package (build the DMG, sign it, notarize, staple, check the stapled ticket). No build code runs here.
 
-`--from <stage>` and `--to <stage>` among the extra arguments choose the steps; `--from package` reuses the signed app (for example to retry a notarization that failed on the network). The overlay's folder must not hold the Developer ID key either. Exit codes are those of the pipeline: prepare 19, build 12, finalize 14, sign 15, package 16. A notarization the service rejects is a `package` error (16) that names the submission; so is a DMG whose signature has no stapled ticket after `notary-submit --staple` (`rcodesign staple <dmg>` retries the staple alone).
+`--from <stage>` and `--to <stage>` among the extra arguments choose the steps; `--from package` reuses the signed app (for example to retry a notarization that failed on the network). The overlay's folder must not hold the Developer ID key either. Exit codes are those of the pipeline: prepare 19, build 12, finalize 14, sign 15 (24 with provisioning updates off), package 16. A notarization the service rejects is a `package` error (16) that names the submission; so is a DMG whose signature has no stapled ticket after `notary-submit --staple` (`rcodesign staple <dmg>` retries the staple alone).
 
 **Known gaps** ([research/parity-known-gaps.md](research/parity-known-gaps.md#tauri-macos)):
 
@@ -176,7 +177,7 @@ From a source checkout, `make test-tauri-linux` builds `samples/HelloTauri` thro
 
 ## Troubleshooting
 
-Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17.
+Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
 
 | Exit | Stage and message | What to do |
 |---|---|---|

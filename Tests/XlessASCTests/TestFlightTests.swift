@@ -205,14 +205,58 @@ private func tester(_ json: String) throws -> ASCBetaTester {
 // MARK: Builds and What to Test
 
 @Test func buildMembershipIsReadWithTheBuildFilter() async throws {
-    let t = MockTransport([(200, tfList([#"{"type":"betaGroups","id":"G1"}"#])), (204, ""), (204, "")])
+    let t = MockTransport([(200, tfList([#"{"type":"betaGroups","id":"G1"}"#])), (204, "")])
     let tf = testFlight(t)
     #expect(try await tf.groupIDs(with: "B1", app: "APP1") == ["G1"])
     #expect(q(t.requests[0], "filter[builds]") == "B1" && q(t.requests[0], "filter[app]") == "APP1")
-    let g = try group(betaGroupJSON("G2", "Beta"))
-    try await tf.addBuild("B1", to: [g])
-    try await tf.removeBuild("B1", from: [g])
-    #expect(t.requests.dropFirst().map(call) == ["POST /v1/builds/B1/relationships/betaGroups", "DELETE /v1/builds/B1/relationships/betaGroups"])
+    try await tf.removeBuild("B1", from: [try group(betaGroupJSON("G2", "Beta"))])
+    #expect(call(t.requests[1]) == "DELETE /v1/builds/B1/relationships/betaGroups")
+}
+
+private func betaGroup(_ id: String, automatic: Bool) throws -> ASCBetaGroup {
+    try group(#"{"type":"betaGroups","id":"\#(id)","attributes":{"name":"Beta","isInternalGroup":true,"hasAccessToAllBuilds":\#(automatic)}}"#)
+}
+
+@Test func aBuildIsAddedThroughTheGroupAndOnlyWhenItIsNotThere() async throws {
+    let t = MockTransport([(204, "")])
+    guard case .alreadyInGroup = try await testFlight(t).addBuild("B1", to: betaGroup("G1", automatic: false), app: "APP1", current: ["G1"]) else {
+        Issue.record("expected alreadyInGroup"); return
+    }
+    #expect(t.requests.isEmpty)
+    let outcome = try await testFlight(t).addBuild("B1", to: betaGroup("G1", automatic: false), app: "APP1", current: ["G2"])
+    guard case .added = outcome else { Issue.record("expected added"); return }
+    #expect(outcome.note(build: "B1", group: "Beta") == nil)
+    #expect(t.requests.map(call) == ["POST /v1/betaGroups/G1/relationships/builds"])
+    #expect(try body(t.requests[0])["data"] == .array([.object(["type": .string("builds"), "id": .string("B1")])]))
+}
+
+@Test func aRefusalOfAnAutomaticGroupIsSettledByReadingOrIsANote() async throws {
+    for status in [409, 422] {
+        let refused = (status, #"{"errors":[{"status":"\#(status)","code":"STATE_ERROR","detail":"cannot add"}]}"#)
+        let there = MockTransport([refused, (200, tfList([#"{"type":"betaGroups","id":"G1"}"#]))])
+        guard case .alreadyInGroup = try await testFlight(there).addBuild("B1", to: betaGroup("G1", automatic: true), app: "APP1", current: []) else {
+            Issue.record("expected alreadyInGroup"); return
+        }
+        for answer in [(200, tfList([])), (400, "{}")] {
+            let unknown = MockTransport([refused, answer])
+            let outcome = try await testFlight(unknown).addBuild("B1", to: betaGroup("G1", automatic: true), app: "APP1", current: [])
+            let note = try #require(outcome.note(build: "B1", group: "Beta"))
+            #expect(note.hasPrefix("warning: could not confirm that build B1 is in group Beta (adding the build to group Beta: ") && note.contains("cannot add")
+                    && note.contains("automatic distribution"))
+        }
+        let manual = MockTransport([refused])
+        await #expect(throws: ASCError.self) { _ = try await testFlight(manual).addBuild("B1", to: betaGroup("G1", automatic: false), app: "APP1", current: []) }
+        #expect(manual.requests.count == 1)
+    }
+}
+
+@Test func theTestersOfAGroupAreCountedFromTheTotalOrTheWholeList() async throws {
+    let total = MockTransport([(200, #"{"data":[],"meta":{"paging":{"total":7,"limit":1}}}"#)])
+    #expect(try await testFlight(total).testerCount(group: "G1") == 7)
+    #expect(call(total.requests[0]) == "GET /v1/betaGroups/G1/betaTesters" && q(total.requests[0], "limit") == "1")
+    let one = #"{"data":[{"type":"betaTesters","id":"T1"}]}"#
+    let listed = MockTransport([(200, one), (200, #"{"data":[{"type":"betaTesters","id":"T1"},{"type":"betaTesters","id":"T2"}]}"#)])
+    #expect(try await testFlight(listed).testerCount(group: "G1") == 2)
 }
 
 @Test func whatToTestIsCreatedUpdatedOrLeftAlone() async throws {
@@ -228,6 +272,33 @@ private func tester(_ json: String) throws -> ASCBetaTester {
     let create = MockTransport([(200, tfList([])), (201, tfSingle(loc))])
     guard case .created = try await testFlight(create).setWhatsNew(build: "B1", locale: "fr-FR", text: "nouveau") else { Issue.record("expected created"); return }
     #expect(try body(create.requests[1])["data"]?["attributes"] == .object(["locale": .string("fr-FR"), "whatsNew": .string("nouveau")]))
+}
+
+/// Every create of a delivery that can be found again: sent again after a failure only when reading shows nothing was made.
+@Test func aCreateOfADeliveryIsSettledByReading() async throws {
+    let text = #"{"type":"betaAppLocalizations","id":"BL1","attributes":{"locale":"fr-FR","description":"Bonjour"}}"#
+    let info = MockTransport([(200, tfList([])), (503, ""), (200, tfList([])), (201, tfSingle(text))])
+    _ = try await testFlight(info).setLocalization(app: "APP1", locale: "fr-FR", BetaInfoText(description: "Bonjour"))
+    #expect(info.requests.map(call).filter { $0 == "POST /v1/betaAppLocalizations" }.count == 2)
+    let lostInfo = MockTransport([(200, tfList([])), (503, ""), (200, tfList([text]))])
+    guard case .created? = try await testFlight(lostInfo).setLocalization(app: "APP1", locale: "fr-FR", BetaInfoText(description: "Bonjour")) else { Issue.record("expected created"); return }
+
+    let submission = #"{"type":"betaAppReviewSubmissions","id":"B1","attributes":{"betaReviewState":"WAITING_FOR_REVIEW"}}"#
+    let submit = MockTransport([(200, tfList([])), (503, ""), (200, tfList([])), (201, tfSingle(submission))])
+    guard case .created = try await testFlight(submit).submit(build: "B1") else { Issue.record("expected created"); return }
+    let lostSubmit = MockTransport([(200, tfList([])), (503, ""), (200, tfList([submission]))])
+    guard case .created = try await testFlight(lostSubmit).submit(build: "B1") else { Issue.record("expected created"); return }
+    #expect(lostSubmit.requests.filter { $0.httpMethod == "POST" }.count == 1)
+
+    let group = try JSONDecoder().decode(ASCBetaGroup.self, from: Data(#"{"type":"betaGroups","id":"G1","attributes":{"name":"Beta","isInternalGroup":false}}"#.utf8))
+    let tester = #"{"type":"betaTesters","id":"T1","attributes":{"email":"a@example.com"}}"#
+    let request = BetaTesterRequest(email: "a@example.com", firstName: nil, lastName: nil)
+    let add = MockTransport([(200, tfList([])), (503, ""), (200, tfList([])), (201, tfSingle(tester))])
+    guard case .created = try await testFlight(add).add(request, to: group, app: "APP1", members: [], users: nil) else { Issue.record("expected created"); return }
+    // Made by the request whose answer was lost, in the group: nothing more is sent.
+    let lostAdd = MockTransport([(200, tfList([])), (503, ""), (200, tfList([tester])), (200, tfList([tester]))])
+    guard case .created = try await testFlight(lostAdd).add(request, to: group, app: "APP1", members: [], users: nil) else { Issue.record("expected created"); return }
+    #expect(lostAdd.requests.filter { $0.httpMethod == "POST" }.count == 1)
 }
 
 // MARK: Beta information
@@ -329,9 +400,10 @@ private func tester(_ json: String) throws -> ASCBetaTester {
     #expect(created.id == "S2" && call(fresh.requests[1]) == "POST /v1/betaAppReviewSubmissions")
     #expect(try body(fresh.requests[1])["data"]?["relationships"]?["build"]?["data"]?["id"]?.string == "B1")
 
-    let failing = MockTransport([(200, tfList([])), (500, "{}")])
-    await #expect(throws: ASCError.self) { _ = try await testFlight(failing).submit(build: "B1") }
-    #expect(failing.requests.count == 2)
+    // Not knowing whether it was submitted, nothing is sent again.
+    let failing = MockTransport([(200, tfList([])), (500, "{}"), (403, "{}")])
+    do { _ = try await testFlight(failing).submit(build: "B1"); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 500) }
+    #expect(failing.requests.count == 3)
 }
 
 @Test func testerEmailsRefuseCommas() throws {

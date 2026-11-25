@@ -93,6 +93,7 @@ An unknown key is refused with its path (`unknown key 'ios.feature'`), so a miss
 | `usesNonExemptEncryption` | `ITSAppUsesNonExemptEncryption`, stamped at `finalize`. App Store Connect asks about export compliance when it is missing. |
 | `privacyManifest` | A `PrivacyInfo.xcprivacy` copied into the iOS app, relative to the overlay file. `finalize` requires one for App Store builds. The macOS app does not get it. |
 | `testflight` | `groups`, `whatToTest`, `locale`: as in [xless.yml](xless-yml.md#testflight). iOS only. |
+| `provisioningUpdates` | `false`: `sign` changes nothing on the Apple account, and fails with exit 24 and the list when it would have to ([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)). Default `true`; the key without a value is refused. |
 | `xcode` | The Xcode whose SDK must build the app, e.g. `"26.2"`; as for Tauri ([react-native.md](react-native.md#pinning-the-xcode-sdk)). Default: the image's SDK. |
 | `rust.toolchain` | A rustup toolchain name (`"1.97.0"`, `stable`). xless sets it as `RUSTUP_TOOLCHAIN` on every cargo call, which beats the repository's `rust-toolchain` file. Quote version numbers. Without it, that file decides, and without a file, `stable`. |
 | `env` | Plain build variables, passed to cargo and so to `build.rs`. Never secrets: a name xless sets itself (`PATH`, `HOME`, `SDKROOT`, `DEVELOPER_DIR`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN`, the deployment targets, `CARGO_PROFILE_RELEASE_STRIP`), one that starts with `XLESS_`, `SWIFT_`, `ASC_` or `CARGO_TARGET_`, and any name xless scrubs as a secret is refused. |
@@ -193,7 +194,7 @@ What differs for cargo:
 
 - **Mounts.** As for Tauri, plus `~/.cache/xless/inputs` at `/cache/inputs` (the clones of git inputs) and each path input read-only at `/inputs/<name>`, with `XLESS_INPUTS_MOUNTED=1`, in step 2 only. The script lists the path inputs by running `xless cargo inputs` on the host (`$XLESS_SELF`, else `xless` on `PATH`); `make testflight CONFIG=…` and `make dmg CONFIG=…` call the script directly, so for a cargo overlay they need `xless` on `PATH` (or `XLESS_SELF` set to a built one). Its refusals (exit 2) are in [build inputs](#build-inputs).
 - **Caches.** `~/.cache/xless/work`, `~/.cache/xless/downloads` and the docker volumes `xless-rustup` and `xless-cargo`: the Rust toolchains and the crates survive between runs. The first build downloads Rust and compiles the whole dependency graph, which takes several minutes and several GB.
-- **Stages.** `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios|macos`. Exit codes are the ones in [pipeline.md](pipeline.md#stages): config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17.
+- **Stages.** `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios|macos`. Exit codes are the ones in [pipeline.md](pipeline.md#stages): config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
 - **Native.** As for Tauri: `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds are untested in this milestone.
 
 ## macOS
@@ -253,7 +254,7 @@ From a source checkout, `make test-cargo-linux` builds `samples/HelloCargo` for 
 
 ## Troubleshooting
 
-Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17.
+Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
 
 | Exit | Stage and message | What to do |
 |---|---|---|

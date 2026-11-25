@@ -33,12 +33,14 @@ private let testMap: [String: CapabilityType] = ["com.apple.developer.associated
     #expect(r.unmapped == ["com.apple.developer.foo"])
 }
 
-private func client(_ t: MockTransport) -> ASCClient { ASCClient(credentials: testCreds, transport: t, sleep: { _ in }) }
+private func account(_ t: MockTransport) -> APISigningAccount {
+    APISigningAccount(resources: ASCResources(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in })), stage: .sign)
+}
 
-@Test func ensureEnablesMissingCapability() async throws {
+@Test func enableMissingEnablesMissingCapability() async throws {
     let t = MockTransport([(200, #"{"data":[{"type":"bundleIdCapabilities","id":"X","attributes":{"capabilityType":"PUSH_NOTIFICATIONS"}}]}"#),
                            (201, #"{"data":{"type":"bundleIdCapabilities","id":"N","attributes":{"capabilityType":"ASSOCIATED_DOMAINS"}}}"#)])
-    let changed = try await Capabilities.ensure([CapabilityRequest(.associatedDomains)], bundleIDResourceID: "B1", client: client(t))
+    let changed = try await account(t).enableMissing([CapabilityRequest(.associatedDomains)], on: "B1", identifier: "a.b")
     #expect(changed)
     #expect(t.requests.count == 2)
     #expect(t.requests[0].url!.path == "/v1/bundleIds/B1/bundleIdCapabilities")
@@ -52,16 +54,16 @@ private func client(_ t: MockTransport) -> ASCClient { ASCClient(credentials: te
     #expect(json == expected)
 }
 
-@Test func ensureLeavesPresentCapabilityAlone() async throws {
+@Test func enableMissingLeavesPresentCapabilityAlone() async throws {
     let t = MockTransport([(200, #"{"data":[{"type":"bundleIdCapabilities","id":"X","attributes":{"capabilityType":"ASSOCIATED_DOMAINS"}}]}"#)])
-    let changed = try await Capabilities.ensure([CapabilityRequest(.associatedDomains)], bundleIDResourceID: "B1", client: client(t))
+    let changed = try await account(t).enableMissing([CapabilityRequest(.associatedDomains)], on: "B1", identifier: "a.b")
     #expect(!changed)
     #expect(t.requests.count == 1)
 }
 
-@Test func ensureWithNothingRequiredMakesNoRequests() async throws {
+@Test func enableMissingWithNothingRequiredMakesNoRequests() async throws {
     let t = MockTransport([])
-    #expect(try await Capabilities.ensure([], bundleIDResourceID: "B1", client: client(t)) == false)
+    #expect(try await account(t).enableMissing([], on: "B1", identifier: "a.b") == false)
     #expect(t.requests.isEmpty)
 }
 
@@ -127,11 +129,11 @@ private func client(_ t: MockTransport) -> ASCClient { ASCClient(credentials: te
     #expect(r.requests == [CapabilityRequest(.gameCenter), CapabilityRequest(.siriKit)])
 }
 
-@Test func ensureSendsTheSettings() async throws {
+@Test func enableMissingSendsTheSettings() async throws {
     let t = MockTransport([(200, #"{"data":[]}"#),
                            (201, #"{"data":{"type":"bundleIdCapabilities","id":"N","attributes":{"capabilityType":"ICLOUD"}}}"#)])
-    let changed = try await Capabilities.ensure([CapabilityRequest(.icloud, settings: [CapabilitySetting(.icloudVersion, "XCODE_6")])],
-                                                bundleIDResourceID: "B1", client: client(t))
+    let changed = try await account(t).enableMissing([CapabilityRequest(.icloud, settings: [CapabilitySetting(.icloudVersion, "XCODE_6")])],
+                                                on: "B1", identifier: "a.b")
     #expect(changed)
     let json = try JSONSerialization.jsonObject(with: t.requests[1].httpBody!) as! NSDictionary
     let expected: NSDictionary = ["data": ["type": "bundleIdCapabilities",

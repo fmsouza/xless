@@ -97,7 +97,8 @@ enum StageRunner {
         }
     }
 
-    static func sign(_ ctx: Context) async throws -> URL {
+    /// `noUpdates`: `--no-provisioning-updates`.
+    static func sign(_ ctx: Context, noUpdates: Bool = false) async throws -> URL {
         try await withStage(.sign) {
             try ctx.requireDevice(.sign)
             SecretScope.enter() // reads signing / notary / App Store Connect keys
@@ -108,7 +109,8 @@ enum StageRunner {
             // React Native: every bundle's entitlements as the build recorded them, with the overlay's edits.
             let manifest = ctx.reactNativeBuild.map { EntitlementsManifest(file: $0.entitlementsFile, rewrites: $0.overlay.entitlements) }
             return try await SignStage.run(input: input, outputDir: ctx.paths.signed, platform: ctx.platform, config: ctx.config,
-                                           project: ctx.project, secrets: ctx.secrets, client: client, manifest: manifest)
+                                           project: ctx.project, secrets: ctx.secrets, client: client, manifest: manifest,
+                                           updatesOff: ProvisioningUpdatesOption.reason(flag: noUpdates, config: ctx.config.provisioningUpdates))
         }
     }
 
@@ -193,7 +195,7 @@ enum StageRunner {
             let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
             try enc.encode(record).write(to: recordURL, options: .atomic)
         }
-        guard let tf = ctx.config.testflight, let buildID = record.buildID else { return UploadOutcome(record: record, testflight: nil) }
+        guard let tf = ctx.config.testflight, let buildID = record.buildID else { return done(ctx, record, nil) }
         let secrets = ctx.secrets
         let result = try await TestFlightPublisher(client: client).publish(
             bundleID: bundleID, buildID: buildID, buildNumber: build, config: tf) { name in
@@ -203,6 +205,14 @@ enum StageRunner {
             }
         }
         for w in result.warnings { FileHandle.standardError.write(Data((w + "\n").utf8)) }
+        return done(ctx, record, result)
+    }
+
+    /// After everything else: what comes next, the same build's way to the App Store.
+    private static func done(_ ctx: Context, _ record: UploadRecord, _ result: TestFlightResult?) -> UploadOutcome {
+        if let command = ctx.submitCommand(for: record) {
+            FileHandle.standardError.write(Data("next: submit this build to App Review (sends nothing with --dry-run):\n  \(command)\n".utf8))
+        }
         return UploadOutcome(record: record, testflight: result)
     }
 

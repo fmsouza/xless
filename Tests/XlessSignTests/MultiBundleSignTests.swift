@@ -21,6 +21,8 @@ final class SignCapture: @unchecked Sendable {
             let value = args[i + 1]
             let (scope, file) = value.hasPrefix("/") ? ("", value) : (String(value.split(separator: ":", maxSplits: 1)[0]), String(value.split(separator: ":", maxSplits: 1)[1]))
             entitlements[scope] = try Plist.read(URL(fileURLWithPath: file), stage: .sign)
+            // It is next to the private key: as private as the key.
+            #expect((try FileManager.default.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         }
     }
 }
@@ -67,7 +69,8 @@ struct MultiBundleFixture {
     }
 
     /// `capture`: record what rcodesign would get instead of running it; nil runs rcodesign.
-    func run(rewrites: EntitlementRewrites = .none, capture: SignCapture? = SignCapture()) async throws -> URL {
+    func run(rewrites: EntitlementRewrites = .none, capture: SignCapture? = SignCapture(), updatesOff: String? = nil,
+             say: (String) -> Void = { _ in }) async throws -> URL {
         let secrets = Secrets(env: ["XLESS_DIST_KEY": key.pem])
         let client = ASCClient(credentials: testCreds, transport: asc, sleep: { _ in })
         let manifest = EntitlementsManifest(file: manifestURL, rewrites: rewrites)
@@ -76,7 +79,7 @@ struct MultiBundleFixture {
                                            secrets: secrets, client: client, manifest: manifest)
         }
         return try await SignStage.run(input: input, outputDir: outputDir, platform: .ios, config: config, project: root, secrets: secrets,
-                                       client: client, manifest: manifest, codesign: { try capture.record($0) })
+                                       client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: { try capture.record($0) })
     }
 
     /// Moves the extension to `PlugIns/<name>` and its manifest entry with it.
@@ -107,9 +110,11 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     let app = try await f.run(capture: capture)
 
     // Extension first: its identifier, capabilities and profile, then the app's.
-    let bundleLookups = f.asc.log.enumerated().filter { $0.element == "GET /v1/bundleIds" }.map(\.offset)
-    #expect(bundleLookups.count == 2)
+    #expect(f.asc.log.filter { $0 == "POST /v1/bundleIds" }.count == 2)
     #expect(f.asc.bundleIDs[extID] == "B1" && f.asc.bundleIDs[appID] != nil)
+    // Everything is read, and the plan printed, before the first change.
+    let firstWrite = try #require(f.asc.log.firstIndex { !$0.hasPrefix("GET ") })
+    #expect(f.asc.log[..<firstWrite].filter { $0 == "GET /v1/profiles" }.count == 2)
     // The four mapped capability types, each on the identifier whose entitlements need it.
     #expect(f.asc.created.map { "\($0.0) \($0.1)" } == [
         "\(extID) AUTOFILL_CREDENTIAL_PROVIDER", "\(extID) APP_GROUPS",
@@ -287,18 +292,19 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     }
 }
 
-/// xless.yml and Tauri apps: no manifest, no extensions. The same requests in the same order and the same rcodesign
-/// arguments as before app extensions were signed.
+/// xless.yml and Tauri apps: no manifest, no extensions. An account that has everything is only read, and said to have it;
+/// the same rcodesign arguments as before app extensions were signed.
 @Test func aSingleBundleAppSignsAsBefore() async throws {
     let f = try SignFixture(profileEntitlements: teamProfile())
     let capture = SignCapture()
+    var said: [String] = []
     let app = try await SignStage.run(input: f.input, outputDir: f.outputDir, platform: .ios, config: f.config, project: f.project,
                                       secrets: Secrets(env: ["XLESS_DIST_KEY": f.key.pem]),
                                       client: ASCClient(credentials: testCreds, transport: f.transport, sleep: { _ in }),
-                                      manifest: nil, codesign: { try capture.record($0) })
+                                      manifest: nil, say: { said.append($0) }, codesign: { try capture.record($0) })
+    #expect(said == ["xless: sign: the account has what signing needs; nothing is changed there"])
     #expect(f.transport.requests.map { "\($0.httpMethod!) \($0.url!.path)" } == [
-        "GET /v1/certificates", "GET /v1/bundleIds", "GET /v1/profiles", "GET /v1/profiles/P1/relationships/certificates",
-        "GET /v1/profiles/P1/relationships/bundleId",
+        "GET /v1/certificates", "GET /v1/bundleIds", "GET /v1/profiles", "GET /v1/profiles/P1", "GET /v1/profiles/P1/relationships/certificates",
     ])
     let args = capture.arguments
     #expect(args.count == 10)
@@ -534,4 +540,101 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
                                     nestedEntitlements: [("PlugIns/Ext.appex", u.appendingPathComponent("e1"))])
     #expect(a == ["sign", "--pem-file", "/t/k", "--pem-file", "/t/c", "--entitlements-xml-file", "/t/e",
                   "--entitlements-xml-file", "PlugIns/Ext.appex:/t/e1", "--timestamp-url", "none", "/t/X.app"])
+}
+
+// MARK: - Provisioning updates off
+
+@Test func thePlanIsPrintedBeforeAnythingIsChanged() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    var said: [String] = [], before: [String] = []
+    _ = try await f.run(say: { said.append($0); before = f.asc.log })
+    #expect(said.count == 1 && said[0].hasPrefix("xless: sign: 4 changes on the account:\n  register bundle ID \(extID) "))
+    #expect(!before.isEmpty && before.allSatisfy { $0.hasPrefix("GET ") })
+}
+
+/// The extension's name and bundle ID are the build's: the plan and the errors of `sign` write out what would drive the terminal.
+@Test func whatTheBuildNamedItsExtensionCannotDriveTheTerminal() async throws {
+    let escapes = "\u{1B}[2J\u{1B}[H"
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    try f.renameExtension(to: "W\(escapes).appex")
+    var said = ""
+    _ = try await f.run(say: { said += $0 })
+    #expect(!said.contains("\u{1B}") && said.contains(#"PlugIns/W\u{1B}[2J\u{1B}[H.appex"#))
+
+    let g = try MultiBundleFixture(app: [:], ext: [:])
+    try g.renameExtension(to: "W\(escapes).appex")
+    try Plist.write(["CFBundleExecutable": "Ext", "CFBundleIdentifier": "org.other.\(escapes)"],
+                    to: g.input.appendingPathComponent("PlugIns/W\(escapes).appex/Info.plist"), stage: .sign)
+    do { _ = try await g.run(); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.stage == .sign && !e.description.contains("\u{1B}") && e.cause.contains(#"org.other.\u{1B}[2J"#)) }
+}
+
+/// A line break in a name starts no line: not in the plan, not in an error, not in the tool's.
+@Test func whatTheBuildNamedItsExtensionStartsNoLine() async throws {
+    let name = "W\n[sign] forged.appex"
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    try f.renameExtension(to: name)
+    var said = ""
+    _ = try await f.run(say: { said += $0 })
+    #expect(said.contains(#"PlugIns/W\u{A}[sign] forged.appex"#) && !said.contains("\n[sign]"))
+
+    func cause(_ f: MultiBundleFixture) async throws -> String {
+        do { _ = try await f.run(); Issue.record("expected throw"); return "" } catch let e as XlessError { return e.description }
+    }
+    let other = try MultiBundleFixture(app: [:], ext: [:])
+    try other.renameExtension(to: name)
+    try Plist.write(["CFBundleExecutable": "Ext", "CFBundleIdentifier": "org.other\n[sign] x"], to: other.input.appendingPathComponent("PlugIns/\(name)/Info.plist"), stage: .sign)
+    let refused = try await cause(other)
+    #expect(!refused.contains("\n") && refused.contains(#"org.other\u{A}[sign] x"#), "\(refused)")
+
+    let failing = try MultiBundleFixture(app: [:], ext: [:])
+    let client = ASCClient(credentials: testCreds, transport: failing.asc, sleep: { _ in })
+    do {
+        _ = try await SignStage.run(input: failing.input, outputDir: failing.outputDir, platform: .ios, config: failing.config, project: failing.root,
+                                    secrets: Secrets(env: ["XLESS_DIST_KEY": failing.key.pem]), client: client, manifest: EntitlementsManifest(file: failing.manifestURL),
+                                    codesign: { _ in throw XlessError(.sign, "`rcodesign sign` exited with 1:\nsigning W\u{1B}\nerror: forged", fix: "see the tool output above") })
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.cause == "`rcodesign sign` exited with 1:\n  signing W\\u{1B}\n  error: forged")
+    }
+}
+
+/// Apple's own text in an error is no different.
+@Test func whatAppleAnswersCannotDriveTheTerminal() async throws {
+    let f = try MultiBundleFixture(app: ["aps-environment": "development"], ext: [:])
+    f.asc.refuse = ["PUSH_NOTIFICATIONS"]
+    f.asc.refusal = "no\u{1B}[2J"
+    do { _ = try await f.run(); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(!e.description.contains("\u{1B}") && e.cause.contains(#"no\u{1B}[2J"#)) }
+}
+
+@Test func withProvisioningUpdatesOffNothingIsChangedAndTheErrorListsWhatIsMissing() async throws {
+    let f = try MultiBundleFixture(app: ["aps-environment": "development"], ext: [:])
+    f.asc.bundleIDs[appID] = "B9"
+    f.asc.profiles = [.init(id: "P9", name: "xless \(appID) IOS_APP_STORE", bundleResource: "B9", content: try fakeProfile(f.asc.entitlements(of: appID)))]
+    do { _ = try await f.run(updatesOff: "--no-provisioning-updates"); Issue.record("expected throw") }
+    catch let e as XlessError {
+        #expect(e.stage == .sign && e.exitCode == 24)
+        #expect(e.cause.hasPrefix("signing needs 4 changes on the account, and provisioning updates are off (--no-provisioning-updates): register bundle ID \(extID) "))
+        #expect(e.cause.contains("; enable PUSH_NOTIFICATIONS (Push Notifications) on \(appID); replace profile xless \(appID) IOS_APP_STORE (P9, which xless made): "))
+        #expect(e.fix == "make them with `xless provision apply` (and `xless profiles renew P9`), or run `xless sign` once where xless may change the account, then re-run")
+    }
+    #expect(!f.asc.log.isEmpty && f.asc.log.allSatisfy { $0.hasPrefix("GET ") })
+    #expect(f.leftApps.isEmpty)
+}
+
+@Test func withProvisioningUpdatesOffAnAccountThatHasEverythingSigns() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    _ = try await f.run()
+    let before = f.asc.log.count
+    _ = try await f.run(updatesOff: "provisioningUpdates: false")
+    #expect(f.asc.log[before...].allSatisfy { $0.hasPrefix("GET ") })
+}
+
+/// The certificate is not something `sign` makes: its exit code does not depend on the setting.
+@Test func aMissingCertificateIsTheSameErrorWithProvisioningUpdatesOff() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    f.asc.certificate = certJSON(id: "C1", der: try selfSigned(try SigningKey.generate()))
+    do { _ = try await f.run(updatesOff: "--no-provisioning-updates"); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.exitCode == 15 && e.cause.contains("no distribution certificate")) }
 }

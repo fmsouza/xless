@@ -106,7 +106,9 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   exits with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove what is left with
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
-  warning. The exit code is xless's (17 for a failed upload or delivery). Afterwards,
+  warning. The exit code is xless's (17 for a failed upload or delivery). Then it prints the `xless release submit` command
+  that sends this build to App Review ([from TestFlight to the App Store](account.md#release-a-version)); nothing is
+  sent there without it. Afterwards,
   [`xless builds`](apple-account.md#xless-builds) lists the build, waits for its processing, answers its export
   compliance and expires old builds.
 - **One run per work copy.** A run holds a lock on the work copy it builds (the project directory; for an overlay,
@@ -167,7 +169,9 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
 
 - the overlay (or xless.yml) must ask for the mac distribution explicitly:
   `platforms.macos.distribution: app-store` — or `xless ship --platform macos --distribution app-store`;
-- `--to upload` reaches it: the run ships **both** channels — the Developer-ID DMG exactly as the
+- `--to upload` must be on the command line: `xless ship --platform macos` without it ends at the package, also for an
+  app-store distribution, and with it a Developer ID build still ends there;
+- with it, `xless run --platform macos` ships **both** channels — the Developer-ID DMG exactly as the
   [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (the app signed with
   `XLESS_DIST_KEY_FILE` under a `MAC_APP_STORE` provisioning profile embedded as
   `Contents/embedded.provisionprofile`, the pkg signed with `XLESS_INSTALLER_KEY_FILE`, uploaded, delivered to the
@@ -187,6 +191,43 @@ by rcodesign); no `xar` tool is needed on the machine.
 The app's `CFBundleVersion` is the dated build number. On macOS that is `<version>.<YYYYMMDDHHmm>`
 ([build numbers](tauri.md#macos)); Apple documents at most three period-separated integers for a Mac App Store
 build, so if App Store Connect refuses it, set a fixed `build:` of up to three integers in the overlay.
+
+## What `sign` changes on the account
+
+`sign` needs three things on the account for each bundle it signs: its bundle ID, the capabilities its entitlements
+use, and a profile named `xless <bundle ID> <TYPE>`. Before it changes anything it reads them all and prints, on
+standard error, what is missing (or that nothing is), then does just that:
+
+```
+xless: sign: 3 changes on the account:
+  enable PUSH_NOTIFICATIONS (Push Notifications) on com.example.app
+  replace profile xless com.example.app IOS_APP_STORE (8U3T4X5YZA, which xless made): it does not carry PUSH_NOTIFICATIONS, enabled above
+  create profile xless com.example.app.Widget IOS_APP_STORE (iOS App Store Connect for PlugIns/Widget.appex, with certificate 5B2C9D7E1F)
+```
+
+- The names in it come from the project, the built app and Apple: control and invisible characters in them are written
+  out (`\u{1B}`, a line break as `\u{A}`), here, in `sign`'s errors, in the plan of `xless provision` and in what its
+  `apply` says, so none can hide or forge a line. (What rcodesign wrote is set in below its error.)
+- It asks nothing and needs no Apple ID: the App Store Connect API key makes these changes, in CI too.
+- It registers bundle IDs, enables capabilities (a capability that is enabled keeps its settings) and creates
+  profiles. The only thing it ever deletes is a profile of that name, which xless made, when the profile cannot be
+  used: expired or about to (within 7 days), invalid, for another certificate or bundle ID, made before a capability
+  the app uses, or one App Store Connect gives no expiry date or bundle ID for. The plan gives the reason.
+- It signs with the certificate of your key that expires last, when the team has several for it.
+- It never makes or revokes a certificate (`xless sign bootstrap`), and never touches any other profile, app group,
+  iCloud container, device or the app record. `xless provision` plans and makes those
+  ([apple-account.md](apple-account.md#xless-provision)), from the same checks.
+- What it creates is sent again after a failure that says nothing (a dropped connection, HTTP 429 or 5xx) only right
+  after a wait and a reading that shows nothing was made, at most 5 times in all; one that was made is used. A profile
+  whose answer was unclear (not a 429) is sent again once at most. `provision` does the same.
+
+To let `sign` change nothing, pass `--no-provisioning-updates` (`xless sign`, `xless ship`, `xless run …
+--no-provisioning-updates`), or set `provisioningUpdates: false` in xless.yml or the overlay. `sign` then only reads:
+when the account lacks something, it fails with exit code **24** and the list of it, and signs nothing. Make the
+changes where that is wanted (`xless provision apply`, `xless profiles renew <id>`, or a `sign` without the
+restriction), then run again. The flag only restricts: nothing on the command line turns the config's `false` off. The
+key without a value, anywhere but at the top level, or a key that reads like it, is a configuration error (exit 10),
+never ignored. A missing certificate is exit 15 either way.
 
 ## Running `xless ship` yourself
 

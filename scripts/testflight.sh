@@ -48,6 +48,8 @@
 #     volumes xless-corepack, xless-bundle, xless-cocoapods-home, xless-cocoapods-cache (step 2): corepack's package
 #       managers, the app's gems, CocoaPods' specs repo and pod downloads. Docker creates every volume on first use.
 #     XLESS_RN_CLEAN=1 is passed to step 2 (prepare regenerates ios/ and the pods).
+#   XLESS_PROJECT_ORIGIN (step 3; a project directory's container too) is the overlay's, or the project's, path on the
+#   host: the `xless release submit` command printed after the upload names it.
 #   XLESS_BUILD_NUMBER is not defaulted: the overlay's `build:` decides (`dated` asks App Store Connect for the next
 #   number in step 1). When set it is passed to steps 2 and 3.
 #
@@ -766,7 +768,7 @@ if [[ -z "$OVERLAY" ]]; then
     need_images "$image"
     materialise
     run "${docker_run[@]}" --mount "$(bind "$PROJECT" /work)" -w /work ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} \
-      ${sign_store[@]+"${sign_store[@]}"} -e XLESS_BUILD_NUMBER \
+      ${sign_store[@]+"${sign_store[@]}"} -e "XLESS_PROJECT_ORIGIN=$PROJECT" -e XLESS_BUILD_NUMBER \
       "$image" xless ship --platform ios "$@"
   else
     cd "$PROJECT"
@@ -814,6 +816,7 @@ if [[ $use_docker == 1 ]]; then
     fi
     sign_caches=(--mount "$(bind "$cache/work" /cache/work)")
   fi
+  sign_caches+=(-e "XLESS_PROJECT_ORIGIN=$OVERLAY")   # step 3 prints the command that comes next, for the host
 else
   # native: --source only when XLESS_SOURCE overrides the overlay's own `source:`
   xl=(--config "$OVERLAY"); [[ -z "${XLESS_SOURCE:-}" ]] || xl+=(--source "$SOURCE")
@@ -968,19 +971,24 @@ if [[ $step3 == 1 ]]; then
       exit 0
     fi
     # native (a macOS host run): the same two channels, xless straight from the env.
+    if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
+      run "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
+      [[ "$(index "$to")" -lt 6 ]] || run "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
+      echo "==> TestFlight: stopped after $to (--to), nothing delivered" >&2
+      exit 0
+    fi
     set +e
-    shiplog="$(mktemp)"; shipout="$(mktemp)"; tmpfiles+=("$shiplog" "$shipout")
-    waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
+    shipout="$(mktemp)"; tmpfiles+=("$shipout")
+    waited_tee "$shipout" ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
     code=$?
-    [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }
+    [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code" >&2; exit "$code"; }
     dmg="$(grep '\.dmg$' "$shipout" | tail -1 || true)"
     echo "==> DMG: $dmg" >&2
     echo "==> DMG build finished" >&2
     if [[ "$(index "$to")" -ge 6 ]]; then
-      : > "$shiplog"
-      waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
+      waited_tee "$shipout" ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
       code=$?
-      [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
+      [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
       pkg="$(grep '\.pkg$' "$shipout" | tail -1 || true)"
       echo "==> PKG: $pkg" >&2
     fi

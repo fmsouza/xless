@@ -60,8 +60,10 @@ struct ReleaseTargetOptions: ParsableArguments {
                              fix: "pass --app <app ID or bundle ID> (see `xless apps list`)\(directory.config == nil ? ", or --config <overlay>" : "")")
         }
         let samePlatform = m.map { ($0.platform ?? "IOS") == (platform ?? $0.platform ?? "IOS") } ?? false
+        // The project's team goes with the project's own app, however it is named, not with another app.
+        let own = self.app == nil || m != nil || project?.bundleID(for: platform) == app
         return ReleaseWanted(app: app, platform: platform, version: appVersion ?? (manifestVersion && samePlatform ? m?.version : nil),
-                             team: self.app == nil ? project?.team : nil)
+                             team: own ? project?.team : nil)
     }
 }
 
@@ -153,12 +155,16 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
         to submit without such a version is submitted with the app's version); --no-products leaves them out. A \
         submission that stopped half-way is resumed. --dry-run runs the pre-flight and lists the steps.
 
+        Without --build and with no build attached, the build uploaded last from this project (xless run, ship or \
+        upload) is taken, when App Store Connect says that it is the version's newest valid build: it is named before \
+        anything is sent. Otherwise a note says why, and the pre-flight that a build is missing.
+
         Exit codes: 0 submitted (or a dry run that passed), 21 the pre-flight failed (nothing was sent), 22 the version \
         is already in review (nothing was sent), 20 any other error.
         """)
 
     @OptionGroup var target: ReleaseTargetOptions
-    @Option(help: ArgumentHelp("The build to submit: its ID or <version>+<build number> (default: the one attached).", valueName: "build"))
+    @Option(help: ArgumentHelp("The build to submit: its ID or <version>+<build number> (default: the one attached, else the one uploaded last).", valueName: "build"))
     var build: String?
     @Option(help: ArgumentHelp("manual, auto, or a date (2026-12-01, 2026-12-01T09:00:00Z): when the approved version is released.", valueName: "when"))
     var release: String?
@@ -185,6 +191,7 @@ struct ReleaseSubmitCommand: AsyncParsableCommand {
         var options = ReleaseCLI.SubmitOptions(build: try build.map(BuildReference.parse), release: try release.map { try ReleaseChoice.parse($0) },
                                                phased: phased, manifestDir: manifest, dryRun: dryRun)
         options.products = products
+        options.uploaded = { [directory = target.directory] in directory.uploadRecord(platform: $0) }
         if manifest != nil, ManifestReader.read(dir).manifest.app.bundleID == nil {
             options.inheritedBundleID = try target.directory.project()?.bundleID(for: wanted.platform)
         }

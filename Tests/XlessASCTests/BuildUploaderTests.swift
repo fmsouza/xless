@@ -140,6 +140,8 @@ final class RecordLog: @unchecked Sendable {
     #expect(log.records.map(\.state) == ["AWAITING_UPLOAD", "PROCESSING", "COMPLETE", "COMPLETE", "COMPLETE"])
     #expect(log.records.map(\.processingState) == [nil, nil, nil, "PROCESSING", "VALID"])
     #expect(log.records.last == rec)
+    // Every record says what was uploaded.
+    #expect(log.records.allSatisfy { $0.bundleID == "a.b" && $0.version == "1" && $0.build == "1" && $0.platform == .ios })
 }
 
 @Test func recordIsReportedBeforeAFailure() async throws {

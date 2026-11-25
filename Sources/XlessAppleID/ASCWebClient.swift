@@ -99,6 +99,9 @@ public actor ASCWebClient {
         try await json(OlympusSession.self, "GET", Self.sessionPath)
     }
 
+    /// What App Store Connect answers a request for the session with; nil when it could not be reached.
+    func sessionStatus() async -> Int? { try? await send("GET", Self.sessionPath).status }
+
     /// Switches the session to `providerId` and reads the session again to confirm it (fastlane: spaceship/client.rb).
     @discardableResult
     public func switchProvider(to providerId: Int) async throws -> OlympusSession {

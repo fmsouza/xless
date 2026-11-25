@@ -4,15 +4,6 @@ import FoundationNetworking
 #endif
 import XlessCore
 
-public struct UploadRecord: Codable, Sendable, Equatable {
-    public var buildUploadID: String
-    public var buildID: String?
-    public var state: String
-    public var processingState: String?
-    public var messages: [String]
-}
-
-struct AppAttributes: Codable, Sendable { var bundleId: String? }
 struct UploadOperation: Codable, Sendable {
     struct Header: Codable, Sendable { var name: String; var value: String }
     var method: String; var url: String; var offset: Int; var length: Int; var requestHeaders: [Header]?
@@ -35,7 +26,6 @@ struct BuildUploadResource: Codable, Sendable {
     var attributes: BuildUploadAttributes
     var relationships: Relationships?
 }
-struct BuildAttributes: Codable, Sendable { var processingState: String? }
 
 public struct BuildUploader: Sendable {
     let client: ASCClient
@@ -54,12 +44,8 @@ public struct BuildUploader: Sendable {
 
     public func upload(ipa: URL, bundleID: String, version: String, build: String, platform: Platform,
                        onRecord: @Sendable (UploadRecord) throws -> Void = { _ in }) async throws -> UploadRecord {
-        let apps: ASCDocument<[ASCResource<AppAttributes>]> = try await step("looking up the app record", fix: "check the ASC_* credentials and network, then re-run `xless upload`") {
-            try await client.get("/v1/apps", query: [("filter[bundleId]", bundleID)])
-        }
-        guard let app = apps.data.first(where: { $0.attributes.bundleId == bundleID }) else {
-            throw XlessError(.upload, "no app record for \(bundleID)", fix: "create it with `xless apps create --bundle-id \(bundleID) --name <name> --sku <sku> --locale <locale>` (Apple ID sign-in: the API cannot create app records), or in App Store Connect (Apps → +)")
-        }
+        let resources = ASCResources(client: client)
+        let app = try await uploadApp(bundleID: bundleID, resources: resources, fix: "check the ASC_* credentials and network, then re-run `xless upload`")
 
         struct UploadRels: Codable, Sendable { var app: ASCToOne }
         let upload: ASCDocument<ASCResource<BuildUploadAttributes>> = try await step("creating the build upload", fix: "see the App Store Connect error above") {
@@ -95,7 +81,8 @@ public struct BuildUploader: Sendable {
                                 attributes: Commit(uploaded: true, sourceFileChecksums: .init(file: .init(hash: md5, algorithm: "MD5")))))
         }
 
-        var record = UploadRecord(buildUploadID: upload.data.id, buildID: nil, state: "AWAITING_UPLOAD", processingState: nil, messages: [])
+        var record = UploadRecord(buildUploadID: upload.data.id, buildID: nil, state: "AWAITING_UPLOAD", processingState: nil, messages: [],
+                                  bundleID: bundleID, version: version, build: build, platform: platform)
         var reported: UploadRecord?
         func report() throws { if record != reported { try onRecord(record); reported = record } }
         try report()
@@ -122,11 +109,9 @@ public struct BuildUploader: Sendable {
         }
         let uploaded = "the build is uploaded (build \(buildID!)); watch App Store Connect → TestFlight — don't re-upload with the same build number"
         let end = try await BuildProcessing.poll(deadline: deadline, interval: pollInterval, sleep: sleep) {
-            let b: ASCDocument<ASCResource<BuildAttributes>> = try await step("polling build processing", fix: uploaded) {
-                try await client.get("/v1/builds/\(buildID!)")
-            }
-            record.buildID = b.data.id
-            record.processingState = b.data.attributes.processingState
+            let b = try await step("polling build processing", fix: uploaded) { try await ASCBuilds(resources: resources).processing(id: buildID!) }
+            record.buildID = b.id
+            record.processingState = b.state
             try report()
             return record.processingState
         }

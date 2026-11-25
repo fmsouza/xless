@@ -4,7 +4,8 @@ import XlessCore
 // TestFlight on the App Store Connect API key, for `xless testflight` (docs/apple-account.md#xless-testflight) and the
 // `testflight:` block of xless.yml: beta groups, beta testers and their invitations, the builds each group gets, a build's
 // "What to Test", the app's beta information (betaAppLocalizations, betaAppReviewDetail, betaLicenseAgreement), the
-// beta app review submission and public links. Creates are sent once (postOnce); a 409 is settled by reading again.
+// beta app review submission and public links. A create is sent again only after reading shows nothing was made (a group, whose
+// name is not unique, once at most), and a lost answer or a 409 is settled by reading (`ASCResources.settled`); an invitation, which cannot be read back, is sent once.
 
 public struct ASCBetaGroupAttributes: ASCAttributes, Equatable {
     public var name: String?
@@ -243,6 +244,11 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
+    /// A create that was made, or one that was there already.
+    private static func outcome<R: Sendable>(_ settled: ASCSettled<R>) -> Outcome<R> {
+        settled.existed ? .unchanged(settled.value) : .created(settled.value)
+    }
+
     // MARK: Groups
 
     /// Every group of the app, sorted by name, then ID. No `filter[name]`: ASC splits it on commas.
@@ -287,14 +293,11 @@ public struct ASCTestFlight: Sendable {
         struct Attributes: Encodable, Sendable { var name: String; var isInternalGroup: Bool; var hasAccessToAllBuilds: Bool?; var feedbackEnabled: Bool? }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
         let attributes = Attributes(name: name, isInternalGroup: !external, hasAccessToAllBuilds: external ? nil : allBuilds, feedbackEnabled: feedback)
-        do {
+        return Self.outcome(try await resources.settle(.shared, lookup: { try await groups(app: appID).first { $0.name == name && $0.isInternal == !external } }, create: {
             let created: ASCSingle<ASCBetaGroup> = try await resources.create("/v1/betaGroups", type: "betaGroups", attributes: attributes,
                                                                              relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            if let found = try await groups(app: appID).first(where: { $0.name == name && $0.isInternal == !external }) { return .unchanged(found) }
-            throw e
-        }
+            return created.data
+        }))
     }
 
     /// The settings `updateGroup` changes; nil leaves one as it is.
@@ -383,8 +386,17 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
+    /// How many testers the group has.
+    public func testerCount(group groupID: String) async throws -> Int {
+        struct Probe: Decodable { struct Meta: Decodable { struct Paging: Decodable { var total: Int? }; var paging: Paging? }; var meta: Meta? }
+        let path = "/v1/betaGroups/\(groupID)/betaTesters"
+        let probe: Probe = try await resources.client.get(path, query: [("limit", "1")])
+        if let total = probe.meta?.paging?.total { return total }
+        return try await resources.list(path, as: ASCRef.self).items.count
+    }
+
     /// Adds someone to the group: nothing when they are among `members` already; a tester of the app is linked; a new
-    /// one is created with the group (sent once; a 409 is settled by looking the address up and linking it).
+    /// one is created with the group (a lost answer or a 409 is settled by looking the address up, and linking it).
     /// - Parameters:
     ///   - appID: the group's app: only its own tester records can be linked.
     ///   - members: the group's testers (`members(of:)`), read once for several additions.
@@ -401,14 +413,16 @@ public struct ASCTestFlight: Sendable {
         }
         struct Attributes: Encodable, Sendable { var email: String; var firstName: String?; var lastName: String? }
         struct Relationships: Encodable, Sendable { var betaGroups: ASCToMany }
-        do {
+        let settled = try await resources.settle(.unique, lookup: { try await findTester(email: request.email, app: appID) }, create: {
             let created: ASCSingle<ASCBetaTester> = try await resources.create(
                 "/v1/betaTesters", type: "betaTesters", attributes: Attributes(email: request.email, firstName: request.firstName, lastName: request.lastName),
                 relationships: Relationships(betaGroups: ASCToMany([ASCRef(type: "betaGroups", id: group.id)])))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            guard let tester = try await findTester(email: request.email, app: appID) else { throw e }
-            if try await self.members(of: group).contains(where: { $0.id == tester.id }) { return .alreadyInGroup(tester) }
+            return created.data
+        })
+        switch settled {
+        case .made(let tester): return .created(tester)
+        case .found(let tester, let ours):
+            if try await self.members(of: group).contains(where: { $0.id == tester.id }) { return ours ? .created(tester) : .alreadyInGroup(tester) }
             try await link(tester, to: group)
             return .added(tester)
         }
@@ -450,9 +464,33 @@ public struct ASCTestFlight: Sendable {
         return Set(items.map(\.id))
     }
 
-    public func addBuild(_ buildID: String, to groups: [ASCBetaGroup]) async throws {
-        guard !groups.isEmpty else { return }
-        try await resources.addRelationship("/v1/builds/\(buildID)", "betaGroups", groups.map { ASCRef(type: "betaGroups", id: $0.id) })
+    public enum BuildAddition: Sendable {
+        case added
+        /// The group has the build already: nothing was sent, or it got the build by itself meanwhile.
+        case alreadyInGroup
+        /// A group with automatic distribution refused the add and does not list the build (yet): it gets it by itself.
+        case automatic(ASCError)
+
+        /// What to tell about `.automatic`.
+        public func note(build buildID: String, group name: String) -> String? {
+            guard case .automatic(let e) = self else { return nil }
+            return "warning: could not confirm that build \(buildID) is in group \(name) (adding the build to group \(name): \(e.description)); the group has automatic distribution, so the build will appear via automatic distribution — check App Store Connect → TestFlight"
+        }
+    }
+
+    /// Adds the build to the group, unless the group has it. A group with automatic distribution may refuse an add
+    /// (409, 422) of a build it has or gets by itself: that is settled by reading, else it is `.automatic`. Any other
+    /// group's refusal is the error.
+    /// - Parameter current: the groups that have the build (`groupIDs(with:app:)`), read once for several groups.
+    public func addBuild(_ buildID: String, to group: ASCBetaGroup, app appID: String, current: Set<String>) async throws -> BuildAddition {
+        if current.contains(group.id) { return .alreadyInGroup }
+        do {
+            try await resources.addRelationship("/v1/betaGroups/\(group.id)", "builds", [ASCRef(type: "builds", id: buildID)])
+            return .added
+        } catch let e as ASCError where group.attributes.hasAccessToAllBuilds == true && (e.status == 409 || e.status == 422) {
+            if let now = try? await groupIDs(with: buildID, app: appID), now.contains(group.id) { return .alreadyInGroup }
+            return .automatic(e)
+        }
     }
 
     public func removeBuild(_ buildID: String, from groups: [ASCBetaGroup]) async throws {
@@ -478,15 +516,14 @@ public struct ASCTestFlight: Sendable {
         }
         if let loc = try await existing() { return try await update(loc) }
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
-        do {
+        let settled = try await resources.settle(.unique, lookup: existing, create: {
             let created: ASCSingle<ASCBetaBuildLocalization> = try await resources.create(
                 "/v1/betaBuildLocalizations", type: "betaBuildLocalizations", attributes: ["locale": locale, "whatsNew": text],
                 relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            guard let loc = try await existing() else { throw e }
-            return try await update(loc)
-        }
+            return created.data
+        })
+        if case .found(let loc, _) = settled, loc.attributes.whatsNew != text { return try await update(loc) }
+        return Self.outcome(settled)
     }
 
     // MARK: Beta information
@@ -516,29 +553,27 @@ public struct ASCTestFlight: Sendable {
                                 existing: [ASCBetaAppLocalization]? = nil) async throws -> Outcome<ASCBetaAppLocalization>? {
         var all = existing ?? []
         if existing == nil { all = try await localizations(app: appID) }
-        let current = all.first { $0.attributes.locale == locale }
-        let diff = Self.infoDiff(text, have: current?.attributes)
-        if let current {
+        func update(_ current: ASCBetaAppLocalization) async throws -> Outcome<ASCBetaAppLocalization> {
+            let diff = Self.infoDiff(text, have: current.attributes)
             guard !diff.isEmpty else { return .unchanged(current) }
             let updated: ASCSingle<ASCBetaAppLocalization> = try await resources.update(
                 "/v1/betaAppLocalizations/\(current.id)", type: "betaAppLocalizations", id: current.id, attributes: diff)
             return .updated(updated.data)
         }
-        guard !diff.isEmpty else { return nil }
+        if let current = all.first(where: { $0.attributes.locale == locale }) { return try await update(current) }
+        var attributes = Self.infoDiff(text, have: nil)
+        guard !attributes.isEmpty else { return nil }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
-        var attributes = diff
         attributes["locale"] = locale
-        do {
+        let settled = try await resources.settle(.unique, lookup: { try await localizations(app: appID).first { $0.attributes.locale == locale } }, create: { [attributes] in
             let created: ASCSingle<ASCBetaAppLocalization> = try await resources.create(
                 "/v1/betaAppLocalizations", type: "betaAppLocalizations", attributes: attributes,
                 relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            // Lost a race with a localization made meanwhile: set that one.
-            let again = try await localizations(app: appID)
-            guard again.contains(where: { $0.attributes.locale == locale }) else { throw e }
-            return try await setLocalization(app: appID, locale: locale, text, existing: again)
-        }
+            return created.data
+        })
+        // Another one (a race, or Apple's) gets what differs.
+        if case .found(let loc, _) = settled, !Self.infoDiff(text, have: loc.attributes).isEmpty { return try await update(loc) }
+        return Self.outcome(settled)
     }
 
     /// The app's beta App Review details, without the demo account's password.
@@ -603,13 +638,10 @@ public struct ASCTestFlight: Sendable {
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
         struct Inner: Encodable, Sendable { var type = "betaAppReviewSubmissions"; var relationships: Relationships }
         struct Body: Encodable, Sendable { var data: Inner }
-        do {
+        return Self.outcome(try await resources.settle(.unique, lookup: { try await submission(build: buildID) }, create: {
             let created: ASCSingle<ASCBetaSubmission> = try await resources.client.postOnce(
                 "/v1/betaAppReviewSubmissions", body: Body(data: Inner(relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            if let existing = try await submission(build: buildID) { return .unchanged(existing) }
-            throw e
-        }
+            return created.data
+        }))
     }
 }

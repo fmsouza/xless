@@ -192,7 +192,7 @@ public struct ReportFile: Encodable, Sendable, Equatable {
 
 /// Downloads reports into a directory (API key with the Sales or Finance role, or Admin).
 public struct ASCReports: Sendable {
-    public let client: ASCClient
+    let client: ASCClient
 
     public init(client: ASCClient) { self.client = client }
 

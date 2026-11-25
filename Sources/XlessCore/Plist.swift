@@ -14,11 +14,17 @@ public enum Plist {
 
     public static func write(_ dict: [String: Any], to url: URL,
                              format: PropertyListSerialization.PropertyListFormat = .binary, stage: Stage) throws {
-        do {
-            let data = try PropertyListSerialization.data(fromPropertyList: dict, format: format, options: 0)
-            try data.write(to: url)
-        } catch {
-            throw XlessError(stage, "cannot write plist \(url.path): \(error)", fix: "check disk space and permissions")
+        do { try data(dict, format: format, named: url.path, stage: stage).write(to: url) } catch let e as XlessError { throw e } catch {
+            throw cannotWrite(url.path, error, stage)
         }
+    }
+
+    /// `dict` as a property list, to be written to the file `name`, which only the error says.
+    public static func data(_ dict: [String: Any], format: PropertyListSerialization.PropertyListFormat, named name: String, stage: Stage) throws -> Data {
+        do { return try PropertyListSerialization.data(fromPropertyList: dict, format: format, options: 0) } catch { throw cannotWrite(name, error, stage) }
+    }
+
+    private static func cannotWrite(_ name: String, _ error: any Error, _ stage: Stage) -> XlessError {
+        XlessError(stage, "cannot write plist \(name): \(error)", fix: "check disk space and permissions")
     }
 }

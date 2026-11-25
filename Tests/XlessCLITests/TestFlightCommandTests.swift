@@ -137,8 +137,41 @@ private func body(_ r: URLRequest) throws -> JSONValue { try JSONDecoder().decod
     ])
     let out = try await cli(t, said: said).buildGroups(add: true, .id(buildID), app: nil, platform: nil, groups: ["Internal", "Beta"], yes: false)
     #expect(out == "added build 1.2.0+42 (\(buildID)) to Beta\n")
-    #expect(try body(t.requests[3])["data"] == .array([.object(["type": .string("betaGroups"), "id": .string("G2")])]))
+    #expect(call(t.requests[3]) == "POST /v1/betaGroups/G2/relationships/builds")
+    #expect(try body(t.requests[3])["data"] == .array([.object(["type": .string("builds"), "id": .string(buildID)])]))
     #expect(said.lines.contains { $0.contains("beta-review submit") })
+}
+
+/// As after an upload: an automatic group that refuses the add may get the build by itself.
+@Test func aBuildAnAutomaticGroupRefusesIsANoteNotAnError() async throws {
+    let automatic = #"{"type":"betaGroups","id":"G1","attributes":{"name":"Internal","isInternalGroup":true,"hasAccessToAllBuilds":true}}"#
+    let said = Said()
+    let t = FakeTransport([
+        (200, build()), (200, list([automatic, group("G2", "QA")])), (200, list([])),
+        (409, #"{"errors":[{"status":"409","code":"STATE_ERROR","detail":"cannot add"}]}"#), (200, list([])), (204, ""),
+    ])
+    let out = try await cli(t, said: said).buildGroups(add: true, .id(buildID), app: nil, platform: nil, groups: ["Internal", "QA"], yes: false)
+    #expect(out == "added build 1.2.0+42 (\(buildID)) to QA\n")
+    #expect(said.lines.contains { $0.contains("could not confirm that build \(buildID) is in group Internal") && $0.contains("automatic distribution") })
+
+    let alone = FakeTransport([(200, build()), (200, list([automatic])), (200, list([])), (409, #"{"errors":[{"status":"409","detail":"no"}]}"#), (200, list([]))])
+    #expect(try await cli(alone).buildGroups(add: true, .id(buildID), app: nil, platform: nil, groups: ["Internal"], yes: false)
+            == "build 1.2.0+42 (\(buildID)) was not added to Internal, which gets it by automatic distribution\n")
+
+    let late = FakeTransport([(200, build()), (200, list([automatic])), (200, list([])), (409, #"{"errors":[{"status":"409","detail":"no"}]}"#),
+                              (200, list([#"{"type":"betaGroups","id":"G1"}"#]))])
+    #expect(try await cli(late).buildGroups(add: true, .id(buildID), app: nil, platform: nil, groups: ["Internal"], yes: false)
+            == "build 1.2.0+42 is already in Internal; nothing was sent\n")
+}
+
+@Test func anErrorAfterOneGroupSaysWhichOneGotTheBuild() async throws {
+    let said = Said()
+    let t = FakeTransport([(200, build()), (200, list([group("G1", "Internal"), group("G2", "QA")])), (200, list([])), (204, ""),
+                           (403, #"{"errors":[{"status":"403","code":"FORBIDDEN_ERROR","detail":"no"}]}"#)])
+    await #expect(throws: ASCError.self) {
+        _ = try await cli(t, said: said).buildGroups(add: true, .id(buildID), app: nil, platform: nil, groups: ["Internal", "QA"], yes: false)
+    }
+    #expect(said.lines == ["note: build 1.2.0+42 (\(buildID)) was added to Internal before this error"])
 }
 
 @Test func anUnprocessedBuildIsNotSubmitted() async throws {

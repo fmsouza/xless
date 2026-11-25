@@ -347,7 +347,7 @@ struct CertCLI {
 
     func revoke(_ id: String, yes: Bool) async throws -> String {
         let c = try await certificates.get(id: id)
-        let profiles = try await certificates.profiles(using: c.id)
+        let profiles = try await ASCProfiles(resources: certificates.resources).profiles(holding: c.id)
         let store = storeFile()
         let keys = CertificateKeyStore.entries(holding: c.id, in: store)
         let type = CertificateType(rawValue: c.certificateType)
@@ -382,11 +382,5 @@ enum CertTable {
         }).rendered
     }
 
-    static func day(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: date)
-    }
+    static func day(_ date: Date) -> String { ASCDate.day(date) }
 }

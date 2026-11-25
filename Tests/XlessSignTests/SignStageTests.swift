@@ -38,11 +38,7 @@ struct SignFixture {
             (200, #"{"data":[\#(certJSON(id: "C1", der: try selfSigned(key)))]}"#),
             (200, #"{"data":[{"type":"bundleIds","id":"B1","attributes":{"identifier":"a.b","platform":"UNIVERSAL"}}]}"#),
         ]
-        transport = MockTransport(head + (tail ?? [
-            (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(profile)","expirationDate":"\#(future)"}}]}"#),
-            (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
-            (200, #"{"data":{"type":"bundleIds","id":"B1"}}"#),
-        ]))
+        transport = MockTransport(head + (tail ?? usedProfile(profile)))
     }
 
     func run() async throws -> URL {
@@ -63,23 +59,24 @@ let ageRange = "com.apple.developer.declared-age-range"
 func teamProfile() -> [String: Any] { ["application-identifier": "ABCDE12345.a.b", "com.apple.developer.team-identifier": "ABCDE12345",
                                   "beta-reports-active": true, "get-task-allow": false] }
 
-/// ASC replies for a forced profile refresh: list the old one, delete it, create `fresh`.
-func refreshSteps(oldProfile: String, fresh: [String: Any]) throws -> [(Int, String)] {
-    let freshB64 = try fakeProfile(fresh).base64EncodedString()
+/// ASC replies to reading the profile signing uses: the listing, the profile, its certificates.
+func usedProfile(_ content: String) -> [(Int, String)] {
+    let attributes = #""name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","expirationDate":"\#(future)""#
     return [
-        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(oldProfile)","expirationDate":"\#(future)"}}]}"#),
-        (204, ""),
-        (201, #"{"data":{"type":"profiles","id":"P2","attributes":{"profileContent":"\#(freshB64)"}}}"#),
+        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{\#(attributes)}}]}"#),
+        (200, #"{"data":{"type":"profiles","id":"P1","attributes":{\#(attributes),"profileContent":"\#(content)"},"relationships":{"bundleId":{"data":{"type":"bundleIds","id":"B1"}}}}}"#),
+        (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
     ]
+}
+
+/// ASC replies to replacing that profile: delete it, create `fresh`.
+func refreshSteps(fresh: [String: Any]) throws -> [(Int, String)] {
+    [(204, ""), (201, #"{"data":{"type":"profiles","id":"P2","attributes":{"profileContent":"\#(try fakeProfile(fresh).base64EncodedString())"}}}"#)]
 }
 
 @Test func entitlementGateFailureLeavesNoSignedBundle() async throws {
     let old = try fakeProfile(teamProfile()).base64EncodedString()
-    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [ageRange: true], tail: [
-        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(old)","expirationDate":"\#(future)"}}]}"#),
-        (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
-        (200, #"{"data":{"type":"bundleIds","id":"B1"}}"#),
-    ] + (try refreshSteps(oldProfile: old, fresh: teamProfile())))
+    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [ageRange: true], tail: usedProfile(old) + (try refreshSteps(fresh: teamProfile())))
     try FileManager.default.createDirectory(at: f.outputDir.appendingPathComponent("X.app"), withIntermediateDirectories: true)   // stale
     do { _ = try await f.run(); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.stage == .sign); #expect(e.cause.contains(ageRange)) }
@@ -118,11 +115,7 @@ func refreshSteps(oldProfile: String, fresh: [String: Any]) throws -> [(Int, Str
 
 @Test func unmappedGatedKeyNotGrantedRefreshesProfileThenRefuses() async throws {
     let old = try fakeProfile(teamProfile()).base64EncodedString()
-    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [appAttest: "production"], tail: [
-        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(old)","expirationDate":"\#(future)"}}]}"#),
-        (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
-        (200, #"{"data":{"type":"bundleIds","id":"B1"}}"#),
-    ] + (try refreshSteps(oldProfile: old, fresh: teamProfile())))
+    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [appAttest: "production"], tail: usedProfile(old) + (try refreshSteps(fresh: teamProfile())))
     do { _ = try await f.run(); Issue.record("expected throw") }
     catch let e as XlessError {
         #expect(e.cause == "entitlement '\(appAttest)' is not granted by the provisioning profile for a.b; xless cannot enable this capability automatically")
@@ -135,11 +128,7 @@ func refreshSteps(oldProfile: String, fresh: [String: Any]) throws -> [(Int, Str
 @Test func unmappedGatedKeyEnabledByHandIsPickedUpByRefresh() async throws {
     var granted = teamProfile(); granted[appAttest] = "production"
     let old = try fakeProfile(teamProfile()).base64EncodedString()
-    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [appAttest: "production"], tail: [
-        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(old)","expirationDate":"\#(future)"}}]}"#),
-        (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
-        (200, #"{"data":{"type":"bundleIds","id":"B1"}}"#),
-    ] + (try refreshSteps(oldProfile: old, fresh: granted)))
+    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [appAttest: "production"], tail: usedProfile(old) + (try refreshSteps(fresh: granted)))
     do { _ = try await f.run(); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.cause.contains("rcodesign")) }
 }
@@ -147,11 +136,7 @@ func refreshSteps(oldProfile: String, fresh: [String: Any]) throws -> [(Int, Str
 @Test func memoryLimitKeyIsPortalOnlyAndGoesToProfileCheck() async throws {
     let key = "com.apple.developer.kernel.increased-memory-limit"
     let old = try fakeProfile(teamProfile()).base64EncodedString()
-    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [key: true], tail: [
-        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(old)","expirationDate":"\#(future)"}}]}"#),
-        (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
-        (200, #"{"data":{"type":"bundleIds","id":"B1"}}"#),
-    ] + (try refreshSteps(oldProfile: old, fresh: teamProfile())))
+    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [key: true], tail: usedProfile(old) + (try refreshSteps(fresh: teamProfile())))
     do { _ = try await f.run(); Issue.record("expected throw") }
     catch let e as XlessError {
         #expect(e.cause.contains("'\(key)' is not granted by the provisioning profile"))
@@ -166,11 +151,7 @@ func refreshSteps(oldProfile: String, fresh: [String: Any]) throws -> [(Int, Str
 /// the entitlements' content reaches the capability gate.
 @Test func absoluteEntitlementsPathIsReadAsIs() async throws {
     let old = try fakeProfile(teamProfile()).base64EncodedString()
-    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [ageRange: true], tail: [
-        (200, #"{"data":[{"type":"profiles","id":"P1","attributes":{"name":"xless a.b IOS_APP_STORE","profileState":"ACTIVE","profileType":"IOS_APP_STORE","profileContent":"\#(old)","expirationDate":"\#(future)"}}]}"#),
-        (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#),
-        (200, #"{"data":{"type":"bundleIds","id":"B1"}}"#),
-    ] + (try refreshSteps(oldProfile: old, fresh: teamProfile())), absoluteEntitlements: true)
+    let f = try SignFixture(profileEntitlements: teamProfile(), userEntitlements: [ageRange: true], tail: usedProfile(old) + (try refreshSteps(fresh: teamProfile())), absoluteEntitlements: true)
     #expect(try f.config.platform(.ios).entitlements?.hasPrefix("/") == true)
     do { _ = try await f.run(); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.stage == .sign); #expect(e.cause.contains(ageRange)) }

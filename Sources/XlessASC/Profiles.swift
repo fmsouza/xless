@@ -124,7 +124,7 @@ extension ASCKeptResource where A == ASCProfileAttributes {
     public var profileType: String { attributes.profileType ?? "" }
     /// The profile itself (a CMS envelope around a plist), when the response carried `profileContent`.
     public var content: Data? { attributes.profileContent.flatMap { Data(base64Encoded: $0) } }
-    public var expires: Date? { attributes.expirationDate.flatMap(ASCCertificates.parseDate) }
+    public var expires: Date? { attributes.expirationDate.flatMap(ASCDate.parse) }
     /// The resource ID of the profile's bundle ID, when the response carried the linkage (`include=bundleId`).
     public var bundleIDResourceID: String? { resource.relationships?["bundleId"]?["data"]?["id"]?.string }
 }
@@ -160,9 +160,9 @@ public struct ASCProfiles: Sendable {
         return ASCProfileListing(profiles: sorted, bundleIDs: bundles)
     }
 
-    /// The profiles named exactly `name` (Apple's filter may match more loosely).
-    public func find(name: String) async throws -> [ASCProfile] {
-        try await list(name: name).profiles.filter { $0.name == name }
+    /// The profiles named exactly `name` (Apple's filter may match more loosely), of `type` when given.
+    public func find(name: String, type: ProfileType? = nil) async throws -> [ASCProfile] {
+        try await list(types: type.map { [$0] } ?? [], name: name).profiles.filter { $0.name == name && (type == nil || $0.profileType == type?.rawValue) }
     }
 
     /// One profile and its bundle ID; `withContent` also fetches the profile itself.
@@ -182,28 +182,64 @@ public struct ASCProfiles: Sendable {
         try await resources.relationship("\(Self.path)/\(id)", "certificates").map(\.id)
     }
 
+    /// The resource ID of the profile's bundle ID (for a response without the linkage).
+    public func bundleIDResourceID(of id: String) async throws -> String? {
+        try await resources.toOneRelationship("\(Self.path)/\(id)", "bundleId")?.id
+    }
+
     /// The IDs of the devices in a profile, every page.
     public func deviceIDs(of id: String) async throws -> [String] {
         try await resources.relationship("\(Self.path)/\(id)", "devices").map(\.id)
     }
 
+    /// The team's profiles that contain the certificate `id` (they stop working once it is revoked): every page of
+    /// profiles, and every certificate of each. A listing carries at most 50 of a profile's certificates
+    /// (`limit[certificates]`, Apple's maximum); a profile that may hold more (its `meta.paging.total` says so, or, without
+    /// a total, it lists 50) and does not list `id` among them is read in full from its certificates relationship.
+    public func profiles(holding id: String) async throws -> [ASCCertificateProfile] {
+        let query = ASCQuery(fields: [("profiles", ["name", "profileType", "profileState", "certificates"]), ("certificates", ["certificateType"])],
+                             include: ["certificates"], extra: [("limit[certificates]", "\(Self.includedCertificates)")])
+        let listing = try await resources.list(Self.path, query: query, as: ASCAnyResource.self)
+        var found: [ASCCertificateProfile] = []
+        for profile in listing.items {
+            let relationship = profile.relationships?["certificates"]
+            guard case .array(let refs)? = relationship?["data"] else { continue }
+            var contains = refs.contains { $0["id"]?.string == id }
+            if !contains, Self.mayHoldMore(listed: refs.count, total: relationship?["meta"]?["paging"]?["total"]) {
+                contains = try await certificateIDs(of: profile.id).contains(id)
+            }
+            guard contains else { continue }
+            found.append(ASCCertificateProfile(id: profile.id, name: profile.attributes?["name"]?.string ?? "",
+                                               profileType: profile.attributes?["profileType"]?.string,
+                                               profileState: profile.attributes?["profileState"]?.string))
+        }
+        return found.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
+    }
+
+    /// How many of a profile's certificates a profile listing includes (Apple's maximum for `limit[certificates]`).
+    static let includedCertificates = 50
+
+    /// Whether a profile listing `listed` certificates may hold more: its total says so, or it has no total and is full.
+    static func mayHoldMore(listed: Int, total: JSONValue?) -> Bool {
+        switch total {
+        case .int(let n)?: n > listed
+        case .double(let n)?: Int(n) > listed
+        default: listed >= includedCertificates
+        }
+    }
+
     struct CreateAttributes: Encodable, Sendable { var name: String; var profileType: String }
     struct CreateRelationships: Encodable, Sendable { var bundleId: ASCToOne; var certificates: ASCToMany; var devices: ASCToMany? }
 
-    /// Creates a profile. `deviceIDs` is sent only when not empty. The POST is sent once, never retried, unless `once` is
-    /// false (the `sign` stage, which always retried it and deletes a same-named profile first).
+    /// Creates a profile: one request. `deviceIDs` is sent only when not empty. `sign` and `provision` send it again only
+    /// after reading shows nothing was made (`APISigningAccount.createProfile`); `xless profiles create` never does.
     public func create(name: String, type: ProfileType, bundleIDResourceID: String, certificateIDs: [String],
-                       deviceIDs: [String] = [], once: Bool = true) async throws -> ASCProfile {
+                       deviceIDs: [String] = []) async throws -> ASCProfile {
         let relationships = CreateRelationships(
             bundleId: ASCToOne(ASCRef(type: "bundleIds", id: bundleIDResourceID)),
             certificates: ASCToMany(certificateIDs.map { ASCRef(type: "certificates", id: $0) }),
             devices: deviceIDs.isEmpty ? nil : ASCToMany(deviceIDs.map { ASCRef(type: "devices", id: $0) }))
         let attributes = CreateAttributes(name: name, profileType: type.rawValue)
-        if !once {
-            let body = ASCResources.Body(data: .init(type: "profiles", id: nil, attributes: attributes, relationships: relationships))
-            let created: ASCSingle<ASCProfile> = try await resources.client.post(Self.path, body: body)
-            return created.data
-        }
         let created: ASCSingle<ASCProfile> = try await resources.create(Self.path, type: "profiles", attributes: attributes, relationships: relationships)
         return created.data
     }

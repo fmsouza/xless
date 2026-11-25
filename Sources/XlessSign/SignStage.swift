@@ -3,22 +3,40 @@ import XlessASC
 import XlessCore
 
 public enum SignStage {
+    /// `updatesOff`: what turned provisioning updates off (`--no-provisioning-updates`): then nothing on the account is
+    /// changed, and what would have to be is the error. nil: what signing needs is made.
+    /// `say`: where the plan of what changes on the account is printed (standard error).
     /// `manifest`: the bundles' entitlements as the build recorded them (React Native). Without it the app's come from
     /// `platforms.<p>.entitlements` and an app extension, if any, gets none.
     public static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
-                           secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest? = nil) async throws -> URL {
+                           secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest? = nil,
+                           updatesOff: String? = nil, say: (String) -> Void = standardError) async throws -> URL {
         try await run(input: input, outputDir: outputDir, platform: platform, config: config, project: project, secrets: secrets,
-                      client: client, manifest: manifest, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
+                      client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
     }
 
     /// `codesign` runs rcodesign with the given arguments (a test seam: tests read the entitlement files it names).
+    /// Errors name what the build and Apple chose (an extension's path and bundle ID, Apple's own text): they leave as
+    /// `[sign]` errors of one line (rcodesign's with its own lines below), with nothing in them that drives the terminal.
     static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL, secrets: Secrets,
-                    client: ASCClient, manifest: EntitlementsManifest?, codesign: ([String]) throws -> Void) async throws -> URL {
-        try await Files.atomicOutput(outputDir) { partial in
-            try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
-                           client: client, manifest: manifest, codesign: codesign)
+                    client: ASCClient, manifest: EntitlementsManifest?, updatesOff: String? = nil, say: (String) -> Void = { _ in },
+                    codesign: ([String]) throws -> Void) async throws -> URL {
+        do {
+            return try await Files.atomicOutput(outputDir) { partial in
+                try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
+                               client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: codesign)
+            }
+        } catch let failed as ToolFailed {
+            throw failed.error.printableOutput
+        } catch {
+            throw XlessError.wrapping(error, stage: .sign).printable
         }
     }
+
+    public static let standardError: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+
+    /// rcodesign failed: its error ends with what it wrote.
+    private struct ToolFailed: Error { var error: XlessError }
 
     /// A bundle with the profile it is signed under.
     struct Provisioned {
@@ -28,7 +46,7 @@ public enum SignStage {
     }
 
     static func sign(input: URL, into outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
-                     secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest?,
+                     secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest?, updatesOff: String?, say: (String) -> Void,
                      codesign: ([String]) throws -> Void) async throws -> URL {
         let pc = try config.platform(platform)
         let distribution = config.distribution(for: platform)
@@ -49,24 +67,23 @@ public enum SignStage {
         }
         let targets = try SignTargets.plan(app: input, platform: platform, appBundleID: bundleID, appEntitlements: user,
                                            manifest: manifest, teamID: config.teamID, declared: declared)
-        let certService = CertificateService(client: client)
-        let profiles = ProfileService(client: client)
-        let cert = try await certService.find(matching: key, kind: kind)
-        var provisioned: [Provisioned] = []
-        for target in targets {
-            provisioned.append(try await provision(target, platform: platform, distribution: distribution, certificateID: cert.id,
-                                                    profiles: profiles, client: client))
-        }
+        let resources = ASCResources(client: client)
+        let cert = try await ASCCertificates(resources: resources).find(for: key, kind: kind)
+        let account = APISigningAccount(resources: resources, stage: .sign)
+        let plan = try await SigningPlanner(account: account).plan(targets.map {
+            SigningTarget(platform: platform, distribution: distribution, bundleID: $0.bundleID, entitlements: $0.entitlements,
+                          extensionPath: $0.path.isEmpty ? nil : $0.path)
+        }, certificate: cert.id)
+        if let updatesOff { try plan.requireNothing(off: updatesOff) }
+        say(plan.text)
+        let profiles = try await SigningApplier(account: account).apply(plan)
+        let provisioned = try zip(targets, profiles).map { Provisioned(target: $0, profile: $1, granted: try Entitlements.extract(fromProfile: $1)) }
 
         // Every check runs before the bundle is touched.
-
         for p in provisioned { try Entitlements.checkTeam(profile: p.granted, teamID: config.teamID) }
         if platform == .ios { try Entitlements.checkAppGroups(provisioned.map { ($0.target.bundleID, $0.target.entitlements, $0.granted) }) }
         let merged = try provisioned.map {
             try Entitlements.merge(user: $0.target.entitlements, profile: $0.granted, platform: platform, teamID: config.teamID, bundleID: $0.target.bundleID)
-        }
-        guard let der = cert.attributes.certificateContent.flatMap({ Data(base64Encoded: $0) }) else {
-            throw XlessError(.sign, "certificate \(cert.id) has no content", fix: "re-run; if it persists, check the certificate in App Store Connect")
         }
 
         let app = try Files.copyBundle(input, intoFreshDir: outputDir)
@@ -78,51 +95,24 @@ public enum SignStage {
             try p.profile.write(to: profileURL)
         }
 
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-sign-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        let keyURL = tmp.appendingPathComponent("key.pem"), certURL = tmp.appendingPathComponent("cert.pem"), entURL = tmp.appendingPathComponent("ent.plist")
-        guard FileManager.default.createFile(atPath: keyURL.path, contents: Data(key.pem.utf8), attributes: [.posixPermissions: 0o600]) else {
-            throw XlessError(.sign, "cannot write signing key to temp dir", fix: "check free space and permissions of \(FileManager.default.temporaryDirectory.path)")
-        }
-        let certPEM = "-----BEGIN CERTIFICATE-----\n\(der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
-        try certPEM.write(to: certURL, atomically: true, encoding: .utf8)
-        var nestedEntitlements: [(path: String, file: URL)] = []
-        for (i, p) in provisioned.enumerated() {
-            if p.target.path.isEmpty { try Plist.write(merged[i], to: entURL, format: .xml, stage: .sign); continue }
-            let url = tmp.appendingPathComponent("ent-\(i).plist")
-            try Plist.write(merged[i], to: url, format: .xml, stage: .sign)
-            nestedEntitlements.append((p.target.path, url))
-        }
-
         // Loose Mach-Os (e.g. a Tauri bundle.resources dylib) and nested code bundles (e.g. an embedded framework) get the
         // hardened runtime like the main executable.
         let info = try Plist.read(app.appendingPathComponent(layout.infoPlist), stage: .sign)
         let main = [layout.executableDir, info["CFBundleExecutable"] as? String ?? pc.product].filter { !$0.isEmpty }.joined(separator: "/")
         let runtimePaths = distribution == .developerID ? RCodesign.hardenedRuntimePaths(in: app, mainExecutable: main) : []
-        try codesign(RCodesign.signArguments(bundle: app, keyPEM: keyURL, certPEM: certURL, entitlements: entURL, distribution: distribution,
-                                             runtimePaths: runtimePaths, nestedEntitlements: nestedEntitlements))
-        return app
-    }
 
-    /// Registers the bundle ID, enables the capabilities its entitlements need and gets its profile.
-    static func provision(_ target: SignTarget, platform: Platform, distribution: Distribution, certificateID: String, profiles: ProfileService,
-                          client: ASCClient) async throws -> Provisioned {
-        let needed = Capabilities.required(entitlements: target.entitlements, platform: platform)
-        let resource = try await profiles.ensureBundleID(identifier: target.bundleID, platform: platform)
-        let enabled = try await Capabilities.ensure(needed.requests, bundleIDResourceID: resource, identifier: target.bundleID, client: client)
-        let type = ProfileType.for(platform: platform, distribution: distribution)
-        var profile = try await profiles.ensureProfile(bundleIDResourceID: resource, certificateID: certificateID,
-                                                       type: type, bundleIdentifier: target.bundleID, forceNew: enabled)
-        var granted = try Entitlements.extract(fromProfile: profile)
-        // A capability enabled (or an app group assigned) by hand in the portal only reaches an existing profile once it
-        // is regenerated. A keychain group outside the team's pattern is not something a new profile changes.
-        if !enabled, Entitlements.problems(user: target.entitlements, profile: granted, platform: platform)
-            .contains(where: { $0.key != Entitlements.keychainGroupsKey }) {
-            profile = try await profiles.ensureProfile(bundleIDResourceID: resource, certificateID: certificateID,
-                                                       type: type, bundleIdentifier: target.bundleID, forceNew: true)
-            granted = try Entitlements.extract(fromProfile: profile)
+        try PrivateFiles.with(stage: .sign) { files in
+            let signer = try files.signer(key: key, certificate: cert.der)
+            var entURL = files.directory.appendingPathComponent("ent.plist")
+            var nestedEntitlements: [(path: String, file: URL)] = []
+            for (i, p) in provisioned.enumerated() {
+                if p.target.path.isEmpty { entURL = try files.write(plist: merged[i], as: "ent.plist"); continue }
+                nestedEntitlements.append((p.target.path, try files.write(plist: merged[i], as: "ent-\(i).plist")))
+            }
+            let arguments = RCodesign.signArguments(bundle: app, keyPEM: signer.key, certPEM: signer.certificate, entitlements: entURL, distribution: distribution,
+                                                    runtimePaths: runtimePaths, nestedEntitlements: nestedEntitlements)
+            do { try codesign(arguments) } catch { throw ToolFailed(error: XlessError.wrapping(error, stage: .sign)) }
         }
-        return Provisioned(target: target, profile: profile, granted: granted)
+        return app
     }
 }

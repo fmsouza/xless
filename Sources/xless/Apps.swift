@@ -55,7 +55,7 @@ struct KeyAppCreationAPI: AppCreationAPI {
     let issuerID: String
 
     init(resources: ASCResources) {
-        apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources); issuerID = resources.client.issuerID
+        apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources); issuerID = resources.issuerID
     }
 
     func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
@@ -237,7 +237,7 @@ struct AppCLI {
     func pricePoints(_ argument: String, territory: String, price: String?) async throws -> String {
         let app = try await apps.resolve(argument)
         let points = ASCPricePoints(resources: apps.resources)
-        let list = try await points.list(app: app.id, territory: territory)
+        let list = try await points.list(.app, app.id, territory: territory)
         guard let price else {
             if json { return try ASCOutput.json(["data": list]) }
             if list.isEmpty { return "App Store Connect lists no price point in \(territory) for \(app.name)\n" }
@@ -246,7 +246,7 @@ struct AppCLI {
             }).rendered
         }
         let point = try ASCPricePoints.resolve(price, in: list, territory: territory, app: argument)
-        let equal = try await points.equalizations(of: point.id)
+        let equal = try await points.equalizations(.app, of: point.id)
         if json { return try ASCOutput.json(PricePoint(pricePoint: point, equalizations: equal)) }
         var out = "\(CustomerPrice.display(point.customerPrice)) in \(territory)\(point.currency.map { " (\($0))" } ?? ""): price point \(point.id)"
         out += point.proceeds.map { ", proceeds \($0)\n" } ?? "\n"

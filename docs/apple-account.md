@@ -34,7 +34,7 @@ and send where, in [security.md](security.md).
 
 | Option | What it does |
 |---|---|
-| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). When the xless.yml here names a team that the Apple ID is not a member of, that is an error: another one is used only with `--team`. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
+| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). When the xless.yml here names a team that the Apple ID is not a member of, that is an error: another one is used only with `--team`. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app (for `xless release`: another app than the project's). Keys from the environment are used as they are. |
 | `--json` | Prints JSON instead of a table (see [JSON output](#json-output)). |
 | `--yes` | Answers yes to the confirmation that every destructive call asks. Without a terminal, such a call is refused unless `--yes` is given; it never goes ahead silently. |
 | `--verbose` | Shows every HTTP exchange with Apple on standard error. The trace never shows the key, the token, a cookie or a secret field: they read `<redacted>`. |
@@ -314,6 +314,9 @@ prints `{"data": [capabilities]}`, `enable` prints the capability and `disable` 
 (empty when it was not enabled); each is App Store Connect's resource.
 
 ### What `sign` enables
+
+`sign` prints what it changes on the account first, or changes nothing with `--no-provisioning-updates`
+([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)).
 
 `sign` enables, on each bundle's identifier, the capability of every entitlement key that has one, with the setting
 the entitlements imply: iCloud with CloudKit (`XCODE_6`), Sign in with Apple as its own primary app, and Data Protection
@@ -800,14 +803,15 @@ by its ID or `<version>+<build number>`, as in [`xless builds`](#xless-builds) (
   kind is an error). `update` renames a group or turns its feedback on or off, sending only what differs. `delete`
   asks first (or needs `--yes`).
 - **Testers.** `add` adds each address to the group: someone already in it is reported and nothing is sent; an
-  existing tester is linked to the group; a new one is created with it (sent once; Apple emails them). The testers of an
+  existing tester is linked to the group; a new one is created with it (Apple emails them). The testers of an
   internal group must be App Store Connect users of the team: an address that is not one is refused, with the
   [`xless users invite`](#xless-users) to run. That check reads `/v1/users`, which needs an Admin key; without one, a
   note says so and Apple decides. `--first-name` and `--last-name` name a new tester (one address at a time).
   `remove` takes testers out of a group, or without `--group` out of every group and build of the app; it asks first.
   `invite` has Apple email testers of the app their invitation again. Addresses are compared without regard to case.
-- **Builds.** `builds add` adds the build to the groups that lack it (groups that have it are left alone); an external
-  group's testers get it once Apple approves it. `builds remove` asks first. `whats-new set` sets the build's What to
+- **Builds.** `builds add` adds the build to the groups that lack it (groups that have it are left alone), as
+  the delivery after an upload does: when a group with automatic distribution refuses the add, a note says the build
+  reaches it by itself. An external group's testers get it once Apple approves it. `builds remove` asks first. `whats-new set` sets the build's What to
   Test for `--locale` (default `en-US`, at most 4000 characters, `--text` or `--file`); the same text sends nothing.
   `whats-new show` prints every locale's.
 - **Beta information.** `beta-info set` sets, with only what differs: the texts of `--locale` (`--description` or
@@ -877,8 +881,7 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   | products | when the manifest lists in-app purchases or subscriptions (and no `--no-products`): each one on App Store Connect, none missing metadata |
 
   `--release manual|auto|<date>` and `--phased` are what the submission sets: app.yml's `release` values are not
-  compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (`--build`;
-  default: the one attached), the release type (`manual`: [`publish`](#xless-release) releases it; `auto`: on
+  compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (below), the release type (`manual`: [`publish`](#xless-release) releases it; `auto`: on
   approval; a date `2026-12-01` (midnight UTC) or a time on the hour `2026-12-01T09:00:00Z`: not before then), the
   phased release (`--phased` adds one, `--no-phased` removes one that has not started), then the review submission:
   created, the version added, the in-app purchases and subscriptions the manifest lists added
@@ -886,10 +889,21 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   a build attached) is **resumed** by running it again; a version rejected by App Review is submitted again in its
   submission. `--dry-run` runs the pre-flight and lists the steps.
 
+  **The build** is the one `--build` names, else the one the version carries. With neither, it is the one uploaded last
+  from this project (`upload.json` in `.xless/build/<platform>/`, or in the overlay's work copy with `--config`; a React
+  Native build in Docker keeps it in a volume, so name the build there). That file is only a hint: App Store Connect
+  must say that the build is of this app, platform and version, valid, not expired, and the newest valid one of the
+  version. It is named on standard error before anything is sent, also with `--dry-run`. In every other case a note says
+  why none was taken, and the pre-flight that the version has no build. A version that carries another build than the one
+  uploaded last keeps it, with a note. A file that is a link, larger than 64 KiB or not
+  readable is ignored with a note. `xless run`, `ship` and `upload` print the whole command, with `--build`, once the
+  build is processed: it can be pasted in any directory, since it names the project's `appstore/` (`--dir`) or the overlay
+  (`--config`) by its absolute path, and with it the listing and the team whose key is preferred.
+
   Exit codes: **0** submitted (or a dry run that passed), **21** the pre-flight failed (nothing was sent), **22** the
   version is already in review (nothing was sent), **20** any other error. With `--json`, one document:
   `{"outcome": "submitted" | "dryRun" | "preflightFailed" | "alreadyInReview", "appID", "bundleID", "platform",
-  "version", "versionID", "versionState", "build", "buildID", "submissionID", "submissionState", "steps", "notes",
+  "version", "versionID", "versionState", "build", "buildID", "buildSource": "named" | "attached" | "lastUpload", "submissionID", "submissionState", "steps", "notes",
   "preflight": {"passed", "checks": [{"name", "status": "ok" | "failed" | "warning" | "skipped", "message", "fix"}]}}`.
 - **`status`** shows the version's state, its release type, its build, its phased release (state, day of 7) and the
   review submissions that hold it, with their items' states. App Review's reasons for a rejection are not in the App

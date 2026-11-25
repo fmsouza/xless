@@ -47,9 +47,9 @@ extension SigningKey {
         try Self.writeExclusively(Data(pem.utf8), toPath: path, mode: 0o600)
     }
 
-    /// Creates `path` with O_CREAT|O_EXCL, writes `data`, and forces `mode` regardless of umask.
+    /// Creates `path` with O_CREAT|O_EXCL|O_NOFOLLOW, writes `data`, and forces `mode` regardless of umask.
     public static func writeExclusively(_ data: Data, toPath path: String, mode: mode_t) throws {
-        let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, mode)
+        let fd = open(path, O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC, mode)
         guard fd >= 0 else {
             let why = errno == EEXIST ? "already exists" : String(cString: strerror(errno))
             throw XlessError(.sign, "cannot create \(path): \(why)", fix: "choose another path; never overwrite a stored key")

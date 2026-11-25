@@ -174,10 +174,15 @@ public struct ASCApps: Sendable {
         } catch let e as ASCError where e.status == 404 { return false }
     }
 
-    /// The app with exactly this bundle identifier.
+    /// The app with exactly this bundle identifier; an app whose identifier cannot be read is an error, not another app.
     public func find(bundleID: String) async throws -> ASCApp? {
         let listing = try await resources.list(Self.path, query: ASCQuery(filters: [("bundleId", bundleID)]), as: ASCApp.self)
-        return listing.items.first { $0.bundleID == bundleID }
+        return try listing.items.first { try $0.resource.text("bundleId") == bundleID }
+    }
+
+    /// Whether App Store Connect takes the key at all: the smallest read there is (one app, whichever comes first).
+    public func probe() async throws {
+        _ = try await resources.client.request("GET", Self.path, query: [("limit", "1")])
     }
 
     /// The app a command names: an app ID or a bundle identifier (looked up).
@@ -193,12 +198,19 @@ public struct ASCApps: Sendable {
         return found
     }
 
-    public func infos(of appID: String) async throws -> [ASCAppInfo] {
-        try await resources.list("\(Self.path)/\(appID)/appInfos", as: ASCAppInfo.self).items
+    public func infos(of appID: String) async throws -> [ASCAppInfo] { try await infos(of: appID, as: ASCAppInfoAttributes.self) }
+
+    /// The app infos with the attributes `A` reads, and the linkage of the relationships in `include`.
+    public func infos<A: ASCAttributes>(of appID: String, include: [String] = [], as: A.Type) async throws -> [ASCKeptResource<A>] {
+        try await resources.list("\(Self.path)/\(appID)/appInfos", query: ASCQuery(include: include), as: ASCKeptResource<A>.self).items
     }
 
-    public func versions(of appID: String) async throws -> [ASCAppStoreVersion] {
-        try await resources.list("\(Self.path)/\(appID)/appStoreVersions", as: ASCAppStoreVersion.self).items
+    public func versions(of appID: String) async throws -> [ASCAppStoreVersion] { try await versions(of: appID, as: ASCAppStoreVersionAttributes.self) }
+
+    /// The App Store versions (of `platform` when given) with the attributes `A` reads.
+    public func versions<A: ASCAttributes>(of appID: String, platform: String? = nil, as: A.Type) async throws -> [ASCKeptResource<A>] {
+        let query = ASCQuery(filters: platform.map { [("platform", $0)] } ?? [])
+        return try await resources.list("\(Self.path)/\(appID)/appStoreVersions", query: query, as: ASCKeptResource<A>.self).items
     }
 
     /// Changes the given attributes that differ from the app's (PATCH /v1/apps/{id}); nil when none differs and nothing

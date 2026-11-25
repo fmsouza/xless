@@ -221,15 +221,18 @@ public struct ProjectConfig: Sendable, Equatable {
     public var buildScheme: BuildScheme = .fixed
     /// `xcode:` (xless.yml or an overlay): the Xcode whose SDK must build the app (`XcodePin`); nil: the image's SDK.
     public var xcode: String? = nil
+    /// false: `sign` changes nothing on the account (`ProvisioningUpdates`).
+    public var provisioningUpdates: Bool = true
 
     public init(bundleID: String, teamID: String, version: String, build: String, platforms: [Platform: PlatformConfig],
                 assets: String? = nil, privacyManifest: String? = nil, infoPlist: String? = nil, launchStoryboard: String? = nil,
                 testflight: TestFlightConfig? = nil, usesNonExemptEncryption: Bool? = nil, buildScheme: BuildScheme = .fixed,
-                xcode: String? = nil) {
+                xcode: String? = nil, provisioningUpdates: Bool? = nil) {
         self.bundleID = bundleID; self.teamID = teamID; self.version = version; self.build = build; self.platforms = platforms
         self.assets = assets; self.privacyManifest = privacyManifest; self.infoPlist = infoPlist
         self.launchStoryboard = launchStoryboard; self.testflight = testflight
         self.usesNonExemptEncryption = usesNonExemptEncryption; self.buildScheme = buildScheme; self.xcode = xcode
+        self.provisioningUpdates = provisioningUpdates ?? true
     }
 
     /// The secrets this configuration names under names of the user's own (the external TestFlight review's demo
@@ -276,10 +279,12 @@ private struct RawConfig: Decodable {
     var testflight: TestFlightConfig?
     var usesNonExemptEncryption: Bool?
     var xcode: String?
+    var provisioningUpdates: Bool?
 }
 
 extension ProjectConfig {
     public static func parse(yaml: String, buildOverride: String? = nil, buildScheme: BuildScheme = .fixed) throws -> ProjectConfig {
+        try ProvisioningUpdates.check(yaml: yaml, file: "xless.yml")
         let raw: RawConfig
         do {
             raw = try YAMLDecoder().decode(RawConfig.self, from: yaml)
@@ -298,7 +303,8 @@ extension ProjectConfig {
             build: buildOverride ?? raw.build.value, platforms: platforms,
             assets: raw.assets, privacyManifest: raw.privacyManifest, infoPlist: raw.infoPlist,
             launchStoryboard: raw.launchStoryboard, testflight: raw.testflight,
-            usesNonExemptEncryption: raw.usesNonExemptEncryption, buildScheme: buildScheme, xcode: raw.xcode)
+            usesNonExemptEncryption: raw.usesNonExemptEncryption, buildScheme: buildScheme, xcode: raw.xcode,
+            provisioningUpdates: raw.provisioningUpdates)
         if let pin = raw.xcode { try XcodePin.validate(pin, file: "xless.yml") }
         try config.validate()
         return config

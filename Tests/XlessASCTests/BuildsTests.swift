@@ -181,6 +181,21 @@ func singleBuildJSON(_ item: String, included: [String]) -> String {
     #expect(still.end == .timedOut("PROCESSING"))
 }
 
+/// A state that cannot be read fails at once: read as unknown, it would be polled for until the timeout.
+@Test func aProcessingStateThatCannotBeReadEndsTheWait() async throws {
+    func read(_ attributes: String) -> MockTransport { MockTransport([(200, #"{"data":{"type":"builds","id":"\#(buildA)","attributes":\#(attributes)}}"#)]) }
+    let t = read(#"{"version":"42","processingState":{"state":"VALID"}}"#)
+    await #expect(throws: DecodingError.self) { try await builds(t).wait(.id(buildA), timeout: .zero, sleep: { _ in }) }
+    let alone = read(#"{"processingState":7}"#)
+    await #expect(throws: DecodingError.self) { try await builds(alone).processing(id: buildA) }
+    // Another attribute that cannot be read does not hide the state.
+    let odd = read(#"{"version":42,"expired":"no","processingState":"VALID"}"#)
+    #expect(try await builds(odd).processing(id: buildA).state == "VALID")
+    let odder = read(#"{"version":42,"processingState":"VALID"}"#)
+    #expect(try await builds(odder).wait(.id(buildA), timeout: .zero, sleep: { _ in }).end == .finished("VALID"))
+    #expect(try await builds(read("{}")).processing(id: buildA).state == nil)
+}
+
 @Test func waitStopsOnCancellationWithoutWriting() async throws {
     let t = MockTransport((0..<5).map { _ in (200, singleBuildJSON(buildJSON(buildA, number: "42", state: "PROCESSING"), included: [])) })
     let b = builds(t)

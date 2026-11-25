@@ -159,7 +159,7 @@ unlock: { keep: ask }       # the default; always: keep both without the questio
 ```sh
 xless unlock                # the passphrase, once: the store stays unlocked for this terminal
 xless unlock --for 2d       # … for two days; --idle 4h: … and 4 h without use
-xless run . && xless release submit --yes
+xless run . && xless release submit
 xless auth status           # what is held, where, until when (--json for a script)
 xless lock                  # forget everything held, now
 ```
@@ -190,7 +190,7 @@ xless lock                  # forget everything held, now
 
 ```sh
 xless session -- ./release.sh
-xless session --sign-in -- sh -c 'xless provision apply --yes && xless run . && xless release submit --yes'
+xless session --sign-in -- sh -c 'xless provision apply --yes && xless run . && xless release submit'
 ```
 
 What was typed for it is held by an xless agent of its own, which ends with the script: when the command returns, when

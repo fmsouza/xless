@@ -71,6 +71,8 @@ public struct CargoOverlay: Sendable, Equatable {
     public var testflight: TestFlightConfig?
     /// `xcode:`: the Xcode whose SDK must build the app (`XcodePin`); nil: the image's SDK.
     public var xcode: String?
+    /// `provisioningUpdates: false`: `sign` changes nothing on the account; nil: it may.
+    public var provisioningUpdates: Bool? = nil
     /// `rust.toolchain`; nil: the workspace's rust-toolchain file, else stable.
     public var toolchain: String?
     /// Plain build-time variables (never secrets).
@@ -136,6 +138,7 @@ private struct Raw: Decodable {
     var privacyManifest: String?
     var testflight: TestFlightConfig?
     var xcode: String?
+    var provisioningUpdates: Bool?
     var rust: Rust?
     var env: [String: String]?
     var inputs: [RawInput]?
@@ -146,7 +149,7 @@ private struct Raw: Decodable {
 
 extension CargoOverlay {
     static let keys: Set<String> = ["type", "source", "bundleID", "teamID", "version", "build", "usesNonExemptEncryption", "privacyManifest",
-                                    "testflight", "xcode", "rust", "env", "inputs", "plistVars", "ios", "macos"]
+                                    "testflight", "xcode", "provisioningUpdates", "rust", "env", "inputs", "plistVars", "ios", "macos"]
     static let platformKeys: Set<String> = ["package", "bin", "features", "product", "minimumOS", "bundleID", "infoPlist", "assets", "icon",
                                             "entitlements", "resources", "architectures", "extensions"]
     static let extensionKeys: Set<String> = ["path", "bundleID", "entitlements"]
@@ -178,6 +181,7 @@ extension CargoOverlay {
             }
             for input in (top["inputs"] as? [Any]) ?? [] { try check(input, inputKeys, "inputs") }
         }
+        try ProvisioningUpdates.check(yaml: yaml, file: "overlay \(name)")
         let raw: Raw
         do {
             raw = try YAMLDecoder().decode(Raw.self, from: yaml)
@@ -400,7 +404,7 @@ extension CargoOverlay {
         return CargoOverlay(
             name: name, source: raw.source, bundleID: raw.bundleID, teamID: raw.teamID, version: version, build: build,
             usesNonExemptEncryption: raw.usesNonExemptEncryption, privacyManifest: raw.privacyManifest, testflight: raw.testflight,
-            xcode: raw.xcode, toolchain: toolchain, env: env, inputs: inputs, plistVars: raw.plistVars ?? [:], ios: ios, macos: macos)
+            xcode: raw.xcode, provisioningUpdates: raw.provisioningUpdates, toolchain: toolchain, env: env, inputs: inputs, plistVars: raw.plistVars ?? [:], ios: ios, macos: macos)
     }
 
     /// Reads and parses the overlay at `url` (paths as for Tauri overlays, `OverlayPaths`). `privacyManifest` is made

@@ -47,17 +47,8 @@ struct ReviewCLI {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// `text` with every control character (C0, DEL, C1; line breaks too unless `keepingLines`) replaced by U+FFFD, so
-    /// escape sequences in someone else's text cannot move the cursor, retitle or clear the terminal, or set the clipboard.
-    static func printable(_ text: String, keepingLines: Bool = false) -> String {
-        var out = String.UnicodeScalarView()
-        for scalar in (keepingLines ? text.replacingOccurrences(of: "\r\n", with: "\n") : text).unicodeScalars {
-            let v = scalar.value
-            if keepingLines, scalar == "\n" || scalar == "\t" { out.append(scalar); continue }
-            out.append(v < 0x20 || (0x7F...0x9F).contains(v) ? "\u{FFFD}" : scalar)
-        }
-        return String(out)
-    }
+    /// Someone else's text, which cannot move the cursor, retitle or clear the terminal, or set the clipboard.
+    static func printable(_ text: String, keepingLines: Bool = false) -> String { TerminalText.prose(text, keepingLines: keepingLines) }
 
     struct ResponseReport: Encodable {
         /// `created`, `replaced` or `unchanged`.

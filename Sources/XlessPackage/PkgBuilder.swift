@@ -386,26 +386,13 @@ public enum PkgBuilder {
         let kind = CertificateKind.installer
         let key = try SigningKey(pem: secrets.required(kind.secretName, stage: .package))
         let client = ASCClient(credentials: try ASCCredentials.fromSecrets(secrets, stage: .package))
-        let cert = try await CertificateService(client: client).find(matching: key, kind: kind)
-        guard let der = cert.attributes.certificateContent.flatMap({ Data(base64Encoded: $0) }) else {
-            throw XlessError(.package, "certificate \(cert.id) has no content",
-                             fix: "re-run; if it persists, check the certificate in App Store Connect")
-        }
+        let cert = try await ASCCertificates(resources: ASCResources(client: client)).find(for: key, kind: kind)
         return try Files.atomicOutput(outputDir) { out in
             let pkg = try buildInto(out, signedApp: signedApp, config: config, dSYMs: dSYMs, run: run, pack: pack)
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-pkg-sign-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-            defer { try? FileManager.default.removeItem(at: tmp) }
-            let keyURL = tmp.appendingPathComponent("key.pem"), certURL = tmp.appendingPathComponent("cert.pem")
-            guard FileManager.default.createFile(atPath: keyURL.path, contents: Data(key.pem.utf8),
-                                                 attributes: [.posixPermissions: 0o600]) else {
-                throw XlessError(.package, "cannot write temporary key files",
-                                 fix: "check free space and permissions of the temp directory")
+            try PrivateFiles.with(stage: .package) { files in
+                let signer = try files.signer(key: key, certificate: cert.der)
+                try run(["rcodesign"] + signArguments(pkg: pkg, keyPEM: signer.key, certPEM: signer.certificate), files.directory)
             }
-            let certPEM = "-----BEGIN CERTIFICATE-----\n\(der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
-            try certPEM.write(to: certURL, atomically: true, encoding: .utf8)
-            try run(["rcodesign"] + signArguments(pkg: pkg, keyPEM: keyURL, certPEM: certURL), tmp)
             return pkg
         }
     }

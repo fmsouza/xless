@@ -67,8 +67,12 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
    key unless you ask for more; the commands that revoke, delete, remove or cancel something at Apple ask first, and
    without a terminal they are refused unless `--yes` is given. `xless provision apply` never deletes or revokes
    anything. Two things replace without asking, because that is how they update: `sign` deletes and recreates its
-   own `xless <bundle ID> <TYPE>` profile when it lacks the certificate or expires within 7 days, and `xless store
-   privacy push` deletes the App Privacy answers app.yml no longer declares.
+   own `xless <bundle ID> <TYPE>` profile when it cannot be used (and prints what it will change first; with
+   `--no-provisioning-updates` it changes nothing:
+   [signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)), and `xless store privacy
+   push` deletes the App Privacy answers app.yml no longer declares. Nothing is sent to App Review but by `xless release
+   submit`; a build it picks itself is one App Store Connect calls the version's newest valid build (what is on disk,
+   where build code can write, is only a hint), and is named before anything is sent.
 
 ## The secret store
 

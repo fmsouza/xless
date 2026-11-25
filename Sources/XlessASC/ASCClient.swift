@@ -93,35 +93,35 @@ public struct ASCClient: Sendable {
         self.credentials = credentials; self.transport = transport; self.baseURL = baseURL; self.sleep = sleep; self.rateLimits = rateLimits
     }
 
-    public func get<T: Decodable>(_ path: String, query: [(String, String)] = []) async throws -> T {
+    func get<T: Decodable>(_ path: String, query: [(String, String)] = []) async throws -> T {
         try decode(await send("GET", path, query: query, body: nil))
     }
 
-    public func post<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
+    func post<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
         try decode(await send("POST", path, query: [], body: JSONEncoder().encode(body)))
     }
 
     /// Single attempt, never retried: for non-idempotent creates where a retry could duplicate a scarce resource.
-    public func postOnce<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
+    func postOnce<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
         try decode(await send("POST", path, query: [], body: JSONEncoder().encode(body), maxAttempts: 1))
     }
 
-    public func patch<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
+    func patch<B: Encodable, T: Decodable>(_ path: String, body: B) async throws -> T {
         try decode(await send("PATCH", path, query: [], body: JSONEncoder().encode(body)))
     }
 
-    public func delete(_ path: String) async throws {
+    func delete(_ path: String) async throws {
         _ = try await send("DELETE", path, query: [], body: nil)
     }
 
     /// DELETE with a body: removing linkage from a to-many relationship.
-    public func delete<B: Encodable>(_ path: String, body: B) async throws {
+    func delete<B: Encodable>(_ path: String, body: B) async throws {
         _ = try await send("DELETE", path, query: [], body: JSONEncoder().encode(body))
     }
 
-    /// Any method on any documented path, the response as received (`xless api`). Non-2xx responses throw `ASCError`.
+    /// Any method on any documented path, the response as received. Non-2xx responses throw `ASCError`.
     /// `maxAttempts: 1` for a request that must not be repeated (a POST).
-    public func request(_ method: String, _ path: String, query: [(String, String)] = [], body: Data? = nil,
+    func request(_ method: String, _ path: String, query: [(String, String)] = [], body: Data? = nil,
                         maxAttempts: Int = ASCClient.maxAttempts) async throws -> ASCResponse {
         let (data, response) = try await exchange(method, path, query: query, body: body, maxAttempts: maxAttempts)
         var headers: [String: String] = [:]
@@ -130,7 +130,7 @@ public struct ASCClient: Sendable {
     }
 
     /// Sends a pre-built request (e.g. upload PUTs to Apple's storage URLs) with the same retry policy and no auth header.
-    public func raw(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func raw(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         try await withRetry { try await transport.send(request) }
     }
 
@@ -160,7 +160,7 @@ public struct ASCClient: Sendable {
     /// GETs `path` and hands its body to a sink piece by piece as it arrives, never holding it whole (a report). Retried
     /// like any GET (429, 5xx, a dropped connection); each attempt writes into a fresh sink from `open`, so a retry never
     /// appends to what a failed attempt wrote. A non-2xx answer throws `ASCError`.
-    public func download(_ path: String, query: [(String, String)] = [], accept: String,
+    func download(_ path: String, query: [(String, String)] = [], accept: String,
                          open: () throws -> @Sendable (Data) throws -> Void) async throws {
         let url = url(path, query: query)
         _ = try await withRetry(maxAttempts: Self.maxAttempts, method: "GET", path: path) {
@@ -177,7 +177,7 @@ public struct ASCClient: Sendable {
     /// Sends `request` as it is (no credentials: a file on Apple's delivery network) and hands its body to a sink
     /// piece by piece, retried like `raw`; each attempt writes into a fresh sink from `open`. A non-2xx answer throws
     /// `ASCError`.
-    public func download(_ request: URLRequest, open: () throws -> @Sendable (Data) throws -> Void) async throws {
+    func download(_ request: URLRequest, open: () throws -> @Sendable (Data) throws -> Void) async throws {
         _ = try await withRetry {
             let sink = try open()
             let (response, errorBody) = try await transport.stream(request, chunk: sink)

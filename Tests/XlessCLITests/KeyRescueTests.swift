@@ -73,15 +73,6 @@ private func mode(_ path: String) throws -> Int { try #require(try FileManager.d
     #expect(try mode("\(dir.path)/key.p8") == 0o600)
 }
 
-@Test func shellWordsAreQuotedOnlyWhenNeeded() {
-    #expect(KeyRescue.shellWord("ASC_KEY_P8@ABCDE12345") == "ASC_KEY_P8@ABCDE12345")
-    #expect(KeyRescue.shellWord("/run/user/1000/xless-rescued-AuthKey_K.p8") == "/run/user/1000/xless-rescued-AuthKey_K.p8")
-    #expect(KeyRescue.shellWord("ADMIN,FINANCE") == "ADMIN,FINANCE")
-    #expect(KeyRescue.shellWord("/tmp/my key.p8") == "'/tmp/my key.p8'")
-    #expect(KeyRescue.shellWord("it's") == "'it'\\''s'")
-    #expect(KeyRescue.shellWord("") == "''")
-}
-
 @Test func secretsImportTakesTheRoleAndServicesARescueCarries() throws {
     let api = try SecretsImportCommand.parse(["ASC_KEY_P8@ABCDE12345", "--file", "k.p8", "--kind", "asc-api-key", "--role", "admin,FINANCE"])
     #expect(api.role == "admin,FINANCE")

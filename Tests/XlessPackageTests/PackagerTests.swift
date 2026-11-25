@@ -88,7 +88,7 @@ private func ipaWithVersions(_ version: String, _ build: String) throws -> URL {
 @Test func notarizationKeyFileIsNormalizedPEM() throws {
     let pem = "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----"
     let mangled = pem.replacingOccurrences(of: "\n", with: "\\n") + "\r\n"
-    #expect(try Packager.p8Contents(Secrets(env: ["ASC_KEY_P8": mangled])) == Data((pem + "\n").utf8))
+    #expect(try Notary.p8Contents(Secrets(env: ["ASC_KEY_P8": mangled])) == Data((pem + "\n").utf8))
 }
 
 @Test func ipaZipsTheBuildsDSYMsNextToIt() throws {
@@ -136,4 +136,85 @@ func makeDSYMs(_ root: URL, name: String) throws -> URL {
     #expect(try Packager.zipDSYMs(nil, app: app, into: out) == nil)
     #expect(try Packager.zipDSYMs(root.appendingPathComponent("missing"), app: app, into: out) == nil)
     #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)
+}
+
+// MARK: - The notarized zip (xless.yml's macOS app)
+
+private let notarySecrets = Secrets(env: ["ASC_KEY_ID": "KEYID", "ASC_ISSUER_ID": "issuer", "ASC_KEY_P8": "very-secret"])
+
+/// The zip of a macOS app, with `notary` in place of rcodesign's submission: it is given the app it would staple.
+private func notarizedZip(_ root: URL, failure: XlessError? = nil, log: String = "", staple: (URL) throws -> Void) throws -> URL {
+    let app = root.appendingPathComponent("signed/X.app")
+    try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try Data("bin".utf8).write(to: app.appendingPathComponent("Contents/MacOS/X"))
+    return try Packager.notarizedZip(signedApp: app, outputDir: root.appendingPathComponent("out"), secrets: notarySecrets, encodeKey: { args in
+        // The key is a file of mode 0600 in a directory of mode 0700, gone with the call.
+        let p8 = args[args.count - 1], json = args[2]
+        let fm = FileManager.default
+        #expect(try String(contentsOfFile: p8, encoding: .utf8) == "very-secret\n")
+        #expect((try fm.attributesOfItem(atPath: p8)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #expect((try fm.attributesOfItem(atPath: (p8 as NSString).deletingLastPathComponent)[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+        #expect((json as NSString).deletingLastPathComponent == (p8 as NSString).deletingLastPathComponent)
+        // rcodesign writes into a file that is already private, not one whose mode it chooses.
+        #expect(((try? fm.attributesOfItem(atPath: json))?[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        try Data(p8.utf8).write(to: root.appendingPathComponent("p8-path"))
+    }, submit: { args in
+        #expect(args.first == "notary-submit" && args.contains("--staple"))
+        try staple(URL(fileURLWithPath: args[args.count - 1]))
+        return Notary.Run(log: log, failure: failure)
+    })
+}
+
+private func stapleTicket(_ app: URL) throws { try Data("ticket".utf8).write(to: app.appendingPathComponent("Contents/CodeResources")) }
+
+@Test func theNotarizedZipHoldsTheStapledApp() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"); defer { try? FileManager.default.removeItem(at: root) }
+    let zip = try notarizedZip(root, staple: stapleTicket)
+    #expect(zip.lastPathComponent == "X-macOS.zip")
+    let listing = try Shell.run("unzip", ["-Z1", zip.path], stage: .package).stdout
+    #expect(listing.contains("X.app/Contents/CodeResources\n") && listing.contains("X.app/Contents/MacOS/X\n"))
+    let p8 = try String(contentsOf: root.appendingPathComponent("p8-path"), encoding: .utf8)
+    #expect(!FileManager.default.fileExists(atPath: (p8 as NSString).deletingLastPathComponent))
+}
+
+@Test func aRejectedZipIsReportedAsTheDMGIs() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"); defer { try? FileManager.default.removeItem(at: root) }
+    let exit1 = XlessError(.package, "`rcodesign notary-submit` exited with 1", fix: "see the tool output above")
+    do {
+        _ = try notarizedZip(root, failure: exit1, log: "poll state after 10s: Invalid\n") { _ in }
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.exitCode == 16)
+        #expect(e.description == "[package] notarization of X.app was rejected (Invalid) — read the notary log printed above, fix the reported binaries, then re-run from package")
+    }
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("out/X-macOS.zip").path))
+    let p8 = try String(contentsOf: root.appendingPathComponent("p8-path"), encoding: .utf8)
+    #expect(!FileManager.default.fileExists(atPath: (p8 as NSString).deletingLastPathComponent))
+}
+
+@Test func aFailedSubmissionOfAZipNamesItsID() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"); defer { try? FileManager.default.removeItem(at: root) }
+    let id = "12345678-1234-1234-1234-123456789abc"
+    let exit1 = XlessError(.package, "`rcodesign notary-submit` exited with 1", fix: "see the tool output above")
+    do {
+        _ = try notarizedZip(root, failure: exit1, log: "created submission ID: \(id)\nerror sending request\n") { _ in }
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.cause == "`rcodesign notary-submit` exited with 1 (notary submission \(id))")
+    }
+}
+
+@Test func anAppWithoutATicketIsNotZipped() throws {
+    for staple: (URL) throws -> Void in [{ _ in }, { app in
+        // an old layout's link to the signature's own CodeResources is no ticket
+        try FileManager.default.createSymbolicLink(atPath: app.appendingPathComponent("Contents/CodeResources").path, withDestinationPath: "MacOS/X")
+    }, { app in try Data().write(to: app.appendingPathComponent("Contents/CodeResources")) }] {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"); defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            _ = try notarizedZip(root, staple: staple)
+            Issue.record("expected throw")
+        } catch let e as XlessError {
+            #expect(e.exitCode == 16 && e.cause == "X.app has no stapled notarization ticket after notary-submit --staple")
+        }
+    }
 }

@@ -286,12 +286,12 @@ struct ProfileCLI {
         }
         let certificates = try await pickCertificates(request)
         let devices = type.usesDevices ? try await pickDevices(request.devices ?? .all, for: type) : []
-        let name = request.name ?? ProfileService.defaultName(bundleIdentifier: bundle.identifier, type: type)
+        let name = request.name ?? SigningProfile.name(bundleID: bundle.identifier, type: type)
         if let existing = try await profiles.find(name: name).first {
             throw XlessError(.account, "a profile named \(name) exists already (\(existing.id), \(existing.profileType))",
                              fix: "renew it with `xless profiles renew \(existing.id)`, or choose another --name")
         }
-        let created = try await ProfileService(client: client).create(
+        let created = try await profiles.create(
             name: name, type: type, bundleIDResourceID: bundle.id, certificateIDs: certificates, deviceIDs: devices)
         return try report(ProfileCreated(profile: created, bundleId: bundle.identifier, certificates: certificates, devices: devices, replaced: nil))
     }
@@ -432,7 +432,7 @@ struct ProfileCLI {
         try await profiles.delete(id: id)
         let created: ASCProfile
         do {
-            created = try await ProfileService(client: client).create(
+            created = try await profiles.create(
                 name: p.name, type: type, bundleIDResourceID: bundle.id, certificateIDs: certificates, deviceIDs: devices)
         } catch {
             let cause = (error as? XlessError)?.cause ?? (error as? any StageReportableError)?.stageError(.account).cause ?? "\(error)"
@@ -470,18 +470,12 @@ struct ProfileCLI {
 
     /// The `xless profiles create` command line that makes this profile again.
     static func createCommand(type: ProfileType, bundle: String, certificates: [String], devices: [String], name: String, team: String? = nil) -> String {
-        var parts = ["xless profiles create", "--type \(type.argument)", "--bundle-id \(shellQuoted(bundle))"]
+        var parts = ["xless profiles create", "--type \(type.argument)", "--bundle-id \(ShellWord.quoted(bundle))"]
         parts += certificates.map { "--cert \($0)" }
         if type.usesDevices, !devices.isEmpty { parts.append("--devices \(devices.joined(separator: ","))") }
         // `--name=…` keeps a name that starts with `-` a value.
-        parts.append("--name=\(shellQuoted(name))")
+        parts.append("--name=\(ShellWord.quoted(name))")
         if let team { parts.append("--team \(team)") }
         return parts.joined(separator: " ")
-    }
-
-    static func shellQuoted(_ text: String) -> String {
-        let plain = text.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || "._-*/".unicodeScalars.contains($0) }
-        if plain, !text.isEmpty, !text.contains("*") { return text }
-        return "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

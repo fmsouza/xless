@@ -9,33 +9,10 @@ import XlessTauri
 // What `xless provision` reads before it asks Apple anything: the bundles the project signs (and their entitlements),
 // the distribution lanes, the TestFlight groups and the `appstore/` manifest (docs/apple-account.md#xless-provision).
 
-/// One bundle signed for one lane: the app of a platform, or an app extension (React Native: from the build's record;
-/// xless.yml, Tauri, cargo: declared under `platforms.ios.extensions` / `ios.extensions`).
-struct ProvisionTarget: @unchecked Sendable {
-    var platform: Platform
-    var distribution: Distribution
-    var bundleID: String
-    /// With the signing prefixes expanded (and a React Native overlay's rewrites applied), as `sign` sees them.
-    var entitlements: [String: Any]
-    /// An app extension's path in the app (`PlugIns/Widget.appex`); nil for the app.
-    var extensionPath: String? = nil
-    /// false when the entitlements could not be read (a React Native app before its first build): nothing is reported
-    /// as drift against them.
-    var entitlementsKnown = true
-
-    var isApp: Bool { extensionPath == nil }
-    /// `the iOS app`, `PlugIns/Widget.appex`.
-    var label: String { extensionPath ?? "the \(platform.display) app" }
-
-    /// The certificate this target is signed with.
-    var signingKind: CertificateKind { distribution == .appStore ? .distribution : .developerID }
-    var profileType: ProfileType { ProfileType.for(platform: platform, distribution: distribution) }
-}
-
 struct ProvisionInputs: @unchecked Sendable {
     var team: String
     /// App targets first per platform (iOS, then macOS), extensions after their app.
-    var targets: [ProvisionTarget]
+    var targets: [SigningTarget]
     var version: String
     var testflight: TestFlightConfig?
     /// The `appstore/` manifest directory, when it exists.
@@ -106,16 +83,16 @@ extension ProvisionInputs {
 
     /// The app of `platform` as the config describes it, then the app extensions it declares (`platforms.ios.extensions`),
     /// each signed for the app's lane with its own entitlements; relative entitlement paths resolve against `root`.
-    static func targets(_ config: ProjectConfig, platform: Platform, root: URL, rewrites: EntitlementRewrites = .none) throws -> [ProvisionTarget] {
+    static func targets(_ config: ProjectConfig, platform: Platform, root: URL, rewrites: EntitlementRewrites = .none) throws -> [SigningTarget] {
         let pc = try config.platform(platform)
         func entitlements(_ path: String?) throws -> [String: Any] {
             let raw = try path.map { try Plist.read($0.hasPrefix("/") ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0), stage: .account) } ?? [:]
             return prepared(raw, team: config.teamID, rewrites: rewrites)
         }
         let distribution = config.distribution(for: platform)
-        let app = ProvisionTarget(platform: platform, distribution: distribution, bundleID: config.bundleID(for: platform), entitlements: try entitlements(pc.entitlements))
+        let app = SigningTarget(platform: platform, distribution: distribution, bundleID: config.bundleID(for: platform), entitlements: try entitlements(pc.entitlements))
         return [app] + (try pc.extensions.map {
-            ProvisionTarget(platform: platform, distribution: distribution, bundleID: $0.bundleID, entitlements: try entitlements($0.entitlements), extensionPath: $0.path)
+            SigningTarget(platform: platform, distribution: distribution, bundleID: $0.bundleID, entitlements: try entitlements($0.entitlements), extensionPath: $0.path)
         })
     }
 
@@ -134,12 +111,12 @@ extension ProvisionInputs {
             var inputs = ProvisionInputs(team: config.teamID, targets: [], version: config.version, testflight: config.testflight)
             let record = StagePaths(project: workRoot, platform: .ios).root.appendingPathComponent("entitlements.json")
             guard FileManager.default.fileExists(atPath: record.path) else {
-                inputs.targets = [ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: config.bundleID(for: .ios), entitlements: [:], entitlementsKnown: false)]
+                inputs.targets = [SigningTarget(platform: .ios, distribution: .appStore, bundleID: config.bundleID(for: .ios), entitlements: [:], entitlementsKnown: false)]
                 inputs.notes.append("the React Native app's entitlements are read from its last build (\(record.path)), and there is none yet: capabilities, app groups, iCloud containers and app extensions are not planned (run `xless build --config \(url.path) --platform ios` first, then plan again)")
                 return inputs
             }
             for entry in try SignTargets.recorded(record) {
-                let target = ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: entry.bundleID,
+                let target = SigningTarget(platform: .ios, distribution: .appStore, bundleID: entry.bundleID,
                                              entitlements: prepared(entry.entitlements, team: config.teamID, rewrites: overlay.entitlements),
                                              extensionPath: entry.path.isEmpty ? nil : entry.path)
                 if entry.path.isEmpty { inputs.targets.insert(target, at: 0) } else { inputs.targets.append(target) }
@@ -173,7 +150,4 @@ extension ProvisionInputs {
 extension Platform {
     /// iOS first, then macOS: the order the plan lists them in.
     static var allCasesOrdered: [Platform] { [.ios, .macos] }
-
-    /// `iOS`, `macOS`.
-    var display: String { self == .ios ? "iOS" : "macOS" }
 }

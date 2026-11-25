@@ -42,6 +42,8 @@ public struct ReactNativeOverlay: Sendable, Equatable {
     public var entitlementsRemove: [String] = []
     /// `xcode:` (Ruling R8): the Xcode whose SDK must build the app (`XcodePin`); nil: the image's SDK.
     public var xcode: String? = nil
+    /// `provisioningUpdates: false`: `sign` changes nothing on the account; nil: it may.
+    public var provisioningUpdates: Bool? = nil
 
     /// What the sign stage (and the simulator build) does to every bundle's entitlements.
     public var entitlements: EntitlementRewrites { EntitlementRewrites(replace: identifiers.map, remove: entitlementsRemove) }
@@ -97,12 +99,13 @@ private struct Raw: Decodable {
     var entitlements: Entitlements?
     var identifiers: Identifiers?
     var xcode: String?
+    var provisioningUpdates: Bool?
 }
 
 extension ReactNativeOverlay {
     static let keys: Set<String> = ["type", "source", "app", "env", "scheme", "configuration", "bundleIDs", "teamID", "version", "build",
                                     "prepare", "allowMissingCommands", "testflight", "usesNonExemptEncryption", "privacyManifest", "entitlements",
-                                    "identifiers", "xcode"]
+                                    "identifiers", "xcode", "provisioningUpdates"]
     static let nestedKeys: [String: Set<String>] = ["app": ["dir"], "prepare": ["run"], "entitlements": ["remove"], "identifiers": ["replace"]]
 
     public static func parse(yaml: String, name: String) throws -> ReactNativeOverlay {
@@ -123,6 +126,7 @@ extension ReactNativeOverlay {
                 }
             }
         }
+        try ProvisioningUpdates.check(yaml: yaml, file: "overlay \(name)")
         let raw: Raw
         do {
             raw = try YAMLDecoder().decode(Raw.self, from: yaml)
@@ -217,7 +221,8 @@ extension ReactNativeOverlay {
             name: name, source: raw.source, appDir: appDir, env: env, scheme: raw.scheme, configuration: configuration,
             bundleIDs: raw.bundleIDs, teamID: raw.teamID, version: version, build: build, prepareRun: run,
             allowMissingCommands: allow, testflight: raw.testflight, usesNonExemptEncryption: raw.usesNonExemptEncryption,
-            privacyManifest: raw.privacyManifest, identifiers: identifiers, entitlementsRemove: remove, xcode: raw.xcode)
+            privacyManifest: raw.privacyManifest, identifiers: identifiers, entitlementsRemove: remove, xcode: raw.xcode,
+            provisioningUpdates: raw.provisioningUpdates)
     }
 
     /// Reads and parses the overlay at `url` (paths as for Tauri overlays, `OverlayPaths`).

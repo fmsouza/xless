@@ -51,7 +51,7 @@ struct ProvisionStep: Sendable {
         case linked(PortalLinkedKind, String, bundles: [String])
         case certificate(CertificateKind, KeySource)
         case apnsKey
-        case profile(ProvisionTarget)
+        case profile(SigningTarget)
         case app(AppCreateRequest)
         case listing
         case privacy(AppYAML.Privacy)
@@ -80,7 +80,9 @@ struct ProvisionStep: Sendable {
     var text: String {
         let sign = switch action { case .create: "+"; case .enable: "+"; case .update: "~"; case .assign: "~"; case .push: "~" }
         let marks = (web ? " [web]" : "") + (checked ? "" : " (checked when applied)")
-        return (["  \(sign) \(action.rawValue) \(subject)\(marks)"] + details.map { "      \($0)" }).joined(separator: "\n")
+        // The listing's details are the changes of a push, some of several lines; every other one is a line.
+        let lines = if case .listing = work { true } else { false }
+        return (["  \(sign) \(action.rawValue) \(TerminalText.escaped(subject))\(marks)"] + details.map { "      \(TerminalText.escaped($0, keepingLines: lines))" }).joined(separator: "\n")
     }
 }
 
@@ -130,7 +132,7 @@ struct ProvisionPlan: Sendable {
     /// Refuses a plan with blockers: nothing is sent.
     func requireUnblocked() throws {
         guard let first = blockers.first else { return }
-        throw XlessError(.account, "\(first.message); nothing was sent" + (blockers.count > 1 ? " (and \(blockers.count - 1) more: see `xless provision plan`)" : ""), fix: first.fix)
+        throw XlessError(.account, "\(first.message); nothing was sent" + (blockers.count > 1 ? " (and \(blockers.count - 1) more: see `xless provision plan`)" : ""), fix: first.fix).printable
     }
 
     mutating func add(_ area: ProvisionArea, _ action: ProvisionStep.Action, _ subject: String, _ details: [String] = [], web: Bool = false,
@@ -138,7 +140,8 @@ struct ProvisionPlan: Sendable {
         steps.append(ProvisionStep(area: area, action: action, subject: subject, details: details, web: web, checked: checked, work: work))
     }
 
-    /// The plan grouped by area, then the drift, the blockers and the notes.
+    /// The plan grouped by area, then the drift, the blockers and the notes. What in their names (the project's, Apple's)
+    /// would drive the terminal or start a line of its own is written out (`TerminalText`).
     var text: String {
         var out = ""
         for area in ProvisionArea.allCases {
@@ -149,16 +152,16 @@ struct ProvisionPlan: Sendable {
         out += Self.driftText(drift, heading: "Drift")
         if !blockers.isEmpty {
             out += "Blocked (nothing is applied until these are fixed):\n"
-            out += blockers.map { "  x \($0.message) — \($0.fix)\n" }.joined()
+            out += blockers.map { "  x \(TerminalText.escaped("\($0.message) — \($0.fix)"))\n" }.joined()
         }
-        out += notes.map { "note: \($0)\n" }.joined()
+        out += notes.map { "note: \(TerminalText.escaped($0))\n" }.joined()
         return out + summary + "\n"
     }
 
     /// The drift section of the plan (and of what `apply` found while applying), empty without drift.
     static func driftText(_ drift: [ProvisionDrift], heading: String) -> String {
         guard !drift.isEmpty else { return "" }
-        return "\(heading) (left as it is: provision never deletes, revokes or replaces):\n" + drift.map { "  ! \($0.subject): \($0.message) — \($0.fix)\n" }.joined()
+        return "\(heading) (left as it is: provision never deletes, revokes or replaces):\n" + drift.map { "  ! \(TerminalText.escaped("\($0.subject): \($0.message) — \($0.fix)"))\n" }.joined()
     }
 
     var summary: String {
@@ -259,7 +262,7 @@ struct ProvisionPlanner {
             for key in unmapped {
                 plan.notes.append("\(id): the App Store Connect API has no capability for the entitlement \(key): enable it at https://developer.apple.com/account/resources/identifiers/list (the sign stage checks the profile carries it)")
             }
-            var existing: [ProvisionCapability] = []
+            var existing: [SigningCapability] = []
             if let resource = plan.known.bundles[id] { existing = try await account.capabilities(of: resource) }
             for r in requests {
                 let settings = r.settings.map { s in "\(s.key): \(CapabilitySetting.chosen([s]).values.first ?? "")" }
@@ -351,12 +354,11 @@ struct ProvisionPlanner {
     func planCertificates(_ plan: inout ProvisionPlan) async throws {
         let file = try vault.file()
         for kind in inputs.certificateKinds {
-            let types = kind.ascTypes.compactMap(CertificateType.init(rawValue:))
-            let valid = try await account.list(types: types, withContent: true).filter { ($0.expires ?? .distantFuture) > now }
+            let valid = try await account.list(types: kind.types, withContent: true).filter { ($0.expires ?? .distantFuture) > now }
             let name = kind.certificateType.displayName
             func matching(_ pem: String) -> ASCCertificate? {
                 guard let key = try? SigningKey(pem: pem) else { return nil }
-                return valid.first { c in c.der.map { (try? key.matches(certificateDER: Array($0))) == true } ?? false }
+                return key.certificate(in: valid, now: now).valid?.certificate
             }
             func found(_ cert: ASCCertificate, from source: String) {
                 plan.known.certificates[kind] = cert.id
@@ -443,35 +445,17 @@ struct ProvisionPlanner {
     func planProfiles(_ plan: inout ProvisionPlan) async throws {
         for t in inputs.targets {
             let type = t.profileType
-            let name = ProfileService.defaultName(bundleIdentifier: t.bundleID, type: type)
+            let name = t.profileName
             let cert = plan.known.certificates[t.signingKind]
             let details = ["\(type.displayName) for \(t.label), with the \(t.signingKind.certificateType.displayName) certificate\(cert.map { " \($0)" } ?? (plan.steps.contains { $0.area == .certificates && $0.subject == t.signingKind.certificateType.displayName } ? " created above" : ""))"]
             guard let bundle = plan.known.bundles[t.bundleID] else { plan.add(.profiles, .create, name, details, .profile(t)); continue }
             let profiles = try await account.profiles(named: name, type: type)
             guard !profiles.isEmpty else { plan.add(.profiles, .create, name, details, .profile(t)); continue }
-            let problems: [[String]] = profiles.map { self.problems(of: $0, target: t, bundle: bundle, certificate: cert) }
+            let problems: [[String]] = profiles.map { t.problems(of: $0, bundle: bundle, certificate: cert, now: now) }
             guard !problems.contains(where: { $0.isEmpty }), let first = profiles.first else { continue }
             plan.drift.append(ProvisionDrift(area: .profiles, subject: "\(name) (\(first.id))", message: problems[0].joined(separator: "; "),
                                              fix: "`xless profiles renew \(first.id)` (or let `xless sign` replace it)"))
         }
-    }
-
-    /// Why a profile is not the one `sign` would use for the target; empty when it is.
-    func problems(of p: ProvisionProfile, target t: ProvisionTarget, bundle: String, certificate: String?) -> [String] {
-        var out: [String] = []
-        if p.state != "ACTIVE" { out.append("it is \(p.state ?? "not active")") }
-        if let e = p.expires, e < now.addingTimeInterval(7 * 86_400) { out.append("it expires on \(CertTable.day(e))") }
-        if let b = p.bundleID, b != bundle { out.append("it is for another bundle ID") }
-        if let certificate, !p.certificateIDs.contains(certificate) {
-            out.append("it does not hold the \(t.signingKind.certificateType.displayName) certificate \(certificate)")
-        } else if certificate == nil {
-            out.append("it does not hold the certificate this plan creates")
-        }
-        if t.entitlementsKnown, let content = p.content, let granted = try? Entitlements.extract(fromProfile: content) {
-            let lacking = Entitlements.profileLacks(user: t.entitlements, profile: granted, platform: t.platform)
-            if !lacking.isEmpty { out.append("it lacks \(lacking.joined(separator: ", "))") }
-        }
-        return out
     }
 
     func planApp(_ plan: inout ProvisionPlan) async throws {
@@ -631,6 +615,9 @@ struct ProvisionApplier {
 
     var team: String { inputs.team }
 
+    /// One line, whatever the names in it (the project's, Apple's).
+    func tell(_ line: String) { say(TerminalText.escaped(line)) }
+
     func apply(_ plan: ProvisionPlan) async throws -> ProvisionApplied {
         do { try plan.requireUnblocked() } catch {
             throw ProvisionApplyFailure(applied: ProvisionApplied(), failed: nil, left: plan.steps, error: XlessError.wrapping(error, stage: .account))
@@ -643,10 +630,10 @@ struct ProvisionApplier {
             let step = plan.steps[i], e = XlessError.wrapping(error, stage: .account)
             let done = applied.done
             let left = plan.steps[done.count...].map { "\($0.area.title): \($0.action.rawValue) \($0.subject)" }
-            say("done: " + (done.isEmpty ? "nothing" : done.map(\.result).joined(separator: "; ")))
-            say("left: " + left.joined(separator: "; "))
+            tell("done: " + (done.isEmpty ? "nothing" : done.map(\.result).joined(separator: "; ")))
+            tell("left: " + left.joined(separator: "; "))
             let failure = XlessError(.account, "\(step.area.title), \(step.action.rawValue) \(step.subject): \(e.cause) (\(done.count) of \(plan.steps.count) steps were done, \(left.count) left)",
-                                     fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left")
+                                     fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left").printable
             return ProvisionApplyFailure(applied: applied, failed: .init(area: step.area, action: step.action, subject: step.subject, cause: e.cause, fix: e.fix),
                                          left: plan.steps.enumerated().filter { $0.offset >= done.count && $0.offset != i }.map(\.element), error: failure)
         }
@@ -665,10 +652,10 @@ struct ProvisionApplier {
                 var found: [ProvisionDrift] = []
                 let result = try await run(step, state: &state, web: side, drift: &found, planNotes: plan.notes)
                 applied.done.append(ProvisionDone(area: step.area, subject: step.subject, result: result))
-                say("\(i + 1)/\(plan.steps.count) \(result)")
+                tell("\(i + 1)/\(plan.steps.count) \(result)")
                 for d in found where !plan.drift.contains(d) && !applied.drift.contains(d) {
                     applied.drift.append(d)
-                    say("drift: \(d.subject): \(d.message) — \(d.fix)")
+                    tell("drift: \(d.subject): \(d.message) — \(d.fix)")
                 }
             } catch {
                 throw failure(at: i, error)
@@ -738,28 +725,28 @@ struct ProvisionApplier {
 
         case .apnsKey:
             guard let web else { throw XlessError(.account, "the Apple ID web session is not open", fix: "this is a bug in xless; please report it") }
-            if let key = try await ProvisionPlanner.apnsKeysAtApple(web)?.first { say("note: " + ProvisionPlanner.apnsElsewhere(key)); return "APNs key \(key.id) exists" }
+            if let key = try await ProvisionPlanner.apnsKeysAtApple(web)?.first { tell("note: " + ProvisionPlanner.apnsElsewhere(key)); return "APNs key \(key.id) exists" }
             let file = try storeFile()
             try vault.unlock(file, reason: "storing the new APNs key")
             let keys = AuthKeyStore(store: vault.store, catalogID: file.id)
-            let created = try await AuthKeyCreation(web: web.authKeys, vault: keys, say: say).run(name: nil, services: [.apns], bundleIDs: [], team: team, now: now)
+            let created = try await AuthKeyCreation(web: web.authKeys, vault: keys, say: tell).run(name: nil, services: [.apns], bundleIDs: [], team: team, now: now)
             return "created APNs key \(created.keyID), stored as \(created.entry)"
 
         case .profile(let t):
-            let name = ProfileService.defaultName(bundleIdentifier: t.bundleID, type: t.profileType)
+            let name = t.profileName
             let bundle = try await bundle(t.bundleID, &state)
             if let existing = try await account.profiles(named: name, type: t.profileType).first { return "profile \(name) exists (\(existing.id))" }
             guard let cert = state.certificates[t.signingKind] else {
                 throw XlessError(.account, "no \(t.signingKind.certificateType.displayName) certificate to put in \(name)", fix: "re-run `xless provision apply` (it creates the certificate first)")
             }
-            let created = try await account.createProfile(name: name, type: t.profileType, bundleResourceID: bundle, certificateID: cert)
+            let created = try await account.createProfile(name: name, type: t.profileType, bundleResourceID: bundle, bundleID: t.bundleID, certificateID: cert)
             return "created profile \(name) (\(created.id))"
 
         case .app(let request):
             let creation = AppCreation(api: account, web: {
                 guard let web else { throw XlessError(.account, "the Apple ID web session is not open", fix: "this is a bug in xless; please report it") }
                 return web.apps
-            }, confirm: { _, _ in true }, say: say)
+            }, confirm: { _, _ in true }, say: tell)
             guard let made = try await creation.run(request), let app = made.created.first ?? made.existing.first else {
                 throw XlessError(.account, "the app record for \(request.bundleID) was not created", fix: "re-run `xless provision apply`")
             }
@@ -771,7 +758,7 @@ struct ProvisionApplier {
             let pushed = try await store.listing.apply(appID: try await app(&state))
             drift += pushed.held.map(ProvisionPlanner.listingDrift)
             // The plan's own notes were shown with it; what planning the listing again found is said now.
-            for note in pushed.notes where !planNotes.contains(note) { say("note: \(note)") }
+            for note in pushed.notes where !planNotes.contains(note) { tell("note: \(note)") }
             return "pushed the App Store listing (\(pushed.sent) change\(pushed.sent == 1 ? "" : "s"))"
 
         case .privacy(let want):
@@ -798,7 +785,7 @@ struct ProvisionApplier {
             let file = try storeFile()
             try CertificateKeyStore.precheck(file, name: entry, base: kind.secretName, team: team, stage: .account,
                                              keepBoth: "remove it, or import the key that goes with the certificate you use")
-            let created = try await CertificateCreation(api: account, say: say).run(type: type, relatedID: nil, entry: entry, team: team, keys: {
+            let created = try await CertificateCreation(api: account, say: tell).run(type: type, relatedID: nil, entry: entry, team: team, keys: {
                 try vault.unlock(file, reason: "storing the new certificate's private key")
                 return CertificateKeyStore(store: vault.store, catalogID: file.id)
             }, now: now)
@@ -819,7 +806,7 @@ struct ProvisionApplier {
             do {
                 try keys.record(name: entry, secret: secret, certificateID: cert.id, expires: facts?.expires ?? cert.expires, team: facts?.teamID ?? team)
             } catch {
-                say("warning: certificate \(cert.id) was created for \(entry), but its ID could not be recorded with it (\(XlessError.wrapping(error, stage: .account).cause)); the sign stage and the next plan still find it by its public key")
+                tell("warning: certificate \(cert.id) was created for \(entry), but its ID could not be recorded with it (\(XlessError.wrapping(error, stage: .account).cause)); the sign stage and the next plan still find it by its public key")
             }
             return (cert.id, "created \(type.displayName) certificate \(cert.id) for the key stored as \(entry)")
         case .environment(let name):
@@ -833,16 +820,16 @@ struct ProvisionApplier {
 
     /// One create request for an existing key, with the refusals `xless certs create` gives.
     func create(_ type: CertificateType, key: SigningKey) async throws -> ASCCertificate {
-        let creation = CertificateCreation(api: account, say: say)
+        let creation = CertificateCreation(api: account, say: tell)
         try await creation.precheck(type)
         // The key may have had certificates before (gone, or expired): only one made by this request counts.
         let before = try await creation.existingIDs()
         do {
             return try await account.create(type: type, csrPEM: try key.csrPEM(commonName: "xless"), relatedID: nil)
         } catch {
-            guard ASCCertificates.isAmbiguous(error) else { throw creation.refused(type, error, removedEntry: nil, keptEntry: nil) }
+            guard ASCCertificates.isAmbiguous(error) else { throw creation.refused(type, error) }
             if let made = await creation.made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error, excluding: before) { return made }
-            throw creation.ambiguous(type, error, kept: nil)
+            throw creation.ambiguous(type, error)
         }
     }
 }

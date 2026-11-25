@@ -58,7 +58,7 @@ public enum TauriProject {
             platforms: [.ios: PlatformConfig(minimumOS: minimumOS, product: product, entitlements: entitlements, extensions: overlay.ios?.extensions ?? [])],
             assets: assets, privacyManifest: overlay.privacyManifest, infoPlist: overlay.infoPlist ?? "\(appleDir)/\(target.infoPath)", launchStoryboard: storyboard,
             testflight: overlay.testflight, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
-            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)
+            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode, provisioningUpdates: overlay.provisioningUpdates)
         try config.validate()
         return ResolvedTauri(config: config, tauri: tauri, target: target, tauriDir: tauriDir, appleDir: appleDir, projectName: projectName)
     }
@@ -84,7 +84,7 @@ public enum TauriProject {
             // Only `macos.infoPlist`: the top-level `infoPlist` is the iOS target's (Xcode placeholders, UIKit keys).
             assets: nil, privacyManifest: nil, infoPlist: overlay.macos?.infoPlist, launchStoryboard: nil,
             testflight: nil, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
-            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)
+            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode, provisioningUpdates: overlay.provisioningUpdates)
         try config.validate()
         return ResolvedTauriMac(config: config, tauri: tauri, tauriDir: tauriDir, mainBinaryName: tauri.mainBinaryName)
     }

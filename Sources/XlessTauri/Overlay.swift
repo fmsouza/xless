@@ -85,6 +85,8 @@ public struct TauriOverlay: Sendable, Equatable {
     public var testflight: TestFlightConfig?
     /// `xcode:`: the Xcode whose SDK must build the app (`XcodePin`); nil: the image's SDK.
     public var xcode: String? = nil
+    /// `provisioningUpdates: false`: `sign` changes nothing on the account; nil: it may.
+    public var provisioningUpdates: Bool? = nil
 
     /// The cargo features of the macOS build: `macos.features` when set, else `tauri.features`.
     public var macFeatures: [String] { macos?.features ?? features }
@@ -119,10 +121,12 @@ private struct Raw: Decodable {
     var usesNonExemptEncryption: Bool?
     var testflight: TestFlightConfig?
     var xcode: String?
+    var provisioningUpdates: Bool?
 }
 
 extension TauriOverlay {
     public static func parse(yaml: String, name: String) throws -> TauriOverlay {
+        try ProvisioningUpdates.check(yaml: yaml, file: "overlay \(name)")
         let raw: Raw
         do {
             raw = try YAMLDecoder().decode(Raw.self, from: yaml)
@@ -158,7 +162,7 @@ extension TauriOverlay {
             bundleID: raw.bundleID, teamID: raw.teamID, version: (version == nil || version == "tauri") ? nil : version,
             build: raw.build?.value ?? "dated", ios: raw.ios, macos: raw.macos, assets: raw.assets, launchStoryboard: raw.launchStoryboard,
             infoPlist: raw.infoPlist, privacyManifest: raw.privacyManifest, linkFlags: raw.linkFlags ?? [], binaryDependencies: deps, scripts: raw.scripts ?? [:],
-            usesNonExemptEncryption: raw.usesNonExemptEncryption, testflight: raw.testflight, xcode: raw.xcode)
+            usesNonExemptEncryption: raw.usesNonExemptEncryption, testflight: raw.testflight, xcode: raw.xcode, provisioningUpdates: raw.provisioningUpdates)
     }
 }
 

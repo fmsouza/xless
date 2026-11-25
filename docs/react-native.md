@@ -99,6 +99,7 @@ Relative paths in the overlay (`source`, `privacyManifest`) resolve against the 
 | `identifiers.replace` | Literal text → replacement in every string value (nested arrays and dictionaries too; never keys) of every bundle's entitlements, applied at `sign`, **and** of the app's own `Info.plist`s, applied at `finalize` so the signature seals them: the app's and its extensions', and another bundle's (a framework, a resource bundle) only when its own `CFBundleIdentifier` is one of the keys or starts with one (the other team's own code; that bundle ID is kept). Third-party frameworks are left alone. Every string value of those files is covered, URL schemes included (`CFBundleURLSchemes`), and files not named `Info.plist` (`GoogleService-Info.plist`, …) are not. Keys are whole identifiers (4+ characters with a `.`) and match only where an identifier ends: the next character is not a letter, digit or `-` (`com.other.app` matches `group.com.other.app`, `com.other.app.share` and `com.other.app:/cb`, never `com.other.apple`). Values are non-empty; longest match first, one pass. Use it when the app is signed by a team that does not own its identifiers, e.g. `{ com.other.app: com.example.myapp }` maps `group.com.other.app` and the keychain group together, in the entitlements and in Info.plist keys the app reads at run time. `finalize` logs the count and the key path of every Info.plist value it replaced, and records the map (`final/identifiers.json`): `sign` refuses a map changed since (re-run from `finalize`). A replacement that would change the app's or an extension's `CFBundleIdentifier` is refused: bundle IDs come from `bundleIDs`. The former `entitlements.replace` is refused with a pointer here. |
 | `entitlements.remove` | Applied at `sign`: top-level entitlement keys dropped from every bundle, e.g. a capability the signing team cannot have. |
 | `xcode` | The Xcode whose SDK builds the app, e.g. `xcode: "26.2"` (quote it). Default: the image's SDK. Pin the Xcode of the app's own release pipeline: an SDK changes what UIKit enforces at launch ([below](#pinning-the-xcode-sdk)). |
+| `provisioningUpdates` | `false`: `sign` changes nothing on the Apple account, and fails with exit 24 and the list when it would have to ([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)). Default `true`; the key without a value is refused. |
 | `testflight` | `groups`, `whatToTest`, `locale`: as in [xless.yml](xless-yml.md#testflight). |
 | `usesNonExemptEncryption` | `ITSAppUsesNonExemptEncryption`, stamped at `finalize`. |
 | `privacyManifest` | A `PrivacyInfo.xcprivacy` copied into the app, replacing the app's own. Without it the one Expo generates must be in the bundle (`finalize` checks). |
@@ -120,7 +121,7 @@ Before the first `prepare` it says what is still unknown.
 | build (12) | Checks the image's SDK against `xcode:` again and records it in `.xless/build/ios/sdk.json` ([below](#pinning-the-xcode-sdk)). Finds the scheme's app target and its extensions and checks `bundleIDs`; clones the Swift packages at their pinned revisions; writes the PIF with the bundle IDs and versions as per-target settings; runs Swift Build. Copies the `.app`, stamps every bundle's version and build number, and writes `entitlements.json` and `packages.json` next to it in `.xless/build/ios/`, and every `.dSYM` Swift Build wrote in `.xless/build/ios/dSYMs/` ([dSYMs](#dsyms)). |
 | assets (13) | Copy-through. |
 | finalize (14) | Replaces `identifiers.replace` in the app's and its extensions' Info.plists (and records the map for `sign`), then Xcode metadata as for every app, stamped from the SDK the build recorded. |
-| sign (15) | Every bundle with its own profile and entitlements ([below](#signing-app-extensions)). |
+| sign (15, [24](signing-and-testflight.md#what-sign-changes-on-the-account)) | Every bundle with its own profile and entitlements ([below](#signing-app-extensions)). |
 | package, upload (16, 17) | As for every app; `package` also zips the dSYMs into `out/<Product>.app.dSYM.zip`. |
 
 Without the script each stage is a command: `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios`. `build` runs `prepare` first, and so does `xless ship`, which takes `--from`/`--to`. `xless next-build --config <overlay>` prints the build number the next run would use (read-only).
@@ -368,7 +369,7 @@ These are measured differences from an Xcode build, or workarounds the Linux too
 
 ## Troubleshooting
 
-Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17. Exit 2 is `xless run --docker` itself (arguments, a missing secret variable, a secret inside a mounted directory).
+Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17. Exit 2 is `xless run --docker` itself (arguments, a missing secret variable, a secret inside a mounted directory).
 
 | Exit | Stage and message | What to do |
 |---|---|---|
