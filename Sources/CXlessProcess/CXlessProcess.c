@@ -907,6 +907,8 @@ void *xless_secret_map(size_t size, int *locked) {
 #ifdef __linux__
     (void)madvise(p, length, MADV_DONTDUMP);
     (void)madvise(p, length, MADV_DONTFORK);
+#elif defined(__APPLE__)
+    (void)minherit(p, length, VM_INHERIT_NONE);
 #endif
     if (locked) *locked = ok;
     return p;
