@@ -1,4 +1,5 @@
 import Foundation
+import XlessImages
 @testable import XlessRun
 
 /// A host whose programs are a closure, and whose files are real ones.
@@ -153,6 +154,9 @@ final class RunHome: Sendable {
     var project: String { "\(root)/proj" }
     /// Where the fake `secrets materialize` writes.
     var secrets: String { "\(root)/run/xless/\(String(repeating: "0a", count: 16))" }
+    var share: URL { URL(fileURLWithPath: "\(root)/share") }
+    /// The images of this machine: one Xcode's, and the kits on it.
+    let images = FakeImages()
 
     init() throws {
         let temporary = FileManager.default.temporaryDirectory.path
@@ -162,6 +166,13 @@ final class RunHome: Sendable {
         }
         try write("ov/app.yml", "type: tauri\nsource: ../src\nteamID: ABCDE12345\n")
         try write("proj/xless.yml", "name: App\n")
+        try write("share/versions.env", "XCODE_VERSION=27.0\n")
+        for kit in Kit.allCases {
+            try FileManager.default.createDirectory(at: kit.directory(share: share), withIntermediateDirectories: true)
+            try write("share/docker/\(kit.rawValue)/Dockerfile", "FROM \(kit.rawValue)\n")
+        }
+        images.add(xcode: "26.6", build: "17F113")
+        for kit in Kit.allCases { try images.add(kit, xcode: "26.6", share: share) }
     }
     deinit { try? FileManager.default.removeItem(atPath: root) }
 
@@ -188,14 +199,14 @@ final class RunHome: Sendable {
         return try ProjectRun(arguments, context: context, host: host).run()
     }
 
-    /// The programs of a run that goes well: a build number, the store's secrets, the images' xless.
+    /// The programs of a run that goes well: a build number, the store's secrets, the images.
     func answer(_ other: @escaping @Sendable (RunStep) -> FakeRunHost.Answer? = { _ in nil }) -> @Sendable (FakeRunHost, RunStep) -> FakeRunHost.Answer {
-        let secrets = secrets
+        let secrets = secrets, images = images, share = share
         return { _, step in
             if let answer = other(step) { return answer }
+            if let answer = images.answer(step.words, share: share) { return answer }
             if step.words.contains("next-build") { return (0, "noise\n42\n") }
             if step.words.contains("named-by") { return (0, "SOME_PASSWORD\n") }
-            if step.words.contains("sha256sum") { return (0, String(repeating: "ab", count: 32) + "  /usr/local/bin/xless\n") }
             if step.words.contains("materialize"), !step.words.contains("--check") {
                 for set in step.words where set.contains("=") {
                     let parts = set.split(separator: "=")
@@ -210,12 +221,66 @@ final class RunHome: Sendable {
     }
 }
 
+/// The images of a fake docker.
+final class FakeImages: @unchecked Sendable {
+    private let lock = NSLock()
+    private var images: [String: LocalImage] = [:]
+    /// What a build of a kit leaves.
+    var buildFails = false, buildIsElsewhere = false
+
+    func set(_ image: LocalImage) { lock.withLock { images[image.name] = image } }
+    func remove(_ name: String) { lock.withLock { images[name] = nil } }
+    func change(_ name: String, _ body: (inout LocalImage) -> Void) { lock.withLock { if var image = images[name] { body(&image); images[name] = image } } }
+    func has(_ name: String) -> Bool { lock.withLock { images[name] != nil } }
+    /// The name of the image with this ID, which is what a container must be of; else what was given.
+    func name(_ id: String) -> String { lock.withLock { images.values.filter { $0.id == id }.map(\.name).min() } ?? "not an ID: \(id)" }
+
+    /// An image as `xless setup --docker` builds it.
+    func add(xcode: String, build: String, name: String? = nil, layers more: [String] = [], id: String? = nil) {
+        set(LocalImage(name: name ?? ImageName.base(arch: "arm64", xcode: xcode), id: id ?? "sha256:base\(xcode)", architecture: "arm64",
+                       labels: [ImageLabel.image: "true", ImageLabel.sdk: build, ImageLabel.xcode: xcode, ImageLabel.arch: "arm64", ImageLabel.version: "0.0.0-dev"],
+                       layers: ["os", "xcode\(xcode)"] + more))
+    }
+
+    func add(_ kit: Kit, xcode: String, share: URL) throws {
+        let name = ImageName.base(arch: "arm64", xcode: xcode), base = lock.withLock { images[name] }!
+        var image = base
+        image.name = kit.image(on: base)
+        image.id = "sha256:\(kit.rawValue)\(xcode)"
+        image.layers.append(kit.rawValue)
+        image.labels.merge([ImageLabel.kit: kit.rawValue, ImageLabel.kitBase: base.id, ImageLabel.kitRecipe: try kit.recipe(share: share)]) { $1 }
+        set(image)
+    }
+
+    /// docker's answer to a question or a build of images; nil: it is another command.
+    func answer(_ words: [String], share: URL) -> FakeRunHost.Answer? {
+        guard words.first == "docker" else { return nil }
+        if words.suffix(2) == ["context", "show"] { return (0, "here\n") }
+        if words.contains("ls"), words.contains("image") { return (0, lock.withLock { images.keys.sorted().joined(separator: "\n") } + "\n") }
+        if words.contains("inspect") {
+            guard let image = lock.withLock({ images[words.last ?? ""] }) else { return (1, "\n") }
+            let json: [String: Any] = ["Id": image.id, "Architecture": image.architecture, "Config": ["Labels": image.labels], "RootFS": ["Layers": image.layers]]
+            return (0, String(decoding: try! JSONSerialization.data(withJSONObject: json), as: UTF8.self) + "\n")
+        }
+        guard words.contains("build") && words.contains("--pull=false") else { return nil }
+        if buildFails { return (1, "") }
+        for kit in Kit.allCases where words.contains("\(ImageLabel.kit)=\(kit.rawValue)") {
+            let tag = words[words.firstIndex(of: "-t")! + 1]
+            try! add(kit, xcode: String(tag.dropFirst("xless:local-arm64-xcode".count).dropLast("-\(kit.rawValue)".count)), share: share)
+            if buildIsElsewhere { change(tag) { $0.layers = ["pulled"] } }
+        }
+        return (0, "")
+    }
+}
+
 extension RunStep {
     var line: String { words.joined(separator: " ") }
     /// `docker <command>`, of the clean-up.
     func isCleanUp(_ command: String) -> Bool { words.contains(command) && line.contains("label=xless.run=") }
     /// `docker run …`, of a step.
     var isContainer: Bool { words.contains("--rm") && !words.contains("--entrypoint") }
+    /// The image a container is of: what its xless follows.
+    var image: String { words.firstIndex(of: "xless").map { words[$0 - 1] } ?? "" }
 }
 
 /// Lines from several threads.

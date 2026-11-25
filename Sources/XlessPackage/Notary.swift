@@ -7,7 +7,7 @@ enum Notary {
     /// Submits `file` (a DMG or an `.app`) to the notary service, waits and staples the ticket in place. The App Store
     /// Connect key is read by rcodesign from private files that are gone when the call ends.
     static func notarize(_ file: URL, secrets: Secrets,
-                         encodeKey: ([String]) throws -> Void = { try Shell.run("rcodesign", $0, stage: .package) },
+                         encodeKey: ([String]) throws -> Void = { try RCodesign.run($0, stage: .package) },
                          run: ([String]) throws -> Run = rcodesign) throws {
         try PrivateFiles.with(stage: .package) { files in
             let p8 = try files.write(try p8Contents(secrets), as: "key.p8"), keyJSON = try files.make("key.json")
@@ -29,7 +29,7 @@ enum Notary {
         let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("xless-notary-\(UUID().uuidString).log")
         defer { try? FileManager.default.removeItem(at: logURL) }
         do {
-            try Shell.run("rcodesign", args, stage: .package, captureTo: logURL)
+            try RCodesign.run(args, stage: .package, captureTo: logURL)
             return Run(log: (try? String(contentsOf: logURL, encoding: .utf8)) ?? "", failure: nil)
         } catch let e as XlessError where !e.cause.hasPrefix("cannot start ") {
             return Run(log: (try? String(contentsOf: logURL, encoding: .utf8)) ?? "", failure: e)
@@ -50,7 +50,7 @@ enum Notary {
     }
 
     /// Fails unless the DMG's signature carries a stapled notarization ticket (read back with `rcodesign print-signature-info`).
-    static func checkStapled(dmg: URL, signatureInfo: (URL) throws -> String = { try Shell.run("rcodesign", ["print-signature-info", $0.path], stage: .package).stdout }) throws {
+    static func checkStapled(dmg: URL, signatureInfo: (URL) throws -> String = { try RCodesign.run(["print-signature-info", $0.path], stage: .package).stdout }) throws {
         try checkStapled(dmg, hasStapledTicket(signatureInfo: signatureInfo(dmg)))
     }
 

@@ -105,11 +105,12 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   is needed only by a run that uploads with `testflight.external.review.demoAccount`, and only the upload gets it
   ([secrets.md](secrets.md#xless-run-and-docker-builds)).
 
-- **Native or images.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
+- **Native or image.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
   ([native-install.md](native-install.md)); a project pinning another Xcode with `xcode:` is refused until you run
-  `xless setup` with that Xcode. With `--docker`: `xless:local-<arch>` for this machine's architecture, or the images
-  of the Xcode the project pins ([react-native.md](react-native.md#pinning-the-xcode-sdk)); `XLESS_IMAGE` names another
-  image. The Docker context is `DOCKER_CONTEXT` when set, else `colima-xless` when that context exists, else the
+  `xless setup` with that Xcode. With `--docker`: the image of the Xcode the project
+  pins, `xless:local-<arch>-xcode<version>`, or without a pin that of the newest Xcode there is an image of. `image:`
+  in xless.yml or the overlay, or `XLESS_IMAGE`, names another image for the build step
+  ([images.md](images.md#an-image-of-your-own)). The Docker context is `DOCKER_CONTEXT` when set, else `colima-xless` when that context exists, else the
   current one.
 - **Build number.** `XLESS_BUILD_NUMBER` if set, else `$(( $(date +%s) / 60 ))`, which is monotonic across machines.
   With `--config` the overlay's `build:` decides instead ([tauri.md](tauri.md#build-numbers)).
@@ -263,10 +264,11 @@ shell history and process list:
 ```sh
 docker run --rm -v "$PWD":/work -w /work \
   -e ASC_KEY_ID -e ASC_ISSUER_ID -e ASC_KEY_P8 -e XLESS_DIST_KEY -e XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 )) \
-  xless:local-amd64 xless ship --platform ios
+  xless:local-amd64-xcode27.0 xless ship --platform ios
 ```
 
-Use `xless:local-arm64` on an arm64 machine. Output ends up in `.xless/build/ios/out/`. The container runs as root, so
+Use the name that `docker image ls xless` shows: its architecture is the machine's (`arm64` or `amd64`), its Xcode the one
+you set up. Output ends up in `.xless/build/ios/out/`. The container runs as root, so
 the files it creates in your project (`.xless/`, and for iOS builds `.build/`, `.bsp/`, `xtool/` and `xtool.yml`)
 belong to root on a Linux host. Remove them with `sudo rm -rf .xless .build .bsp xtool xtool.yml`, or hand them back
 with `docker run --rm -v "$PWD":/work -w /work alpine chown -R "$(id -u):$(id -g)" .xless .build .bsp xtool xtool.yml`.
@@ -274,7 +276,7 @@ with `docker run --rm -v "$PWD":/work -w /work alpine chown -R "$(id -u):$(id -g
 ## Continuous integration
 
 [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow to copy into your app's repository
-and adapt. It runs an image from your own private registry as the job container and ships with `xless ship`. It needs the repository variable `XLESS_IMAGE` and
-the secrets `XLESS_REGISTRY_TOKEN`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` and `XLESS_DIST_KEY`. It has not been
-run yet. Images hold Apple's SDK, so they may only go to a registry that is private:
-[maintainers.md](maintainers.md#private-registries).
+and adapt. It runs on a Linux runner of your own (self-hosted) that you set up once with `xless setup --sdk <dir>`, and ships
+with `xless ship`. It needs the secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` and `XLESS_DIST_KEY`. It has not been
+run yet. GitHub's own runners start empty, and there is no image to give them: one holds Apple's SDK, so it is never pushed to a
+registry ([maintainers.md](maintainers.md#images-on-other-machines)).

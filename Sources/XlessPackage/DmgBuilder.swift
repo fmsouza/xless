@@ -122,7 +122,7 @@ public enum DmgBuilder {
             do { try run(argv) } catch {
                 if "\(error)".contains("cannot start "), ["dmg", "hfsplus", "mkfs.hfsplus"].contains(argv[0]) {
                     throw XlessError(.package, "cannot start \(argv[0]) to build the DMG",
-                                     fix: "install libdmg-hfsplus and hfsprogs (use the xless-tauri image)")
+                                     fix: "install libdmg-hfsplus and hfsprogs (xless's Docker images have them)")
                 }
                 throw error
             }
@@ -145,7 +145,7 @@ public enum DmgBuilder {
                                     dSYMs: dSYMs, run: DmgBuilder.shell)
             try PrivateFiles.with(stage: .package) { files in
                 let signer = try files.signer(key: key, certificate: cert.der)
-                try Shell.run("rcodesign", signArguments(dmg: dmg, keyPEM: signer.key, certPEM: signer.certificate), stage: .package)
+                try RCodesign.run(signArguments(dmg: dmg, keyPEM: signer.key, certPEM: signer.certificate), stage: .package)
             }
             try Notary.notarize(dmg, secrets: secrets)
             try Notary.checkStapled(dmg: dmg)

@@ -59,6 +59,12 @@ testflight: { groups: [Internal] }
     #expect(e?.fix.contains("identifiers: { replace:") == true && e?.fix.contains("Info.plist") == true)
 }
 
+/// `xless run` reads it; the overlay takes it, as a name and nothing else.
+@Test func reactNativeOverlaysTakeAnImage() throws {
+    _ = try ReactNativeOverlay.parse(yaml: rnYAML + "\nimage: my-app-image:1\n", name: "a")
+    #expect(throws: XlessError.self) { try ReactNativeOverlay.parse(yaml: rnYAML + "\nimage: [a]\n", name: "a") }
+}
+
 @Test func parsesTheXcodePin() throws {
     for (value, want) in [("\"26.2\"", "26.2"), ("26.2", "26.2"), ("'27.0'", "27.0"), ("27.0.1", "27.0.1"), ("27", "27")] {
         let o = try ReactNativeOverlay.parse(yaml: rnYAML + "\nversion: 1.0.0\nxcode: \(value)\n", name: "a")

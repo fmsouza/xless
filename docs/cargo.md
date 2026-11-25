@@ -31,7 +31,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 ## Requirements
 
 - To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate; for macOS the Developer ID certificate), plus its keys in the secret store (or, in CI, the variables under [One command: TestFlight](signing-and-testflight.md#one-command-testflight)).
-- The `xless-tauri` image, which carries Rust's installer, LLVM binutils and the tools that build a DMG. `xless setup --docker` builds it ([README](../README.md#build-in-docker-instead)).
+- The xless image of the Xcode (`xless setup --docker`, [README](../README.md#build-in-docker-instead)). The `tauri` kit on top of it, which has Rust's installer, is built by the first run that needs it, or by `xless setup --docker --with cargo` ([images.md](images.md#what-there-is)).
 - The app repository is a git checkout, and `Cargo.lock` is committed and up to date (`--locked`). xless copies the **tracked** files of `source:` (and only those) into a work copy under `~/.cache/xless/work/<overlay name>`; the source is never written to. Commit the lockfile, the plist, the icon or asset catalog and every file the overlay refers to. Untracked and ignored files are not copied: a file the app's `build.rs` reads from the tree and git ignores is missing in the work copy. Data that lives outside the repository goes in as a [build input](#build-inputs).
 - `source:` may be a directory inside a git checkout (a workspace in a monorepo). The version lookup and the `GIT_SHA` placeholder read that checkout's git data.
 - A work copy belongs to one source. The first sync records the source in `.xless/source` of the work copy, and a later run of an overlay with the same file name but another source stops at `prepare`; rename one overlay file or delete the work copy.
@@ -95,6 +95,7 @@ An unknown key is refused with its path (`unknown key 'ios.feature'`), so a miss
 | `testflight` | `groups`, `whatToTest`, `locale`: as in [xless.yml](xless-yml.md#testflight). iOS only. |
 | `provisioningUpdates` | `false`: `sign` changes nothing on the Apple account, and fails with exit 24 and the list when it would have to ([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)). Default `true`; the key without a value is refused. |
 | `xcode` | The Xcode whose SDK must build the app, e.g. `"26.2"`; as for Tauri ([react-native.md](react-native.md#pinning-the-xcode-sdk)). Default: the image's SDK. |
+| `image` | An image of your own for the build step ([images.md](images.md#an-image-of-your-own)), already built on this machine. The steps with the secrets run in the xless image. `XLESS_IMAGE` wins over it. Default: the `tauri` kit. |
 | `rust.toolchain` | A rustup toolchain name (`"1.97.0"`, `stable`). xless sets it as `RUSTUP_TOOLCHAIN` on every cargo call, which beats the repository's `rust-toolchain` file. Quote version numbers. Without it, that file decides, and without a file, `stable`. |
 | `env` | Plain build variables, passed to cargo and so to `build.rs`. Never secrets: a name xless sets itself (`PATH`, `HOME`, `SDKROOT`, `DEVELOPER_DIR`, `CARGO_HOME`, `RUSTUP_HOME`, `RUSTUP_TOOLCHAIN`, the deployment targets, `CARGO_PROFILE_RELEASE_STRIP`), one that starts with `XLESS_`, `SWIFT_`, `ASC_` or `CARGO_TARGET_`, and any name xless scrubs as a secret is refused. |
 | `inputs` | Extra read-only directories the build needs: see [build inputs](#build-inputs). |
@@ -184,7 +185,7 @@ As for Tauri ([tauri.md](tauri.md#creating-the-app-store-connect-app-record)), w
 xless run --docker --config ~/ci/my-app.overlay.yml [extra xless ship args, e.g. --from upload]
 ```
 
-The run and its options are those of Tauri ([tauri.md](tauri.md#shipping)): three containers in the `xless-tauri` image, so the app's build code (`build.rs`, proc-macros) never runs next to a secret.
+The run and its options are those of Tauri ([tauri.md](tauri.md#shipping)): three containers, of which only the build's has the toolchains, so the app's build code (`build.rs`, proc-macros) never runs next to a secret.
 
 1. `xless next-build --config <overlay> --source <source>`, with the App Store Connect key only. Skipped when `XLESS_BUILD_NUMBER` or `--build-number` is given, when resuming after `build`, and for macOS.
 2. `xless ship --to finalize` with no secret file or variable: prepare, build, assets, finalize.
@@ -246,7 +247,7 @@ From the milestone's non-goals and what was left out:
 
 ## Linux parity test
 
-From a source checkout, `make test-cargo-linux` builds `samples/HelloCargo` for iOS and for universal macOS through `finalize` in the `xless-tauri` image (no credentials, no signing, explicit build numbers) and checks the finalized apps: thin arm64 Mach-O on iOS at minimum OS 17.0, an `x86_64` then `arm64` universal executable on macOS, the bundle IDs, build numbers and icons, `Assets.car`, and no `@PLACEHOLDER@` left in either Info.plist. There is no Mac reference for a plain Cargo app, so the checks are the bundle's contract, not a comparison with an Xcode build. `scripts/test-cargo-linux.sh --platform ios|macos|all` runs one platform.
+From a source checkout, `make test-cargo-linux` builds `samples/HelloCargo` for iOS and for universal macOS through `finalize` in the `tauri` kit's image (no credentials, no signing, explicit build numbers) and checks the finalized apps: thin arm64 Mach-O on iOS at minimum OS 17.0, an `x86_64` then `arm64` universal executable on macOS, the bundle IDs, build numbers and icons, `Assets.car`, and no `@PLACEHOLDER@` left in either Info.plist. There is no Mac reference for a plain Cargo app, so the checks are the bundle's contract, not a comparison with an Xcode build. `scripts/test-cargo-linux.sh --platform ios|macos|all` runs one platform.
 
 - **A normal git checkout.** The repository is mounted read-only and must be an ordinary checkout, not a `git worktree`: `GIT_SHA` is `git rev-parse HEAD` of the mounted source, and a worktree's `.git` file points outside the mount.
 - **The sample committed.** The work copy is the tracked files, so a sample that is edited but not committed is built as it was committed.

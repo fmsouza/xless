@@ -391,7 +391,7 @@ public enum PkgBuilder {
             let pkg = try buildInto(out, signedApp: signedApp, config: config, dSYMs: dSYMs, run: run, pack: pack)
             try PrivateFiles.with(stage: .package) { files in
                 let signer = try files.signer(key: key, certificate: cert.der)
-                try run(["rcodesign"] + signArguments(pkg: pkg, keyPEM: signer.key, certPEM: signer.certificate), files.directory)
+                try run(["rcodesign"] + RCodesign.arguments(signArguments(pkg: pkg, keyPEM: signer.key, certPEM: signer.certificate)), files.directory)
             }
             return pkg
         }

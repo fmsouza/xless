@@ -57,10 +57,15 @@ X
 # The fake docker: each `run` logs its command and, for each /secrets/store mount, which files it can see, and what the
 # run directory holds at that moment. DSLEEP: a run whose command has that word sleeps (to be stopped). DHANG: asked
 # for the run's containers, it never answers.
+case "$(uname -m)" in arm64|aarch64) A=arm64 ;; *) A=amd64 ;; esac
+fake="$repo/Tests/shell/fake-images.sh"
+{ "$fake" base "$A" 27.0 27A266a; "$fake" kit tauri "$repo" "$A" 27.0 27A266a
+  "$fake" base "$A" 27.0 27A266a mine:1 sha256:mine base27.0,xless27.0,mine; } > "$t/images"
+mkdir "$t/image"; printf 'name: App\nimage: mine:1\n' > "$t/image/xless.yml"
 cat > "$t/bin/docker" <<'D'
 #!/usr/bin/env bash
 [[ -z "${DHANG:-}" || "$*" != "ps "*label=xless.run=* ]] || { echo $$ > "$DHANG"; exec sleep 60; }
-case "$1" in context|image|ps|rm) exit 0 ;; esac
+case "$1" in image) exec "$FAKE" "$@" ;; context|ps|rm) exit 0 ;; esac
 [[ "$1" == run ]] || exit 0
 { echo "run $*"
   for a in "$@"; do
@@ -73,7 +78,7 @@ exit 0
 D
 chmod +x "$t/bin/xless" "$t/bin/docker"
 docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
-        XDG_RUNTIME_DIR="$t/run" RUN="$RUN" XLOG="$t/xlog" DLOG="$t/dlog" DPID="$t/dpid" MPID="$t/mpid")
+        XDG_RUNTIME_DIR="$t/run" RUN="$RUN" XLOG="$t/xlog" DLOG="$t/dlog" FAKE="$fake" FAKE_IMAGES="$t/images" DPID="$t/dpid" MPID="$t/mpid")
 reset() { : > "$t/xlog"; : > "$t/xlog.named"; : > "$t/dlog"; rm -rf "$t/run/xless" "$t/dpid" "$t/mpid"; }
 
 # A project directory with nothing set: one materialisation (with the project's team), one container gets the set
@@ -143,16 +148,20 @@ env -i HOME="$t/home" PATH="/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XL
 [[ $code -eq 2 ]] && grep -q "is not on PATH" "$t/err" || fail "no host xless: exit $code $(cat "$t/err")"
 
 # stopped by a signal, whichever ends a process (Ctrl-C, Ctrl-\\, a runner's cancel, a timer, a fault of xless's own): while a
-# container runs, and while xless writes them (or waits for the passphrase), the run directory, the step and the lock of the
-# work copy go at once. INT, QUIT: the run is started with them at their default (a background job of this test starts with
+# container runs (the one that signs; the one that builds a project with an image of its own), and while xless writes them (or
+# waits for the passphrase), the run directory, the step, the run's xless.yml and the lock of the work copy go at once. INT, QUIT: the run is started with them at their default (a background job of this test starts with
 # them ignored, and so would the run); XFSZ: python ignores it.
 dfl() { exec python3 -c 'import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGQUIT, signal.SIGXFSZ)]; os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
 for sig in INT TERM HUP QUIT USR1 USR2 ALRM VTALRM PROF XCPU XFSZ SYS ABRT TRAP SEGV BUS FPE ILL; do
   want=$((128 + $(kill -l $sig)))
-  for where in container materialise; do
+  for where in container materialise image; do
     reset
-    if [[ $where == container ]]; then extra=(DSLEEP="--from sign"); pidf="$t/dpid"; else extra=(MAT_SLEEP=1); pidf="$t/mpid"; fi
-    dfl "${docker[@]}" "${extra[@]}" "$S" --config "$t/ov/app.yml" >/dev/null 2>&1 & pid=$!; bg+=("$pid")
+    case $where in
+      container) extra=(DSLEEP="--from sign"); pidf="$t/dpid"; args=(--config "$t/ov/app.yml") ;;
+      materialise) extra=(MAT_SLEEP=1); pidf="$t/mpid"; args=(--config "$t/ov/app.yml") ;;
+      image) extra=(DSLEEP="--to finalize"); pidf="$t/dpid"; args=("$t/image") ;;
+    esac
+    dfl "${docker[@]}" "${extra[@]}" "$S" "${args[@]}" >/dev/null 2>&1 & pid=$!; bg+=("$pid")
     for _ in $(seq 100); do [[ -s "$pidf" ]] && break; sleep 0.1; done
     [[ -s "$pidf" && -d "$RUN" ]] || fail "$sig/$where: never reached the point to stop: $(cat "$t/dlog" "$t/xlog")"
     start=$SECONDS; kill -"$sig" "$pid"; code=0; wait "$pid" || code=$?
@@ -160,6 +169,8 @@ for sig in INT TERM HUP QUIT USR1 USR2 ALRM VTALRM PROF XCPU XFSZ SYS ABRT TRAP 
     [[ ! -e "$RUN" ]] || fail "$sig/$where: the run directory outlived the stopped run: $(ls -R "$RUN")"
     kill "$(cat "$pidf")" 2>/dev/null && fail "$sig/$where: the step outlived the stopped run"
     [[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "$sig/$where: the lock outlived the stopped run"
+    [[ $where != image || -z "$(ls -A "$t/home/.cache/xless/run")" ]] || fail "$sig/$where: the run's xless.yml outlived it: $(ls -R "$t/home/.cache/xless/run")"
+    [[ $where != image ]] || ! grep -q "/secrets\|ASC_\|--from sign" "$t/dlog" || fail "$sig/$where: a secret in the build, or a step after it: $(cat "$t/dlog")"
   done
 done
 

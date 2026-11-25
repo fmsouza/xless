@@ -48,16 +48,19 @@ expect 10 "error: [config] --destination simulator builds React Native overlays 
 # xless run and xless docker: the run's steps. Printed (--dry-run), or run by a fake docker that logs what it is asked.
 mkdir -p "$t/p" "$t/bin" "$t/home" "$t/share"
 cp "$repo/samples/HelloShip/xless.yml" "$t/p/xless.yml"
+case "$(uname -m)" in arm64|aarch64) A=arm64 ;; *) A=amd64 ;; esac
+"$repo/Tests/shell/fake-images.sh" base "$A" 27.0 27A266a > "$t/images"
 cat > "$t/bin/docker" <<'S'
 #!/bin/sh
 printf '%s\n' "$*" >> "$DLOG"
+case "$*" in *" image "*) while [ "$1" != image ]; do shift; done; exec "$FAKE" "$@" ;; esac
 case "$*" in *" run "*|"run "*) exit "${STUB_EXIT:-0}" ;; esac
 S
 chmod +x "$t/bin/docker"
-cp "$repo/versions.env" "$t/share/versions.env"
+cp "$repo/versions.env" "$t/share/versions.env"; cp -R "$repo/docker" "$t/share/docker"
 v="$("${base[@]}" "$x" --version)"
 echo "$v" > "$t/share/VERSION"   # a share is from one release: this xless's
-runs=("${base[@]}" HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" DLOG="$t/dlog" DOCKER_CONTEXT=stub XLESS_SHARE="$t/share")
+runs=("${base[@]}" HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" DLOG="$t/dlog" FAKE="$repo/Tests/shell/fake-images.sh" FAKE_IMAGES="$t/images" DOCKER_CONTEXT=stub XLESS_SHARE="$t/share")
 ship="ship --platform ios --build-number 1 --to finalize"
 xr="$(cd "$(dirname "$x")" && pwd -P)/$(basename "$x")"
 # xless docker: in the images unless XLESS_USE_DOCKER says otherwise; ship's arguments, with or without the `--` that may

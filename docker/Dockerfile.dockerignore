@@ -1,0 +1,11 @@
+# What may go into the image (or, for `swift build`, into its build stage): nothing else of the checkout.
+*
+!Package.swift
+!Package.resolved
+!Sources
+!Tests
+!ThirdParty
+ThirdParty/**/.build
+ThirdParty/**/.swiftpm
+!docker/shims
+!docker/toolchain

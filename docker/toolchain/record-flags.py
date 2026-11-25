@@ -1,4 +1,4 @@
-# Ruling R10 (docker/Dockerfile.sdk): records the clang flags a Swift toolchain needs for Darwin targets.
+# Ruling R10 (docker/Dockerfile): records the clang flags a Swift toolchain needs for Darwin targets.
 #   python3 record-flags.py <version> <root> <SDK bundle> <flag …>
 # - the record (/opt/xless/swift-toolchain.json, or $XLESS_SWIFT_TOOLCHAIN_RECORD: a native install's) gets them as clangFlags (XlessCore SwiftToolchain: Swift Build's build settings);
 # - each of the SDK bundle's toolsets gets them as -Xcc options of its swiftCompiler (Swift compiles of SwiftPM builds),

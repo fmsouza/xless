@@ -701,7 +701,7 @@ its mounted output dir).
   (`LIBDMG_HFSPLUS_COMMIT`/`LIBDMG_HFSPLUS_SHA256`, source tarball). The fanquake fork the plan named is archived
   (2020) and its default branch keeps only `dmg`, no `hfsplus`. The mozilla fork is maintained, has
   `hfsplus <img> symlink <path> <target>` and `addall --symlinks clone_link`. Built with cmake in a builder stage of
-  `docker/Dockerfile.tauri` (on the same base, with zlib, bzip2 and lzma; OpenSSL and LZFSE off), only the two
+  `docker/Dockerfile` (on the same base, with zlib, bzip2 and lzma; OpenSSL and LZFSE off), only the two
   executables and the GPL-3 `LICENSE` are copied into the image. Nothing of it is linked into xless.
 
 ### Sequence (HelloTauri, universal, from the Task 2 reference `.app`)

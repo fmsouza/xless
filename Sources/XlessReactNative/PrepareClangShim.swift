@@ -1,7 +1,7 @@
 import Foundation
 import XlessCore
 
-/// The `clang` on `PATH` during `prepare` only (docker/shims/rn/prepare/clang; contract doc, "Env-only fixes" 5).
+/// The `clang` on `PATH` during `prepare` only (docker/shims/prepare/clang; contract doc, "Env-only fixes" 5).
 /// `pod install` runs `expo-modules-jsi`'s `create-stub-xcframework.sh`, which compiles an empty stub dylib with
 /// `clang -x c - -dynamiclib -o …/.stub-binary -install_name @rpath/ExpoModulesJSI.framework/ExpoModulesJSI` and no
 /// target: on a Mac that is a Mach-O dylib, on Linux the host clang fails to link an ELF executable. A compile with

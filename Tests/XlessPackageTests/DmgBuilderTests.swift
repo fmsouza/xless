@@ -173,7 +173,7 @@ private func macApp(_ root: URL, executable: Data) throws -> URL {
         }
         Issue.record("expected throw")
     } catch let e as XlessError {
-        #expect(e.description == "[package] cannot start dmg to build the DMG — install libdmg-hfsplus and hfsprogs (use the xless-tauri image)")
+        #expect(e.description == "[package] cannot start dmg to build the DMG — install libdmg-hfsplus and hfsprogs (xless's Docker images have them)")
     }
 }
 
@@ -215,7 +215,7 @@ private let exit1 = XlessError(.package, "`rcodesign notary-submit` exited with 
     try notary("stapling DMG with 1695 byte notarization ticket\n")   // exit 0, no status: logged as unknown
 }
 
-/// Runs only where the DMG tools exist (the xless-tauri image): a real volume, listed back with `dmg extract` + `hfsplus ls`.
+/// Runs only where the DMG tools exist (xless's images): a real volume, listed back with `dmg extract` + `hfsplus ls`.
 @Test(.enabled(if: onPath("dmg") && onPath("hfsplus") && onPath("mkfs.hfsplus")))
 func realDmgKeepsFrameworkSymlinksAndHasApplicationsLink() throws {
     let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }
@@ -301,7 +301,7 @@ private let stapledInfo = unstapledInfo.replacingOccurrences(of: "blob_count: 3"
     }
 }
 
-/// In the xless-tauri image: a real DMG signed by rcodesign (self-signed certificate, nothing sent anywhere) has no ticket.
+/// In one of xless's images: a real DMG signed by rcodesign (self-signed certificate, nothing sent anywhere) has no ticket.
 @Test(.enabled(if: onPath("dmg") && onPath("hfsplus") && onPath("mkfs.hfsplus") && onPath("rcodesign")))
 func signedButUnstapledRealDmgFailsTheStapleCheck() throws {
     let root = scratch(); defer { try? FileManager.default.removeItem(at: root) }

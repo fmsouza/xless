@@ -4,7 +4,7 @@ import XlessCore
 /// One download of a native setup: checked against its versions.env sha256, unpacked into `final`'s `.partial`
 /// sibling, and renamed into place only once complete (a leftover `.partial` is removed, never reused).
 public struct NativeDownload: Equatable, Sendable {
-    /// `appImage`: xtool's AppImage, extracted with its own runtime (`--appimage-extract`, as docker/Dockerfile.base does);
+    /// `appImage`: xtool's AppImage, extracted with its own runtime (`--appimage-extract`, as docker/Dockerfile does);
     /// linked as `bin/xtool`. `rcodesign`: the release tarball's binary, linked as `bin/rcodesign`. `swiftToolchain`: a
     /// swift.org toolchain tarball, unpacked without its top directory (`<final>/usr/bin/swiftc`).
     public enum Kind: Equatable, Sendable { case appImage, rcodesign, swiftToolchain }
@@ -116,7 +116,7 @@ public enum NativeSetupPlan {
                                    argv: ["xless", "sdk", "install", "--xtoolsdk", xtoolSDK.path, "--meta", meta.path],
                                    estimate: "~1 min", action: .sdkInstall(xtoolSDK: xtoolSDK, meta: meta, toolchain: layout.toolchain(version: swift))))
             // The image's own Swift (SWIFT_VERSION) keeps the Xcode's clang resource directory; another release gets
-            // its own, with the Xcode's runtimes (docker/Dockerfile.sdk's two cases).
+            // its own, with the Xcode's runtimes (docker/Dockerfile's two cases).
             let mode = swift == table["SWIFT_VERSION"] ? "own" : "separate"
             steps.append(SetupStep(title: "fit the Swift \(swift) toolchain to the SDK and record it in \(layout.record.path)",
                                    argv: [share.appendingPathComponent("scripts/native-toolchain.sh").path, layout.toolchain(version: swift).path, mode,

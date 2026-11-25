@@ -4,12 +4,12 @@ import XlessCore
 import XlessTauri
 @testable import XlessXcode
 
-/// In-image check (xless-rn, gated on XLESS_SWBUILD_IT): samples/HelloPIF, asset catalog included, through the PIF
+/// In-image check (xless's image, gated on XLESS_SWBUILD_IT): samples/HelloPIF, asset catalog included, through the PIF
 /// writer, the stock `swbuild` and the image's Xcode tool shims (`actool` on PATH, no stand-in), compared with the Mac
 /// reference with no allowed gaps: `Assets.car`, the loose icons and the `CFBundleIcons` keys must all be there.
 ///
 ///   docker --context colima-xless run --rm -v "$PWD":/repo -v xless-m3-t6:/scratch -w /repo -e XLESS_SWBUILD_IT=1 \
-///     xless-rn:local-arm64 swift test --scratch-path /scratch/build --filter helloPIFWithAssetCatalogMatchesTheMacReference
+///     xless:local-arm64-xcode27.0 swift test --scratch-path /scratch/build --filter helloPIFWithAssetCatalogMatchesTheMacReference
 @Test(.enabled(if: ProcessInfo.processInfo.environment["XLESS_SWBUILD_IT"] != nil))
 func helloPIFWithAssetCatalogMatchesTheMacReference() throws {
     let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

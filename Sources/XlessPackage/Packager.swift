@@ -42,7 +42,7 @@ public enum Packager {
     /// distribution), with the dSYMs zipped next to it (`zipDSYMs`).
     public static func notarizedZip(signedApp: URL, outputDir: URL, secrets: Secrets, dSYMs: URL? = nil) throws -> URL {
         try notarizedZip(signedApp: signedApp, outputDir: outputDir, secrets: secrets, dSYMs: dSYMs,
-                         encodeKey: { try Shell.run("rcodesign", $0, stage: .package) }, submit: Notary.rcodesign)
+                         encodeKey: { try RCodesign.run($0, stage: .package) }, submit: Notary.rcodesign)
     }
 
     static func notarizedZip(signedApp: URL, outputDir: URL, secrets: Secrets, dSYMs: URL? = nil, encodeKey: ([String]) throws -> Void,

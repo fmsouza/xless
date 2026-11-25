@@ -11,7 +11,7 @@ public enum SetupDisk {
     /// architecture only.
     public static let nativeKey = "XLESS_SETUP_NATIVE_GB"
     /// When versions.env has no value (an older share): the figures measured for Xcode 26.2 and 27.0.
-    public static let fallback = [cacheKey: 17, dockerKey: 40, nativeKey: 10]
+    public static let fallback = [cacheKey: 17, dockerKey: 30, nativeKey: 10]
 
     public struct Need: Equatable, Sendable {
         /// The variable that sets (and overrides) `perArchGB`.

@@ -7,7 +7,7 @@ After `xless setup` and a few builds, xless takes space in these places:
 | The program and its support files | `~/.local/bin/xless`, `~/.local/share/xless` (the install's `--prefix` / `XLESS_PREFIX`) | about 100 MB |
 | The native install: Swift toolchain, xtool, rcodesign; the installed SDK and its metadata | `~/.local/share/xless-native`; `~/.swiftpm/swift-sdks/darwin.artifactbundle` and `~/.config/xless/toolchain-meta.json` | about 8 GB |
 | The exported SDKs, Tauri work copies and downloads | `~/.cache/xless` (`$XDG_CACHE_HOME/xless` when that is set) | about 3.5 GB per Xcode and architecture, plus the work copies |
-| With `--docker`: the images `xless-base`, `xless`, `xless-tauri`, `xless-rn`, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 21 to 31 GB per Xcode and architecture ([measured](acceptance-m5.md#runs-in-the-vm)) |
+| With `--docker`: the image `xless:local-<arch>-xcode<version>`, the kits on it, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 14 GB for the images and about 25 GB with the build cache, per Xcode and architecture |
 | With `--docker`: Docker volumes of `xless run --docker` (Rust toolchains, React Native work copies and caches) | Docker's data root | a few GB per app |
 | The secret store, if you made one (your keys); with a credential helper, only its writers' `lock` file | `~/.local/share/xless/vault` (`$XDG_DATA_HOME/xless/vault`) | a few KB |
 
@@ -25,8 +25,8 @@ xless clean --all           # remove all of them
 
 | Option | Removes |
 |---|---|
-| `--images` | every local tag of `xless-base`, `xless`, `xless-tauri` and `xless-rn`, then their older builds (see `--old`) |
-| `--old` | only the older builds of the images that a later `xless setup` replaced, which are left untagged (`docker image prune --filter label=org.xless.image`) |
+| `--images` | every local tag of `xless` (and of `xless-base`, `xless-tauri` and `xless-rn`, the images of xless 0.10 and older), then their older builds (see `--old`). An [image of your own](images.md#an-image-of-your-own) is yours to remove, and stays when its Dockerfile says `LABEL org.xless.image=own` |
+| `--old` | only what an upgrade leaves: the tags of xless 0.10 and older, which it lists and asks about (no is the default; `--yes` answers, and without a terminal nothing is removed unless it is given), each looked at again right before it goes; and the older builds that a later `xless setup` replaced, which are left untagged (`docker image prune --filter label=org.xless.image=true`) |
 | `--volumes` | the volumes `xless run --docker` creates: `xless-rustup`, `xless-cargo`, `xless-corepack`, `xless-bundle`, `xless-cocoapods-home`, `xless-cocoapods-cache` and every `xless-rn-work-*` |
 | `--cache` | `~/.cache/xless` (or `$XDG_CACHE_HOME/xless`); needs no Docker |
 | `--native` | the native install: `~/.local/share/xless-native` (or `$XLESS_NATIVE_HOME`), the installed SDK and its `toolchain-meta.json`; needs no Docker |
@@ -50,30 +50,28 @@ docker builder prune --all   # remove all of it: the next build of any project s
 
 ## After an upgrade
 
-Each `xless setup --docker` after an upgrade builds the images again around the new `xless` and moves their tags to the new
-builds. The old builds stay on disk, untagged (`<none>` in `docker images`). Remove them with:
+Each `xless setup --docker` after an upgrade builds the image again around the new `xless` and moves its tag to the new
+build; the kits follow when they are next needed. The old builds stay on disk, untagged (`<none>` in `docker images`), and
+the four images of xless 0.10 and older (`xless-base`, `xless`, `xless-tauri`, `xless-rn`) stay with their tags. Remove
+them with:
 
 ```sh
 xless clean --old
 ```
 
 Images built by a release older than the one that added `xless clean` do not carry the `org.xless.image` label, so
-`--old` does not see them. `docker image prune` removes them, together with every other untagged image on the machine.
+`--old` does not see their untagged builds. `docker image prune` removes them, together with every other untagged image on the machine.
 
 ## Remove one Xcode's images
 
-`xless clean --images` removes the images of every Xcode. To drop one Xcode, for example 26.2, remove its tags and its
-exported SDK:
+`xless clean --images` removes the images of every Xcode. To drop one Xcode, for example 26.2, remove its image, the kits
+on it and its exported SDK:
 
 ```sh
 docker image rm $(docker image ls --format '{{.Repository}}:{{.Tag}}' \
-  | grep -E '^xless(-base|-tauri|-rn)?:local-(arm64|amd64)-xcode26\.2(-|$)')
+  | grep -E '^xless:local-(arm64|amd64)-xcode26\.2(-|$)')
 rm -rf ~/.cache/xless/sdk/xcode26.2-17C52
 ```
-
-Docker removes an image when its last tag goes. The plain `:local-<arch>` tags belong to the default Xcode (27.0); for
-27.0 also remove `xless-base:local-<arch>`, `xless:local-<arch>`, `xless-tauri:local-<arch>` and
-`xless-rn:local-<arch>`.
 
 ## Uninstall
 
@@ -100,5 +98,5 @@ any more (after an upgrade too: a new xless does not use the agent of the old on
 - remove the line that adds `~/.local/bin` to `PATH` from your shell's startup file, if you added one;
 - delete the Xcode `.xip` you downloaded.
 
-The images contain Apple's SDK. If you ever pushed them to a private registry
-([maintainers.md](maintainers.md#private-registries)), delete them there too.
+The images contain Apple's SDK, so they belong on no registry ([maintainers.md](maintainers.md#images-on-other-machines)). If
+you ever pushed one to a private registry of yours, delete it there too.

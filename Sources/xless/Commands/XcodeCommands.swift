@@ -19,7 +19,7 @@ struct XcodePIFCommand: ParsableCommand {
     @Option(help: "Output directory: <workspace>.pif and request.json.") var out: String
     @Option(name: .customLong("override"), help: "Build setting override NAME=VALUE (repeatable).") var overrides: [String] = []
     @Option(name: .customLong("package"), help: "Resolved Swift package IDENTITY=<dump-pif JSON> (repeatable).") var packages: [String] = []
-    @Flag(help: "Add the overrides Swift Build needs on Linux (xless-rn image) and write its toolset.json to --out; --override wins.")
+    @Flag(help: "Add the overrides Swift Build needs on Linux (xless's images) and write its toolset.json to --out; --override wins.")
     var linux = false
 
     func run() throws {
@@ -60,7 +60,7 @@ struct XcodePIFCommand: ParsableCommand {
 struct XcodeSwbuildCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swbuild",
-        abstract: "Run swbuild on a PIF and build request in the Linux Swift Build environment (xless-rn image); summarises the result.")
+        abstract: "Run swbuild on a PIF and build request in the Linux Swift Build environment (xless's images); summarises the result.")
     @Argument(help: "The PIF (xless xcode pif).") var pif: String
     @Option(help: "The build request (request.json).") var request: String
     @Option(name: .customLong("derived-data"), help: "Derived data directory.") var derivedData: String

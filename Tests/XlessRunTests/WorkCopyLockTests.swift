@@ -79,11 +79,12 @@ import Testing
     @Test func aRunNotesWhereItsSecretsReallyAre() throws {
         let (printed, real) = try makeLinkedSecrets()
         let path = path, locks = Notes()
-        let host = FakeRunHost { _, step in
+        let answer = home.answer { step in
+            step.words.contains("materialize") && !step.words.contains("--check") ? (0, "\(printed)\n") : nil
+        }
+        let host = FakeRunHost { host, step in
             if step.isContainer { locks.add((try? String(contentsOfFile: path, encoding: .utf8)) ?? "") }
-            if step.words.contains("materialize"), !step.words.contains("--check") { return (0, "\(printed)\n") }
-            if step.words.contains("sha256sum") { return (0, String(repeating: "ab", count: 32) + "  /usr/local/bin/xless\n") }
-            return (0, step.words.contains("next-build") ? "42\n" : "")
+            return answer(host, step)
         }
         #expect(try home.run([home.project], docker: true, host: host) == 0, "\(host.lines)")
         #expect(locks.lines.first?.contains("\nsecrets=\(printed)\nsecrets_real=\(real)\n") == true, "\(locks.lines)")
@@ -279,9 +280,8 @@ import Testing
         let out = try home.write("out", "\(secrets)\n")
         try leave(pid: 77, more: "secrets_out=\(out)\njob=88 Mon Nov 23 10:00:01 2026\n")
         // 77 is another process by now
-        let host = FakeRunHost(processes: [77: .init(), 88: .init(started: "Mon Nov 23 10:00:01 2026", children: [89]), 89: .init()]) { _, step in
-            step.line.contains("label=xless.work=") ? (0, "c0ffee dead\n") : (0, "")
-        }
+        let host = FakeRunHost(processes: [77: .init(), 88: .init(started: "Mon Nov 23 10:00:01 2026", children: [89]), 89: .init()],
+                               answer: home.answer { $0.line.contains("label=xless.work=") ? (0, "c0ffee dead\n") : nil })
         #expect(try run(host, docker: true) == 0)
         #expect(host.killed == [89, 88] && !home.exists(secrets))
         #expect(host.allSteps.contains { $0.line == "docker rm -f c0ffee dead" })
@@ -405,6 +405,72 @@ import Testing
         try FileManager.default.moveItem(atPath: "\(home.root)/big", toPath: "\(home.root)/away")
         try named([real], "\(link) leads nowhere now")
         #expect(home.exists("\(home.root)/away/cache-x/\(RunFiles.name(real))"))
+    }
+
+    /// The xless.yml of a run in containers, which no clean-up took away: where it is, is in the lock before it is there.
+    @Test func aGoneRunsConfigurationIsRemoved() throws {
+        let path = path, left = Notes()
+        let host = FakeRunHost(answer: home.answer { step in
+            guard step.isContainer else { return nil }
+            left.add((try? String(contentsOfFile: path, encoding: .utf8)) ?? "")
+            return nil
+        })
+        #expect(try home.run([home.project], docker: true, host: host, environment: home.files()) == 0)
+        let lock = left.lines.joined(separator: "\n").split(separator: "\n")
+        let directory = try #require(lock.first { $0.hasPrefix("configuration=") }).dropFirst("configuration=".count).description
+        #expect(RunFiles.parent(directory) == "\(home.home)/.cache/xless/run" && !home.exists(directory))
+        // as a run that is killed leaves it
+        try make(directory)
+        try leave(pid: 77, more: "configuration=\(directory)\n")
+        #expect(try run(FakeRunHost()) == 0)
+        #expect(!home.exists(directory))
+        // one that a live run has
+        try make(directory)
+        try leave(pid: 77, more: "configuration=\(directory)\n")
+        #expect(try run(FakeRunHost(processes: [77: .init(started: "Mon Nov 23 10:00:00 2026")])) == 2)
+        #expect(home.exists(directory))
+    }
+
+    /// And nothing else: only a private directory of this user's, where a run makes it.
+    @Test func nothingElseIsRemovedAsAConfiguration() throws {
+        let id = String(repeating: "0a", count: 16), base = "\(home.home)/.cache/xless/run"
+        let precious = ["\(home.root)/precious", "\(home.root)/run/\(id)", "\(base)/other", "\(base)/\(id.uppercased())", "\(base)/\(id)/\(id)", "\(base)/\(id)0"]
+        for directory in precious { try make(directory) }
+        for named in precious + [base, "\(base)/", "\(base)/..", "\(base)/../run/\(id)", "\(base)/./\(id)", "\(base)//\(id)", "\(base)/\(id)/", "/", ""] {
+            try leave(pid: 77, more: "configuration=\(named)\n")
+            #expect(try run(FakeRunHost()) == 0)
+            for directory in precious { #expect(home.exists("\(directory)/xless.yml"), "\(named)") }
+        }
+        // open to others, a file, and a link to a directory that is private
+        for mode in [0o755, 0o770, 0o600] as [mode_t] {
+            let open = "\(base)/\(String(repeating: "0b", count: 16))"
+            try make(open)
+            #expect(chmod(open, mode) == 0)
+            try leave(pid: 77, more: "configuration=\(open)\n")
+            #expect(try run(FakeRunHost()) == 0)
+            #expect(home.exists(open), "\(mode)")
+            #expect(chmod(open, 0o700) == 0)
+            guard getuid() == 0 else { continue }
+            #expect(chown(open, 1, 1) == 0)
+            try leave(pid: 77, more: "configuration=\(open)\n")
+            #expect(try run(FakeRunHost()) == 0)
+            #expect(home.exists(open), "another user's")
+            #expect(chown(open, 0, 0) == 0)
+        }
+        let file = "\(base)/\(String(repeating: "0c", count: 16))", link = "\(base)/\(String(repeating: "0d", count: 16))"
+        FileManager.default.createFile(atPath: file, contents: Data(), attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: precious[0])
+        for named in [file, link] {
+            try leave(pid: 77, more: "configuration=\(named)\n")
+            #expect(try run(FakeRunHost()) == 0)
+            #expect((try? FileManager.default.attributesOfItem(atPath: named)) != nil && home.exists("\(precious[0])/xless.yml"), "\(named)")
+        }
+    }
+
+    private func make(_ directory: String) throws {
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        #expect(chmod(directory, 0o700) == 0)
+        try Data("name: App\n".utf8).write(to: URL(fileURLWithPath: "\(directory)/xless.yml"))
     }
 
     @Test func aStepThatDoesNotStopIsNotBuiltOver() throws {

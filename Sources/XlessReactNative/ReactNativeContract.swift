@@ -61,7 +61,7 @@ public enum ReactNativeContract {
                              fix: "lock cocoapods \(cocoaPods), or re-measure docs/research/react-native-ios-contract.md (gate G1) and update ReactNativeContract")
         }
         guard bundler == ReactNativeContract.bundler else {
-            throw XlessError(.prepare, "Gemfile.lock is BUNDLED WITH \(bundler ?? "(none)"); the xless-rn image has Bundler \(ReactNativeContract.bundler)",
+            throw XlessError(.prepare, "Gemfile.lock is BUNDLED WITH \(bundler ?? "(none)"); xless's React Native image has Bundler \(ReactNativeContract.bundler)",
                              fix: "run `bundle _\(ReactNativeContract.bundler)_ lock` in the app and commit Gemfile.lock")
         }
     }

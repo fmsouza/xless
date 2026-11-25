@@ -4,7 +4,7 @@ import Foundation
 /// that process, the system's own mark of it and the program it runs (so a reused PID is not taken for it), the machine and the
 /// PID namespace it is in, where its secrets are and, while a step runs, the step's PID. A run on a work copy that a live run holds, or may hold, is refused. A SIGKILL leaves no
 /// chance to clean up, so the next run on that work copy takes the lock over and stops what the killed run left: the step it
-/// recorded, the secrets it wrote, and every container labelled xless.work=<hash> (every run that labels a container so holds
+/// recorded, the secrets it wrote, the copy it kept of a project's configuration, and every container labelled xless.work=<hash> (every run that labels a container so holds
 /// the lock while it runs).
 final class WorkCopyLock {
     private let host: any RunHost
@@ -34,7 +34,7 @@ final class WorkCopyLock {
             if held { state.lock = lock }
             return held
         }
-        if !held { try takeOver(key, new: new) }
+        if !held { try takeOver(key, new: new, home: home) }
         if let (cli, environment) = docker {
             let ids = RunCleanup.containers(cli, environment, label: "xless.work=\(hash)", host)
             if !ids.isEmpty {
@@ -46,7 +46,7 @@ final class WorkCopyLock {
         }
     }
 
-    private func takeOver(_ key: String, new: String) throws {
+    private func takeOver(_ key: String, new: String, home: String) throws {
         let takeover = "\(path).takeover"
         guard let old = try? String(contentsOfFile: path, encoding: .utf8) else { throw RunStop.usage("cannot take the lock \(path) of the work copy \(key)") }
         func field(_ name: String) -> String {
@@ -124,6 +124,14 @@ final class WorkCopyLock {
             } else {
                 host.say("==> removed the secrets it left in \(left.path)")
             }
+        }
+        // The xless.yml of a run in containers: only a private directory of this user's, where a run makes it.
+        let configuration = field("configuration")
+        var kind = stat()
+        if RunText.isConfigurationDirectory(configuration, home: home), lstat(configuration, &kind) == 0, kind.st_uid == geteuid(),
+           kind.st_mode & (S_IFMT | 0o777) == S_IFDIR | 0o700 {
+            host.say("==> removing the xless.yml it left in \(configuration)")
+            host.removeTree(configuration)
         }
         if printed == nil { host.say("==> note: secrets that it may have left are not removed: look for \(unread)") }
         for failure in failures.dropLast() { host.say("testflight: \(failure)") }

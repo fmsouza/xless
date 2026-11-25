@@ -169,8 +169,8 @@ public enum CargoBuilder {
     private static func builtInVariables(_ ctx: CargoBuildContext) throws -> [String: String] {
         let sha: String
         do {
-            sha = try Shell.run("git", WorkCopy.git(ctx.sourceRoot, ["rev-parse", "HEAD"]), baseEnvironment: ctx.env, stage: .build)
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            sha = try WorkCopy.git(ctx.sourceRoot, ["rev-parse", "HEAD"], baseEnvironment: ctx.env, stage: .build)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         } catch let e as XlessError {
             throw XlessError(.build, "cannot read the git commit of \(ctx.sourceRoot.path): \(e.cause)",
                              fix: "build from a git checkout with at least one commit (GIT_SHA is an Info.plist placeholder value)")

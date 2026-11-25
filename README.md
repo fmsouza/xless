@@ -125,26 +125,28 @@ unsigned iOS app for arm64 devices. No Apple account is needed for this step.
 
 ## Build in Docker instead
 
-The same builds can run in Docker images instead, which carry everything xless needs, including what React Native,
-Tauri and plain Cargo apps need. Build the images once per Xcode version:
+The same builds can run in a Docker image instead, which carries everything xless needs. Build it once per Xcode
+version:
 
 ```sh
 xless setup --docker --xcode ~/Downloads/Xcode_27.xip
 ```
 
-This builds four Docker images on your machine: `xless-base`, `xless` (with Apple's SDK), `xless-tauri` (Tauri and
-plain Cargo apps) and `xless-rn`. It first checks Docker and your free disk space, then prints each step with a rough
-time. The whole run took about 13 minutes on an 8-core machine with a fast network; it can take an hour on a slow one.
+This builds one Docker image on your machine, `xless:local-<arch>-xcode<version>`, with Apple's SDK. It first checks
+Docker and your free disk space, then prints each step with a rough time: most of it is unpacking the `.xip`.
 `--dry-run` shows the plan, and `--arch amd64` (or `arm64`, or both) builds for another architecture.
 
-Once the SDK is exported, the `.xip` is no longer needed: to build the images again (on a machine that lost them,
+A Tauri, plain Cargo, React Native or Expo app needs other toolchains too (Rust, Node, Ruby, Hermes). `xless run` adds
+them in a small image on top the first time such an app needs it, and says so; `xless setup --docker --with
+tauri,react-native` does it ahead of time ([images.md](docs/images.md)).
+
+Once the SDK is exported, the `.xip` is no longer needed: to build the image again (on a machine that lost it,
 say), run `xless setup --docker` with no `--xcode`. It reuses the SDK export in `~/.cache/xless/sdk/`, or the one you
 name with `--sdk <dir>` ([troubleshooting.md](docs/troubleshooting.md#without-the-xip)). The same works without
 `--docker` for the native install.
 
-`docker images` then lists each image under several tags that name the same image: `:local-<arch>-xcode<version>`,
-`:local-<arch>-xcode<version>-<build>` and, for Xcode 27.0, `:local-<arch>`. The images never leave your machine: they
-contain Apple's SDK, so do not push them to a public registry.
+The images never leave your machine: they contain Apple's SDK, so never push them to a registry. A project
+that pins an Xcode (`xcode: "26.2"`) runs in that one's image, another in the newest Xcode's there is an image of.
 
 Then add `--docker` to `xless run`:
 

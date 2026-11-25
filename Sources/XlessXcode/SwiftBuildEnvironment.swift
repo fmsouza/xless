@@ -26,8 +26,8 @@ public struct SwiftBuildEnvironment: Sendable {
     /// From the image's environment; refuses when the React Native image's shims are not installed.
     public static func fromProcess(_ env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage) throws -> SwiftBuildEnvironment {
         guard let shims = env["XLESS_SHIM_DIR"], !shims.isEmpty, let include = env["XLESS_TOOLCHAIN_INCLUDE"], !include.isEmpty else {
-            throw XlessError(stage, "XLESS_SHIM_DIR or XLESS_TOOLCHAIN_INCLUDE is not set: this is not the xless-rn image",
-                             fix: "run in the xless-rn image (docker/Dockerfile.rn), which installs Swift Build's tool shims")
+            throw XlessError(stage, "XLESS_SHIM_DIR or XLESS_TOOLCHAIN_INCLUDE is not set: this is not one of xless's images",
+                             fix: "run in an image that xless setup --docker builds: it has Swift Build's tool shims")
         }
         return SwiftBuildEnvironment(sdk: DarwinSDK(bundle: DarwinSDKLocator.bundle(env: env)),
                                      shimDirectory: URL(fileURLWithPath: shims), toolchainInclude: URL(fileURLWithPath: include),

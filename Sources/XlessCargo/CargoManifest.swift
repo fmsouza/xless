@@ -77,7 +77,7 @@ public enum CargoManifest {
     static func load(source: URL) throws -> [String: Info] {
         let listing: String
         do {
-            listing = try Shell.run("git", WorkCopy.git(source, ["ls-files", "-z", "--", "Cargo.toml", "*/Cargo.toml"]), stage: .config).stdout
+            listing = try WorkCopy.git(source, ["ls-files", "-z", "--", "Cargo.toml", "*/Cargo.toml"], stage: .config)
         } catch let e as XlessError {
             throw XlessError(.config, "cannot list the tracked Cargo.toml files of \(source.path): \(e.cause)",
                              fix: "point source: at a directory of a git checkout, or set version: in the overlay")

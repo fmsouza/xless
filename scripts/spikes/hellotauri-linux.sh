@@ -3,11 +3,11 @@
 # Kept as executable documentation of the Linux build sequence that TauriBuilder (Task 11) automates. It is not
 # part of xless and is not run by CI. Findings: docs/research/tauri-ios-contract.md, "Linux build — spike A".
 #
-# Runs inside xless-tauri:<tag> with the repo mounted read-only. Everything is written under /cache/work:
+# Runs inside xless:<tag>-tauri with the repo mounted read-only. Everything is written under /cache/work:
 #
 #   docker --context colima-xless run --rm \
 #     -v xless-rustup:/cache/rustup -v xless-cargo:/cache/cargo -v xless-spike:/cache/work \
-#     -v "$PWD":/repo:ro xless-tauri:local-arm64 /repo/scripts/spikes/hellotauri-linux.sh
+#     -v "$PWD":/repo:ro xless:local-arm64-xcode27.0-tauri /repo/scripts/spikes/hellotauri-linux.sh
 #
 # Env: SPIKE_STEPS  space-separated subset of: sync rust frontend cargo swift symbols link app
 #                   (default: all of them, in that order)
@@ -42,7 +42,7 @@ SWIFTRS_REVISION=207e4bfe5d36fdd0cc08f28d1849ff94ac7e24b8
 # The Swift FFI the Rust side imports: tauri (ios.rs), swift-rs (SRObject/SRString) and one init per plugin.
 FFI_PATTERN='^_(init_plugin_[A-Za-z0-9_]+|log_stdout|register_plugin|run_plugin_command|on_webview_created|retain_object|release_object|string_from_bytes)$'
 
-[[ -d /opt/xless ]] || { echo "hellotauri-linux: run inside the xless-tauri image" >&2; exit 1; }
+[[ -d /opt/xless ]] || { echo "hellotauri-linux: run inside a tauri kit's image" >&2; exit 1; }
 want() { [[ " $STEPS " == *" $1 "* ]]; }
 step() { echo; echo "==> [$(date +%T)] $*"; }
 SECONDS=0

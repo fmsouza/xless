@@ -15,7 +15,7 @@ public enum XlessShare {
     }
 
     /// The share directory: `XLESS_SHARE`, else `<prefix>/share/xless` beside `<prefix>/bin/xless` (an install), else the
-    /// first directory above the executable holding versions.env and docker/Dockerfile.base (a source checkout).
+    /// first directory above the executable holding versions.env and docker/Dockerfile (a source checkout).
     public static func locate(env: [String: String], executable: URL) throws -> URL {
         let fm = FileManager.default
         if let s = env["XLESS_SHARE"], !s.isEmpty { return URL(fileURLWithPath: s) }
@@ -25,7 +25,7 @@ public enum XlessShare {
         var dir = exe.deletingLastPathComponent()
         while true {
             if fm.fileExists(atPath: dir.appendingPathComponent("versions.env").path),
-               fm.fileExists(atPath: dir.appendingPathComponent("docker/Dockerfile.base").path) { return dir }
+               fm.fileExists(atPath: dir.appendingPathComponent("docker/Dockerfile").path) { return dir }
             // Stop at the root: past it, Foundation can return "/.." (and "/../..", …) instead of "/" again.
             let parent = dir.deletingLastPathComponent().standardizedFileURL
             if dir.path == "/" || parent.path == dir.path { break }

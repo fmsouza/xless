@@ -1,8 +1,8 @@
 import Foundation
 
-/// Ruling R10: the Swift toolchain that compiles an app's code is the one its pinned Xcode ships. Each xless image chain
+/// Ruling R10: the Swift toolchain that compiles an app's code is the one its pinned Xcode ships. Each xless image
 /// is made from one Xcode (Ruling R8) and carries the open-source Swift release matching that Xcode's Swift
-/// (`XCODE_SWIFT_<build>` in versions.env, installed by docker/Dockerfile.sdk under `/opt/xless/toolchains/swift-<ver>`;
+/// (`XCODE_SWIFT_<build>` in versions.env, installed by docker/Dockerfile under `/opt/xless/toolchains/swift-<ver>`;
 /// the image's own Swift when they are the same). The image records it in `/opt/xless/swift-toolchain.json`.
 ///
 /// Every compile of app code uses it: Swift Build's toolset and `PATH` (React Native and the `xcodebuild` shim), and for
@@ -16,7 +16,7 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     /// The toolchain's root: its tools are in `<root>/usr/bin` ("/" for the image's own Swift).
     public var root: String
     /// Flags Apple's clang of the same Xcode applies by default for Darwin targets and this toolchain's clang does not
-    /// (docker/Dockerfile.sdk measures them against the Xcode's own clang: for Swift 6.2.3, `-fdefine-target-os-macros`
+    /// (docker/Dockerfile measures them against the Xcode's own clang: for Swift 6.2.3, `-fdefine-target-os-macros`
     /// and `-D` definitions of the four `TARGET_OS_*` macros it still lacks, docker/toolchain/target-os). The image's
     /// `clang`/`clang++` add them to every compile they run for a Darwin target, never for Linux; Swift Build also gets
     /// them as build settings, for its in-process dependency scanner (libclang) and Swift's Clang importer
@@ -27,7 +27,7 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
         self.version = version; self.root = root; self.clangFlags = clangFlags
     }
 
-    /// The image's record (docker/Dockerfile.sdk).
+    /// The image's record (docker/Dockerfile).
     public static let imageFile = "/opt/xless/swift-toolchain.json"
     /// Where the image's own Swift lives: the swift:<SWIFT_VERSION>-jammy base, which built `swbuild`.
     public static let engineBin = "/usr/bin"

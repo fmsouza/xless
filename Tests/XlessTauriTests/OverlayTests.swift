@@ -146,6 +146,11 @@ private let minimal = "type: tauri\nbundleID: com.example.a\nteamID: ABCDE12345\
     #expect(TauriBuilder.macCargoArguments(target: "aarch64-apple-darwin", features: empty.macFeatures)[3] == "tauri/custom-protocol")
 }
 
+@Test func tauriOverlaysTakeAnImage() throws {
+    _ = try TauriOverlay.parse(yaml: minimal + "image: my-app-image:1\n", name: "a")
+    #expect(throws: XlessError.self) { try TauriOverlay.parse(yaml: minimal + "image: [a]\n", name: "a") }
+}
+
 @Test func tauriOverlaysTakeAnXcodePin() throws {
     #expect(try TauriOverlay.parse(yaml: minimal, name: "a").xcode == nil)
     #expect(try TauriOverlay.parse(yaml: minimal + "xcode: \"26.2\"\n", name: "a").xcode == "26.2")

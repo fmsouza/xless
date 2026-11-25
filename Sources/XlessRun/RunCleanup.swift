@@ -17,6 +17,8 @@ final class RunCleanup: @unchecked Sendable {
         var secrets: String?
         var secretsFile: String?
         var temporary: [String] = []
+        /// Directories of the run's own.
+        var trees: [String] = []
     }
 
     private let host: any RunHost
@@ -86,6 +88,7 @@ final class RunCleanup: @unchecked Sendable {
         if let path = state.takeover { host.removeEmptyDirectory(path) }
         Self.dropSecrets(state, nil, host) // what a step that writes them still wrote
         for path in state.temporary { host.removeFile(path) }
+        for path in state.trees { host.removeTree(path) }
         state = State()
     }
 

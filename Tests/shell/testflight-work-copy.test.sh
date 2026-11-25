@@ -15,10 +15,14 @@ started() { LC_ALL=C TZ=UTC0 ps -o lstart= -p "$1" | sed 's/^ *//; s/ *$//'; }  
 waitfor() { local _; for _ in $(seq 300); do grep -q "$1" "$2" 2>/dev/null && return 0; sleep 0.1; done; return 1; }   # RE FILE
 mkdir -p "$t/proj" "$t/proj2" "$t/bin" "$t/nbin" "$t/home"
 touch "$t/proj/xless.yml" "$t/proj2/xless.yml"
+case "$(uname -m)" in arm64|aarch64) A=arm64 ;; *) A=amd64 ;; esac
+fake="$repo/Tests/shell/fake-images.sh"
+{ "$fake" base "$A" 27.0 27A266a; for kit in tauri react-native; do "$fake" kit "$kit" "$repo" "$A" 27.0 27A266a; done; } > "$t/images"
 cat > "$t/bin/docker" <<'D'
 #!/usr/bin/env bash
 echo "$*" >> "$KLOG"
 case "$1" in
+  image) exec "$FAKE" "$@" ;;
   run) [[ -z "${RUN_SLEEP:-}" ]] || sleep "$RUN_SLEEP" ;;
   rm) [[ -z "${RM_FAIL:-}" ]] || exit 1 ;;
   ps) [[ "$*" != *"label=xless.work="* || -z "${WORK_IDS:-}" ]] || echo "$WORK_IDS" ;;
@@ -27,7 +31,7 @@ exit 0
 D
 chmod +x "$t/bin/docker"
 printf '#!/bin/sh\nexit 0\n' > "$t/nbin/xless"; chmod +x "$t/nbin/xless"
-docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1)
+docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" KLOG="$t/klog" FAKE="$fake" FAKE_IMAGES="$t/images" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1)
 native=(env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0)
 args=(--build-number 1 --to finalize)
 
@@ -156,7 +160,7 @@ mkdir -p "$t/a/app" "$t/b/app"
 printf 'type: tauri\nsource: app\n' | tee "$t/a/my.yml" > "$t/b/my.yml"
 : > "$t/klog"
 "${docker[@]}" RUN_SLEEP=120 "$S" --config "$t/a/my.yml" "${args[@]}" >/dev/null 2>"$t/errA" & a=$!; bg+=("$a")
-waitfor '^run ' "$t/klog"; grep -q '^run .*--label xless\.work=' "$t/klog" || fail "overlay run without the work copy's label: $(cat "$t/klog" "$t/errA")"
+waitfor '^run ' "$t/klog" || true; grep -q '^run .*--label xless\.work=' "$t/klog" || fail "overlay run without the work copy's label: $(cat "$t/klog" "$t/errA")"
 code=0; "${native[@]}" "$S" --config "$t/b/my.yml" "${args[@]}" >/dev/null 2>"$t/errB" || code=$?
 [[ $code -eq 2 ]] && grep -qF "$(cd -P "$t" && pwd -P)/home/.cache/xless/work/my is in use" "$t/errB" || fail "an overlay of the same name: exit $code: $(cat "$t/errB")"
 printf 'type: react-native\nsource: app\n' > "$t/b/rn.yml"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installed by docker/Dockerfile.sdk (Ruling R10) as the `clang` and `clang++` of an open-source Swift toolchain whose
+# Installed by docker/Dockerfile (Ruling R10) as the `clang` and `clang++` of an open-source Swift toolchain whose
 # clang driver lacks defaults of the Apple clang its Xcode ships (measured: Xcode 26.2's clang 17 against Swift 6.2.3's;
 # LLVM 21's driver has both):
 # - it drops -fno-cxx-modules yet passes -fmodule-map-file on, so the compiler refuses a C++ #include of a header that a

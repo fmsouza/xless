@@ -472,7 +472,7 @@ private func fixtureMetadata() throws -> (data: Data, work: URL, registry: URL) 
 
 /// Runs only when XLESS_TAURI_IT_METADATA (a `cargo metadata --format-version 1 --filter-platform aarch64-apple-ios`
 /// JSON of a Tauri app whose crates are on disk) and XLESS_TAURI_IT_CRATE_LIB (the cargo-built `lib<crate>.a`) are set,
-/// e.g. in xless-tauri:<tag> against the spike A work copy.
+/// e.g. in xless:<tag> against the spike A work copy.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["XLESS_TAURI_IT_METADATA"] != nil))
 func aggregateBuildsAndExportsEverySymbolTheCrateImports() throws {
     let env = ProcessInfo.processInfo.environment

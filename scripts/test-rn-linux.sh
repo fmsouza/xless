@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds samples/HelloRN on Linux (in the xless-rn image) with its committed overlay through prepare, build, assets and
+# Builds samples/HelloRN on Linux (in the react-native kit's image) with its committed overlay through prepare, build, assets and
 # finalize, unsigned, and compares the app and its app extension with samples/HelloRN/reference/reference.json and
 # reference-appex.json (recorded from xcodebuild on a Mac by `make rn-reference`): the build stage's app as it is, the
 # finalized app with the one key the overlay adds (ITSAppUsesNonExemptEncryption, from usesNonExemptEncryption: false).
@@ -33,11 +33,11 @@
 # it is still running after 10 s (its screenshot, console and any crash report are kept in ~/.cache/xless/sim/HelloRN);
 # elsewhere that step is skipped. --no-launch skips it on a Mac too.
 # Variables: ARCH (arm64 or amd64; default the host's: the image's platform, so ARCH=amd64 on an arm64 Mac runs the amd64 chain
-#   under emulation), XLESS_IMAGE (default xless-rn:local-<arch>), DOCKER_CONTEXT (default colima-xless if it exists),
+#   under emulation), XLESS_IMAGE (default xless:local-<arch>-xcode<versions.env's>-react-native), DOCKER_CONTEXT (default colima-xless if it exists),
 #   XLESS_RN_TEST_VOLUME (default xless-rn-test-work): the docker volume holding the work copy and the pnpm store.
 #   XLESS_RN_OVERLAY (default samples/HelloRN/xless.overlay.yml): the overlay, relative to the repository; its work copy is
 #     named after the file. XLESS_RN_REFERENCE (default samples/HelloRN/reference): the Mac reference directory (an absolute
-#     host path; mounted read-only). With the Xcode 26.2 pin: XLESS_IMAGE=xless-rn:local-arm64-xcode26.2
+#     host path; mounted read-only). With the Xcode 26.2 pin: XLESS_IMAGE=xless:local-arm64-xcode26.2-react-native
 #     XLESS_RN_OVERLAY=samples/HelloRN/xless.overlay-26.2.yml XLESS_RN_REFERENCE=<`DEVELOPER_DIR=<26.2> make rn-reference`'s OUT>
 #     XLESS_RN_TEST_VOLUME=xless-rn-test-work-26.2 (the reference's directory also needs the allowed-gaps.txt of the default one).
 # The repository is mounted read-only. Caches are the docker volumes xless run uses: xless-corepack,
@@ -53,7 +53,8 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's native gems and work copy stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-image="${XLESS_IMAGE:-xless-rn:local-$arch}"
+xcode="$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")"
+image="${XLESS_IMAGE:-xless:local-$arch-xcode$xcode-react-native}"   # xless setup --docker --with react-native builds it
 volume="${XLESS_RN_TEST_VOLUME:-xless-rn-test-work$vsuf}"
 overlay="${XLESS_RN_OVERLAY:-samples/HelloRN/xless.overlay.yml}"
 refdir="${XLESS_RN_REFERENCE:-$root/samples/HelloRN/reference}"
@@ -76,7 +77,7 @@ alpine="$(sed -n 's/^ALPINE_IMAGE=//p' "$root/versions.env")"   # pinned by dige
 run() {   # RUN-NAME [docker run options...]: one build and compare, in a fresh container
   local name="$1"; shift
   echo "==> HelloRN: $name" >&2
-  "${docker[@]}" run --rm -i ${plat[@]+"${plat[@]}"} "$@" -v "$root":/repo:ro -v "$volume":/cache/work -v "$refdir":/ref:ro \
+  "${docker[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} "$@" -v "$root":/repo:ro -v "$volume":/cache/work -v "$refdir":/ref:ro \
     -v xless-corepack:/cache/corepack -v "xless-bundle$vsuf":/cache/bundle \
     -v xless-cocoapods-home:/root/.cocoapods -v xless-cocoapods-cache:/root/Library/Caches/CocoaPods \
     -e XLESS_BUILD_NUMBER=1.0.0.2026101601 -e FRESH="$fresh" -e OVERLAY="$overlay" -e WORKNAME="$workname" "$image" bash -s <<'IN'
@@ -148,7 +149,7 @@ IN
 
 simulator() {   # the simulator build of run 3, offline, in the same work copy
   echo "==> HelloRN: simulator build (offline)" >&2
-  "${docker[@]}" run --rm -i ${plat[@]+"${plat[@]}"} --network none -v "$root":/repo:ro -v "$volume":/cache/work \
+  "${docker[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} --network none -v "$root":/repo:ro -v "$volume":/cache/work \
     -v xless-corepack:/cache/corepack -v "xless-bundle$vsuf":/cache/bundle \
     -v xless-cocoapods-home:/root/.cocoapods -v xless-cocoapods-cache:/root/Library/Caches/CocoaPods \
     -e XLESS_BUILD_NUMBER=1.0.0.2026101601 -e OVERLAY="$overlay" -e WORKNAME="$workname" "$image" bash -s <<'IN'

@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessImages
 
 /// The three steps of a run of an overlay: a Tauri v2 app (`type: tauri`, docs/tauri.md), a plain Cargo app (`type: cargo`,
 /// docs/cargo.md) or a React Native or Expo app (`type: react-native`, docs/react-native.md).
@@ -25,7 +26,7 @@ extension ProjectRun {
 
     /// How the steps run: the images, the caches and the arguments that every one has.
     private struct Steps {
-        var image = "", keyImage = ""
+        var images = RunImages.none
         var mounts: [String] = []
         var buildCaches: [String] = [], signCaches: [String] = []
         /// `--config`, and `--source`.
@@ -63,10 +64,9 @@ extension ProjectRun {
             try mountFiles(platform: request.platform)
         } else { try unlockStore() }
 
-        let steps = try docker ? dockerSteps(overlay, inputs) : nativeSteps(overlay)
+        let steps = try docker ? dockerSteps(overlay, inputs, top, next: next) : nativeSteps(overlay)
         try holdWorkCopy(workCopy(overlay, steps))
         if docker {
-            if overlay.isReactNative, !overlay.isSimulator, !dryRun { try compareImages(steps) }
             // The store's secrets for steps 1 and 3, now that nothing else can stop the run before step 1.
             buildMounts = try [overlay.directory, overlay.mounted].map(files.real) + inputs.map(\.path)
             if !overlay.isReactNative { buildMounts += ["work", "downloads", "inputs"].map { "\(steps.cache)/\($0)" } }
@@ -145,13 +145,11 @@ extension ProjectRun {
         Steps(arguments: ["--config", overlay.path] + (setting("XLESS_SOURCE") == nil ? [] : ["--source", overlay.source]))
     }
 
-    private func dockerSteps(_ overlay: Overlay, _ inputs: [(name: String, path: String)]) throws -> Steps {
+    private func dockerSteps(_ overlay: Overlay, _ inputs: [(name: String, path: String)], _ top: RunTop, next: Bool) throws -> Steps {
         var steps = Steps()
         steps.mounts = ["--mount", RunText.bind(overlay.mounted, "/source", readOnly: true), "--mount", RunText.bind(overlay.directory, "/config", readOnly: true)]
         steps.arguments = ["--config", "/config/\(RunFiles.name(overlay.path))", "--source", "/source\(overlay.below)"]
         if overlay.isReactNative {
-            steps.image = setting("XLESS_IMAGE") ?? "xless-rn:local-\(architecture)"
-            steps.keyImage = setting("XLESS_SIGN_IMAGE") ?? "xless-base:local-\(architecture)"
             // One work volume per overlay file: its name, and a hash of its path (two overlays never share a work copy). A volume,
             // not a host folder: the build needs a case-sensitive file system.
             let volume = setting("XLESS_RN_WORK_VOLUME") ?? "xless-rn-work-\(volumeName(overlay.stem))-\(RunText.sha256(overlay.path).prefix(8))"
@@ -159,13 +157,11 @@ extension ProjectRun {
             steps.buildCaches = ["-v", "\(volume):/cache/work", "-v", "xless-corepack:/cache/corepack", "-v", "xless-bundle:/cache/bundle",
                                  "-v", "xless-cocoapods-home:/root/.cocoapods", "-v", "xless-cocoapods-cache:/root/Library/Caches/CocoaPods",
                                  "-e", "XLESS_WORK_VOLUME=\(volume)"] + (setting("XLESS_RN_CLEAN") == nil ? [] : ["-e", "XLESS_RN_CLEAN"])
-            // the base image sets no work root: the work copy is where step 2 left it
+            // xless's own image sets no work root: the work copy is where step 2 left it
             steps.signCaches = ["-v", "\(volume):/cache/work", "-e", "XLESS_WORK_ROOT=/cache/work", "-e", "XLESS_WORK_VOLUME=\(volume)"]
             host.say("==> React Native: work volume \(volume)")
         } else {
             let cache = "\(files.home)/.cache/xless"
-            steps.image = setting("XLESS_IMAGE") ?? "xless-tauri:local-\(architecture)"
-            steps.keyImage = steps.image
             steps.cache = cache
             if !dryRun {
                 for name in ["work", "downloads"] + (overlay.isCargo ? ["inputs"] : []) {
@@ -182,17 +178,9 @@ extension ProjectRun {
             steps.signCaches = ["--mount", RunText.bind("\(cache)/work", "/cache/work")]
         }
         steps.signCaches += origin(overlay.path)
-        if setting("XLESS_IMAGE") == nil { steps.image = pinned(steps.image) }
-        // A simulator build is step 2 only: the image of the others is never used, so it is neither selected nor required.
-        if overlay.isReactNative, !overlay.isSimulator {
-            if setting("XLESS_SIGN_IMAGE") == nil { steps.keyImage = pinned(steps.keyImage) }
-            try checkPin("build \(steps.image), App Store Connect steps \(steps.keyImage)")
-            try need(images: [steps.image, steps.keyImage])
-        } else {
-            if !overlay.isReactNative { steps.keyImage = steps.image }
-            try checkPin(steps.image)
-            try need(images: [steps.image])
-        }
+        // A simulator build is step 2 only.
+        steps.images = try chooseImages(top, kit: Kit(overlayType: top["type"]), builds: overlay.span.from <= .finalize, other: next || overlay.span.to >= .sign,
+                                        signImage: overlay.isReactNative && !overlay.isSimulator)
         return steps
     }
 
@@ -215,20 +203,6 @@ extension ProjectRun {
         return "\(host.realPath(root) ?? root)/\(overlay.stem)" // created as xless would, its links resolved: one spelling only
     }
 
-    /// React Native: step 2 (xless-rn) and steps 1 and 3 (xless-base) must run the same xless, or step 3 could misread what step 2
-    /// wrote. The images are compared by the digest of their xless binary.
-    private func compareImages(_ steps: Steps) throws {
-        func digest(_ image: String) throws -> String {
-            let digest = String(ask(dockerRun + ["--entrypoint", "sha256sum", image, "/usr/local/bin/xless"], quiet: true).output.prefix { $0 != "\n" }.prefix(64))
-            if digest.isEmpty { throw RunStop.usage("cannot read xless from \(image) (is the image built? xless setup --docker --xcode <Xcode.xip>)") }
-            return digest
-        }
-        let build = try digest(steps.image), key = try digest(steps.keyImage)
-        guard build == key else {
-            throw RunStop.usage("\(steps.image) and \(steps.keyImage) hold different xless builds (\(build.prefix(12)) vs \(key.prefix(12))); rebuild both from the same commit (xless setup --docker --xcode <Xcode.xip>), or set XLESS_IMAGE / XLESS_SIGN_IMAGE to matching images")
-        }
-    }
-
     // MARK: - The steps
 
     private var buildNumberWords: [String] { setting("XLESS_BUILD_NUMBER") == nil ? [] : ["-e", "XLESS_BUILD_NUMBER"] }
@@ -237,7 +211,7 @@ extension ProjectRun {
     private func nextBuild(_ overlay: Overlay, _ steps: Steps) throws {
         let command = overlay.isReactNative || overlay.isCargo ? ["next-build"] : ["tauri", "next-build"]
         host.say("==> TestFlight: step 1/3, next build number (App Store Connect, read-only)")
-        let words = docker ? dockerRun + steps.mounts + secrets.api + storeMounts("next") + [steps.keyImage, "xless"] + command + steps.arguments
+        let words = docker ? dockerRun + steps.mounts + secrets.api + storeMounts("next") + [steps.images.secrets.reference, "xless"] + command + steps.arguments
             : [xself] + command + steps.arguments
         let result = step(words, docker ? .identifiers : .everything, told: !docker, output: .captured)
         if dryRun {
@@ -271,7 +245,7 @@ extension ProjectRun {
         let output: RunStep.Output = simulator ? .both : .shown
         let result: (code: Int32, output: String)
         if docker {
-            result = step(dockerRun + steps.mounts + steps.buildCaches + ["-e", "XLESS_SOURCE_ORIGIN=\(overlay.source)"] + buildNumberWords + [steps.image, "xless"] + ship, .nothing, output: output)
+            result = step(dockerRun + steps.mounts + steps.buildCaches + ["-e", "XLESS_SOURCE_ORIGIN=\(overlay.source)"] + buildNumberWords + [steps.images.build.reference, "xless"] + ship, .nothing, output: output)
         } else {
             // without the secret variables (xless also scrubs them from its tools; the files stay on disk), without what a session
             // holds, and with the secret store closed to it
@@ -301,7 +275,7 @@ extension ProjectRun {
     }
 
     private func signStep(_ steps: Steps, _ ship: [String], _ keys: [String], output: RunStep.Output = .shown) -> (code: Int32, output: String) {
-        docker ? step(dockerRun + steps.mounts + steps.signCaches + secrets.api + keys + buildNumberWords + [steps.keyImage, "xless"] + ship, .identifiers, output: output)
+        docker ? step(dockerRun + steps.mounts + steps.signCaches + secrets.api + keys + buildNumberWords + [steps.images.secrets.reference, "xless"] + ship, .identifiers, output: output)
             : step([xself] + ship, .everything, told: true, output: output)
     }
 

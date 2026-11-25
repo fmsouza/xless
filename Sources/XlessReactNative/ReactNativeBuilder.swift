@@ -161,9 +161,8 @@ public enum ReactNativeBuilder {
     /// Whether the app commits its native project: `ios/Podfile` or an `ios/*.xcodeproj` is tracked (`ios` relative to
     /// `source`). Other tracked files under `ios/` (a stray asset, a README) do not make a native project.
     static func isTracked(ios: String, in source: URL, env: [String: String]) throws -> Bool {
-        let out = try Shell.run("git", WorkCopy.git(source, ["ls-files", "-z", "--", "\(ios)/Podfile", "\(ios)/*.xcodeproj/project.pbxproj"]),
-                                baseEnvironment: env, stage: .prepare).stdout
-        return !out.isEmpty
+        try !WorkCopy.git(source, ["ls-files", "-z", "--", "\(ios)/Podfile", "\(ios)/*.xcodeproj/project.pbxproj"],
+                          baseEnvironment: env, stage: .prepare).isEmpty
     }
 
     /// The nearest directory from `app` up to `work` with a package.json and a lockfile (a monorepo installs at its root).
@@ -202,12 +201,12 @@ public enum ReactNativeBuilder {
         add(toolchain)
         for (k, v) in ctx.overlay.env.sorted(by: { $0.key < $1.key }) { add(k); add(v) }
         for c in ctx.overlay.prepareRun { add(c) }
-        add(try Shell.run("git", WorkCopy.git(src, ["ls-files", "-s", "-z", "--", "."]), baseEnvironment: ctx.env, stage: .prepare).stdout)
-        add(try Shell.run("git", WorkCopy.git(src, ["diff", "--no-ext-diff", "--binary", "--", "."]), baseEnvironment: ctx.env, stage: .prepare).stdout)
+        add(try WorkCopy.git(src, ["ls-files", "-s", "-z", "--", "."], baseEnvironment: ctx.env, stage: .prepare))
+        add(try WorkCopy.git(src, ["diff", "--no-ext-diff", "--binary", "--", "."], baseEnvironment: ctx.env, stage: .prepare))
         return h.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }
 
-    /// What builds the app, hashed: the image (`XLESS_IMAGE_ID`, baked in by docker/Dockerfile.rn), the Darwin SDK (its
+    /// What builds the app, hashed: the image (`XLESS_IMAGE_ID`, baked in by the Dockerfiles), the Darwin SDK (its
     /// toolchain metadata: images made from another Xcode share the image ID's commit; Ruling R8), the Swift toolchain that
     /// compiles (Ruling R10), the running xless executable, and the tool versions (`tools`: Node, the JS package manager,
     /// Ruby, Bundler).
@@ -233,8 +232,7 @@ public enum ReactNativeBuilder {
     static func resetJSDependencies(_ ctx: ReactNativeBuildContext, jsRoot: URL, toolchain: String, clean: Bool) throws -> [String] {
         let recorded = try? String(contentsOf: ctx.toolchainFile, encoding: .utf8)
         guard clean || recorded != toolchain else { return [] }
-        let listing = try Shell.run("git", WorkCopy.git(ctx.sourceRoot, ["ls-files", "-z", "--", "package.json", "*/package.json"]),
-                                    baseEnvironment: ctx.env, stage: .prepare).stdout
+        let listing = try WorkCopy.git(ctx.sourceRoot, ["ls-files", "-z", "--", "package.json", "*/package.json"], baseEnvironment: ctx.env, stage: .prepare)
         let trees = jsDependencyTrees(work: ctx.workRoot, jsRoot: jsRoot,
                                       packageJSONs: listing.split(separator: "\0", omittingEmptySubsequences: true).map(String.init))
         guard !trees.isEmpty else { return [] }
@@ -371,7 +369,7 @@ public enum ReactNativeBuilder {
         if aliases > 0 { log("\(aliases) lowercase framework aliases in XCFrameworkIntermediates") }
 
         guard fm.isExecutableFile(atPath: ReactNativeEnvironment.hermesc) else {
-            throw XlessError(.build, "\(ReactNativeEnvironment.hermesc) is missing", fix: "run in the xless-rn image, which builds hermesc from source")
+            throw XlessError(.build, "\(ReactNativeEnvironment.hermesc) is missing", fix: "run in xless's React Native image, which builds hermesc from source (xless run builds that image)")
         }
         let pif = try PIFWriter.write(built, to: xlessDir, packages: packages)
         let request = xlessDir.appendingPathComponent("request.json")

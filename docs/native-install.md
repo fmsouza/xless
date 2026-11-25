@@ -47,7 +47,7 @@ xless puts the native toolchain and tools first on its own `PATH` when it starts
 (swiftly's, your distribution's) for everything it runs, and nothing is added to your shell's startup files.
 
 The Swift toolchain is fitted to the SDK the way the images fit theirs (`scripts/native-toolchain.sh`, with the same
-files as `docker/Dockerfile.sdk`): its `clang` and `clang++` become a small driver that adds, for Darwin targets only,
+files as `docker/Dockerfile`): its `clang` and `clang++` become a small driver that adds, for Darwin targets only,
 the `TARGET_OS_*` definitions Apple's clang has and the open-source one lacks, and the SDK's toolsets get the same
 flags. For Xcode 26.2 (Swift 6.2.3) the SDK also uses that toolchain's clang headers with the Xcode's runtime
 libraries. This changes only xless's own copy of Swift.

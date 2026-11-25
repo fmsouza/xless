@@ -34,7 +34,7 @@ public enum XcrunShim {
     }
 
     /// Tools `xcrun <tool> args…` may run: LLVM's Mach-O-aware binutils, whose output does not depend on the SDK or
-    /// host (CocoaPods' embed-frameworks script runs `xcrun otool -LX` and calls `lipo` by name, docker/shims/rn).
+    /// host (CocoaPods' embed-frameworks script runs `xcrun otool -LX` and calls `lipo` by name, docker/shims).
     /// Compilers are not run through xcrun: without the SDK's target and sysroot they would silently build for the
     /// Linux host; only `swiftc --version` (Expo's ExpoModulesJSI build script) is answered.
     static let runnable: Set<String> = ["lipo", "otool", "nm", "ar", "ranlib", "libtool"]

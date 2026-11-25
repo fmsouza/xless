@@ -239,12 +239,13 @@ import XlessCore
     @Test func theEnvFileIsDataAndWinsOverTheEnvironment() throws {
         let marker = "\(home.root)/ran"
         let file = try home.write("testflight.env", "ASC_KEY_ID=FILEID\nXLESS_IMAGE='img:1'\n")
+        home.images.add(xcode: "26.6", build: "17F113", name: "img:1", layers: ["mine"], id: "sha256:mine")
         let host = FakeRunHost(answer: home.answer())
         var environment = try home.files()
         environment["XLESS_TESTFLIGHT_ENV"] = file
         environment["XLESS_IMAGE"] = "img:0"
         #expect(try home.run(["--config", home.overlay], docker: true, host: host, environment: environment) == 0)
-        #expect(containers(host).allSatisfy { $0.words.contains("img:1") } && containers(host)[0].environment["ASC_KEY_ID"] == "FILEID")
+        #expect(containers(host)[1].image == "sha256:mine" && containers(host)[0].environment["ASC_KEY_ID"] == "FILEID")
         try home.write("testflight.env", "A=1\nB=$(touch \(marker))\n")
         let refused = FakeRunHost(answer: home.answer())
         #expect(try home.run(["--config", home.overlay], docker: true, host: refused, environment: environment) == 2)
@@ -306,13 +307,6 @@ import XlessCore
         #expect(host.lines.suffix(3) == ["==> DMG: \(home.home)/.cache/xless/work/a/A.dmg", "==> PKG: \(home.home)/.cache/xless/work/a/A.pkg", "==> DMG build finished"])
         let steps = containers(host)
         #expect(steps.count == 3 && steps[1].line.contains("/sign,dst=/secrets/store") && !steps[1].line.contains("INSTALLER") && steps[2].line.contains("/appstore,dst=/secrets/store"))
-    }
-
-    @Test func differentXlessBuildsInTheTwoImagesAreRefused() throws {
-        try home.write("ov/app.yml", "type: react-native\nsource: ../src\n")
-        let host = FakeRunHost(answer: home.answer { $0.words.contains("sha256sum") ? (0, $0.line.contains("xless-rn") ? "aaaa  x\n" : "bbbb  x\n") : nil })
-        #expect(try home.run(["--config", home.overlay], docker: true, host: host, environment: home.files()) == 2)
-        #expect(host.lines.last?.contains("hold different xless builds") == true && containers(host).isEmpty)
     }
 
     @Test func aFileThatIsNotYAMLIsAConfigurationError() throws {

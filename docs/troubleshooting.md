@@ -75,7 +75,8 @@ With `--docker`:
 | `… is not a supported Xcode (supported: Xcode 26.0.1 (17A400), Xcode 26.1 (17B55), Xcode 26.1.1 (17B100), Xcode 26.2 (17C52), Xcode 26.3 (17C529), Xcode 26.4 (17E192), Xcode 26.4.1 (17E202), Xcode 26.5 (17F42), Xcode 26.6 (17F113), Xcode 27.0 (27A266a), Xcode 27.1 (27A9275), Xcode 27.2 (27B52))` | The file is not one of the supported downloads: another Xcode version, a beta, or an incomplete download. Download a supported one ([apple-requirements.md](apple-requirements.md#how-to-get-xcode-on-linux)). |
 | `… contains ':', which docker cannot mount` | Move or rename the `.xip` so that its path has no `:`. |
 | Setup was interrupted | Run the same command again. A half-written SDK export or download is deleted, never reused; installed tools and images already built are kept. |
-| `the images *:local-<arch>-xcode<V> are another build of Xcode <V>` | Images from another build of the same Xcode version (a beta) exist. `XLESS_XCODE_RETAG=1 xless setup …` keeps them under a `-xcode<V>-<build>` tag and builds the new ones. |
+| `xless:local-<arch>-xcode<V> is another build of Xcode <V>` | An image of another build of the same Xcode version (a beta) exists. `XLESS_XCODE_RETAG=1 xless setup …` keeps it under a `-xcode<V>-<build>` tag and builds the new one. |
+| `note: … image tags of an older xless … not used any more` | Not an error: images of xless 0.10 and older, which nothing uses any more. `xless clean --old` asks, and removes them. |
 | `this xless is a development build … there is no release to download the linux-<arch> xless from` | Only with `--arch` for the other architecture and an xless built from source: set `XLESS_BIN_ARM64` or `XLESS_BIN_AMD64` to a Linux `xless` binary of that architecture. |
 
 ### The disk check
@@ -87,18 +88,18 @@ natively, this machine's only):
 |---|---|---|---|
 | The cache: `$XDG_CACHE_HOME/xless`, else `~/.cache/xless` | 17 GB, only when this run exports the SDK | xtool unpacks the `.xip` into the SDK export there (measured peak about 15 GB); about 3.5 GB stays | `XLESS_SETUP_CACHE_GB` |
 | The native home: `$XLESS_NATIVE_HOME`, else `~/.local/share/xless-native` (native only) | 10 GB, unless nothing is left to install | the Swift toolchain (about 4 GB unpacked, from a 1.1 GB download), xtool, rcodesign and the installed SDK (about 3.5 GB) | `XLESS_SETUP_NATIVE_GB` |
-| Docker's data root (`docker info`, `/var/lib/docker` by default; checked on Linux, with `--docker` only) | 40 GB | the four images and their build cache (measured about 31 GB for the first chain) | `XLESS_SETUP_DOCKER_GB` |
+| Docker's data root (`docker info`, `/var/lib/docker` by default; checked on Linux, with `--docker` only) | 30 GB | the image, both kits and their build cache (measured about 25 GB for a first setup; the image is 13 GB, the kits 0.3 and 0.7 GB) | `XLESS_SETUP_DOCKER_GB` |
 
-The figures are decimal GB (10^9 bytes), from `versions.env`, measured on first runs from the Xcode 26.2 and 27.0
-`.xip`s ([acceptance-m5.md](acceptance-m5.md)). With `--arch arm64 --arch amd64` each is doubled. The refusal names the
+The figures are decimal GB (10^9 bytes), from `versions.env`, measured on first runs from the Xcode 26.2, 26.6 and 27.0
+`.xip`s (the native ones: [acceptance-m5.md](acceptance-m5.md)). With `--arch arm64 --arch amd64` each is doubled. The refusal names the
 directory it checked, the free and the needed space, and the variable. If you know a run needs less, for example
 because most image layers are already built, set that variable to the GB per architecture to ask for:
 `XLESS_SETUP_DOCKER_GB=10 xless setup …`. `xless setup --dry-run` prints what the check asks for.
 
-A native install needs nothing after an upgrade of xless. To put a newer xless into the images, run
-`xless setup --docker` again: the images are rebuilt around the new
-`xless` (the SDK export is reused), and the previous ones stay on disk without a tag until `docker image prune`
-removes them.
+A native install needs nothing after an upgrade of xless. To put a newer xless into the image, run
+`xless setup --docker` again: it is rebuilt around the new
+`xless` (the SDK export is reused), and the previous one stays on disk without a tag until `xless clean --old`
+removes it.
 
 `xless setup --reexport` exports the SDK again even when the cache has it. The cache is
 `$XDG_CACHE_HOME/xless`, else `~/.cache/xless`; deleting it costs only a new export.
@@ -129,8 +130,14 @@ and must be one `versions.env` supports. Nothing is exported, so the disk check 
 
 | Symptom | What to do |
 |---|---|
-| `Unable to find image 'xless:local-arm64'` (or `-amd64`), `pull access denied` | With `--docker`, no image for an unpinned project: run `xless setup --docker` with Xcode 27.0, or pin the Xcode you set up in `xless.yml`, for example `xcode: "26.2"`. |
-| `… pins xcode: "…", but these images are missing: …` (exit 2) | Build that Xcode's images: `xless setup --docker --xcode <that Xcode's .xip>`. |
+| `there is no xless image on this machine` (exit 2) | With `--docker`, no image yet: `xless setup --docker --xcode <Xcode.xip>`. After an upgrade from xless 0.10 or older, `xless setup --docker` alone builds it from the SDK exported before. |
+| `… pins xcode: "…", but the image xless:local-…-xcode… is missing` (exit 2) | Build that Xcode's image with the command the message names: from the SDK export in the cache where there is one, else `xless setup --docker --xcode <that Xcode's .xip>`. |
+| `… is not an image of this xless`, `… holds xless …, and this xless needs … or later there` (exit 2) | An older xless built the image: run `xless setup --docker` again, with the Xcode the message names when the export is gone. |
+| `XLESS_IMAGE names …`, `image: in … names …` (exit 2) | An [image of your own](images.md#an-image-of-your-own) that is missing, is built on another Xcode's, architecture's or an earlier build of the xless image, or is not built on one at all. The message has the `docker build` that fixes it. |
+| `XLESS_SIGN_IMAGE names …, which has more in it than xless's own image` (exit 2) | The steps with the secrets run in the xless image itself. Unset the variable. |
+| `warning: …/xless.yml is not what it was when this run began` | Something changed it meanwhile: you, or the build's code. The run signed by what it was; look at the change (`git diff`) before the next run ([security.md](security.md#the-build-and-your-secrets)). |
+| `… was not built (docker build exited with code …)` | The kit's build failed; its output is above the line. It needs buildx (`docker buildx version`), the network and room on Docker's disk. |
+| `==> building the image xless:local-…-tauri` (or `-react-native`) | Not an error: a kit an app needs is built once, when it is missing or older than xless ([images.md](images.md#what-there-is)). It needs the network. |
 | `testflight: set ASC_KEY_ID in the environment or …` (exit 2) | The run includes `sign`. Set up the secrets ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)), or stop before signing with `--to finalize`. |
 | `testflight: the work copy … is in use by another run (pid …)` (exit 2) | Another `xless run` is building the same project or overlay ([one run per work copy](signing-and-testflight.md#one-command-testflight)). Wait for it to end, or stop it with the `kill` the message names. Its containers are removed when it stops. |
 | `testflight: the work copy … may be in use by another run (pid …)` (exit 2) | A run that was killed, or one on another machine or in another container: which, this one cannot tell. The message says why, and what to do once no run works there any more. Do it in that order: the lock is the only place that says where a killed run's secrets are. |

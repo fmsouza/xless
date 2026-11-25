@@ -3,6 +3,31 @@ import Foundation
 @testable import XlessSign
 @testable import XlessCore
 
+/// Its configuration file would be the build's: `rcodesign.toml` of the directory it runs in.
+@Suite struct RCodesignConfigurationTests {
+    @Test func itReadsNoConfigurationFileAndRunsWhereNoBuildWrites() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rcodesign-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fake = directory.appendingPathComponent("rcodesign")
+        try ExecutableFile.write(Data("#!/bin/sh\npwd\nprintf '%s\\n' \"$@\"\n".utf8), to: fake, stage: .sign)
+        let said = try RCodesign.run(["sign", "--pem-file", "/k.pem", "/b/X.app"], program: fake.path, stage: .sign).stdout
+        #expect(said == "/\nsign\n-C\n/dev/null\n--pem-file\n/k.pem\n/b/X.app\n")
+    }
+
+    /// Every step that has a secret starts it that way. (A simulator build's, which signs ad hoc without one, is a build step.)
+    @Test func nothingElseStartsIt() throws {
+        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Sources").standardizedFileURL
+        var direct: [String] = []
+        for case let file as URL in try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)) where file.pathExtension == "swift" {
+            for line in try String(contentsOf: file, encoding: .utf8).split(separator: "\n") where line.contains("Shell.run(\"rcodesign\"") || line.contains("[\"rcodesign\"]") {
+                if !line.contains("RCodesign.arguments(") { direct.append(file.lastPathComponent) }
+            }
+        }
+        #expect(direct == ["SimulatorBuild.swift"])
+    }
+}
+
 private func u(_ p: String) -> URL { URL(fileURLWithPath: p) }
 
 @Test func appStoreSigningDisablesTimestamp() {

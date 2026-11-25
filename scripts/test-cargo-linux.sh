@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds samples/HelloCargo on Linux (in the xless-tauri image) for iOS and for universal macOS through prepare, build,
+# Builds samples/HelloCargo on Linux (in the tauri kit's image) for iOS and for universal macOS through prepare, build,
 # assets and finalize, then checks the finalized apps. There is no Mac reference for a plain Cargo app; the checks are
 # the bundle's contract:
 #   iOS:   the executable is a thin arm64 Mach-O with LC_BUILD_VERSION platform 2 (iOS) and minos 17.0; Info.plist has
@@ -15,7 +15,7 @@
 #   scripts/test-cargo-linux.sh --platform macos
 # --platform ios|macos|all (default all).
 # Variables: ARCH (arm64 or amd64; default the host's: ARCH=amd64 on an arm64 Mac runs the amd64 chain under emulation),
-#   XLESS_IMAGE (default xless-tauri:local-<arch>; with an Xcode pin, e.g. xless-tauri:local-arm64-xcode26.2),
+#   XLESS_IMAGE (default xless:local-<arch>-xcode<versions.env's>-tauri; with an Xcode pin, e.g. xless:local-arm64-xcode26.2-tauri),
 #   DOCKER_CONTEXT (default colima-xless if it exists).
 # The repository is mounted read-only and must be a normal git checkout, not a git worktree (a worktree's .git file points
 # outside the mount, so the container cannot read the tracked files or GIT_SHA); the sample's files are the tracked ones,
@@ -32,7 +32,8 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's work copy and Rust toolchains stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-image="${XLESS_IMAGE:-xless-tauri:local-$arch}"
+xcode="$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")"
+image="${XLESS_IMAGE:-xless:local-$arch-xcode$xcode-tauri}"   # xless setup --docker --with tauri builds it
 platform=all
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,7 +46,7 @@ done
 args=(docker)
 [[ -z "$ctx" ]] || args+=(--context "$ctx")
 
-"${args[@]}" run --rm -i ${plat[@]+"${plat[@]}"} -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
+"${args[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
   -e PLATFORM="$platform" "$image" bash -s <<'IN'
 set -euo pipefail
 o=/repo/samples/HelloCargo/xless.overlay.example.yml

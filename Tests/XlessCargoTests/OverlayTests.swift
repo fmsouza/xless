@@ -143,6 +143,11 @@ private func writeOverlay(_ yaml: String, named file: String = "my.overlay.yml")
     expectConfig(minimalIOS + "xcode: latest\n", mentioning: "xcode")
 }
 
+@Test func cargoOverlaysTakeAnImage() throws {
+    _ = try CargoOverlay.parse(yaml: minimalIOS + "image: my-app-image:1\n", name: "a")
+    expectConfig(minimalIOS + "image: [a]\n", mentioning: "image")
+}
+
 @Test func refusesNoPlatform() {
     expectConfig("type: cargo\nbundleID: com.example.hello\nteamID: ABCDE12345\n", mentioning: "ios")
 }

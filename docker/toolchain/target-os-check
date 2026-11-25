@@ -1,7 +1,7 @@
 #!/bin/sh
 # Ruling R10: the TARGET_OS_* macros an image's clang predefines, against those of the Apple clang its Xcode ships
 # (docker/toolchain/target-os/<Xcode build>.txt, measured black-box by scripts/target-os-macros.sh: the compiler's
-# output for an empty input). docker/Dockerfile.sdk runs it when it builds an image.
+# output for an empty input). docker/Dockerfile runs it when it builds an image.
 #   target-os-check check <fixture> <clang> [flag …]
 #     For every Darwin triple of the fixture, each macro's value under `#if` through `<clang> -target <triple> [flag …]`
 #     is the fixture's (a macro the clang leaves undefined is "undef"), and the clang defines no TARGET_OS_ macro the
