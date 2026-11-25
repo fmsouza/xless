@@ -1,7 +1,7 @@
 # Maintainers
 
 This page is for people who work on xless itself: the Mac tools that measure Xcode and compare xless's output with
-it, the parity tests, private registries, and releases. Users never need any of it. How to propose a change is in
+it, the parity tests, images on other machines, and releases. Users never need any of it. How to propose a change is in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 The scripts named here run from a source checkout. Those that run Apple's programs are listed in
@@ -90,28 +90,24 @@ xless accepts only the Xcode releases it has measured. Adding one takes, on a Ma
    that Xcode, `make kits`, `make test-rn-linux` and `make test-tauri-linux` in its images, and `xless setup --xcode <the .xip>` on
    Linux.
 
-## Private registries
+## Images on other machines
 
-Images hold Apple's SDK, so they are never published. If you need them on other machines (a CI runner, a build
-server), build them there (`xless setup --docker --sdk <dir>`, from a copy of the SDK export), or push them only to a
-registry that you have checked is private. xless has no command or make target that pushes; by hand:
+Images hold Apple's SDK, so they stay on the machine that built them: xless has no command, make target or workflow that
+pushes one, and none is ever pushed by hand either, also not to a registry that is private today. On another machine (a CI
+runner, a build server), copy the SDK export of one you set up (`~/.cache/xless/sdk/xcode<V>-<B>`, as you may copy the Xcode
+it comes from) and build the image there:
 
 ```sh
-cp registry.env.example registry.env     # set XLESS_REGISTRY; then XLESS_REGISTRY_PRIVATE=true once you have verified it is private
-r=$(scripts/check-private-registry.sh) &&
-  docker tag xless:local-arm64-xcode27.0 "$r/xless:xcode27.0" && docker push "$r/xless:xcode27.0"
+xless setup --docker --sdk <the copied directory>     # the image; without --docker the native install
 ```
 
-- `scripts/check-private-registry.sh` refuses unless `registry.env` sets `XLESS_REGISTRY_PRIVATE=true`, and refuses
-  Docker Hub (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and bare names such as `myuser`, which
-  Docker would push to Docker Hub).
-- A machine that pulls it uses it as `docker tag <registry>/xless:xcode27.0 xless:local-arm64-xcode27.0`: `xless run` looks
-  for that name, checks the image's labels, and never pulls.
-- On a machine with a native install, `xless sdk install --image <registry>/xless:<tag>` installs the SDK from such
-  an image (`docker login <registry>` first; [native-install.md](native-install.md)).
-- [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow that runs such an image as the job
-  container ([signing-and-testflight.md](signing-and-testflight.md#continuous-integration)). It lives in `docs/`, so
-  this repository never runs it.
+- [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow for such a runner of your own
+  ([signing-and-testflight.md](signing-and-testflight.md#continuous-integration)). It lives in `docs/`, so this repository
+  never runs it.
+- `scripts/check-private-registry.sh` is for whoever already keeps such images in a registry of their own, from before: it says
+  whether `registry.env` (from `registry.env.example`) names one that has been checked to be private, refuses Docker Hub
+  (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and bare names such as `myuser`, which Docker takes for
+  Docker Hub's), and pushes nothing.
 
 ## Releases
 

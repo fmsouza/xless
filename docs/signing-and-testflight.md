@@ -270,7 +270,7 @@ with `docker run --rm -v "$PWD":/work -w /work alpine chown -R "$(id -u):$(id -g
 ## Continuous integration
 
 [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow to copy into your app's repository
-and adapt. It runs an image from your own private registry as the job container and ships with `xless ship`. It needs the repository variable `XLESS_IMAGE` and
-the secrets `XLESS_REGISTRY_TOKEN`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` and `XLESS_DIST_KEY`. It has not been
-run yet. Images hold Apple's SDK, so they may only go to a registry that is private:
-[maintainers.md](maintainers.md#private-registries).
+and adapt. It runs on a Linux runner of your own (self-hosted) that you set up once with `xless setup --sdk <dir>`, and ships
+with `xless ship`. It needs the secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` and `XLESS_DIST_KEY`. It has not been
+run yet. GitHub's own runners start empty, and there is no image to give them: one holds Apple's SDK, so it is never pushed to a
+registry ([maintainers.md](maintainers.md#images-on-other-machines)).

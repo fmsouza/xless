@@ -2,7 +2,9 @@
 
 `xless setup --docker --xcode <Xcode.xip>` builds the image that `xless run --docker` builds and signs apps in (without
 `--docker`, `xless setup` installs natively instead: [native-install.md](native-install.md)). Everything is built on your
-machine: xless never pulls an image of its own from a registry, and never pushes one.
+machine: xless never pulls an image of its own from a registry, and never pushes one. (`docker build` fetches what its
+Dockerfiles start `FROM` when that is not on the machine: Swift's image from Docker Hub for the xless image. The kits start from
+the local xless image, which xless checks before and after it builds one.)
 
 ## What there is
 
@@ -46,8 +48,12 @@ kit's, and build it:
 ```Dockerfile
 ARG XLESS_IMAGE
 FROM ${XLESS_IMAGE}
+LABEL org.xless.image=own
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
 ```
+
+The label says that it is not xless's own: `xless clean` then leaves its older builds alone
+([uninstall.md](uninstall.md#xless-clean)).
 
 ```sh
 docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0-tauri -t my-app-image ./image
@@ -64,7 +70,8 @@ XLESS_IMAGE=my-app-image xless run --docker --config app.yml
 ```
 
 - It is used for the build step alone: the steps with the secrets run in the xless image of the same Xcode. For a
-  Swift-only project this makes the run two containers instead of one, and the one that builds has no secret.
+  Swift-only project this makes the run two containers instead of one, and the one that builds has no secret. The project's
+  directory is mounted whole into it, so it may not be your home directory or one above it.
 - xless never builds it for you: your project's Dockerfile is code, and building it is your decision. Build it again
   after each `xless setup` of that Xcode and after each new xless.
 - It must be built on the local image of the Xcode the project pins, as that image is now. xless checks the labels that
@@ -73,7 +80,7 @@ XLESS_IMAGE=my-app-image xless run --docker --config app.yml
   layers are the first layers of it. Another Xcode or architecture, an older xless, or labels without the layers are
   refused (exit 2) with the command that fixes it. Labels are a consistency check, not a proof of where an image comes
   from: anybody can write one.
-- It holds Apple's SDK, as every image built on the xless one. Never push it to a registry others can read.
+- It holds Apple's SDK, as every image built on the xless one. Never push it to a registry.
 
 `docker/tauri/Dockerfile` and `docker/react-native/Dockerfile` in `~/.local/share/xless` are ordinary Dockerfiles of the
 same form: copy one to start from it, for example for a React Native release that needs another `hermesc`
@@ -181,8 +188,10 @@ Those built a chain of four images (`xless-base`, `xless`, `xless-tauri`, `xless
 `local-<arch>-xcode<version>`. Run `xless setup --docker` once (from the SDK it exported before, so without the `.xip`):
 nothing has to be tagged by hand. Then:
 
-- `xless clean --old` removes the old tags (it shows them and asks; `xless setup` says when there are any).
+- `xless clean --old` removes the old tags (it shows them and asks; `--yes` answers; `xless setup` says when there are any).
+- An image of the old chain with the tag a new one gets (`xless:local-arm64-xcode27.0`) is replaced by it; the setup says so.
 - `XLESS_IMAGE` still works and is checked as [above](#an-image-of-your-own): an image of the old chain has no labels, so
-  it is refused. `XLESS_SIGN_IMAGE` still works for React Native, with a notice: nothing needs it any more.
+  it is refused. `XLESS_SIGN_IMAGE` is still read for React Native, with a notice: it may name the xless image itself, which is
+  used anyway. One with anything more in it is refused: unset the variable.
 - The tag `xless:local-<arch>`, without an Xcode, is still used for the Xcode its labels name when it has them, with a
   notice; a later release stops looking at it.

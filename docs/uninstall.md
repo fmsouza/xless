@@ -25,8 +25,8 @@ xless clean --all           # remove all of them
 
 | Option | Removes |
 |---|---|
-| `--images` | every local tag of `xless` (and of `xless-base`, `xless-tauri` and `xless-rn`, the images of xless 0.10 and older), then their older builds (see `--old`). An [image of your own](images.md#an-image-of-your-own) is yours to remove |
-| `--old` | only what an upgrade leaves: the tags of xless 0.10 and older, which it lists and asks about (`--yes` to answer), and the older builds that a later `xless setup` replaced, which are left untagged (`docker image prune --filter label=org.xless.image`) |
+| `--images` | every local tag of `xless` (and of `xless-base`, `xless-tauri` and `xless-rn`, the images of xless 0.10 and older), then their older builds (see `--old`). An [image of your own](images.md#an-image-of-your-own) is yours to remove, and stays when its Dockerfile says `LABEL org.xless.image=own` |
+| `--old` | only what an upgrade leaves: the tags of xless 0.10 and older, which it lists and asks about (no is the default; `--yes` answers, and without a terminal nothing is removed unless it is given), each looked at again right before it goes; and the older builds that a later `xless setup` replaced, which are left untagged (`docker image prune --filter label=org.xless.image=true`) |
 | `--volumes` | the volumes `xless run --docker` creates: `xless-rustup`, `xless-cargo`, `xless-corepack`, `xless-bundle`, `xless-cocoapods-home`, `xless-cocoapods-cache` and every `xless-rn-work-*` |
 | `--cache` | `~/.cache/xless` (or `$XDG_CACHE_HOME/xless`); needs no Docker |
 | `--native` | the native install: `~/.local/share/xless-native` (or `$XLESS_NATIVE_HOME`), the installed SDK and its `toolchain-meta.json`; needs no Docker |
@@ -60,7 +60,7 @@ xless clean --old
 ```
 
 Images built by a release older than the one that added `xless clean` do not carry the `org.xless.image` label, so
-`--old` does not see them. `docker image prune` removes them, together with every other untagged image on the machine.
+`--old` does not see their untagged builds. `docker image prune` removes them, together with every other untagged image on the machine.
 
 ## Remove one Xcode's images
 
@@ -98,5 +98,5 @@ any more (after an upgrade too: a new xless does not use the agent of the old on
 - remove the line that adds `~/.local/bin` to `PATH` from your shell's startup file, if you added one;
 - delete the Xcode `.xip` you downloaded.
 
-The images contain Apple's SDK. If you ever pushed them to a private registry
-([maintainers.md](maintainers.md#private-registries)), delete them there too.
+The images contain Apple's SDK, so they belong on no registry ([maintainers.md](maintainers.md#images-on-other-machines)). If
+you ever pushed one to a private registry of yours, delete it there too.

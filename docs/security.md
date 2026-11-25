@@ -457,20 +457,44 @@ each step of `xless run --docker`:
 | `xless.yml`, no `image:` | (none) | xless image, in the one container with the secrets | the same container |
 | `xless.yml` with `image:` or `XLESS_IMAGE` | (none) | your image, without a secret | xless image |
 
-Images are never pulled (`--pull=never`), so a name that is not on your machine stops the run instead of asking a
-registry. xless checks an image's labels (its Xcode, architecture and xless) and that an image of your own starts with the
+`XLESS_SIGN_IMAGE`, from before, may only name the xless image itself: anything with more in it is refused. A container is
+started from an image on your machine (`docker run --pull=never`), by the ID of the one that was checked, so a tag that moves
+during a run changes nothing, and a name that is not on your machine stops the run instead of asking a registry. (A kit's
+`docker build` starts `FROM` the local image by its name; what it made is checked, layers and all, before it is used.)
+xless checks an image's labels (its Xcode, architecture and xless) and that an image of your own starts with the
 layers of the xless image. That finds an image left behind by an upgrade or built on the wrong one; it is not a proof of
 what the image holds, since whoever can write to your Docker can make one that passes. Only the Dockerfiles shipped with
 xless are ever built by a run, from its own share directory, with no secret in the context, an argument or a layer.
 
-When you do not fully trust the code of an `xless.yml` project, keep the signing in a second run, so no build code runs while a
-key is in use:
+**What the build decides in the step that signs.** The app, its Info.plists (with the version and the build number), its
+extensions and its entitlements are the build's: the step with the secrets signs and uploads what the build left, in the work
+copy (an overlay) or in the project (`.xless/`, and the entitlements files that xless.yml names). So are the capabilities that
+those entitlements need, which signing turns on for the bundle ID on your account unless `--no-provisioning-updates`
+(`provisioningUpdates: false`) is set. What it signs the app *as* is not: the team, the app's bundle ID, the distribution,
+whether the account may be changed, and the app that the upload goes to come from the configuration.
+
+- An overlay, and the app's source, are mounted read-only into every container.
+- A project directory is the build's to write. Its containers get the xless.yml that was read when the run began, read-only, from
+  a directory of the run's own outside of the project (`~/.cache/xless/run/<random>/`), over the one in the project. The
+  container that signs runs in `/`, not in the project. When xless.yml in the project is another one after the build, the run
+  says so (on a Mac's file system a build can write it under another spelling of its name).
+- Signing tools read no configuration of the directory they run in: rcodesign is started with `-C /dev/null`, in `/`, and git with
+  the programs of a repository's configuration off (`core.fsmonitor`). This holds natively too.
+- Natively the build runs as you, and can write what you can: the overlay and xless.yml as well. What is above is of the
+  containers.
+
+When you do not fully trust the code of an `xless.yml` project, name an image of your own for its build (the last line of the
+table), or keep the signing in a second run, so no build code runs while a key is in use:
 
 ```sh
 export XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 ))
 xless run ~/MyApp --to finalize       # build only: reads no secret, opens no store
 xless run ~/MyApp --from sign         # sign and upload what it built: no build code runs
 ```
+
+The second run reads the project's files as the first left them. In containers (`--docker`) the first one's build has xless.yml
+read-only, and the run says when it is another one afterwards; natively nothing keeps a build from changing it. Look at the
+project (`git diff`, `git status`) before the second, if you would not let its build code choose the team and the bundle ID.
 
 Where the kernel keyring is unavailable (macOS, a container whose seccomp profile blocks it) there is nothing in it to
 hide; where it is available but a tool cannot be given an empty keyring, xless does not start the tool. Nor does it start

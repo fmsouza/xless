@@ -45,7 +45,7 @@ build. The pages below go further.
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md): branches, Conventional Commit titles, the pull request checks, and how
   versions are computed.
-- [maintainers.md](maintainers.md): the Mac tools, the parity tests, measuring a new Xcode, private registries, releases
+- [maintainers.md](maintainers.md): the Mac tools, the parity tests, measuring a new Xcode, images on other machines, releases
   and the repository settings.
 - [examples/example-ios.yml](examples/example-ios.yml): an example GitHub Actions workflow for an app repository.
 

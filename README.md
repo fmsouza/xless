@@ -145,7 +145,7 @@ say), run `xless setup --docker` with no `--xcode`. It reuses the SDK export in 
 name with `--sdk <dir>` ([troubleshooting.md](docs/troubleshooting.md#without-the-xip)). The same works without
 `--docker` for the native install.
 
-The images never leave your machine: they contain Apple's SDK, so do not push them to a public registry. A project
+The images never leave your machine: they contain Apple's SDK, so never push them to a registry. A project
 that pins an Xcode (`xcode: "26.2"`) runs in that one's image, another in the newest Xcode's there is an image of.
 
 Then add `--docker` to `xless run`:

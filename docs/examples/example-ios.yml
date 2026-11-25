@@ -1,16 +1,12 @@
 # Example only: this workflow is not run by this repository (it lives in docs/examples/, not .github/workflows/).
-# It needs your own private xless image (the XLESS_IMAGE variable) and your own secrets (XLESS_REGISTRY_TOKEN, ASC_*, XLESS_DIST_KEY).
+# It needs a Linux runner of your own with xless set up (`xless setup --sdk <dir>`; an image holds Apple's SDK, so none is pushed to
+# a registry) and your own secrets (ASC_*, XLESS_DIST_KEY). Never let pull requests of others run on such a runner.
 # Copy it to your app repository's .github/workflows/ and adapt it.
 name: example-ios
 on: workflow_dispatch
 jobs:
   ship:
-    runs-on: ubuntu-latest
-    container:
-      image: ${{ vars.XLESS_IMAGE }}           # e.g. ghcr.io/you/xless:xcode27.0 (private)
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.XLESS_REGISTRY_TOKEN }}
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v4
       - name: Ship HelloShip to TestFlight

@@ -179,8 +179,8 @@ xless setup --xcode ~/Downloads/Xcode_27.xip
 ```
 
 or build the Docker image instead, with `xless setup --docker --xcode …` ([README](../README.md#build-in-docker-instead)).
-To use images on other machines (a CI runner, a build server), push them to your own private registry
-([maintainers.md](maintainers.md#private-registries)); never to a public one, since they contain Apple's SDK.
+On another machine (a CI runner, a build server) build it from a copy of the SDK export
+([maintainers.md](maintainers.md#images-on-other-machines)): never push an image to a registry, since it contains Apple's SDK.
 `xless xcode download` fetches the `.xip` from the terminal ([xcode-download.md](xcode-download.md)).
 
 ## 7. Ship

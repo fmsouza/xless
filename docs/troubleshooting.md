@@ -76,7 +76,7 @@ With `--docker`:
 | `… contains ':', which docker cannot mount` | Move or rename the `.xip` so that its path has no `:`. |
 | Setup was interrupted | Run the same command again. A half-written SDK export or download is deleted, never reused; installed tools and images already built are kept. |
 | `xless:local-<arch>-xcode<V> is another build of Xcode <V>` | An image of another build of the same Xcode version (a beta) exists. `XLESS_XCODE_RETAG=1 xless setup …` keeps it under a `-xcode<V>-<build>` tag and builds the new one. |
-| `note: … image tags of an older xless … not used any more` | Not an error: images of xless 0.10 and older, which nothing uses any more. `xless clean --old` removes them. |
+| `note: … image tags of an older xless … not used any more` | Not an error: images of xless 0.10 and older, which nothing uses any more. `xless clean --old` asks, and removes them. |
 | `this xless is a development build … there is no release to download the linux-<arch> xless from` | Only with `--arch` for the other architecture and an xless built from source: set `XLESS_BIN_ARM64` or `XLESS_BIN_AMD64` to a Linux `xless` binary of that architecture. |
 
 ### The disk check
@@ -131,9 +131,12 @@ and must be one `versions.env` supports. Nothing is exported, so the disk check 
 | Symptom | What to do |
 |---|---|
 | `there is no xless image on this machine` (exit 2) | With `--docker`, no image yet: `xless setup --docker --xcode <Xcode.xip>`. After an upgrade from xless 0.10 or older, `xless setup --docker` alone builds it from the SDK exported before. |
-| `… pins xcode: "…", but the image xless:local-…-xcode… is missing` (exit 2) | Build that Xcode's image: `xless setup --docker --xcode <that Xcode's .xip>`. |
+| `… pins xcode: "…", but the image xless:local-…-xcode… is missing` (exit 2) | Build that Xcode's image with the command the message names: from the SDK export in the cache where there is one, else `xless setup --docker --xcode <that Xcode's .xip>`. |
 | `… is not an image of this xless`, `… holds xless …, and this xless needs … or later there` (exit 2) | An older xless built the image: run `xless setup --docker` again, with the Xcode the message names when the export is gone. |
 | `XLESS_IMAGE names …`, `image: in … names …` (exit 2) | An [image of your own](images.md#an-image-of-your-own) that is missing, is built on another Xcode's, architecture's or an earlier build of the xless image, or is not built on one at all. The message has the `docker build` that fixes it. |
+| `XLESS_SIGN_IMAGE names …, which has more in it than xless's own image` (exit 2) | The steps with the secrets run in the xless image itself. Unset the variable. |
+| `warning: …/xless.yml is not what it was when this run began` | Something changed it meanwhile: you, or the build's code. The run signed by what it was; look at the change (`git diff`) before the next run ([security.md](security.md#the-build-and-your-secrets)). |
+| `… was not built (docker build exited with code …)` | The kit's build failed; its output is above the line. It needs buildx (`docker buildx version`), the network and room on Docker's disk. |
 | `==> building the image xless:local-…-tauri` (or `-react-native`) | Not an error: a kit an app needs is built once, when it is missing or older than xless ([images.md](images.md#what-there-is)). It needs the network. |
 | `testflight: set ASC_KEY_ID in the environment or …` (exit 2) | The run includes `sign`. Set up the secrets ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)), or stop before signing with `--to finalize`. |
 | `testflight: the work copy … is in use by another run (pid …)` (exit 2) | Another `xless run` is building the same project or overlay ([one run per work copy](signing-and-testflight.md#one-command-testflight)). Wait for it to end, or stop it with the `kill` the message names. Its containers are removed when it stops. |

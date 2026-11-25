@@ -163,7 +163,7 @@ Docker creates every volume on first use.
 | Variable | Meaning |
 |---|---|
 | `XLESS_IMAGE` | Step 2's image, in place of the kit's and of the overlay's `image:` ([images.md](images.md#an-image-of-your-own)). It must be built on the xless image of steps 1 and 3: the run compares their labels and layers before it starts and stops (exit 2) when they do not match. |
-| `XLESS_SIGN_IMAGE` | Older: the image of steps 1 and 3, which must be that xless image. Still read, with a notice; nothing needs it. |
+| `XLESS_SIGN_IMAGE` | Older: the image of steps 1 and 3. Still read, with a notice; nothing needs it. It may only name the xless image of that Xcode itself: a kit's, or one of your own, is refused (exit 2). |
 | `XLESS_RN_WORK_VOLUME` | The work volume. Default: one per overlay file (above). |
 | `XLESS_RN_CLEAN=1` | Passed to step 2: `prepare` reinstalls the JS dependencies and regenerates `ios/` and the pods. |
 | `XLESS_SOURCE` | Replaces the overlay's `source:`. |
