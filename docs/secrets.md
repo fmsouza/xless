@@ -98,7 +98,8 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   itself. (Every tool any xless runs, in a project directory's single process too,
   starts in a POSIX session of its own and an empty session keyring, with `XLESS_NO_SECRET_STORE=1`:
   [security.md](security.md#the-build-and-your-secrets).) This keeps xless itself from handing out a secret there; it
-  is no sandbox: code that runs on your machine as you can read your files, which is why the overlays build in Docker.
+  is no sandbox: code that runs on your machine as you can read your files, which is why the overlays build in Docker, or on a Mac in
+  [a sandbox](security.md#an-overlays-build-on-a-mac).
 - **With `--docker`**, the store is not in any container. Before the first step, the xless on your machine (asking the
   passphrase once) writes the secrets each container needs into a fresh `$XDG_RUNTIME_DIR/xless/<random>/` (a tmpfs on
   systemd hosts: never on disk), one directory per container (step 1 gets the App Store Connect key; step 3, or the

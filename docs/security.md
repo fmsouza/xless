@@ -476,6 +476,8 @@ one that is not there: the run stops.
 
 An app's build runs code you did not write. What that code can reach depends on how it is built:
 
+- **An overlay app on a Mac, natively (`xless run --config`)**, builds in a sandbox of macOS's, without a secret and without
+  your files; signing and uploading come after it, outside. [More below](#an-overlays-build-on-a-mac).
 - **An overlay app (Tauri, Cargo, React Native: `xless run --docker --config`)** builds in three containers. The build
   container (step 2) gets no secret and no secret file, and is the only one that runs in an image with the app's
   toolchains (the kit, or an image you name); the next-build and signing containers run in the xless image, where no
@@ -550,7 +552,8 @@ whether the account may be changed, and the app that the upload goes to come fro
   fetch what a partial clone lacks before the run (`git ls-files` in it does): without it the listing fails, or an older git leaves
   those files out. This holds natively too.
 - Natively the build runs as you, and can write what you can: the overlay and xless.yml as well. What is above is of the
-  containers (but on a Mac a run signs with the xless.yml that it read first, or not at all).
+  containers (but on a Mac a run signs with the xless.yml that it read first, or not at all, and the sandbox of an overlay's build
+  has the overlay and the source read-only).
 
 When you do not fully trust the code of an `xless.yml` project, name an image of your own for its build (the last line of the
 table), or keep the signing in a second run, so no build code runs while a key is in use:
@@ -595,9 +598,8 @@ copies nothing of Xcode's into an image, a cache or a release; an app's own buil
   temporary directory (`/tmp`, `$TMPDIR`) they can write. It does not keep them from
   *reading* your files, and the compilers and the linker are not in it, nor what flags make them do (`unsafeFlags`, in a package that
   may have them).
-- **xless adds no sandbox of its own.** `sandbox-exec` is deprecated and its profile language is not documented. A profile that
-  lets a compiler, Xcode's services and an unknown package work would have to allow reading almost everything, and a sandbox
-  cannot be put into SwiftPM's (it would have to be turned off). What keeps the secrets from a build is that they come after it:
+- **xless adds no sandbox of its own** to an `xless.yml` project's build ([an overlay's](#an-overlays-build-on-a-mac) has one). A
+  sandbox cannot be put into SwiftPM's, which would have to be turned off. What keeps the secrets from a build is that they come after it:
   the process that builds never has them, and the store stays sealed. What such code starts can outlive the
   build, in that sandbox or out of it, and do what any program of yours can: read the signer's key file while it is there, for one. When you do not trust a project's code, build it with `--docker`, which shows it
   nothing of yours but the project.
@@ -609,7 +611,70 @@ copies nothing of Xcode's into an image, a cache or a release; an app's own buil
   compares the archive with the pin and the program with the archive, stops where somebody else could write to the place, and starts
   that file: an rcodesign on your `PATH` is not used. The app store's `.pkg`, disk images, notarization and uploads are xless's own
   as on Linux.
+- **An identity of your keychain is not used either**, not even when you ask for it. `codesign` would sign with one after you
+  allowed it, and "Always Allow" holds for `codesign`, so for every program of yours that starts it: what a build left running
+  outside of a sandbox could sign as you as well, with whatever it likes. Give xless a key of its own ([bootstrap.md](bootstrap.md))
+  and keep it in the secret store.
 - A simulator build is signed ad hoc with `/usr/bin/codesign --sign -`: no identity, no key, no keychain.
+
+### An overlay's build on a Mac
+
+`xless run --config <overlay>` on a Mac builds a Tauri, Cargo or React Native app with the tools that are installed there. npm
+scripts, `build.rs`, gems, pods, Swift packages' plugins and macros, and Xcode's build phases are code that nobody looked at, and
+there is a lot of it. So `prepare` to `finalize` run in a second xless, with everything that they start, in a sandbox:
+`/usr/bin/sandbox-exec`, the command-line program of macOS's own sandbox, with rules that xless writes. One line says so, and names
+what it opens. There is no switch that turns it off, and nothing of the build runs where it cannot be put on: the xless that builds
+first looks whether it is in it (it can neither make a file in `/tmp` nor list your home directory). Signing, packaging and
+uploading are the first xless's, after it, with the secrets.
+
+What the build has:
+
+- **To read:** the checkout that `source:` is in (the whole of it, with its `.git` and the files that git does not track), the
+  overlay's directory, the path inputs of a Cargo overlay, what `XLESS_BUILD_READ` names (absolute paths with `:` between them; for
+  a package that is a directory of yours, for one), that Xcode, xless, the tools on `PATH` and what is beside them, and those of
+  rustup, rbenv, pyenv, nodenv, asdf, mise, Volta and proto. And what is not in a home directory, another volume or a directory for
+  temporary files: the system, `/Applications`, `/opt/homebrew`, `/usr/local`. A home directory, or one above it, is never opened,
+  and a run stops when a secret's file is in what would be.
+- **To write:** its work copy and a home directory of its own, `~/.cache/xless/build-home` (what package managers keep), with
+  `~/.cache/xless/downloads` and `inputs`. Not the source, the overlay or the tools. In the work copy it cannot write what xless
+  signs, packages and records outside of the sandbox, nor put links in the place of xless's directories.
+- **Variables:** `PATH`, the locale, the proxies and certificate files, and a few that are known to be harmless. Any other that you
+  export is not there, a token for a registry neither (the images get none either).
+- **The network**, as in the images: package managers need it. That includes what listens on this Mac (`localhost`), and a password
+  that is in a proxy variable is one that the build has.
+
+What it does not have: `~/.config/xless`, the store, the keychains, `~/.ssh`, `~/.aws`, `~/.npmrc`, `~/.docker`, `~/.gnupg` and the
+rest of every home directory (it does not see that they are there), other volumes, the directories for temporary files; sockets (the
+xless agent's, Docker's, an ssh agent's), the terminal, the keychain's services, the pasteboard, Apple events, launchd (it cannot
+leave a job behind), starting an app (`open`), `sudo` and other programs that run as another user, other programs' memory and signals
+to them. What it starts and leaves running is in the sandbox as well.
+
+What the sandbox is not:
+
+- **Apple calls `sandbox-exec` deprecated, and its rules are not documented.** xless tests what its own do, on the macOS that its
+  tests run on. It is not a container, and no virtual machine: a hole in the kernel, or a service of the system that is open to it
+  and does more than it seems, is a way out. Of the services there are the ones that tell users and hosts, check certificates, watch
+  files, take log messages and tell the types of documents (so it can list the apps that are installed); launchd answers it about
+  its jobs, too.
+- **The environment of your other programs can be read**, as any program of yours can (`KERN_PROCARGS2`, what `ps -E` shows): the
+  rules have no word for it. A secret that is exported in a shell is in the environment of what that shell started. Keep secrets in
+  the store. The xless of a macOS release hides its own environment; one that you built from source does not.
+- **Every overlay's build shares the home directory of the builds**, as they share the images' volumes: an app's code can change the
+  packages that another's build finds there. Two apps that should not trust each other want two users of the Mac, or two
+  `XLESS_CACHE`.
+- **What the build leaves running can write the work copy while the app is signed.** It can change what is signed, not what it is
+  signed as, which is in the overlay that it cannot write. (It could make the app what it likes before.) In Docker it ends with the
+  container.
+- **The sandboxes inside are off**: SwiftPM's for manifests and plugins, the Swift compiler's for macros and Xcode's for build
+  phases cannot be put on in this one, and Xcode asks nothing about plugins and macros (`-skipPackagePluginValidation`,
+  `-skipMacroValidation`).
+- **The app itself is what its code makes it.** That holds everywhere.
+
+Outside of the sandbox, before it, xless asks git for the source's files, and your own rustup for the targets that the app lacks
+(`rustup target add`, and for an iOS Tauri app the component `llvm-tools`): rustup reads the app's toolchain file and runs none of
+its code.
+
+When you do not trust an app's code, build it with `--docker`: what it does not get mounted is not there.
 
 Where the kernel keyring is unavailable (macOS, a container whose seccomp profile blocks it) there is nothing in it to
 hide; where it is available but a tool cannot be given an empty keyring, xless does not start the tool. Nor does it start

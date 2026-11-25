@@ -10,7 +10,8 @@ are the alternative. This page says what the native install puts where, what it 
 
 `xless.yml` projects (Swift packages), for iOS and macOS, through every stage up to TestFlight. React Native, Tauri and
 plain Cargo apps (`--config <overlay.yml>`) need much more than the native install has (Node and CocoaPods, rustup's
-Apple targets, Swift Build, the Xcode tool shims), so `xless run` refuses them without `--docker`.
+Apple targets, Swift Build, the Xcode tool shims), so on Linux `xless run` refuses them without `--docker`.
+[On a Mac](#tauri-cargo-and-react-native-apps-on-a-mac) they build natively.
 
 ## What it needs
 
@@ -89,9 +90,8 @@ else xless's own, which is the same as on Linux:
 rcodesign (about 9 MB, pinned by SHA-256) is fetched once, by the first command that signs, into
 `~/.local/share/xless-native/tools` (or under `XLESS_NATIVE_HOME`, an absolute path). `xless clean --native` removes it.
 
-**What it builds.** Swift packages (`xless.yml`), for iOS devices, the iOS simulator and macOS. React Native, Tauri and Cargo
-apps build in the images, on a Mac too (`--docker`), except for the React Native simulator builds that
-[react-native.md](react-native.md) describes. A framework that the app loads is put in its `Frameworks`, and on macOS a
+**What it builds.** Swift packages (`xless.yml`), for iOS devices, the iOS simulator and macOS, and
+[Tauri, Cargo and React Native apps](#tauri-cargo-and-react-native-apps-on-a-mac). A framework that the app loads is put in its `Frameworks`, and on macOS a
 dynamic library (`lib….dylib`) too; on iOS, where the App Store takes no loose one, `finalize` stops, so make that library
 product static there. Where an app's lowest system needs Swift libraries that Apple ships with Xcode for older systems, the build stops and says to
 raise `minimumOS`. A simulator build has no entitlements.
@@ -102,6 +102,39 @@ manifest allows are taken. The build ends with a note on each package that the f
 Build products are in the project's `.xless/` (`xcode-pkg-*`, `xcode-build-*`, and `build/` as on Linux). They are deleted with
 it. SwiftPM keeps its own caches and settings as it does without xless: `~/Library/Caches/org.swift.swiftpm` and `~/.swiftpm`
 (`~/Library/org.swift.swiftpm`), which it finds by the user, not by `HOME`.
+
+### Tauri, Cargo and React Native apps on a Mac
+
+```sh
+xless run --config ~/ci/my-app.overlay.yml --build-number 1.0.0.2026101601 --to finalize
+```
+
+The overlay is the one that the images build. What they have of other languages is yours here, found on `PATH`:
+
+| App | Needs, beside Xcode |
+|---|---|
+| Cargo | [rustup](https://rustup.rs). Targets that the app needs and you lack are added to your toolchain (`rustup target add`). |
+| Tauri | rustup, Node and the package manager of the lockfile. An iOS app also has `llvm-tools` added to the toolchain. |
+| React Native | Node and the package manager of the lockfile, Ruby with Bundler 2.7.2. The gems, CocoaPods among them, are installed for the builds only. |
+
+The build runs in a sandbox that keeps the app's build code from your files and secrets; a line at the start says what it opens.
+[security.md](security.md#an-overlays-build-on-a-mac) says what that covers and what not. What the app's build needs beyond its
+checkout goes into `XLESS_BUILD_READ`:
+
+```sh
+XLESS_BUILD_READ=~/projects/shared-package xless run --config ~/ci/my-app.overlay.yml
+```
+
+- **Your settings of the tools are not there**: `~/.npmrc`, `~/.cargo/config.toml`, `~/.gitconfig`, ssh keys. What the build needs of
+  them belongs into the app's repository (`.npmrc`, `.cargo/config.toml`) or the overlay's `env:`. Packages from private registries or
+  over ssh cannot be fetched, as in the images.
+- **The first build fetches everything once more**, into `~/.cache/xless/build-home`, a home directory that only builds have.
+- React Native is built by `xcodebuild`. Its log is in the work copy, and the error names it.
+- Asset catalogs and storyboards are compiled by xless, as on Linux: Xcode's `actool` and `ibtool` do not work in the sandbox, so
+  `XLESS_TOOLS=xcode` is refused.
+- Debug symbols, signing, packaging and uploading are as in the images. Disk images are made by macOS's `hdiutil`.
+- The work copy is `~/.cache/xless/work/<overlay name>`, the one that `--docker` uses for Tauri and Cargo apps (React Native's is in a
+  volume there). Going from one to the other installs the JavaScript packages again.
 
 ## One Xcode at a time
 

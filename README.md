@@ -3,21 +3,24 @@
 xless builds iOS and macOS apps on Linux, with no Mac, and on a Mac with the Xcode that is installed. It compiles a Swift package, a React Native (Expo) app, a
 Tauri app or a plain Cargo app against Apple's SDK, and can then sign it, package it and upload it to TestFlight. By
 default it installs everything it needs straight onto your Linux machine, from the Xcode download Apple gives you. The
-alternative is a set of Docker images that you build once on your own machine: add `--docker` to the commands. React
+alternative is a set of Docker images that you build once on your own machine: add `--docker` to the commands. On Linux, React
 Native, Tauri and plain Cargo apps build in the images only.
 
 ## On a Mac
 
-With Xcode installed (and opened once), [install xless](#install) and build a Swift package app. Nothing else is set up:
+With Xcode installed (and opened once), [install xless](#install) and build. Nothing else is set up:
 
 ```sh
 xless run <project-dir> --build-number 1 --to finalize     # builds
 xless run <project-dir>                                    # builds, signs and ships (docs/signing-and-testflight.md)
 ```
 
+`xless run --config <overlay.yml>` builds a React Native, Tauri or plain Cargo app, with the Mac's own Node, Ruby or Rust; the
+app's build code runs [in a sandbox](docs/security.md#an-overlays-build-on-a-mac).
+
 `xless setup` there only checks what it finds. xless uses Apple's tools where they are, and its own for signing, packaging
-and uploading ([docs/native-install.md](docs/native-install.md#on-a-mac)). React Native, Tauri and plain Cargo apps build
-[in Docker](#build-in-docker-instead) on a Mac too. The rest of this page is about Linux.
+and uploading ([docs/native-install.md](docs/native-install.md#on-a-mac)). `--docker` builds [in Docker](#build-in-docker-instead)
+on a Mac too. The rest of this page is about Linux.
 
 ## What you need
 

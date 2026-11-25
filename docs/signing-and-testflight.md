@@ -165,7 +165,8 @@ xless run ~/MyApp --from sign
 ## The three-step split
 
 An overlay app's build runs third-party code: npm scripts, `build.rs`, CocoaPods hooks, Xcode build phases. So with
-`--config`, `xless run --docker` never runs that code next to a secret. It uses three containers:
+`--config`, `xless run --docker` never runs that code next to a secret. It uses three containers (natively on a Mac, the same
+three steps, with the second in [a sandbox](security.md#an-overlays-build-on-a-mac)):
 
 1. `xless next-build` (`xless tauri next-build` for Tauri), with the App Store Connect key only: the next `dated` build
    number, a read-only query. Skipped when `XLESS_BUILD_NUMBER` or `--build-number` is given.
