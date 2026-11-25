@@ -42,8 +42,12 @@ public enum BuiltTree {
     }
 
     /// Copies a tree that the build may still change meanwhile: by what is open and never by a path, so a directory that becomes a link to
-    /// the user's own is not gone into, and a pipe is not waited for. Modes and dates stay. `to` is not there yet.
-    public static func copy(_ from: URL, to: URL, stage: Stage) throws {
+    /// the user's own is not gone into, and a pipe is not waited for. Modes and dates stay, and what a file has besides its bytes, but for
+    /// flags and lists that would keep xless from changing or removing it; a directory's extended attributes do not. `to` is not there yet.
+    public static func copy(_ from: URL, to: URL, stage: Stage) throws { try copy(from, to: to, stage: stage) { _ in } }
+
+    /// `between`: after something was looked at and before it is opened (for the tests).
+    static func copy(_ from: URL, to: URL, stage: Stage, between: (_ path: String) -> Void) throws {
         func failed(_ name: String, _ why: String) -> XlessError {
             XlessError(stage, TerminalText.escaped("cannot copy \(name.isEmpty ? from.path : "\(name) in \(from.lastPathComponent)"): \(why)"), fix: "look at what in the build put it there, or still writes there, then build again")
         }
@@ -55,15 +59,16 @@ public enum BuiltTree {
             guard above.count < maxDepth else { throw failed(place, "it is nested deeper than \(maxDepth) directories") }
             var own = stat()
             guard fstat(source, &own) == 0, mkdir(target, 0o700) == 0 else { throw system(place) }
-            guard let names = fdopendir(dup(source)).flatMap(names) else { throw failed(place, "it cannot be listed, or holds a name that is not UTF-8") }
+            guard let names = opened(source).flatMap(names) else { throw failed(place, "it cannot be listed, or holds a name that is not UTF-8") }
             for name in names {
                 let shown = (above + [name]).joined(separator: "/"), to = "\(target)/\(name)"
                 var info = stat()
                 guard fstatat(source, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { throw system(shown) }
+                between(shown)
                 switch info.st_mode & S_IFMT {
                 case S_IFLNK:
                     guard case .link(let path) = link(at: Array(name.utf8), in: source) else { throw system(shown) }
-                    guard symlink(path.map { CChar(bitPattern: $0) } + [0], to) == 0 else { throw system(shown) }
+                    guard symlink(path.map { CChar(bitPattern: $0) } + [0], to) == 0, utimensat(AT_FDCWD, to, times(info), AT_SYMLINK_NOFOLLOW) == 0 else { throw system(shown) }
                 case S_IFDIR:
                     let fd = openat(source, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
                     guard fd >= 0 else { throw system(shown) }
@@ -83,7 +88,9 @@ public enum BuiltTree {
         try directory(fd, to: to.path, [])
     }
 
-    /// Writes a new file into a tree of the build's: what is at its place, a link say, goes, and nothing on the way there is a link.
+    /// Writes a new file into a tree of the build's: what is at its place, a link say, goes, and nothing on the way there is a link. (When it
+    /// is looked at: the way is for a tree that only xless writes, sign's copy. In finalize on a Mac what the build left running can
+    /// change it meanwhile, but there the build writes with the same rights.)
     public static func write(_ data: Data, at path: String, in root: URL, stage: Stage) throws {
         var at = root.path
         let parts = path.utf8.split(separator: UInt8(ascii: "/")).map { String(decoding: $0, as: UTF8.self) }
@@ -160,6 +167,14 @@ public enum BuiltTree {
         return names.sorted()
     }
 
+    /// A directory of its own to list, so that `directory` stays open, in no program that another thread starts.
+    private static func opened(_ directory: Int32) -> Directory? {
+        let fd = openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        guard let listing = fdopendir(fd) else { close(fd); return nil }
+        return listing
+    }
+
     private static func times(_ info: stat) -> [timespec] {
         #if canImport(Darwin)
         [info.st_mtimespec, info.st_mtimespec]
@@ -170,13 +185,17 @@ public enum BuiltTree {
 
     private static func file(_ source: Int32, to path: String, _ info: stat) -> Bool {
         #if canImport(Darwin)
-        if fclonefileat(source, AT_FDCWD, path, UInt32(CLONE_NOFOLLOW)) == 0 { return true }
+        if fclonefileat(source, AT_FDCWD, path, UInt32(CLONE_NOFOLLOW)) == 0 {
+            var copy = stat()
+            let locks = UInt32(UF_IMMUTABLE | UF_APPEND)
+            return lstat(path, &copy) == 0 && (copy.st_flags & locks == 0 || chflags(path, copy.st_flags & ~locks) == 0)
+        }
         #endif
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard fd >= 0 else { return false }
         defer { close(fd) }
         #if canImport(Darwin)
-        guard fcopyfile(source, fd, nil, copyfile_flags_t(COPYFILE_ALL)) == 0 else { return false }
+        guard fcopyfile(source, fd, nil, copyfile_flags_t(COPYFILE_DATA | COPYFILE_DATA_SPARSE | COPYFILE_XATTR)) == 0 else { return false }
         #else
         var buffer = [UInt8](repeating: 0, count: 1 << 20)
         while true {
@@ -184,6 +203,10 @@ public enum BuiltTree {
             if got < 0, errno == EINTR { continue }
             guard got >= 0 else { return false }
             if got == 0 { break }
+            if buffer[..<got].allSatisfy({ $0 == 0 }) { // a hole, perhaps of many gigabytes
+                guard lseek(fd, off_t(got), SEEK_CUR) >= 0 else { return false }
+                continue
+            }
             var put = 0
             while put < got {
                 let n = buffer.withUnsafeBytes { systemWrite(fd, $0.baseAddress! + put, got - put) }
@@ -192,6 +215,7 @@ public enum BuiltTree {
                 put += n
             }
         }
+        guard ftruncate(fd, lseek(fd, 0, SEEK_CUR)) == 0 else { return false }
         #endif
         return fchmod(fd, info.st_mode & 0o777) == 0 && futimens(fd, times(info)) == 0
     }

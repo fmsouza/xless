@@ -107,7 +107,10 @@ func whatABuildMayNotLeaveInABundleIsRefused(_ what: String, _ why: String) thro
     for (path, mode) in [(run, 0o755), (app.appendingPathComponent("A"), 0o640), (app.appendingPathComponent("Frameworks"), 0o750)] {
         try fm.setAttributes([.posixPermissions: mode, .modificationDate: date], ofItemAtPath: path.path)
     }
+    let link = app.appendingPathComponent("nowhere"), then = [timespec(tv_sec: 1_000_000_000, tv_nsec: 0), timespec(tv_sec: 1_000_000_000, tv_nsec: 0)]
+    try #require(utimensat(AT_FDCWD, link.path, then, AT_SYMLINK_NOFOLLOW) == 0)
     try BuiltTree.copy(app, to: copy, stage: .sign)
+    #expect(try fm.attributesOfItem(atPath: copy.appendingPathComponent("nowhere").path)[.modificationDate] as? Date == date)
     #expect(try fm.subpathsOfDirectory(atPath: copy.path).sorted() == fm.subpathsOfDirectory(atPath: app.path).sorted())
     #expect(try Data(contentsOf: copy.appendingPathComponent("run")) == bytes)
     for (path, mode) in [("run", 0o755), ("A", 0o640), ("Frameworks", 0o750)] {
@@ -128,6 +131,57 @@ func whatABuildMayNotLeaveInABundleIsRefused(_ what: String, _ why: String) thro
     _ = try strange.pipe("A.app/pipe")
     #expect { try BuiltTree.copy(app, to: to, stage: .sign) } throws: { "\($0)".contains("pipe in A.app: it is neither") }
 }
+
+/// What was a file or a directory when it was looked at is a link to the user's own, or a pipe, when it is opened.
+@Test(arguments: [("A", "own/key"), ("Frameworks/F.framework/Versions/A", "own"), ("A", nil)])
+func whatComesBetweenLookingAndOpeningIsNotCopied(_ path: String, _ target: String?) throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    try FileManager.default.createDirectory(at: strange.root.appendingPathComponent("own"), withIntermediateDirectories: true)
+    for name in ["F", "key"] { _ = try strange.file("own/\(name)", "secret") }
+    let to = strange.root.appendingPathComponent("copy"), place = app.appendingPathComponent(path)
+    var came = false
+    #expect(throws: XlessError.self) {
+        try BuiltTree.copy(app, to: to, stage: .sign) { looked in
+            guard looked == path else { return }
+            came = rename(place.path, strange.root.appendingPathComponent("aside").path) == 0
+                && (target.map { symlink(strange.root.appendingPathComponent($0).path, place.path) } ?? mkfifo(place.path, 0o600)) == 0
+        }
+    }
+    #expect(came)
+    for case let file as URL in FileManager.default.enumerator(at: to, includingPropertiesForKeys: nil)! where (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+        #expect(try String(contentsOf: file, encoding: .utf8) != "secret", "\(file.path)")
+    }
+}
+
+@Test func theHolesOfAFileAreNotWrittenOut() throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    let sparse = app.appendingPathComponent("sparse"), fd = open(sparse.path, O_WRONLY | O_CREAT, 0o600), size = off_t(64 << 20), bytes = Array("end".utf8)
+    defer { close(fd) }
+    try #require(fd >= 0 && pwrite(fd, bytes, 3, size) == 3 && ftruncate(fd, 2 * size + 1) == 0)
+    let to = strange.root.appendingPathComponent("copy")
+    try BuiltTree.copy(app, to: to, stage: .sign)
+    var info = stat()
+    #expect(lstat(to.appendingPathComponent("sparse").path, &info) == 0 && info.st_size == 2 * size + 1 && info.st_blocks * 512 < size)
+    let copy = try FileHandle(forReadingFrom: to.appendingPathComponent("sparse"))
+    defer { try? copy.close() }
+    try copy.seek(toOffset: UInt64(size) - 1)
+    #expect(try copy.read(upToCount: 5) == Data([0] + bytes + [0]))
+}
+
+#if canImport(Darwin)
+@Test func aFileThatMayNotBeChangedIsOneOfXlesssInTheCopy() throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    let locked = app.appendingPathComponent("A"), to = strange.root.appendingPathComponent("copy")
+    try #require(chflags(locked.path, UInt32(UF_IMMUTABLE)) == 0)
+    defer { for file in [locked, to.appendingPathComponent("A")] { chflags(file.path, 0) } }
+    try BuiltTree.copy(app, to: to, stage: .sign)
+    try BuiltTree.write(Data("new".utf8), at: "A", in: to, stage: .sign)
+    try FileManager.default.removeItem(at: to)
+}
+#endif
 
 /// A process that the build left makes a directory a link to the user's own again and again.
 @Test func nothingOfTheUsersOwnIsCopiedThroughALinkThatComesBetween() throws {
