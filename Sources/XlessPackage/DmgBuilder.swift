@@ -26,7 +26,7 @@ public enum DmgBuilder {
         let info = try Plist.read(app.appendingPathComponent("Contents/Info.plist"), stage: .package)
         let name = info["CFBundleExecutable"] as? String ?? app.deletingPathExtension().lastPathComponent
         let exe = app.appendingPathComponent("Contents/MacOS").appendingPathComponent(name)
-        let names = (try? Data(contentsOf: exe)).flatMap { try? MachO.sliceArchitectures(in: $0).map(\.name) } ?? []
+        let names = (name.contains("/") ? nil : try? Data(contentsOf: exe)).flatMap { try? MachO.sliceArchitectures(in: $0).map(\.name) } ?? []
         let found = names.compactMap(MacArchitecture.init(rawValue:))
         guard !found.isEmpty, found.count == names.count else {
             let listed = names.isEmpty ? "" : " (\(names.joined(separator: ", ")))"

@@ -119,13 +119,13 @@ public enum PkgBuilder {
         return pkg
     }
 
-    /// `find . | sort | cpio -o -H odc | gzip`, the exact payload format Apple's own packages carry (odc magic
+    /// `find . | sort | cpio -o -H odc | gzip` (by NUL, not by line: a name may have a line break), the exact payload format Apple's own packages carry (odc magic
     /// `070707`, `./`-relative paths, TRAILER). Sorted byte-wise (LC_ALL=C): deterministic on every host and
     /// parents-before-children, which cpio's extraction requires. Constant text — every path stays in the cwd
     /// or `$1`, never in the command string, so arbitrary file names are safe; the exclusions are Packager's
     /// junk list.
     static let cpioPipeline =
-        #"find . \( ! -name '*.DS_Store' ! -name '._*' ! -path '*/._*' \) -print | LC_ALL=C sort | cpio -o -H odc | gzip -c > "$1""#
+        #"find . \( ! -name '*.DS_Store' ! -name '._*' ! -path '*/._*' \) -print0 | LC_ALL=C sort -z | cpio -0 -o -H odc | gzip -c > "$1""#
 
     // MARK: - XML templates (productbuild's own output, verified 2026-10-31 · Build 26B123)
 

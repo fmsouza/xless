@@ -12,13 +12,16 @@ public enum IPAInfo {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-ipa-\(UUID().uuidString).plist")
         defer { try? FileManager.default.removeItem(at: tmp) }
         // unzip -p writes raw bytes; go through a file because Shell captures text.
-        try Shell.run("sh", ["-c", "unzip -p \"$0\" \"$1\" > \"$2\"", ipa.path, entry, tmp.path], stage: .upload)
+        try Shell.run("sh", ["-c", "unzip -p \"$0\" \"$1\" > \"$2\"", ipa.path, pattern(of: entry), tmp.path], stage: .upload)
         let info = try Plist.read(tmp, stage: .upload)
         guard let version = info["CFBundleShortVersionString"] as? String, let build = info["CFBundleVersion"] as? String else {
             throw XlessError(.upload, "\(entry) lacks CFBundleShortVersionString/CFBundleVersion", fix: "re-run from finalize (`xless ship --from finalize`)")
         }
         return (version, build)
     }
+
+    /// What `unzip` takes for this one entry: it takes patterns, and an app's name may look like one.
+    private static func pattern(of entry: String) -> String { entry.replacing(/[\\*?\[\]]/) { "\\" + $0.output } }
 
     /// The versions to declare to App Store Connect: always the ipa's. An explicit build-number override
     /// (`--build-number` / `XLESS_BUILD_NUMBER`) must agree with the ipa, because it is re-resolved on every run.
