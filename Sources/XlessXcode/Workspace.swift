@@ -257,8 +257,8 @@ struct XMLTree {
 
     static func parse(file: URL) throws -> XMLTree {
         let data: Data
-        do { data = try Data(contentsOf: file) } catch {
-            throw XlessError(.prepare, "cannot read \(file.path): \(error.localizedDescription)", fix: "check the path")
+        do { data = try PlainFile.read(file, followsLinks: true) } catch {
+            throw XlessError(.prepare, "cannot read \(file.path): it \(error.reason)", fix: "check the path")
         }
         let collector = Collector()
         let parser = XMLParser(data: data)

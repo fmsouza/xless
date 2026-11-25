@@ -154,8 +154,8 @@ public enum DatedBuildNumber {
     }
 
     static func recorded(_ file: URL) throws -> String {
-        guard let text = try? String(contentsOf: file, encoding: .utf8),
-              case let v = text.trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty else {
+        guard let data = try? PlainFile.read(file, maxSize: 4096), let text = String(data: data, encoding: .utf8),
+              case let v = text.trimmingCharacters(in: .whitespacesAndNewlines), v.wholeMatch(of: /[0-9]+(\.[0-9]+)*/) != nil else {
             throw XlessError(.config, "no build number recorded for this work copy", fix: "run `xless ship` (or `xless build`) first")
         }
         return v

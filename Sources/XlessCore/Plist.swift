@@ -3,8 +3,8 @@ import Foundation
 public enum Plist {
     public static func read(_ url: URL, stage: Stage) throws -> [String: Any] {
         let data: Data
-        do { data = try Data(contentsOf: url) } catch {
-            throw XlessError(stage, "cannot read \(url.path)", fix: "check the previous stage produced it")
+        do { data = try PlainFile.read(url, followsLinks: true) } catch {
+            throw XlessError(stage, "cannot read \(url.path): it \(error.reason)", fix: "check the previous stage produced it")
         }
         guard let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
             throw XlessError(stage, "\(url.path) is not a dictionary plist", fix: "check the file contents")

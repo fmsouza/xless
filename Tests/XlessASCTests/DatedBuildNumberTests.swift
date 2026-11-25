@@ -329,3 +329,19 @@ private func macConfig(build: String = "1.0.0.200001010000") -> ProjectConfig {
     #expect(try DatedBuildNumber.resolveLocal(version: "1.0.0", fresh: true, file: file, today: today) == "1.0.0.2026101501")
     #expect(try DatedBuildNumber.resolveLocal(version: "1.0.0", fresh: false, file: file) == "1.0.0.2026101501")
 }
+
+@Test func theRecordedBuildNumberIsANumberInAPlainFile() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-recorded-\(UUID().uuidString)"), file = root.appendingPathComponent("build-number")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try DatedBuildNumber.record("1.0.2026112501", in: file)
+    #expect(try DatedBuildNumber.recorded(file) == "1.0.2026112501")
+    for text in ["", "1.0 2", "1.0.2026112501\nsecond", "-x", "\u{1B}[2J"] {
+        try Data(text.utf8).write(to: file)
+        #expect(throws: XlessError.self, "\(text)") { try DatedBuildNumber.recorded(file) }
+    }
+    #if !os(Windows)
+    try FileManager.default.removeItem(at: file)
+    try #require(mkfifo(file.path, 0o600) == 0)
+    #expect(throws: XlessError.self) { try DatedBuildNumber.recorded(file) }
+    #endif
+}

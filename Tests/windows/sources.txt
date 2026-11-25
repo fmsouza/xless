@@ -25,6 +25,7 @@
 - Sources/XlessCore/NativeTools.swift
 + Sources/XlessCore/PEM.swift
 - Sources/XlessCore/PackageResolved.swift
++ Sources/XlessCore/PlainFile.swift
 + Sources/XlessCore/Platform.swift
 + Sources/XlessCore/Plist.swift
 - Sources/XlessCore/PlistBuddyShim.swift
@@ -207,6 +208,7 @@
 - Tests/XlessCoreTests/NativeToolsTests.swift
 + Tests/XlessCoreTests/PEMTests.swift
 - Tests/XlessCoreTests/PackageResolvedTests.swift
+- Tests/XlessCoreTests/PlainFileTests.swift
 - Tests/XlessCoreTests/PlistBuddyShimTests.swift
 + Tests/XlessCoreTests/PrivateFileTests.swift
 + Tests/XlessCoreTests/ProjectConfigTests.swift

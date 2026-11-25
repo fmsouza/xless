@@ -151,8 +151,9 @@ public enum SignTargets {
 
     /// `entitlements.json`: bundle path → `{bundleID, target, file?, entitlements}`.
     static func read(_ file: URL) throws -> [String: Entry] {
-        guard let data = try? Data(contentsOf: file) else {
-            throw XlessError(.sign, "\(file.path) does not exist", fix: "run `xless build` first: the build records each bundle's entitlements there")
+        let data: Data
+        do { data = try PlainFile.read(file) } catch {
+            throw XlessError(.sign, "\(file.path) \(error.reason)", fix: "run `xless build` first: the build records each bundle's entitlements there")
         }
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw XlessError(.sign, "\(file.path) is not a JSON object", fix: "run `xless build` again")
