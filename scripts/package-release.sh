@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Packages a built xless into the release tarball.
-#   scripts/package-release.sh [--os linux|macos] <version> <x86_64|arm64> <xless-binary> <out-dir>   (--os linux by default)
+#   scripts/package-release.sh [--os linux|macos|windows] <version> <x86_64|arm64> <xless-binary> <out-dir>   (--os linux by default)
 # Writes <out-dir>/xless-<version>-<os>-<arch>.tar.gz (top directory xless-<version>-<os>-<arch>/) and adds its line to
 # <out-dir>/SHA256SUMS (sha256sum's format; the other lines are kept). Layout (checked by scripts/check-package.sh):
 #   bin/xless (stripped)  LICENSE  share/xless/{VERSION,versions.env,docker/,scripts/,credential-helpers/,samples/HelloShip/,licenses/}
+# For Windows (x86_64) a .zip instead, of bin/xless.exe with the DLLs of the Swift runtime that it needs (from XLESS_RUNTIME),
+# LICENSE and share/xless/{VERSION,licenses/}: builds do not run there.
 # docker/ and samples/HelloShip are the tracked files only. The macOS binary is freed of the run paths of the Xcode it was
 # built with, signed ad hoc (with the hardened runtime, and without any identity) and checked by scripts/check-macos-binary.sh;
 # XLESS_LINK_MAP is the linker's map of it (scripts/check-link-map.sh, which says what may be linked in), without which none is made.
@@ -13,11 +15,11 @@ set -euo pipefail
 os=linux
 if [[ "${1:-}" == --os ]]; then os="${2:-}"; shift 2 || true; fi
 version="${1:-}" arch="${2:-}" bin="${3:-}" outdir="${4:-}"
-usage() { echo "usage: package-release.sh [--os linux|macos] <version> <x86_64|arm64> <xless-binary> <out-dir>" >&2; exit 2; }
+usage() { echo "usage: package-release.sh [--os linux|macos|windows] <version> <x86_64|arm64> <xless-binary> <out-dir>" >&2; exit 2; }
 [[ -n "$version" && -n "$arch" && -n "$bin" && -n "$outdir" ]] || usage
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "package-release: bad version '$version'" >&2; exit 2; }
-case "$os" in linux|macos) ;; *) echo "package-release: unsupported system '$os' (linux or macos)" >&2; exit 2 ;; esac
-case "$arch" in x86_64|arm64) ;; *) echo "package-release: unsupported arch '$arch' (x86_64 or arm64)" >&2; exit 2 ;; esac
+case "$os" in linux|macos|windows) ;; *) echo "package-release: unsupported system '$os' (linux, macos or windows)" >&2; exit 2 ;; esac
+case "$os-$arch" in *-x86_64|linux-arm64|macos-arm64) ;; *) echo "package-release: unsupported arch '$arch' (x86_64 or arm64; x86_64 on Windows)" >&2; exit 2 ;; esac
 [[ -f "$bin" ]] || { echo "package-release: no binary at $bin" >&2; exit 1; }
 root="$(cd "$(dirname "$0")/.." && pwd)"
 name="xless-$version-$os-$arch"
@@ -26,6 +28,40 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 stage="$work/$name"
 share="$stage/share/xless"
+
+# Adds the file's line to <out-dir>/SHA256SUMS.
+add_sum() {
+  local sum
+  if command -v sha256sum >/dev/null 2>&1; then sum=$(cd "$outdir" && sha256sum "$1" | tr '*' ' ')   # '*': binary, of Git for Windows
+  else sum=$(cd "$outdir" && shasum -a 256 "$1"); fi
+  {
+    if [[ -f "$outdir/SHA256SUMS" ]]; then grep -vF "  $1" "$outdir/SHA256SUMS" || true; fi
+    echo "$sum"
+  } | LC_ALL=C sort -k2 > "$work/sums"
+  cat "$work/sums" > "$outdir/SHA256SUMS"
+}
+
+if [[ "$os" == windows ]]; then
+  python=python3; command -v python3 >/dev/null 2>&1 || python=python
+  tool() { "$python" -I "$root/scripts/windows-package.py" "$@"; }
+  mkdir -p "$work/stage/$name/bin" "$work/stage/$name/share/xless" "$outdir"
+  stage="$work/stage/$name"
+  cp "$bin" "$stage/bin/xless.exe"
+  if [[ "${XLESS_STUB:-}" != true ]]; then
+    [[ -d "${XLESS_RUNTIME:-}" ]] || { echo "package-release: XLESS_RUNTIME is not the directory of the Swift runtime's DLLs" >&2; exit 1; }
+    tool closure "$bin" "$XLESS_RUNTIME" > "$work/libraries"
+    while IFS= read -r f; do cp "$XLESS_RUNTIME/$f" "$stage/bin/$f"; done < "$work/libraries"
+  fi
+  cp "$root/LICENSE" "$stage/LICENSE"
+  echo "$version" > "$stage/share/xless/VERSION"
+  "$root/scripts/third-party-licenses.sh" --os windows "$stage/share/xless/licenses"
+  tool pack "$work/stage" "$work/$name.zip"
+  "$root/scripts/check-package.sh" windows "$version" "$arch" "$work/$name.zip" >/dev/null
+  cat "$work/$name.zip" > "$outdir/$name.zip"
+  add_sum "$name.zip"
+  echo "$outdir/$name.zip"
+  exit 0
+fi
 mkdir -p "$stage/bin" "$share/scripts" "$share/credential-helpers"
 
 install -m 755 "$bin" "$stage/bin/xless"
@@ -83,12 +119,5 @@ COPYFILE_DISABLE=1 tar -czf "$work/$name.tar.gz" -C "$work" "${tar_opts[@]}"
 "$root/scripts/check-package.sh" "$os" "$version" "$arch" "$work/$name.tar.gz" >/dev/null
 cat "$work/$name.tar.gz" > "$tarball"
 
-if command -v sha256sum >/dev/null 2>&1; then sum=$(cd "$outdir" && sha256sum "$name.tar.gz")
-else sum=$(cd "$outdir" && shasum -a 256 "$name.tar.gz"); fi
-sums="$outdir/SHA256SUMS"
-{
-  if [[ -f "$sums" ]]; then grep -vF "  $name.tar.gz" "$sums" || true; fi
-  echo "$sum"
-} | sort -k2 > "$work/sums"
-cat "$work/sums" > "$sums"
+add_sum "$name.tar.gz"
 echo "$tarball"
