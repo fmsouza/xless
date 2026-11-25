@@ -128,9 +128,10 @@ private final class Looking: @unchecked Sendable {
     }
 }
 
-/// A key file is gone also when a signal ends xless meanwhile (Ctrl-C, a CI runner's cancel), whether a tool ever ran or not.
+/// A key file is gone also when a signal ends xless meanwhile (Ctrl-C, Ctrl-\, a CI runner's cancel, output nobody reads, a
+/// fault of xless's own), whether a tool ever ran or not.
 @Suite struct PrivateFilesOnSignalTests {
-    @Test(arguments: [SIGINT, SIGTERM, SIGHUP]) func aSignalRemovesTheFiles(signal: Int32) async throws {
+    @Test(arguments: [SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2, SIGALRM, SIGPIPE, SIGXCPU, SIGSYS, SIGABRT, SIGTRAP, SIGSEGV, SIGBUS, SIGFPE, SIGILL]) func aSignalRemovesTheFiles(signal: Int32) async throws {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
         defer { try? FileManager.default.removeItem(atPath: parent) }
         await #expect(processExitsWith: .signal(signal)) { [signal = signal as Int32, parent = parent as String] in
@@ -142,6 +143,21 @@ private final class Looking: @unchecked Sendable {
                     kill(getpid(), signal)
                     sleep(20)
                 }
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
+    }
+
+    /// Also where a handler of another's is, which comes back (Swift's backtrace, on Linux): xless ends after it all the same.
+    @Test(arguments: [SIGQUIT, SIGABRT, SIGSEGV]) func aHandlerThatGoesOnDoesNotKeepTheFiles(signal: Int32) async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(signal)) { [signal = signal as Int32, parent = parent as String] in
+            Foundation.signal(signal) { _ in }
+            try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { files in
+                _ = try files.write(Data("secret".utf8), as: "key.pem")
+                kill(getpid(), signal)
+                sleep(20)
             }
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)

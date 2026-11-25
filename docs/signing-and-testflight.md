@@ -43,9 +43,9 @@ literal `\n` sequences.
 
 xless removes the secrets (and their `_FILE` forms) from the environment of every tool it runs, so package code
 executed during `build` (SwiftPM macros and plugins) cannot read them from its environment; rcodesign gets keys
-through mode-0600 temporary files, removed when it ends and when a signal (Ctrl-C, SIGTERM, SIGHUP) ends xless. A file named by a `_FILE` variable is another matter: code that runs on the same
-machine or in the same container as the build, as the same user, can still read it. That is why overlay apps are
-built in [three steps](#the-three-step-split).
+through mode-0600 temporary files, removed when it ends and when a signal ends xless (any but SIGKILL). A file named by a
+`_FILE` variable is another matter: code that runs on the same machine or in the same container as the build, as the same
+user, can still read it. That is why overlay apps are built in [three steps](#the-three-step-split).
 
 Once xless reads a secret (`sign`, `package`, `upload`, `next-build`, `sign bootstrap`), core dumps are off for the
 rest of the command and for the tools it runs, so a crash cannot write a key to disk; on Linux the process is also
@@ -116,9 +116,11 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
 - **Paths.** Relative secret paths are resolved against the current directory. With `--docker`, the secret files and
   the project must be somewhere Docker can mount (on Linux, any local path).
 - **Dry run.** `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the commands without running them.
-- **Stopping.** Stopping `xless run` (Ctrl-C, or SIGTERM or SIGHUP, as a CI runner does when it cancels a job) takes
+- **Stopping.** Stopping `xless run` (Ctrl-C, Ctrl-\\, or SIGTERM or SIGHUP, as a CI runner does when it cancels a job) takes
   effect at once, whichever step is running: with `--docker` it removes its containers and the secrets it wrote for them,
-  natively it stops xless (and what that runs), and it exits with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove what is left with
+  natively it stops xless (and what that runs), and it exits with code 130, 131, 143 or 129. Any other signal that ends a
+  process does the same (128 and its number), and so does a fault of xless's own; one that `nohup` or a script's `&` made it
+  ignore does nothing. A SIGKILL cannot be caught: after one, remove what is left with
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
   warning. The exit code is xless's (17 for a failed upload or delivery). Then it prints the `xless release submit` command

@@ -49,6 +49,27 @@ import Testing
         #expect(try FileManager.default.attributesOfItem(atPath: file)[.posixPermissions] as? Int == 0o600)
     }
 
+    /// A fault of the run's own is cleaned up after too; the secrets go even when that cannot be done.
+    @Test(arguments: [true, false]) func aFaultOfItsOwnLeavesNothing(cleansUp: Bool) async throws {
+        let file = try host.temporaryFile(), secret = try host.temporaryFile()
+        defer { host.removeFile(file); host.removeFile(secret) }
+        await #expect(processExitsWith: .failure) { [cleansUp = cleansUp as Bool, file = file as String, secret = secret as String] in
+            let host = PosixRunHost()
+            host.removeOnFault(secret, isDirectory: false)
+            if cleansUp {
+                try host.onStop { code in
+                    host.removeFile(file)
+                    host.end(code)
+                }
+                host.pause(0.2)
+            }
+            UnsafeMutablePointer<Int>(bitPattern: 8)!.pointee = 1
+            exit(0)
+        }
+        #expect(!FileManager.default.fileExists(atPath: secret))
+        #expect(FileManager.default.fileExists(atPath: file) != cleansUp)
+    }
+
     @Test func theProcessTable() throws {
         let step = try host.start(RunStep(["sleep", "30"], environment: environment))
         #expect(host.isRunning(step.pid))

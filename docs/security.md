@@ -56,8 +56,8 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
    (`xless secrets export --out`, `xless sign bootstrap --out`): a new file, opened with `O_EXCL`, mode 0600, never an
    overwrite. Imports offer to delete the file they read. Two things need a file for a moment: rcodesign its key, and a
    container its secrets. Each is mode 0600 in a fresh directory of mode 0700 (the containers' on a tmpfs, unless you allow a
-   disk), and is removed when the tool or the container ends, on an error, and when SIGINT, SIGTERM or SIGHUP ends xless.
-   A `kill -9` leaves them; the next run on the same work copy removes the containers' and their secrets.
+   disk), and is removed when the tool or the container ends, on an error, and when a signal ends xless (Ctrl-C, Ctrl-\\,
+   SIGTERM, a fault of its own: any that can be caught). A `kill -9` leaves them; the next run on the same work copy removes the containers' and their secrets.
 3. **Nothing kept longer than the command,** unless you opt in: the store's unlock (`xless unlock`, `--remember`) and
    the Apple ID session (`xless auth login --keep`) can be held in memory, for 8 hours and 2 without use unless you say
    otherwise, and never more than 7 days. `xless auth status` shows what is held, where and until when, also for a script that runs; `xless lock`
@@ -207,8 +207,8 @@ it runs (the build is in the container), and a
 [credential helper](#with-a-credential-helper), which may ask something on the terminal and already sees every secret.
 
 A session of its own has no terminal, so Ctrl-C and a closed window do not reach a tool by themselves: xless passes SIGINT,
-SIGTERM and SIGHUP on to the process group of each tool that runs, and ends as it would. (A `kill -9` of xless it cannot
-pass on.)
+SIGTERM and SIGHUP on to the process group of each tool that runs (SIGTERM for any other signal that ends it), and ends as it
+would. (A `kill -9` of xless it cannot pass on.)
 
 Containers: xless never mounts the agent's socket. One mounted by hand gives nothing: on Linux a container's process is in
 no granted session; on macOS a socket does not cross into the VM.

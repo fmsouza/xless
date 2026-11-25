@@ -2,7 +2,7 @@
 # xless run with the secret store (fmsouza/xless#102): a secret whose *_FILE variable is not set comes from
 # the store. In docker, the host's xless writes them once (`xless secrets materialize`) into a fresh run directory, one
 # set per container, each mounted read-only into its container only and removed when it ends; the rest goes when the
-# run ends, fails, or is stopped by INT, TERM or HUP. Natively, xless reads the store itself (checked up front), and the
+# run ends, fails, or is stopped by a signal. Natively, xless reads the store itself (checked up front), and the
 # build step cannot open it. A fake xless stands in for the store, a fake docker logs what each container gets.
 set -euo pipefail
 t=$(mktemp -d)
@@ -137,12 +137,13 @@ reset; code=0
 env -i HOME="$t/home" PATH="/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q "is not on PATH" "$t/err" || fail "no host xless: exit $code $(cat "$t/err")"
 
-# stopped (INT, TERM, HUP): while a container runs, and while xless writes them (or waits for the passphrase), the run
-# directory goes at once. INT: the script is started with INT at its default (a background job of this test starts with
-# INT ignored, which bash cannot trap).
-dfl() { exec python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
-for sig in INT TERM HUP; do
-  case $sig in INT) want=130 ;; TERM) want=143 ;; HUP) want=129 ;; esac
+# stopped by a signal, whichever ends a process (Ctrl-C, Ctrl-\\, a runner's cancel, a timer, a fault of xless's own): while a
+# container runs, and while xless writes them (or waits for the passphrase), the run directory, the step and the lock of the
+# work copy go at once. INT, QUIT: the run is started with them at their default (a background job of this test starts with
+# them ignored, and so would the run); XFSZ: python ignores it.
+dfl() { exec python3 -c 'import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGQUIT, signal.SIGXFSZ)]; os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
+for sig in INT TERM HUP QUIT USR1 USR2 ALRM VTALRM PROF XCPU XFSZ SYS ABRT TRAP SEGV BUS FPE ILL; do
+  want=$((128 + $(kill -l $sig)))
   for where in container materialise; do
     reset
     if [[ $where == container ]]; then extra=(DSLEEP="--from sign"); pidf="$t/dpid"; else extra=(MAT_SLEEP=1); pidf="$t/mpid"; fi
@@ -152,7 +153,8 @@ for sig in INT TERM HUP; do
     start=$SECONDS; kill -"$sig" "$pid"; code=0; wait "$pid" || code=$?
     [[ $code -eq $want && $((SECONDS - start)) -lt 10 ]] || fail "$sig/$where: exit $code after $((SECONDS - start)) s, want $want at once"
     [[ ! -e "$RUN" ]] || fail "$sig/$where: the run directory outlived the stopped run: $(ls -R "$RUN")"
-    kill "$(cat "$pidf")" 2>/dev/null || true
+    kill "$(cat "$pidf")" 2>/dev/null && fail "$sig/$where: the step outlived the stopped run"
+    [[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "$sig/$where: the lock outlived the stopped run"
   done
 done
 

@@ -105,7 +105,7 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   project's one container, that key and the signing keys; the macOS App-Store ship its own two keys), directories 0700
   and files 0600. Each directory is mounted read-only into its container only (`/secrets/store`, with
   `NAME_FILE=/secrets/store/NAME`) and removed when that container ends; the rest goes when the run ends, on an error
-  and when it is stopped (Ctrl-C, SIGTERM, SIGHUP). The build container (step 2) never sees them, and the run refuses
+  and when it is stopped (by any signal but SIGKILL). The build container (step 2) never sees them, and the run refuses
   to start if they would be inside a folder mounted into it. Without a tmpfs (no `XDG_RUNTIME_DIR`, as on macOS, or
   one on a disk) the run refuses, unless you pass `--allow-disk-secrets`: then they go to
   `~/.cache/xless/secrets/<random>/` (under your home directory, which Colima and Docker Desktop share with their VM)

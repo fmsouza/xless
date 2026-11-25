@@ -60,12 +60,15 @@ public protocol RunHost: AnyObject, Sendable {
     /// Becomes `words`; comes back only when it cannot be started, with why.
     func become(_ words: [String], environment: [String: String]) -> String
 
-    /// From here on a request to stop the run is given to `stop`, on a thread of its own, with the exit code it asks for.
+    /// From here on a request to stop the run (a signal that would end it) is given to `stop`, on a thread of its own, with the
+    /// exit code it asks for.
     func onStop(_ stop: @escaping @Sendable (Int32) -> Void) throws
     /// Whether the run has been asked to stop.
     var stopping: Bool { get }
     /// Ends this process now.
     func end(_ code: Int32) -> Never
+    /// A fault of this process's own that leaves no chance to clean up removes `path` too (a directory: once it is empty).
+    func removeOnFault(_ path: String, isDirectory: Bool)
 
     /// The process runs (and is not a dead one nobody waited for).
     func isRunning(_ pid: Int32) -> Bool

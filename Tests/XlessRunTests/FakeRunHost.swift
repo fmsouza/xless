@@ -94,6 +94,10 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
         pthread_exit(nil)
     }
 
+    func removeOnFault(_ path: String, isDirectory: Bool) { lock.withLock { onFault.append(path) } }
+    private var onFault: [String] = []
+    var removedOnFault: [String] { lock.withLock { onFault } }
+
     func isRunning(_ pid: Int32) -> Bool { lock.withLock { processes[pid] != nil } }
     func started(_ pid: Int32) -> String { lock.withLock { processes[pid]?.started ?? (pid == processID ? "Tue Nov 24 09:00:00 2026" : "") } }
     func commandLine(_ pid: Int32) -> String { lock.withLock { processes[pid]?.command ?? "" } }

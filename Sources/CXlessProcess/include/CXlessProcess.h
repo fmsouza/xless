@@ -73,20 +73,22 @@ int xless_reap(int pid, int nohang, int *code);
 /// Its stdin is this process's, or /dev/null when that is a terminal; stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor
 /// is closed in it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
 /// On Linux the child gets the calling thread's credentials (its session keyring).
-/// SIGINT, SIGTERM and SIGHUP, which its session gets from no terminal, are passed on to its process group from here to
-/// `xless_wait`: this process's handlers (installed where the disposition is the default, not where it is ignored) tell
-/// every tool that runs and then take the signal's default action.
+/// A signal that ends this process is passed on to its process group from here to `xless_wait` (its session gets none from a
+/// terminal): this process's handlers (installed where the disposition is the default, not where it is ignored) tell every
+/// tool that runs, SIGINT, SIGTERM and SIGHUP as they are and SIGTERM for any other, and then take the signal's default
+/// action. The same for a fault of this process's own (SIGSEGV, SIGABRT, ...), also where a handler of another's is (which
+/// comes after).
 int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
 
 /// waitpid(2) for `pid`: 1 when it ended (`*status`: its exit status, or the signal that killed it), -1 on error.
 int xless_wait(int pid, int *status);
 
-/// SIGINT, SIGTERM or SIGHUP that ends this process removes the file at `path` first (a directory: once it is empty), from a
-/// signal handler; those that are ignored stay ignored. Call it before the file is made. Returns what to give
-/// `xless_keep_when_ended`, or -1: no room (64 at a time).
-int xless_remove_when_ended(const char *path, int is_directory);
+/// A signal that ends this process (any that can be caught; those that are ignored stay ignored) removes the file at `path`
+/// first (a directory: once it is empty), from a signal handler. Call it before the file is made. Returns what to give
+/// `xless_keep_when_ended`, or NULL: there is no memory.
+void *xless_remove_when_ended(const char *path, int is_directory);
 /// Forgets it: it is gone, or not private any more.
-void xless_keep_when_ended(int slot);
+void xless_keep_when_ended(void *entry);
 
 /// Whether `pid` is a tool that signals are passed on to.
 int xless_tool_runs(int pid);
@@ -108,11 +110,18 @@ void xless_end_by_signal(int sig);
 /// it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
 int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
 
-/// From here on SIGINT, SIGTERM and SIGHUP are noted instead of ending this process (those that are ignored stay ignored):
-/// the descriptor returned gives one byte, the signal's number, for each. -errno on failure.
+/// From here on the signals that end a process are noted instead of ending this one (those that are ignored stay ignored): the
+/// descriptor returned gives one byte, the signal's number, for each. A fault of this process's own is noted too, and ends it
+/// once `xless_end_run` is called, or after a minute. -errno on failure.
 int xless_take_stop_signals(void);
 /// The first signal noted since; 0: none.
 int xless_stop_signal(void);
+/// How many were.
+int xless_stops(void);
+/// This thread is the one that reads that descriptor and cleans up (a fault of its own ends the process at once).
+void xless_cleans_up(void);
+/// It has: ends this process with `code`, without anything more of its own; by the signal, when it was a fault.
+void xless_end_run(int code) __attribute__((noreturn));
 
 /// Sets `sig` back to what it does by default: to end this process, and (where it would be passed on) the tools it runs.
 /// Async-signal-safe.

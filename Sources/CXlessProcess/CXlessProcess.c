@@ -299,32 +299,51 @@ static void close_from_3(int keep) {
 
 // The tools that run are told the signals that end this process: in sessions of their own, they get none from a terminal.
 
-static const int forwarded[] = { SIGINT, SIGTERM, SIGHUP };
-#define FORWARDED (sizeof forwarded / sizeof *forwarded)
-static atomic_int is_forwarded[FORWARDED];
+enum { STAYS, ENDS, FAULT };
+
+/// What `sig` does to a process by default: nothing that ends it, ends it, or ends it as a fault of its own does.
+static int what_is(int sig) {
+    switch (sig) {
+    case SIGKILL: case SIGSTOP: // which nobody can catch
+    case SIGTSTP: case SIGTTIN: case SIGTTOU: case SIGCONT: case SIGCHLD: case SIGURG: case SIGWINCH:
+#ifdef __APPLE__
+    case SIGIO: case SIGINFO:
+#endif
+        return STAYS;
+    case SIGSEGV: case SIGBUS: case SIGILL: case SIGFPE: case SIGABRT: case SIGTRAP: case SIGSYS:
+#ifdef SIGEMT
+    case SIGEMT:
+#endif
+        return FAULT;
+    default: return ENDS; // on Linux the real-time ones too
+    }
+}
+
+static atomic_int is_forwarded[NSIG];
 static atomic_int tools[256]; // their pids, which are their process groups; 0: none
 static atomic_int owner;      // the process they are tools of (a forked child has their numbers too)
 static atomic_int starting;   // how many are being started
 static atomic_int deferred;   // the signal that came meanwhile
 
+/// SIGINT, SIGTERM and SIGHUP as they are; any other says the same as SIGTERM to them.
 static void tell_tools(int sig) {
+    if (sig != SIGINT && sig != SIGHUP) sig = SIGTERM;
     for (size_t i = 0; i < sizeof tools / sizeof *tools; i++) {
         int tool = atomic_load(&tools[i]);
         if (tool > 0) kill(-tool, sig);
     }
 }
 
-// What must not outlive this process: files, and directories of them. A slot's string is never freed: a handler may read it.
-struct private_path { int is_directory; char path[]; };
-static _Atomic(struct private_path *) private_paths[64];
-#define PRIVATE_PATHS (sizeof private_paths / sizeof *private_paths)
+// What must not outlive this process: files, and directories of them, the last one first. An entry is never freed: a handler
+// may read it.
+struct private_path { struct private_path *next; atomic_int kept; int is_directory; char path[]; };
+static _Atomic(struct private_path *) private_paths;
 
 // Async-signal-safe. The files, then the directories they leave empty, the last ones made first.
 static void remove_private(void) {
     for (int directories = 0; directories < 2; directories++) {
-        for (size_t i = PRIVATE_PATHS; i-- > 0;) {
-            struct private_path *it = atomic_load(&private_paths[i]);
-            if (it == NULL || it->is_directory != directories) continue;
+        for (struct private_path *it = atomic_load(&private_paths); it != NULL; it = it->next) {
+            if (atomic_load(&it->kept) || it->is_directory != directories) continue;
             if (directories) rmdir(it->path); else unlink(it->path);
         }
     }
@@ -363,17 +382,80 @@ static void forward_on(int sig) {
     action.sa_handler = forward;
     action.sa_flags = SA_RESTART;
     sigemptyset(&action.sa_mask);
-    for (size_t i = 0; i < FORWARDED; i++) sigaddset(&action.sa_mask, forwarded[i]);
+    for (int i = 1; i < NSIG; i++) if (what_is(i) == ENDS) sigaddset(&action.sa_mask, i);
     sigaction(sig, &action, NULL);
 }
 
-static void handlers_on(void) {
-    for (size_t i = 0; i < FORWARDED; i++) {
-        struct sigaction now;
-        if (sigaction(forwarded[i], NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
-        atomic_store(&is_forwarded[i], 1);
-        if (now.sa_handler == SIG_DFL) forward_on(forwarded[i]);
+static struct sigaction before_fault[NSIG];
+static atomic_int has_cleaner;
+static void let_stop_clean_up(int sig);
+static void note_stop(int sig);
+static void pass_on(int sig, siginfo_t *info, void *context);
+
+static int from_another(const siginfo_t *info) {
+#ifdef __linux__
+    return info->si_code <= 0 && info->si_pid != getpid(); // si_pid is there for these alone
+#else
+    return info->si_pid > 0 && info->si_pid != getpid();
+#endif
+}
+
+// Async-signal-safe. Something in this process is broken (or somebody says so): the tools are told, what is private goes, and
+// then comes what would have come first (Swift's backtrace) and the end: that handler comes back when nothing is broken after
+// all, and leaves every one of these signals to the default. Nothing that needs a lock: it may be held. Sent by another process
+// nothing is broken: in a run that is a stop as any other is.
+static void fault(int sig, siginfo_t *info, void *context) {
+    if (getpid() == atomic_load(&owner)) {
+        if (atomic_load(&has_cleaner) && from_another(info)) {
+            note_stop(sig);
+            return;
+        }
+        tell_tools(SIGTERM);
+        remove_private();
+        let_stop_clean_up(sig);
     }
+    const struct sigaction *before = &before_fault[sig];
+    if (before->sa_flags & SA_SIGINFO) before->sa_sigaction(sig, info, context);
+    else if (before->sa_handler != SIG_DFL) before->sa_handler(sig);
+    take_default(sig);
+}
+
+static void fault_on(int sig, const struct sigaction *now) {
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_sigaction = fault;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    before_fault[sig] = *now;
+    sigaction(sig, &action, NULL);
+}
+
+/// Where nothing is said of the signal, or something is done at it (Swift's backtrace): that comes after.
+static void faults_on(void) {
+    static atomic_flag begun = ATOMIC_FLAG_INIT;
+    static char stack[65536]; // for the one that says the stack is full (of the thread that comes here first)
+    stack_t now_on;
+    if (!atomic_flag_test_and_set(&begun) && sigaltstack(NULL, &now_on) == 0 && (now_on.ss_flags & SS_DISABLE)) {
+        stack_t own = { .ss_sp = stack, .ss_size = sizeof stack };
+        sigaltstack(&own, NULL);
+    }
+    for (int sig = 1; sig < NSIG; sig++) {
+        struct sigaction now;
+        if (what_is(sig) != FAULT || sigaction(sig, NULL, &now) != 0 || now.sa_handler == SIG_IGN || now.sa_sigaction == fault) continue;
+        fault_on(sig, &now);
+    }
+}
+
+static void handlers_on(void) {
+    for (int sig = 1; sig < NSIG; sig++) {
+        struct sigaction now;
+        if (what_is(sig) != ENDS || sigaction(sig, NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
+        atomic_store(&is_forwarded[sig], 1);
+        if (now.sa_handler == SIG_DFL) forward_on(sig);
+        // Swift's backtrace is at this one too, and would go on after it, with the end as it is by default from then on.
+        else if (sig == SIGQUIT && now.sa_handler != forward && now.sa_handler != note_stop && now.sa_sigaction != pass_on && now.sa_sigaction != fault) fault_on(sig, &now);
+    }
+    faults_on();
 }
 
 // Counted first, then the handlers: a signal from here on waits until the tool is known (also when its start hangs), and
@@ -384,24 +466,21 @@ static void tool_starts(void) {
     handlers_on();
 }
 
-int xless_remove_when_ended(const char *path, int is_directory) {
+void *xless_remove_when_ended(const char *path, int is_directory) {
     struct private_path *it = malloc(sizeof *it + strlen(path) + 1);
-    if (it == NULL) return -1;
+    if (it == NULL) return NULL;
     it->is_directory = is_directory;
+    atomic_init(&it->kept, 0);
     strcpy(it->path, path);
-    for (size_t i = 0; i < PRIVATE_PATHS; i++) {
-        struct private_path *none = NULL;
-        if (!atomic_compare_exchange_strong(&private_paths[i], &none, it)) continue;
-        atomic_store(&owner, getpid());
-        handlers_on();
-        return (int)i;
-    }
-    free(it);
-    return -1;
+    it->next = atomic_load(&private_paths);
+    while (!atomic_compare_exchange_weak(&private_paths, &it->next, it)) {}
+    atomic_store(&owner, getpid());
+    handlers_on();
+    return it;
 }
 
-void xless_keep_when_ended(int slot) {
-    if (slot >= 0 && (size_t)slot < PRIVATE_PATHS) atomic_store(&private_paths[slot], NULL);
+void xless_keep_when_ended(void *entry) {
+    if (entry != NULL) atomic_store(&((struct private_path *)entry)->kept, 1);
 }
 
 static void tool_started(int tool) { // 0: it was not
@@ -432,13 +511,8 @@ int xless_tool_runs(int pid) {
 }
 
 void xless_signal_default(int sig) {
-    for (size_t i = 0; i < FORWARDED; i++) {
-        if (forwarded[i] == sig && atomic_load(&is_forwarded[i])) {
-            forward_on(sig);
-            return;
-        }
-    }
-    signal(sig, SIG_DFL);
+    if (sig > 0 && sig < NSIG && atomic_load(&is_forwarded[sig])) forward_on(sig);
+    else signal(sig, SIG_DFL);
 }
 
 static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
@@ -634,18 +708,44 @@ void xless_end_by_signal(int sig) { take_default(sig); }
 
 static int stop_pipe[2] = { -1, -1 };
 static atomic_int stop_noted;
+static atomic_int stops;
+static atomic_int faulted, cleaned_up;
+static pthread_t cleaner;
 
 // Async-signal-safe.
 static void note_stop(int sig) {
     int e = errno, none = 0;
     unsigned char byte = (unsigned char)sig;
     atomic_compare_exchange_strong(&stop_noted, &none, sig);
+    atomic_fetch_add(&stops, 1);
     ssize_t n = write(stop_pipe[1], &byte, 1);
     (void)n; // full: it has said so already
     errno = e;
 }
 
 int xless_stop_signal(void) { return atomic_load(&stop_noted); }
+int xless_stops(void) { return atomic_load(&stops); }
+
+// Async-signal-safe. A thread of its own cleans up (xless_cleans_up), while this one, which is at fault, waits: not for ever,
+// as it may hold what that one needs.
+static void let_stop_clean_up(int sig) {
+    if (!atomic_load(&has_cleaner) || pthread_equal(pthread_self(), cleaner)) return;
+    atomic_store(&faulted, 1);
+    note_stop(sig);
+    struct timespec tenth = { 0, 100000000 };
+    for (int i = 0; i < 600 && !atomic_load(&cleaned_up); i++) nanosleep(&tenth, NULL);
+}
+
+void xless_cleans_up(void) {
+    cleaner = pthread_self();
+    atomic_store(&has_cleaner, 1);
+}
+
+void xless_end_run(int code) {
+    atomic_store(&cleaned_up, 1);
+    while (atomic_load(&faulted)) pause(); // it ends as the fault does
+    _exit(code);
+}
 
 int xless_take_stop_signals(void) {
     int e;
@@ -658,10 +758,12 @@ int xless_take_stop_signals(void) {
     action.sa_handler = note_stop;
     action.sa_flags = SA_RESTART;
     sigemptyset(&action.sa_mask);
-    for (size_t i = 0; i < FORWARDED; i++) {
+    atomic_store(&owner, getpid());
+    for (int sig = 1; sig < NSIG; sig++) {
         struct sigaction now;
-        if (sigaction(forwarded[i], NULL, &now) == 0 && now.sa_handler != SIG_IGN) sigaction(forwarded[i], &action, NULL);
+        if (what_is(sig) == ENDS && sigaction(sig, NULL, &now) == 0 && now.sa_handler != SIG_IGN) sigaction(sig, &action, NULL);
     }
+    faults_on();
     return stop_pipe[0];
 }
 

@@ -143,6 +143,7 @@ public final class PosixRunHost: RunHost {
         let descriptor = xless_take_stop_signals()
         guard descriptor >= 0 else { throw Failure(code: -descriptor) }
         Thread.detachNewThread {
+            xless_cleans_up()
             var signal: UInt8 = 0
             while true {
                 let n = read(descriptor, &signal, 1)
@@ -152,7 +153,8 @@ public final class PosixRunHost: RunHost {
     }
 
     public var stopping: Bool { xless_stop_signal() != 0 }
-    public func end(_ code: Int32) -> Never { _exit(code) }
+    public func end(_ code: Int32) -> Never { xless_end_run(code) }
+    public func removeOnFault(_ path: String, isDirectory: Bool) { _ = xless_remove_when_ended(path, isDirectory ? 1 : 0) }
 
     public func isRunning(_ pid: Int32) -> Bool { pid > 0 && kill(pid, 0) == 0 && !ps(["-o", "stat=", "-p", "\(pid)"]).hasPrefix("Z") }
     public func started(_ pid: Int32) -> String { ps(["-o", "lstart=", "-p", "\(pid)"]) }

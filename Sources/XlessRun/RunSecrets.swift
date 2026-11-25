@@ -228,6 +228,7 @@ extension ProjectRun {
         guard RunText.isSecretsDirectory(directory), files.isDirectory(directory) else {
             throw RunStop.usage("\"\(xself)\" secrets materialize printed '\(directory)', not a run directory")
         }
+        cleanup.note(secrets: directory, secrets.sets)
         try refuseInBuildMounts(directory)
         secrets.directory = directory
     }

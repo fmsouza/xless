@@ -102,6 +102,9 @@ import XlessCore
         let written = try #require(host.allSteps.first { $0.words.contains("materialize") && !$0.words.contains("--check") })
         #expect(written.environment["XLESS_SESSION"] == "/agent")
         #expect(!home.exists(home.secrets), "removed when the run ended")
+        // each file, for a fault of the run's own that leaves no time for that
+        let files = ["next", "sign"].flatMap { set in ["ASC_KEY_P8", "ASC_KEY_ID", "ASC_ISSUER_ID"].map { "\(home.secrets)/\(set)/\($0)" } } + ["\(home.secrets)/sign/XLESS_DIST_KEY"]
+        #expect(Set(host.removedOnFault) == Set(files + ["", "/next", "/sign"].map { home.secrets + $0 }))
         if case .file(let path) = written.output { #expect(!home.exists(path)) } else { Issue.record("not to a file") }
     }
 

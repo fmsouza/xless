@@ -1,7 +1,7 @@
 import Foundation
 
-/// What a run must not leave behind, and its removal: when the run ends, and when it is asked to stop (SIGINT, SIGTERM,
-/// SIGHUP), from whatever it is doing then.
+/// What a run must not leave behind, and its removal: when the run ends, and when it is asked to stop (by a signal, whichever
+/// would end it), from whatever it is doing then.
 final class RunCleanup: @unchecked Sendable {
     struct State {
         /// The step that runs.
@@ -46,6 +46,16 @@ final class RunCleanup: @unchecked Sendable {
             let started = try host.start(step)
             state.job = started.pid
             return started
+        }
+    }
+
+    /// The secrets written for this run, in `directory` by container: also for a fault that leaves no time for a clean-up.
+    func note(secrets directory: String, _ sets: [RunSecrets.Set]) {
+        change { $0.secrets = directory }
+        host.removeOnFault(directory, isDirectory: true)
+        for set in sets {
+            host.removeOnFault("\(directory)/\(set.name)", isDirectory: true)
+            for name in set.names { host.removeOnFault("\(directory)/\(set.name)/\(name.drop { $0 == "?" })", isDirectory: false) }
         }
     }
 
