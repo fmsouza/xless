@@ -270,11 +270,23 @@ private func yaml(_ extra: String) -> String {
 /// A restriction that is misspelt would be dropped silently (xless.yml ignores keys it does not know): refused.
 @Test(arguments: ["provisioningUpdate: false", "provisioning_updates: false", "ProvisioningUpdates: false", "noProvisioningUpdates: true", "provisioning: false",
                   "provisionUpdates: false", "provisionning-updates: false", "provisoningUpdates: false", "povisioningUpdates: false", "prvsioningUpdates: false",
-                  "provUpdates: false", "noProvisionUpdates: true", "allowProvisioningUpdates: false", "\"provisioningUpdates \": false", "7: a\nprovisionUpdates: false"])
+                  "provUpdates: false", "noProvisionUpdates: true", "allowProvisioningUpdates: false", "\"provisioningUpdates \": false", "disableProvisioningUpdates: true", "updateProvisioning: false",
+                  "provisoinUpdates: false", "noProvisioning: true", "provision: false", "provisionning-updates: [a]", "7: a\nprovisionUpdates: false"])
 func aMisspeltProvisioningUpdatesIsRefused(line: String) {
     #expect { _ = try ProjectConfig.parse(yaml: yaml(line)) } throws: {
-        ($0 as? XlessError)?.stage == .config && ($0 as? XlessError)?.fix == "write it as provisioningUpdates: false"
+        ($0 as? XlessError)?.stage == .config && ($0 as? XlessError)?.fix == ifMeant
     }
+}
+
+private let ifMeant = "if `sign` must change nothing on the account, write it as provisioningUpdates: false; else remove it"
+
+/// Keys that are about something else, read by nobody or by a later xless: what they say is left alone.
+@Test(arguments: ["provisioningProfile: a", "provisioningProfiles: { com.example.app: a }", "provisioning_profile_specifier: a", "provisioningStyle: manual",
+                  "provisioning: { style: manual }", "provisioning: manual", "provision: a", "provisioned: true", "approvedUpdates: true", "improveUpdates: false",
+                  "providerUpdates: false", "updates: false", "provingUpdates: [a]", "provisioningStates: a"])
+func aKeyAboutSomethingElseIsNotTakenForProvisioningUpdates(line: String) throws {
+    #expect(try ProjectConfig.parse(yaml: yaml(line)).provisioningUpdates)
+    try ProvisioningUpdates.check(yaml: "platforms:\n  ios: { \(line) }\n", file: "overlay a")
 }
 
 /// A restriction without a value is not "unset": whoever wrote the key meant something by it.
@@ -289,7 +301,7 @@ func aProvisioningUpdatesWithoutAValueIsRefused(line: String) {
 
 /// Only the top level is read: anywhere else the restriction would be dropped silently.
 @Test func aMisplacedProvisioningUpdatesIsRefused() {
-    func refused(_ yaml: String, _ cause: String, _ fix: String = "write it at the top level, as provisioningUpdates: false") {
+    func refused(_ yaml: String, _ cause: String, _ fix: String = "write it at the top level, as provisioningUpdates: false, or remove it") {
         #expect { _ = try ProjectConfig.parse(yaml: yaml) } throws: {
             ($0 as? XlessError)?.stage == .config && ($0 as? XlessError)?.cause == cause && ($0 as? XlessError)?.fix == fix
         }
@@ -299,7 +311,7 @@ func aProvisioningUpdatesWithoutAValueIsRefused(line: String) {
     refused(yaml("testflight: { provisioningUpdates: false }"), "xless.yml: testflight.provisioningUpdates is not read")
     refused(yaml("x: [1, { y: { provisioningUpdates: ~ } }]"), "xless.yml: x[1].y.provisioningUpdates is not read")
     refused(yaml("x: &x { provisioningUpdates: false }\n<<: *x"), "xless.yml: x.provisioningUpdates is not read")
-    refused(yaml("testflight: { provisionUpdates: false }"), "xless.yml: unknown key 'testflight.provisionUpdates'", "write it as provisioningUpdates: false")
+    refused(yaml("testflight: { provisionUpdates: false }"), "xless.yml: unknown key 'testflight.provisionUpdates'", ifMeant)
     // Twice is not a choice between the two.
     #expect(throws: XlessError.self) { _ = try ProjectConfig.parse(yaml: yaml("provisioningUpdates: false\nprovisioningUpdates: true")) }
 }
@@ -309,9 +321,7 @@ func aProvisioningUpdatesWithoutAValueIsRefused(line: String) {
     #expect(try ProjectConfig.parse(yaml: yaml("x-note: provisioning\nupdates: weekly\nprofile: a")).provisioningUpdates)
     let names = "a:\n  env: { PROVISIONING_UPDATES: \"1\", provisioning: a }\n  plistVars: { PROVISIONING: a }\n  scripts: { provision: run }\n  bundleIDs: { Provisioning: a.b }\n  replace: { provisioning.x: y }\n"
     try ProvisioningUpdates.check(yaml: names, file: "overlay a")
-    #expect { try ProvisioningUpdates.check(yaml: "env: { provisioningUpdates: \"false\" }\n", file: "overlay a") } throws: {
-        ($0 as? XlessError)?.cause == "overlay a: env.provisioningUpdates is not read"
-    }
+    try ProvisioningUpdates.check(yaml: "env: { provisioningUpdates: \"false\" }\n", file: "overlay a")
 }
 
 @Test func anErrorsExitCodeIsItsStagesUnlessItHasItsOwn() {
