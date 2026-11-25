@@ -12,7 +12,6 @@ import Testing
     #expect(try BuildSandbox.quoted(#"/a "b"\c"#) == #""/a \"b\"\\c""#)
     for bad in ["relative", "/", "/a\nb", "/a\u{7f}"] { #expect(throws: XlessError.self) { try BuildSandbox.quoted(bad) } }
     #expect(BuildSandbox.above("/a/b/c") == ["/a", "/a/b"] && BuildSandbox.above("/a") == [])
-    #expect(try BuildSandbox.pattern("/a.b(c)+") == #"/a\.b\(c\)\+"#)
     #expect(BuildSandbox.isBelow("/a/b", "/a") && BuildSandbox.isBelow("/a", "/a") && !BuildSandbox.isBelow("/ab", "/a") && BuildSandbox.isBelow("/a", "/"))
 }
 
@@ -64,7 +63,7 @@ private final class Sandboxed {
     #expect(try box.sh("echo new > made && cat made").out == "new\n")
     for denied in ["cat ../private", "cat secret", "echo x > secret", "mv secret elsewhere", "ls ..", "echo x > ../r/open", "echo x > ../r/new", "rm ../private", "ln ../private stolen && cat stolen",
                    "echo x > /private/tmp/xless-sandbox-test", "ls /Users", "ls \(BuildSandbox.userHome!)", "ls /System/Volumes/Data\(BuildSandbox.userHome!)", "ls /Volumes",
-                   "ls /private/var/folders", "ls $(getconf DARWIN_USER_TEMP_DIR)", "ls /private/var/root"] {
+                   "ls /private/var/folders", "ls \(ShellWord.quoted(FileManager.default.temporaryDirectory.path))", "ls /private/var/root"] {
         let answer = try box.sh(denied)
         #expect(answer.status != 0 && answer.out.lowercased().contains("not permitted"), "\(denied): \(answer.status) \(answer.out)")
     }
@@ -72,6 +71,8 @@ private final class Sandboxed {
     // what is closed is not there, the way to what is open is
     #expect(try box.sh("test -e ../private || test -e secret").status == 1)
     #expect(try box.sh("test -d .. && test -d ../../ && cd ../r && pwd -P").out == box.root + "/r\n")
+    // a tool that asks the system for a directory for temporary files makes do with the build's
+    #expect(try box.sh("cd / && f=$(mktemp) && echo x > \"$f\" && echo \"${f%/*}\"").out == box.work + "\n")
     // a link of the build's own leads nowhere else
     #expect(try box.sh("ln -s ../private link && cat link").status != 0)
     // and it holds for all that it starts, in a session of its own too

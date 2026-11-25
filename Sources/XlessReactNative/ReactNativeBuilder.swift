@@ -69,7 +69,7 @@ public enum ReactNativeBuilder {
             let count = try WorkCopy.sync(source: ctx.sourceRoot, to: ctx.workRoot, origin: origin, baseEnvironment: ctx.env)
             log("\(count) tracked files")
 
-            try ctx.xcode?.writeTools(work: ctx.workRoot)
+            try ctx.xcode?.writeTools(work: ctx.workRoot, temporary: ctx.env["TMPDIR"])
             let env = shims.map { ReactNativeEnvironment.prepare(overlay: o, shimDirectory: $0, base: ctx.env) } ?? ReactNativeEnvironment.native(overlay: o, work: ctx.workRoot, base: ctx.env)
             let app = ctx.appDir
             guard let jsRoot = jsRoot(app: app, work: ctx.workRoot), var install = try TauriBuilder.installCommand(appRoot: jsRoot) else {
@@ -452,7 +452,7 @@ public enum ReactNativeBuilder {
         try FileManager.default.createDirectory(at: xlessDir, withIntermediateDirectories: true)
         let xcconfig = xlessDir.appendingPathComponent("xless.xcconfig"), output = xlessDir.appendingPathComponent("xcodebuild.log")
         try Data(XcodeBuild.configuration(perTarget).utf8).write(to: xcconfig, options: .atomic)
-        try xcode.writeTools(work: ctx.workRoot)
+        try xcode.writeTools(work: ctx.workRoot, temporary: ctx.env["TMPDIR"])
         let arguments = XcodeBuild.arguments(workspace: ws.path, scheme: o.scheme, configuration: o.configuration, destination: ctx.destination, derivedData: ctx.derivedData,
                                              xcconfig: xcconfig, tools: RustApple.wrapperDirectory(workRoot: ctx.workRoot), settings: overrides)
         log("xcodebuild \(o.scheme) (\(o.configuration), \(ctx.destination.platformName)) — log: \(output.path)")

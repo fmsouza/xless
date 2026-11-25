@@ -36,6 +36,7 @@ public enum ReactNativeEnvironment {
     public static func native(overlay: ReactNativeOverlay, work: URL, base: [String: String]) -> [String: String?] {
         var env = build(overlay: overlay)
         env["PATH"] = RustApple.wrapperDirectory(workRoot: work).path + ":" + (base["PATH"] ?? "/usr/bin:/bin")
+        env["SWIFT_EXEC"] = XcodeBuild.compiler(work: work).path
         if overlay.env["BUNDLE_PATH"] == nil { env["BUNDLE_PATH"] = (base["HOME"] ?? NSHomeDirectory()) + "/.bundle/xless" }
         return env
     }

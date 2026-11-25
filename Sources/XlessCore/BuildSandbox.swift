@@ -37,9 +37,11 @@ public struct BuildSandbox: Sendable, Equatable {
     public static let privatePlaces = ["/Users", "/Volumes", "/private/tmp", "/private/var/tmp", "/private/var/folders", "/private/var/root"]
 
     /// The services of the system that build tools look for; every other is refused: the keychain, launchd's jobs, Apple events, the
-    /// pasteboard, the simulators and the window server are services.
+    /// pasteboard, the simulators and the window server are services. So are two that answer where the user's directories for temporary
+    /// files and for caches are: without them Foundation, Xcode and the compilers, which do not look at TMPDIR otherwise, use TMPDIR and
+    /// the home directory that they are given.
     static let services = [
-        "com.apple.system.opendirectoryd.libinfo", "com.apple.system.opendirectoryd.membership", "com.apple.bsd.dirhelper",
+        "com.apple.system.opendirectoryd.libinfo",
         "com.apple.FSEvents", "com.apple.trustd.agent", "com.apple.trustd", "com.apple.system.notification_center",
         "com.apple.SystemConfiguration.configd", "com.apple.SystemConfiguration.DNSConfiguration", "com.apple.logd",
         "com.apple.lsd.mapdb", // the types of documents, read only: xcodebuild asks whether a workspace is one
@@ -57,12 +59,6 @@ public struct BuildSandbox: Sendable, Equatable {
         let fixed = try (writes + fixed).map { " (literal \(try Self.quoted(Self.real($0))))" }.joined()
         if !fixed.isEmpty { rules.append("(deny file-write-create file-write-unlink\(fixed))") }
         rules.append(#"(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))"#)
-        // xcodebuild saves files in the user's directory for temporary files whatever TMPDIR says, below directories with names of its
-        // own, and renames them into their place. What others have there cannot be listed, read or (but for a name that somebody guesses)
-        // changed.
-        if let temporary = Self.userTemporaryDirectory {
-            rules.append("(allow file-write* (regex #\"^\(try Self.pattern(Self.real(temporary)))/TemporaryItems(/NSIRD_|$)\"))")
-        }
         let read = "file-read-data file-read-xattr file-read-metadata"
         try add("deny \(read)", closed)
         // the way to what is open
@@ -87,11 +83,12 @@ public struct BuildSandbox: Sendable, Equatable {
         return (Self.tool, ["-p", try profile(), program] + arguments)
     }
 
-    /// Whether this process is in such a sandbox, seen and not told: it can neither make a file in the user's directory for temporary
-    /// files nor list the home directory, and the system says that it may not. (Both are the user's own: outside it can.)
+    /// Whether this process is in such a sandbox, seen and not told: it can neither make a file in the directory for everyone's
+    /// temporary files nor list the home directory, and the system says that it may not. (Outside everyone can the one, and the user
+    /// the other.)
     public static func isInForce() -> Bool {
-        guard let temporary = userTemporaryDirectory, let home = userHome else { return false }
-        let probe = "\(temporary)/xless-sandbox-\(UUID().uuidString)"
+        guard let home = userHome else { return false }
+        let probe = "/private/tmp/xless-sandbox-\(UUID().uuidString)"
         let made = open(probe, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         if made >= 0 {
             close(made)
@@ -148,19 +145,10 @@ public struct BuildSandbox: Sendable, Equatable {
         directory == "/" || path == directory || path.hasPrefix(directory + "/")
     }
 
-    private static func checked(_ path: String) throws -> String {
+    static func quoted(_ path: String) throws -> String {
         guard path.hasPrefix("/"), path != "/", !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else {
             throw XlessError(.prepare, "the build's sandbox cannot have \(TerminalText.escaped(path)) in its rules", fix: "use a directory with a plain path, or build in Docker: add --docker")
         }
-        return path
-    }
-
-    static func quoted(_ path: String) throws -> String {
-        "\"" + (try checked(path)).replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
-    }
-
-    /// For a regular expression of a rule.
-    static func pattern(_ path: String) throws -> String {
-        try checked(path).reduce(into: "") { out, c in out += "\\^$.|?*+()[]{}\"".contains(c) ? "\\\(c)" : String(c) }
+        return "\"" + path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }

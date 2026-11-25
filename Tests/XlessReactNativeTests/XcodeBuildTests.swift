@@ -59,7 +59,7 @@ private func temporary() throws -> URL {
     defer { try? FileManager.default.removeItem(at: root) }
     let build = xcode(root)
     try ExecutableFile.write("#!/bin/sh\necho \"$XLESS_TOOLCHAIN_META: $*\"\n", to: build.executable, stage: .build)
-    try build.writeTools(work: work)
+    try build.writeTools(work: work, temporary: "/its own")
     let bin = work.path + "/.xless/bin"
     func run(_ words: String...) throws -> String { try Shell.run("\(bin)/\(words[0])", Array(words.dropFirst()), stage: .build).stdout.trimmingCharacters(in: .newlines) }
     for tool in ["actool", "ibtool"] {
@@ -69,6 +69,16 @@ private func temporary() throws -> URL {
     }
     #expect(try ToolchainMeta.load(from: URL(fileURLWithPath: "\(bin)/toolchain-meta.json")) == build.meta)
     #expect(FileManager.default.isExecutableFile(atPath: "\(bin)/swift"))
+}
+
+@Test func thePackagesCompilerHasTheBuildsDirectoryForTemporaryFiles() throws {
+    let root = try temporary(), work = root.appendingPathComponent("work")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let build = xcode(root), program = URL(fileURLWithPath: build.sdk.compiler("swiftc", swift: nil))
+    try FileManager.default.createDirectory(at: program.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try ExecutableFile.write("#!/bin/sh\necho \"$TMPDIR: $*\"\n", to: program, stage: .build)
+    try build.writeTools(work: work, temporary: "/its own")
+    #expect(try Shell.run(XcodeBuild.compiler(work: work).path, ["a b", "-c"], env: ["TMPDIR": nil], stage: .build).stdout == "/its own: a b -c\n")
 }
 
 @Test func aFailedXcodebuildIsReportedByItsErrors() throws {
@@ -106,6 +116,7 @@ private func temporary() throws -> URL {
     let overlay = try ReactNativeOverlay.parse(yaml: yaml, name: "a")
     let env = ReactNativeEnvironment.native(overlay: overlay, work: URL(fileURLWithPath: "/w"), base: ["PATH": "/opt/node/bin:/usr/bin", "HOME": "/build-home"])
     #expect(env["PATH"] == "/w/.xless/bin:/opt/node/bin:/usr/bin" && env["BUNDLE_PATH"] == "/build-home/.bundle/xless" && env["APP_VARIANT"] == "production")
+    #expect(env["SWIFT_EXEC"] == XcodeBuild.compiler(work: URL(fileURLWithPath: "/w")).path)
     #expect(env["HERMES_CLI_PATH"] == nil && env["TAR_OPTIONS"] == nil)
 }
 
