@@ -49,6 +49,7 @@ extension StorePull {
     }
 
     func fetch(_ item: MediaDownload) async throws -> MediaDownloadOutcome {
+        try ProjectPath.check(item.path, stage: .account)
         try FileManager.default.createDirectory(at: item.staged.deletingLastPathComponent(), withIntermediateDirectories: true)
         try await download(item.url, item.staged)
         if item.preview, Self.startsWithPlaylist(item.staged) {

@@ -11,8 +11,4 @@ import Testing
     #expect(ShellWord.quoted("com.example.*") == "'com.example.*'")
     // zsh puts the path of a command in the place of `=command`, and any shell a home directory in that of `~`.
     #expect(ShellWord.quoted("=ls") == "'=ls'" && ShellWord.quoted("--name=a") == "--name=a" && ShellWord.quoted("~") == "'~'")
-    // A shell makes the word it was made from of each.
-    for word in ["a b", "it's", "$(id)", "`id`", "a\nb", "\\", "\"", "*", "!x", "é", "{a,b}", "a;b", "#", "-n"] {
-        #expect(try Shell.run("sh", ["-c", "printf %s \(ShellWord.quoted(word))x"], stage: .build).stdout == (word == "-n" ? "-nx" : word + "x"))
-    }
 }

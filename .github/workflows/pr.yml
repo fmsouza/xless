@@ -106,6 +106,45 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "::error::failed shell tests:$failed"; exit 1; fi
 
+  # The libraries that the account commands use, on Windows (docs/maintainers.md, "Windows"); xless itself does not build there yet.
+  # `--build-system native`: SwiftPM 6.4's other one does not find the C headers there (swiftlang/swift-package-manager#10656).
+  windows-tests:
+    name: windows-tests (x86_64)
+    runs-on: windows-2022   # windows-2025 has a Visual Studio whose C++ headers refuse the pinned Swift's clang
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: The toolchain script's test
+        timeout-minutes: 5
+        run: Tests/windows/toolchain.test.ps1
+      - name: The toolchain script's test (Windows PowerShell)
+        timeout-minutes: 5
+        shell: powershell
+        run: Tests/windows/toolchain.test.ps1
+      - name: Toolchain
+        timeout-minutes: 40
+        run: scripts/windows-toolchain.ps1
+      - name: Build
+        timeout-minutes: 50
+        run: |
+          swift build --build-system native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          swift build --build-system native --build-tests
+      - name: swift test
+        timeout-minutes: 30
+        run: swift test --build-system native --skip-build
+      # Makes Windows write a dump of every crash of one test program, and looks at what it wrote: only on a machine that is thrown away.
+      - name: No dump of a process with a secret
+        timeout-minutes: 10
+        run: |
+          $bin = swift build --build-system native --show-bin-path
+          Tests/windows/no-dump.test.ps1 (Join-Path $bin XlessWindowsProbe.exe)
+
   # The release tarball, built the way the release build will build it (a static musl binary), installed with the
   # one-line installer from a file:// release, and run, through the tests of the xless agent too.
   package:

@@ -4,10 +4,14 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #endif
+#if os(Windows)
+import XlessCore
+#endif
 
 /// Where the store lives: `$XDG_DATA_HOME/xless/vault/` (else `~/.local/share/xless/vault/`), a directory of mode 0700
 /// holding `secrets.vault` and the writers' `lock`, both 0600. A symlink, another owner or any group/world permission
-/// bit on any of them is refused, never repaired.
+/// bit on any of them is refused, never repaired. On Windows `%LOCALAPPDATA%\xless\vault\` (`UserPaths`), and nobody else's
+/// access to any of them (`PrivateFile`), on a drive built into the computer.
 public struct VaultLocation: Sendable, Equatable {
     public let directory: URL
 
@@ -17,6 +21,9 @@ public struct VaultLocation: Sendable, Equatable {
     var lockFile: URL { directory.appendingPathComponent("lock") }
 
     public static func standard(env: [String: String] = ProcessInfo.processInfo.environment) -> VaultLocation {
+        #if os(Windows)
+        return VaultLocation(directory: UserPaths.directory(xdg: "XDG_DATA_HOME", env: env).appendingPathComponent("vault", isDirectory: true))
+        #else
         // XDG: a relative XDG_DATA_HOME is invalid and ignored.
         let base: URL
         if let xdg = env["XDG_DATA_HOME"], xdg.hasPrefix("/") {
@@ -26,8 +33,10 @@ public struct VaultLocation: Sendable, Equatable {
             base = URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent(".local/share", isDirectory: true)
         }
         return VaultLocation(directory: base.appendingPathComponent("xless/vault", isDirectory: true))
+        #endif
     }
 
+    #if !os(Windows)
     /// Whether the directory entry for the store's file exists at all (without following a symlink).
     public var fileExists: Bool {
         var st = stat()
@@ -74,4 +83,5 @@ public struct VaultLocation: Sendable, Equatable {
                              fix: "chmod \(directory ? "700" : "600") \(path), and consider whether its content was exposed")
         }
     }
+    #endif
 }

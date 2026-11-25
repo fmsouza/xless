@@ -222,7 +222,7 @@ public struct ASCReports: Sendable {
                 throw XlessError(.account, "\(target.path) already exists; nothing was downloaded", fix: "re-run with --force to replace it, or give another --out")
             }
         }
-        let partial = directory.appendingPathComponent(".\(report.fileName).partial-\(getpid())")
+        let partial = directory.appendingPathComponent(".\(report.fileName).partial-\(ProcessInfo.processInfo.processIdentifier)")
         var sink: ReportSink?
         defer {
             sink?.close()
@@ -254,6 +254,15 @@ public struct ASCReports: Sendable {
 
     /// Moves the complete report into place: without `force`, never over a file that appeared meanwhile.
     func place(_ partial: URL, at target: URL, force: Bool) throws {
+        #if os(Windows)
+        do { try OutputFile.move(partial.path, to: target.path, replacing: force) } catch let refusal as PrivateFile.Refusal {
+            if refusal.kind == .exists {
+                throw XlessError(.account, "\(target.path) appeared while the report was downloaded; nothing was written",
+                                 fix: "re-run with --force to replace it, or give another --out")
+            }
+            throw XlessError(.account, "could not move the report to \(target.path): \(refusal.cause)", fix: "check that --out is writable, then re-run")
+        }
+        #else
         if force {
             guard rename(partial.path, target.path) == 0 else {
                 throw XlessError(.account, "could not move the report to \(target.path): \(String(cString: strerror(errno)))", fix: "check that --out is writable, then re-run")
@@ -270,6 +279,7 @@ public struct ASCReports: Sendable {
         guard rename(partial.path, target.path) == 0 else {
             throw XlessError(.account, "could not move the report to \(target.path): \(String(cString: strerror(errno)))", fix: "check that --out is writable, then re-run")
         }
+        #endif
     }
 }
 
@@ -278,7 +288,11 @@ public struct ASCReports: Sendable {
 final class ReportSink: @unchecked Sendable {
     struct WriteError: Error, CustomStringConvertible { let description: String }
 
+    #if os(Windows)
+    private let handle: OutputFile
+    #else
     private let handle: FileHandle
+    #endif
     private var decoder: GzipDecoder?
     private var head = Data()
     private var decided = false
@@ -286,9 +300,13 @@ final class ReportSink: @unchecked Sendable {
     private(set) var written = 0
 
     init(path: String) throws {
+        #if os(Windows)
+        do { handle = try OutputFile(creating: path) } catch { throw WriteError(description: "\(error)") }
+        #else
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
         guard fd >= 0 else { throw WriteError(description: String(cString: strerror(errno))) }
         handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        #endif
     }
 
     func write(_ data: Data) throws {
@@ -316,7 +334,11 @@ final class ReportSink: @unchecked Sendable {
     }
 
     private func save(_ data: Data) throws {
+        #if os(Windows)
+        do { try handle.write(data) } catch { throw WriteError(description: "\(error)") }
+        #else
         do { try handle.write(contentsOf: data) } catch { throw WriteError(description: error.localizedDescription) }
+        #endif
         written += data.count
     }
 
@@ -333,6 +355,10 @@ final class ReportSink: @unchecked Sendable {
     func close() {
         guard !closed else { return }
         closed = true
+        #if os(Windows)
+        handle.close()
+        #else
         try? handle.close()
+        #endif
     }
 }

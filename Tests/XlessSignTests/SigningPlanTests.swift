@@ -5,6 +5,7 @@ import Foundation
 @testable import XlessCore
 
 let future = "2099-01-01T00:00:00.000+0000"
+let appAttest = "com.apple.developer.devicecheck.appattest-environment"
 
 private let bundle = "com.example.app"
 private let name = "xless com.example.app IOS_APP_STORE"

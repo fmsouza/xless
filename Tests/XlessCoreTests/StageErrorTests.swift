@@ -17,7 +17,9 @@ import Foundation
         #expect(e.stage == .upload)
         #expect(e.stage.exitCode == 17)
         #expect(e.description.hasPrefix("[upload] "))
+        #if !os(Windows) // Foundation there does not say of which directory
         #expect(e.cause.contains(missing.path))
+        #endif
         #expect(!e.fix.isEmpty)
     } catch { Issue.record("not an XlessError: \(error)") }
 }

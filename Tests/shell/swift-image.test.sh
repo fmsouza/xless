@@ -27,4 +27,11 @@ from_line="FROM \${SWIFT_IMAGE}"
 grep -qF "$from_line" "$root/docker/Dockerfile" || fail "docker/Dockerfile does not build $from_line"
 # docker/react-native is a Dockerfile on its own (its folder is all it is built from), so it repeats it.
 grep -qxF "ARG BUILD_IMAGE=$image" "$root/docker/react-native/Dockerfile" || fail "docker/react-native/Dockerfile's BUILD_IMAGE is not versions.env's SWIFT_IMAGE '$image'"
+
+# The Windows toolchain (scripts/windows-toolchain.ps1): the same Swift, by https from swift.org, with a SHA-256 and a signer.
+pin() { sed -n "s/^$1=//p" "$root/versions.env"; }
+[[ "$(pin SWIFT_WINDOWS_URL_X86_64)" == "https://download.swift.org/swift-$version-release/windows10/swift-$version-RELEASE/swift-$version-RELEASE-windows10.exe" ]] \
+  || fail "SWIFT_WINDOWS_URL_X86_64 is not swift.org's Windows installer of SWIFT_VERSION $version"
+[[ "$(pin SWIFT_WINDOWS_SHA256_X86_64)" =~ ^[0-9a-f]{64}$ ]] || fail "SWIFT_WINDOWS_SHA256_X86_64 is not a SHA-256"
+[[ "$(pin SWIFT_WINDOWS_SIGNER)" =~ ^\"CN=[^\"]+\"$ ]] || fail "SWIFT_WINDOWS_SIGNER is not a quoted certificate subject"
 echo "swift-image: ok ($image, $n containers)"

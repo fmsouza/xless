@@ -51,11 +51,15 @@ public struct UserConfig: Sendable, Equatable {
     public init(team: String? = nil) { self.team = team }
 
     public static func file(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        #if os(Windows)
+        return UserPaths.directory(xdg: "XDG_CONFIG_HOME", env: env).appendingPathComponent("config.yml")
+        #else
         if let xdg = env["XDG_CONFIG_HOME"], xdg.hasPrefix("/") {
             return URL(fileURLWithPath: xdg).appendingPathComponent("xless/config.yml")
         }
         let home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? FileManager.default.homeDirectoryForCurrentUser.path
         return URL(fileURLWithPath: home).appendingPathComponent(".config/xless/config.yml")
+        #endif
     }
 
     /// The settings; empty when the file does not exist.
@@ -82,13 +86,19 @@ public struct UserConfig: Sendable, Equatable {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             let text = raw.isEmpty ? "" : try Yams.dump(object: raw, sortKeys: true)
             try Data(text.utf8).write(to: url, options: .atomic)
+            #if !os(Windows)
             try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+            #endif
         } catch {
             throw XlessError(.config, "cannot write \(url.path): \(error.localizedDescription)", fix: "check that the directory is writable")
         }
     }
 
     static func read(_ url: URL) throws -> [String: Any] {
+        #if os(Windows)
+        // Local application data on a share: its path as a URL would be another one, on the current drive.
+        guard UserPaths.isOnDrive(url.path) else { throw XlessError(.config, "\(url.path) is not on a drive", fix: "set XDG_CONFIG_HOME to a directory on one") }
+        #endif
         guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw XlessError(.config, "cannot read \(url.path)", fix: "check its permissions, or remove it")

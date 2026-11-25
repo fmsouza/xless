@@ -16,7 +16,7 @@ public enum InputGate {
 
     public static var isOff: Bool { forced ?? !allows(env: ProcessInfo.processInfo.environment) }
 
-    static func allows(env: [String: String]) -> Bool { ["", "0"].contains(env[variable] ?? "") }
+    static func allows(env: [String: String]) -> Bool { ["", "0"].contains(env.variable(variable) ?? "") }
 
     /// Throws when input is off.
     /// - Parameter what: "xless would ask for …": "the secret store's passphrase (exporting NOTE)".

@@ -189,15 +189,6 @@ private func meta(_ code: String, _ build: String, sdk: String) -> ToolchainMeta
     }
 }
 
-@Test func theBuildSDKRecordRoundTripsAndSummarises() throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sdkrec-\(UUID())")
-    #expect(BuildSDKRecord.load(in: dir) == nil)
-    let r = BuildSDKRecord(pin: "26.2", toolchain: meta("2620", "17C52", sdk: "26.2"))
-    try r.write(in: dir)
-    #expect(BuildSDKRecord.load(in: dir) == r)
-    #expect(r.summary(platform: .ios) == "Xcode 26.2 (17C52), iphoneos26.2 SDK (23C50), pinned by xcode: \"26.2\"")
-}
-
 @Test func xlessYMLTakesAnImage() throws {
     let yaml = "bundleID: a.b.c\nteamID: ABCDE12345\nversion: 1.0.0\nbuild: 1\nplatforms: { ios: { minimumOS: \"17.0\", product: X } }\n"
     _ = try ProjectConfig.parse(yaml: yaml + "image: my-app-image:1\n")

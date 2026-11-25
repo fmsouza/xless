@@ -42,13 +42,28 @@ public struct SigningKey: Sendable {
 }
 
 extension SigningKey {
+    #if os(Windows)
+    public typealias FileMode = UInt16
+    #else
+    public typealias FileMode = mode_t
+    #endif
+
     /// Writes the PEM to a new file (O_EXCL, mode 0600). Fails if the path already exists; never overwrites.
     public func writeExclusively(toPath path: String) throws {
         try Self.writeExclusively(Data(pem.utf8), toPath: path, mode: 0o600)
     }
 
-    /// Creates `path` with O_CREAT|O_EXCL|O_NOFOLLOW, writes `data`, and forces `mode` regardless of umask.
-    public static func writeExclusively(_ data: Data, toPath path: String, mode: mode_t) throws {
+    /// Creates `path` with O_CREAT|O_EXCL|O_NOFOLLOW, writes `data`, and forces `mode` regardless of umask. On Windows, where a mode says
+    /// nothing, the file is the user's alone whatever it is (`PrivateFile`).
+    public static func writeExclusively(_ data: Data, toPath path: String, mode: FileMode) throws {
+        #if os(Windows)
+        do { try PrivateFile.create(path, data) } catch let refusal as PrivateFile.Refusal {
+            if refusal.kind == .exists {
+                throw XlessError(.sign, "cannot create \(path): already exists", fix: "choose another path; never overwrite a stored key")
+            }
+            throw XlessError(.sign, refusal.cause, fix: refusal.fix)
+        }
+        #else
         let fd = open(path, O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC, mode)
         guard fd >= 0 else {
             let why = errno == EEXIST ? "already exists" : String(cString: strerror(errno))
@@ -71,5 +86,6 @@ extension SigningKey {
             unlink(path)
             throw XlessError(.sign, "could not write \(path): \(String(cString: strerror(errno)))", fix: "check disk space and permissions")
         }
+        #endif
     }
 }

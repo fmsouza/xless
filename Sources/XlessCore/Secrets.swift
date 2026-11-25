@@ -41,13 +41,13 @@ public struct Secrets: Sendable {
     /// The name joins `SecretEnvironment.scrub`: a tool xless runs later never sees it in its environment.
     public func optional(_ name: String, stage: Stage = .config) throws -> String? {
         SecretEnvironment.scrub(name)
-        if let v = env[name], !v.isEmpty {
+        if let v = env.variable(name), !v.isEmpty {
             SecretScope.enter()
             return v
         }
-        if let path = env["\(name)_FILE"], !path.isEmpty {
+        if let path = env.variable("\(name)_FILE"), !path.isEmpty {
             SecretScope.enter()
-            guard let s = try? String(contentsOfFile: path, encoding: .utf8) else {
+            guard let s = try? Self.text(of: path) else {
                 throw XlessError(.config, "\(name)_FILE points to an unreadable file", fix: "check the path in \(name)_FILE")
             }
             return s
@@ -57,6 +57,16 @@ public struct Secrets: Sendable {
             return v
         }
         return nil
+    }
+
+    private static func text(of path: String) throws -> String {
+        #if os(Windows)
+        // A device (`NUL`, `\\.\pipe\…`) is no file of a secret.
+        guard let text = String(validating: try InputFile.read(path, limit: 1 << 20), as: UTF8.self) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+        return text
+        #else
+        return try String(contentsOfFile: path, encoding: .utf8)
+        #endif
     }
 
     public func required(_ name: String, stage: Stage) throws -> String {

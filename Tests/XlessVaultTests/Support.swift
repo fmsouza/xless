@@ -14,7 +14,11 @@ struct TempStore {
 
     init() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-vault-\(UUID().uuidString)")
+        #if os(Windows)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        #else
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        #endif
         location = VaultLocation(directory: root.appendingPathComponent("xless/vault"))
     }
 
@@ -92,6 +96,8 @@ final class MemoryCache: VaultKeyCache, @unchecked Sendable {
     func forget(id: String) throws -> Bool { lock.withLock { keys.removeValue(forKey: id) != nil } }
 }
 
+#if !os(Windows)
 func mode(_ path: String) throws -> Int {
     (try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue ?? -1
 }
+#endif

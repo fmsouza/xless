@@ -5,6 +5,9 @@ import SwiftASN1
 import Crypto
 import _CryptoExtras
 @testable import XlessSign
+#if os(Windows)
+import XlessCore
+#endif
 
 @Test func generatesKeyAndParsableCSR() throws {
     let key = try SigningKey.generate()
@@ -48,8 +51,13 @@ func selfSigned(_ key: SigningKey, team: String? = nil) throws -> [UInt8] {
     defer { try? FileManager.default.removeItem(atPath: path) }
     let key = try SigningKey.generate()
     try key.writeExclusively(toPath: path)
+    #if os(Windows)
+    // Nobody else's, or it would not be read.
+    #expect(try PrivateFile.read(path, .anyDrive, limit: 1 << 16) == Data(key.pem.utf8))
+    #else
     let attrs = try FileManager.default.attributesOfItem(atPath: path)
     #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+    #endif
     #expect(try SigningKey(pem: String(contentsOfFile: path, encoding: .utf8)).pem == key.pem)
     #expect(throws: (any Error).self) { try SigningKey.generate().writeExclusively(toPath: path) }
     #expect(try String(contentsOfFile: path, encoding: .utf8) == key.pem)

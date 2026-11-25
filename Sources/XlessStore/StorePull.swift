@@ -267,7 +267,7 @@ public struct StorePull: Sendable {
 
     /// A locale App Store Connect sent, when it is safe as a directory name.
     func usableLocale(_ locale: String?) -> String? {
-        guard let locale, locale.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil else {
+        guard let locale, locale.range(of: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$", options: .regularExpression) != nil, ProjectPath.problem(locale) == nil else {
             say("note: App Store Connect sent a localization with an unusable locale (\(locale ?? "none")); it is left out")
             return nil
         }
@@ -276,7 +276,7 @@ public struct StorePull: Sendable {
 
     /// A display or preview type App Store Connect sent, when it is safe as a directory name.
     func usableSetType(_ type: String) -> Bool {
-        guard type.range(of: "^[A-Z0-9_]+$", options: .regularExpression) != nil else {
+        guard type.range(of: "^[A-Z0-9_]+$", options: .regularExpression) != nil, ProjectPath.problem(type) == nil else {
             say("note: App Store Connect sent a media set of an unusable type (\(type)); it is left out")
             return false
         }

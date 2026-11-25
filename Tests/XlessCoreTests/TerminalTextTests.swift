@@ -36,11 +36,6 @@ private let hidden: [Unicode.Scalar] = [
         == XlessError(.sign, "`t` exited with 1:\n  \tx\\u{1B}\n  error: y", fix: #"c\u{A}d"#))
 }
 
-@Test func theCommandInAToolsErrorIsOneLine() throws {
-    do { try Shell.run("sh", ["-c", "echo one >&2; echo two >&2; exit 3", "a\nerror: b\u{1B}"], stage: .sign); Issue.record("expected throw") }
-    catch let e as XlessError { #expect(e.cause == #"`sh -c echo one >&2; echo two >&2; exit 3 a\u{A}error: b\u{1B}` exited with 3:"# + "\none\ntwo") }
-}
-
 /// Prose (a customer's review): what drives the terminal is replaced, what a script needs to be read (a joiner) is kept.
 @Test func proseLosesOnlyWhatDrivesTheTerminal() {
     #expect(TerminalText.prose("a\u{1B}]52;c;ZXZpbA==\u{07}b\u{9B}2J") == "a\u{FFFD}]52;c;ZXZpbA==\u{FFFD}b\u{FFFD}2J")

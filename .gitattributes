@@ -1,0 +1,2 @@
+# Every file is checked out byte for byte as it is committed, on Windows too (no CRLF): tests compare fixtures.
+* -text

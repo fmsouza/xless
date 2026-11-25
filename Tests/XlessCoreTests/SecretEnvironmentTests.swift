@@ -4,8 +4,8 @@ import Testing
 @Test func everyRegisteredSecretIsScrubbedWithItsFileVariant() {
     #expect(!SecretEnvironment.entries.isEmpty)
     for entry in SecretEnvironment.entries {
-        #expect(Shell.scrubbedEnvironment.contains(entry.name))
-        #expect(Shell.scrubbedEnvironment.contains("\(entry.name)_FILE"))
+        #expect(SecretEnvironment.scrubbed.contains(entry.name))
+        #expect(SecretEnvironment.scrubbed.contains("\(entry.name)_FILE"))
         #expect(SecretEnvironment.isSecret(entry.name))
         #expect(!entry.purpose.isEmpty)
     }

@@ -50,6 +50,7 @@ the release run says so in a warning.
 | `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner. One (`xcode-native`) builds the sample with the runner's Xcode, for a device, the simulator and macOS, and signs it with a throw-away certificate |
 | `package (macos-arm64)`, `package (macos-x86_64)` | The macOS tarballs built as a release would build them (the x86_64 one cross-compiled) and checked: nothing of Apple's in them, only the system's libraries needed |
 | `install (macos-arm64)`, `install (macos-x86_64)` | Each one installed with `scripts/install.sh` and run on a Mac of its architecture, the agent and the prompts included |
+| `windows-tests (x86_64)` | The libraries of the account commands and their tests on GitHub's `windows-2022` runner, and that a crash of a process with a secret leaves no dump. xless itself does not build on Windows yet ([maintainers.md](docs/maintainers.md#windows)) |
 
 Linux CI never touches an Xcode, an SDK or an image. The macOS jobs compile with the runner's Xcode, as any Swift program
 on a Mac is; nothing of it goes into an archive, an artifact or a cache. CI uses no Apple secret.
@@ -66,6 +67,9 @@ The tests pass as root and as a regular user, under any umask and locale, and ru
 writes a script or stand-in tool and runs it writes it with `ExecutableFile.write` (XlessCore), never with `Data.write`
 and a chmod: a file written in-process can still be open for writing in a child another thread is starting, and Linux
 then refuses to run it ("Text file busy"). A shell test that lists or sorts names sets `LC_ALL=C`.
+
+A new Swift file of a target that Windows builds gets a line in `Tests/windows/sources.txt`: built there or not
+([maintainers.md](docs/maintainers.md#windows)).
 
 ## Versions and releases
 

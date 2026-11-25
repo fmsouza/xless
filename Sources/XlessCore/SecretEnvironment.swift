@@ -22,7 +22,9 @@ public enum SecretEnvironment {
     /// Every entry's name and its `_FILE` variant.
     public static let names: [String] = entries.flatMap { [$0.name, "\($0.name)_FILE"] }
 
-    public static func isSecret(_ variable: String) -> Bool { names.contains(variable) }
+    public static func isSecret(_ variable: String) -> Bool { isSecret(variable, ignoreCase: EnvironmentNames.ignoreCase) }
+
+    static func isSecret(_ variable: String, ignoreCase: Bool) -> Bool { names.contains(EnvironmentNames.folded(variable, ignoreCase: ignoreCase)) }
 
     /// Adds a secret's name for the rest of this process: a name of the user's own that this run reads a secret from
     /// (a demo account password's `passwordSecret`), registered when the configuration names it and whenever `Secrets`
@@ -33,7 +35,7 @@ public enum SecretEnvironment {
         guard let first = base.unicodeScalars.first, first == "_" || (first.isASCII && first.properties.isAlphabetic),
               base.unicodeScalars.allSatisfy({ $0 == "_" || ($0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains($0))) })
         else { return }
-        registered.add(base)
+        registered.add(EnvironmentNames.folded(base))
     }
 
     /// Every name a child's environment loses: the entries' and the registered names, each with its `_FILE` form.
@@ -57,13 +59,15 @@ public enum SecretEnvironment {
     /// that variable (`scrub`), so it may name none that something else relies on: a key or a token (`isKeyOrToken`), a
     /// secret's `_FILE` variable, one of xless's own `XLESS_*` variables (other than `XLESS_DEMO_PASSWORD`), a variable
     /// of the system or the shell (`PATH`, `HOME`, `ENV`, `LD_*`, …), or one of those that `xless run`'s script had for itself. Compared without case, before any `@TEAMID`.
-    public static func passwordNameProblem(_ name: String) -> String? {
+    public static func passwordNameProblem(_ name: String) -> String? { passwordNameProblem(name, onWindows: EnvironmentNames.ignoreCase) }
+
+    static func passwordNameProblem(_ name: String, onWindows: Bool) -> String? {
         let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
         if isKeyOrToken(name) { return "names a key or token, not a password" }
         if base.hasSuffix("_FILE") { return "names a _FILE variable (the path of a secret's file), not a secret" }
         if name == savedSession { return "names xless's own entry (an Apple ID session), not a password" }
         if base.hasPrefix("XLESS_"), !entries.contains(where: { $0.name == base }) { return "names one of xless's own variables, not a password" }
-        if reservedVariables.contains(base) || reservedPrefixes.contains(where: base.hasPrefix) {
+        if reservedVariables.contains(base) || (onWindows && reservedOnWindows.contains(base)) || reservedPrefixes.contains(where: base.hasPrefix) {
             return "names a variable the system, the shell or xless's scripts use (\(base)), not a password"
         }
         return nil
@@ -85,6 +89,12 @@ public enum SecretEnvironment {
         // the script that was `xless run` before
         "ALLOW_DISK", "ARGS", "CARGO", "CONFIG", "DESTINATION", "ENV_FILE", "NAME", "OVERLAY", "PLATFORM", "PROJECT", "SIM",
         "SOURCE", "SOURCE_MOUNT", "SOURCE_SUB", "TEAM", "XCODE_PIN", "XCODE_TAG", "XCODE_VERSION",
+    ]
+
+    /// Those of Windows, where they are its own.
+    static let reservedOnWindows: Set<String> = [
+        "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "USERPROFILE", "USERNAME",
+        "HOMEDRIVE", "HOMEPATH", "PUBLIC", "OS", "PROMPT", "PSMODULEPATH",
     ]
 
     static let reservedPrefixes = [
