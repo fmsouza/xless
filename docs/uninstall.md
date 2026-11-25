@@ -1,6 +1,6 @@
 # Uninstall xless and free its disk space
 
-After `xless setup` and a few builds, xless takes space in these places:
+This is the same on Linux and macOS. After `xless setup` and a few builds, xless takes space in these places:
 
 | What | Where | Size |
 |---|---|---|
@@ -89,13 +89,17 @@ Use your prefix in place of `~/.local` if you installed with `--prefix` or `XLES
 Before removing it, revoke at Apple the keys and certificates you no longer use, or export the ones you keep
 ([security.md](security.md#wiping-everything)); to keep it, remove everything in `~/.local/share/xless` but `vault`.
 Reinstalling or upgrading with the install line keeps it. Run `xless lock` before you remove `xless`, so nothing is held
-any more (after an upgrade too: a new xless does not use the agent of the old one). Then, if you want:
+any more (after an upgrade too: a new xless does not use the agent of the old one). The agent's directory of sockets
+(`$XDG_RUNTIME_DIR/xless-agent`, `$TMPDIR/xless-agent` on macOS) is empty then, and the system removes it. On macOS xless
+puts nothing into the Keychain, `~/Library` or `/Applications`. Then, if you want:
 
 - free Docker's build cache ([above](#free-the-build-cache));
 - remove `~/.cache/xless` by hand if `xless clean` was already gone (and `docker image rm` the images and
   `docker volume rm` the volumes listed in the table above);
 - remove `~/.config/xless` (it may hold your `testflight.env`, and `config.yml` with the default team and where the secrets live);
-- remove the line that adds `~/.local/bin` to `PATH` from your shell's startup file, if you added one;
+- remove the line that adds `~/.local/bin` to `PATH` from your shell's startup file (`~/.zshrc` on macOS), if you added one;
+- on macOS, take your terminal out of System Settings > Privacy & Security > Input Monitoring, if you put it there for a
+  [security key](apple-account.md#signing-in-with-a-security-key);
 - delete the Xcode `.xip` you downloaded.
 
 The images contain Apple's SDK, so they belong on no registry ([maintainers.md](maintainers.md#images-on-other-machines)). If

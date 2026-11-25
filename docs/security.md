@@ -184,7 +184,9 @@ An agent serves a process only when **all** of these hold, each taken from the k
    **and** start time, so a process ID used again later is not taken for it. Another terminal is granted once the store
    is unlocked there too (`xless unlock` in it): it must show the agent that it knows the store's data key, which takes the
    passphrase, and can add only the session the kernel says it is in.
-3. On macOS, it is **the same xless executable** as the agent (by the file's device and inode).
+3. On macOS, it runs **the same xless executable** as the agent: the file the kernel has mapped as its program, by device
+   and inode, so a moved or renamed `xless` is still the same one and another file put at its path is not. After an
+   upgrade, the new `xless` is another program: it says so, and `xless lock` ends the agent of the old one.
 
 Who speaks is taken once, pinned, and looked at again before every answer:
 
@@ -224,8 +226,8 @@ connected to. A data key that does not open the store is never used.
 
 The agent process: no controlling terminal, no file of yours open, stdin, stdout and stderr on `/dev/null`, an empty
 environment, `/` as its directory, core dumps off; non-dumpable on Linux, `PT_DENY_ATTACH` on macOS; secrets
-in memory locked against swap (where the limit allows), left out of core dumps, and zeroed when dropped. It writes no
-log. It holds at most 8 items of 128 KiB, for at most 64 sessions, and gives a connection 10 seconds and 4 KiB before it
+in memory locked against swap (where the limit allows), in no forked child, left out of core dumps on Linux (macOS has
+none to leave them out of: they are off), and zeroed when dropped. It writes no log. It holds at most 8 items of 128 KiB, for at most 64 sessions, and gives a connection 10 seconds and 4 KiB before it
 knows who it is. An agent of another xless version is never misunderstood: the command says so, and `xless lock` ends it.
 
 ### An agent for a script
@@ -412,8 +414,8 @@ stopped after 20 seconds. `xless auth status --json` says beforehand what is hel
 - **Tools start in a POSIX session of their own and an empty session keyring** (see
   [below](#the-build-and-your-secrets)), without a file of xless's open and with no terminal as their standard input
   (their output may be one, and code that runs as you can open its device), and xless makes itself non-dumpable before it
-  starts one, so the tool cannot attach to xless or read its memory or environment (Linux; on macOS the system's own
-  rules on attaching to a process apply).
+  starts one, so the tool cannot attach to xless or read its memory or environment (on macOS that is the signature's
+  work: [the table](#linux-and-macos)).
 - **`--verbose` traces are redacted** so you can paste them into an issue: the `Authorization` header, cookies, any
   header named like an auth, token, secret, session, password, CSRF or signature header, every query string but the
   App Store Connect API's own (so a presigned upload address's signature never shows), the SRP exchange's values, and
@@ -424,6 +426,41 @@ stopped after 20 seconds. `xless auth status --json` says beforehand what is hel
   from Apple's error messages.
 - **Errors never contain a secret.** A failed unlock, a refused key or a broken store entry says what failed and what
   to do, never part of the value.
+
+### Linux and macOS
+
+What protects xless's memory and what it holds, on each system:
+
+| Against | Linux | macOS, a release | macOS, a build of your own |
+|---|---|---|---|
+| A core dump on disk | core limit 0, non-dumpable | core limit 0 | core limit 0 |
+| Another process of yours attaching to a command or reading its memory | non-dumpable from the first secret, and before the first tool starts | the hardened runtime, always: macOS refuses debuggers | nothing of xless's: a debugger you run may attach |
+| The same, to the agent | non-dumpable from its start | the hardened runtime and `PT_DENY_ATTACH` | `PT_DENY_ATTACH` (no debugger; a program with a debugger's rights to the task port still) |
+| Another process of yours reading a command's environment | non-dumpable: `/proc/<pid>/environ` is refused | the signature's `restrict` flag: macOS hides it (`ps -E`) | nothing: `ps -E` shows it |
+| A library put into xless (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`) | nothing: who sets xless's environment runs code in it | ignored | not ignored |
+| Held secrets in swap | `mlock`, where the limit allows; never for the Swift heap | the same; macOS encrypts its swap | the same |
+| Held secrets in a forked child | `MADV_DONTFORK` | `VM_INHERIT_NONE` | `VM_INHERIT_NONE` |
+| Held secrets in a core dump | `MADV_DONTDUMP` | no dumps | no dumps |
+| A build's tool asking the agent | POSIX session of its own (rule 2) | the same, and the executable (rule 3) | the same |
+| Who speaks to the agent | pidfd and `SCM_CREDENTIALS` | audit token, at the first message and before each answer | the same |
+| A build's tool reading the kernel keyring | an empty session keyring | there is no keyring | there is no keyring |
+| The machine sleeps | dropped when it wakes | the same | the same |
+| The screen is locked | your locker runs `xless lock` | dropped within 2 seconds | the same |
+
+What none of them does: root, and on macOS a program you gave the rights of a debugger or of accessibility to where the
+table says so, is not shut out; a secret variable you export is in your shell's environment, which is not xless's to hide
+(on macOS `ps -E` shows the environment of your other programs to all your processes, as `/proc` does on Linux).
+
+A **release for macOS is signed ad hoc**: the signature carries the hardened runtime and the `restrict` flag, and is the
+hash of that build. It names no one, and is not notarized by Apple: it is no proof of who made it. That is what the
+checksum (which the installer always checks) and the provenance attestation are for
+([how to check a download](../README.md#install)). The installer needs no such check of macOS's: `curl` and `tar` set no
+quarantine mark, so Gatekeeper is not asked. A tarball downloaded in a browser is marked, and macOS refuses an xless
+unpacked from it with the Finder: use the install line.
+
+On macOS a path can be spelled in more than one way (upper and lower case, Unicode forms, `/private/tmp` and `/tmp`,
+`/System/Volumes/Data`). Where xless refuses a mount or looks whether one path is in another, it asks the kernel which file it
+is, not how it is written.
 
 ## The build and your secrets
 
@@ -447,7 +484,8 @@ An app's build runs code you did not write. What that code can reach depends on 
   makes itself non-dumpable: the tool cannot attach to it or read its memory or its environment. Natively the build
   still runs as you: its SwiftPM plugins and macros can read your files, including the key files a `_FILE` variable
   names (the store keeps keys sealed on disk), and the environment of your shell, or of any other process of yours
-  (`xless run` itself is not one: it is non-dumpable too) that exported a secret variable (`/proc/<pid>/environ`): keep keys in the store rather than in exported variables.
+  (`xless run` itself is not one: it is non-dumpable too, and a macOS release hides its environment) that exported a
+  secret variable (`/proc/<pid>/environ`; `ps -E` on macOS): keep keys in the store rather than in exported variables.
 
 **Which image a container runs in.** An image with toolchains of other languages never holds a secret. The table is
 each step of `xless run --docker`:

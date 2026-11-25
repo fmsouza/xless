@@ -8,7 +8,8 @@ Native, Tauri and plain Cargo apps build in the images only.
 
 ## What you need
 
-- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on.
+- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on. (On macOS 14 or later xless installs
+  too, for its account commands and builds [in Docker](#build-in-docker-instead); it has no native builds there yet.)
 - A few system packages: `curl`, `tar`, `zip`, `unzip`, `git`, `python3` and the libraries of Swift's Linux toolchain.
   `xless setup` checks for the commands and prints the `apt-get install` line that adds whatever is missing. It never
   runs `sudo` itself.
@@ -66,8 +67,8 @@ xless recognises the file by its content, not by its name, and refuses any other
 curl -fsSL https://github.com/fmsouza/xless/releases/latest/download/install.sh | sh
 ```
 
-This puts `xless` in `~/.local/bin` and its support files in `~/.local/share/xless`, after checking the download
-against the release's checksums. It needs no `sudo`. Run it again to upgrade: it replaces both, and xless refuses
+This puts `xless` in `~/.local/bin` and its support files in `~/.local/share/xless`, on Linux and on macOS 14 or later
+(x86_64 or arm64), after checking the download against the release's checksums. It needs no `sudo`. Run it again to upgrade: it replaces both, and xless refuses
 support files from another release than its own ([troubleshooting](docs/troubleshooting.md#installing)). If it says
 that `~/.local/bin` is not on `PATH` in this shell, open a new terminal (many Linux systems add `~/.local/bin` at login
 once it exists) or run the `export` line it prints. If a new terminal still cannot find `xless`, add that line to your shell's startup file. Then check:
@@ -81,10 +82,11 @@ Each release asset also carries a signed build provenance attestation: proof tha
 (signed in with `gh auth login`):
 
 ```sh
-gh attestation verify xless-<version>-linux-<arch>.tar.gz -R fmsouza/xless
+gh attestation verify xless-<version>-<linux|macos>-<arch>.tar.gz -R fmsouza/xless
 ```
 
 `SHA256SUMS` and `install.sh` are attested too. The installer itself checks the checksum only; it does not need `gh`.
+The macOS program is signed ad hoc, not by an Apple developer: [what that means](docs/security.md#linux-and-macos).
 
 ## Set up
 
