@@ -357,9 +357,10 @@ done
 [[ "$s3" != *"cocoapods"* && "$s3" != *"corepack"* && "$s3" != *".cache/xless"* ]] || fail "rn step 3 mounts build caches: $s3"
 # image and volume overrides; XLESS_RN_CLEAN reaches the build
 out=$("${base[@]}" XLESS_IMAGE=rn:1 XLESS_SIGN_IMAGE=keys:1 XLESS_RN_WORK_VOLUME=w1 XLESS_RN_CLEAN=1 "$S" --config "$t/rn/app.yml" 2>/dev/null)
-[[ "$(line "next-build")" == *" keys:1 xless next-build "* ]] || fail "rn step 1 image override: $out"
+# (an image that is not here cannot be shown to be xless's own, which the steps with the secrets run in)
+[[ "$(line "next-build")" == *" xless:local-$A-xcode27.0 xless next-build "* ]] || fail "rn step 1 image: $out"
 [[ "$(line "--to finalize")" == *"-v w1:/cache/work "*"-e XLESS_RN_CLEAN "*" rn:1 xless ship "* ]] || fail "rn step 2 overrides: $out"
-[[ "$(line "--from sign")" == *"-v w1:/cache/work "*" keys:1 xless ship "* ]] || fail "rn step 3 overrides: $out"
+[[ "$(line "--from sign")" == *"-v w1:/cache/work "*" xless:local-$A-xcode27.0 xless ship "* ]] || fail "rn step 3 overrides: $out"
 # offline: --build-number with --to finalize needs no secret at all (--dry-run is XLESS_TESTFLIGHT_DRY_RUN=1)
 bare=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1)
 out=$("${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --build-number 1.0.0.2026101601 --to finalize 2>/dev/null) || fail "offline rn run needs secrets"
@@ -582,9 +583,9 @@ out=$("${pinned[@]}" "$S" "$t/proj" --to finalize 2>"$t/err") || fail "plain tag
 # ... and the images of an older xless, which have none, are not: what to do is said
 printf '%s\n' "xless:local-$A sha256:old $A old" "xless-rn:local-$A sha256:rn $A old" "xless-base:local-$A sha256:b $A old" > "$t/images"
 code=0; "${pinned[@]}" "$S" --config "$t/pin/def.yml" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -qF "the image xless:local-$A-xcode27.0 is missing" "$t/err" || fail "the older images: exit $code $(cat "$t/err")"
+[[ $code -eq 2 ]] && grep -qF "the image xless:local-$A-xcode27.0 is missing; build it: xless setup --docker --arch $A (from the SDK export in the cache; when that is gone: xless setup --docker --xcode " "$t/err" || fail "the older images: exit $code $(cat "$t/err")"
 out=$("${pinned[@]}" "$S" --config "$t/rn/app.yml" 2>"$t/err") || fail "unpinned dry run with the older images: $(cat "$t/err")"
-grep -qF "(those of an older xless, as xless:local-$A, are not used; xless clean --old removes them)" "$t/err" || fail "the older images are not explained: $(cat "$t/err")"
+grep -qF "; those of an older xless, as xless:local-$A, are not used: xless clean --old removes them)" "$t/err" || fail "the older images are not explained: $(cat "$t/err")"
 # a dry run with none shows what there would be, versions.env's Xcode's
 [[ "$(line "--to finalize")" == *" xless:local-$A-xcode$dx-react-native xless ship "* ]] || fail "dry run with no image: $out"
 # A kit that is missing or stale: a dry run says what it would build, and builds nothing (the command is printed)
@@ -619,10 +620,12 @@ for value in --privileged '[a]'; do
   code=0; "${pinned[@]}" "$S" --config "$t/pin/option.yml" >/dev/null 2>"$t/err" || code=$?
   [[ $code -eq 2 ]] && grep -qF "image: in $t/pin/option.yml" "$t/err" || fail "image: $value: exit $code $(cat "$t/err")"
 done
-# XLESS_SIGN_IMAGE still works, checked as any image of one's own, with a notice
+# XLESS_SIGN_IMAGE still works for xless's own image, with a notice; one with more in it is refused
+out=$("${pinned[@]}" XLESS_SIGN_IMAGE="$P" "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
+[[ "$(line "--from sign")" == *" $P xless ship "* ]] && grep -q "note: XLESS_SIGN_IMAGE still works" "$t/err" || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
 "$fake" base "$A" 26.2 17C52 keys:2 sha256:keys base26.2,xless26.2,keys >> "$t/images"
-out=$("${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
-[[ "$(line "--from sign")" == *" keys:2 xless ship "* ]] && grep -q "note: XLESS_SIGN_IMAGE still works" "$t/err" || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
+code=0; "${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 2 ]] && grep -q "XLESS_SIGN_IMAGE names keys:2, which has more in it than xless's own image $P, .*; unset XLESS_SIGN_IMAGE" "$t/err" || fail "XLESS_SIGN_IMAGE keys:2: $code $(cat "$t/err")"
 # Tauri overlays and xless.yml projects take the pin too
 printf 'type: tauri\nsource: app\nbundleID: com.example.x\nxcode: 26.2\n' > "$t/pin/tauri.yml"
 images 27.0 27A266a 26.2 17C52 > "$t/images"
@@ -638,7 +641,9 @@ out=$("${pinned[@]}" "$S" "$t/pinproj" --no-provisioning-updates 2>"$t/err") || 
 s1=$(sed -n 1p <<<"$out"); s2=$(sed -n 2p <<<"$out")
 [[ $(wc -l <<<"$out") -eq 2 && "$s1" == *" mine:1 xless ship --platform ios --from build --to finalize --no-provisioning-updates " ]] || fail "project image, build: $out"
 [[ "$s1" != *"/secrets/"* && "$s1" != *"ASC_"* && "$s1" != *"XLESS_DIST_KEY"* ]] || fail "secrets reach the project's own image: $s1"
-[[ "$s2" == *"dst=/secrets/dist-key.pem,readonly"*" $P xless ship --platform ios --from sign --to upload --no-provisioning-updates " ]] || fail "project image, signing: $out"
+[[ "$s2" == *"dst=/secrets/dist-key.pem,readonly"*" -w / "*" $P xless ship --project /work --platform ios --from sign --to upload --no-provisioning-updates " ]] || fail "project image, signing: $out"
+# ... and neither with a configuration that the build's code can have written
+for s in "$s1" "$s2"; do [[ "$s" == *"/.cache/xless/run/<run>/xless.yml,dst=/work/xless.yml,readonly' "* ]] || fail "project image, xless.yml: $s"; done
 printf 'xcode: "26.2"\n' > "$t/pinproj/xless.yml"
 # a pin that is no version is a usage error; natively the pin selects nothing (prepare and the build stage check the SDK)
 printf 'type: react-native\nsource: app\nxcode: latest\n' > "$t/pin/bad.yml"
