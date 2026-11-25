@@ -145,7 +145,7 @@ public enum DmgBuilder {
                                     dSYMs: dSYMs, run: DmgBuilder.shell)
             try PrivateFiles.with(stage: .package) { files in
                 let signer = try files.signer(key: key, certificate: cert.der)
-                try Shell.run("rcodesign", signArguments(dmg: dmg, keyPEM: signer.key, certPEM: signer.certificate), stage: .package)
+                try RCodesign.run(signArguments(dmg: dmg, keyPEM: signer.key, certPEM: signer.certificate), stage: .package)
             }
             try Notary.notarize(dmg, secrets: secrets)
             try Notary.checkStapled(dmg: dmg)

@@ -12,7 +12,7 @@ public enum SignStage {
                            secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest? = nil,
                            updatesOff: String? = nil, say: (String) -> Void = standardError) async throws -> URL {
         try await run(input: input, outputDir: outputDir, platform: platform, config: config, project: project, secrets: secrets,
-                      client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
+                      client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: { try RCodesign.run($0, stage: .sign) })
     }
 
     /// `codesign` runs rcodesign with the given arguments (a test seam: tests read the entitlement files it names).

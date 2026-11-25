@@ -3,6 +3,20 @@ import XlessCore
 import XlessMachO
 
 public enum RCodesign {
+    /// `arguments` (a subcommand and its own), without a configuration file. By itself rcodesign reads `rcodesign.toml` of the directory
+    /// it runs in, and the user's: they can name another signer, other entitlements or another API key than its arguments do, and a
+    /// project's directory is one the build can write. (rcodesign 0.29.0 `--help`: "The special value `/dev/null` can be used to
+    /// specify an empty/null config file".)
+    public static func arguments(_ arguments: [String]) -> [String] {
+        arguments.prefix(1) + ["-C", "/dev/null"] + arguments.dropFirst()
+    }
+
+    /// Runs it, in a directory that no build can write.
+    @discardableResult
+    public static func run(_ arguments: [String], program: String = "rcodesign", stage: Stage, captureTo: URL? = nil) throws -> ShellResult {
+        try Shell.run(program, self.arguments(arguments), cwd: URL(fileURLWithPath: "/"), stage: stage, captureTo: captureTo)
+    }
+
     /// `runtimePaths` (Developer ID only): bundle-relative Mach-Os (`hardenedRuntimePaths`) that get the hardened runtime
     /// too. rcodesign signs loose Mach-Os (e.g. a dylib in Contents/Resources) and nested bundles, but an unscoped
     /// `--code-signature-flags` applies to the main executable only, so each one is named with a path-scoped flag.
