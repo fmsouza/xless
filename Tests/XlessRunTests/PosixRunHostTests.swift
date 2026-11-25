@@ -82,10 +82,15 @@ import Testing
             #expect(children[host.processID]?.contains(step.pid) == true)
             #expect(host.commandLine(step.pid).contains("sleep"))
         }
+        let mark = host.mark(step.pid)
+        #expect(!mark.isEmpty && mark == host.mark(step.pid) && mark != host.mark(host.processID))
+        #expect(host.programFile(step.pid).contains("/"))
         host.terminate(step.pid)
         #expect(host.finish(step).code == 143)
-        #expect(!host.isRunning(step.pid) && host.started(step.pid).isEmpty)
-        #expect(!host.isRunning(0) && !host.isRunning(-1))
+        #expect(!host.isRunning(step.pid) && host.started(step.pid).isEmpty && host.mark(step.pid).isEmpty)
+        #expect(!host.isRunning(0) && !host.isRunning(-1) && host.mark(0).isEmpty && host.programFile(0).isEmpty)
+        // not this user's (or init itself, where that is this user's): it runs all the same
+        #expect(host.isRunning(1))
     }
 
     @Test func files() throws {

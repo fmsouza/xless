@@ -153,9 +153,26 @@ public final class PosixRunHost: RunHost {
     public func end(_ code: Int32) -> Never { xless_end_run(code) }
     public func removeOnFault(_ path: String, isDirectory: Bool) { _ = xless_remove_when_ended(path, isDirectory ? 1 : 0) }
 
-    public func isRunning(_ pid: Int32) -> Bool { pid > 0 && kill(pid, 0) == 0 && !ps(["-o", "stat=", "-p", "\(pid)"]).hasPrefix("Z") }
+    public func isRunning(_ pid: Int32) -> Bool {
+        pid > 0 && (kill(pid, 0) == 0 || errno == EPERM) && !ps(["-o", "stat=", "-p", "\(pid)"]).hasPrefix("Z")
+    }
+
     public func started(_ pid: Int32) -> String { ps(["-o", "lstart=", "-p", "\(pid)"]) }
     public func commandLine(_ pid: Int32) -> String { ps(["-o", "command=", "-p", "\(pid)"]) }
+
+    public func mark(_ pid: Int32) -> String {
+        let start = xless_process_start(pid)
+        guard start != 0 else { return "" }
+        // On Linux it counts from the start of the system.
+        let boot = (try? String(contentsOfFile: "/proc/sys/kernel/random/boot_id", encoding: .utf8)) ?? ""
+        return (boot.split(whereSeparator: \.isWhitespace) + ["\(start)"]).joined(separator: " ")
+    }
+
+    public func programFile(_ pid: Int32) -> String {
+        var path = [UInt8](repeating: 0, count: 4096)
+        let n = path.withUnsafeMutableBytes { xless_process_program(pid, $0.baseAddress?.assumingMemoryBound(to: CChar.self), $0.count) }
+        return n > 0 ? String(decoding: path[..<n], as: UTF8.self) : ""
+    }
 
     public func children() -> [Int32: [Int32]] {
         var out: [Int32: [Int32]] = [:]

@@ -961,6 +961,13 @@ uint64_t xless_process_start(int pid) {
     }
     return field == 22 ? (uint64_t)start + 1 : 0;
 }
+
+long xless_process_program(int pid, char *buffer, size_t length) {
+    char path[64];
+    if (pid <= 0) return -1;
+    snprintf(path, sizeof path, "/proc/%d/exe", pid);
+    return readlink(path, buffer, length);
+}
 #elif defined(__APPLE__)
 int xless_peer_of(int fd, struct xless_peer *out) {
     memset(out, 0, sizeof *out);
@@ -1057,6 +1064,12 @@ uint64_t xless_process_start(int pid) {
     if (pid <= 0 || sysctl(name, 4, &info, &length, NULL, 0) != 0 || length < sizeof info) return 0;
     if (info.kp_proc.p_stat == SZOMB) return 0;
     return (uint64_t)info.kp_proc.p_starttime.tv_sec * 1000000u + (uint64_t)info.kp_proc.p_starttime.tv_usec + 1;
+}
+
+long xless_process_program(int pid, char *buffer, size_t length) {
+    if (pid <= 0 || length > PROC_PIDPATHINFO_MAXSIZE) return -1;
+    int n = proc_pidpath(pid, buffer, (uint32_t)length);
+    return n > 0 ? n : -1;
 }
 #endif
 

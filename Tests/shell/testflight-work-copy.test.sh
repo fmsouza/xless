@@ -77,9 +77,34 @@ grep -qx "pid=$a" "$lock" || fail "the refused run took the lock"
 alive "$aj" || fail "the refused run stopped the live run's step"
 "${docker[@]}" KLOG="$t/klogC" "$S" "$t/proj2" "${args[@]}" >/dev/null 2>"$t/errC" || fail "another work copy was refused: $(cat "$t/errC")"
 "${docker[@]}" XLESS_TESTFLIGHT_DRY_RUN=1 "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/errD" || fail "a dry run was refused: $(cat "$t/errD")"
+# however it was started, and whatever the clock did since: no single value says that it is gone
 kill -TERM "$a"; code=0; wait "$a" || code=$?
 [[ $code -eq 143 ]] || fail "the first run: exit $code after TERM, want 143"
+ln -s "$XLESS_RUN" "$t/ci-run"
+for how in marks nomarks link; do
+  first=("$XLESS_RUN"); [[ $how != link ]] || first=("$t/ci-run")
+  : > "$t/klog"
+  "${docker[@]}" RUN_SLEEP=120 XLESS_SHARE="$repo" XLESS_SELF=xless WORK_IDS=live0 "${first[@]}" --no-input run "$t/proj" "${args[@]}" >/dev/null 2>"$t/errA" & a=$!; bg+=("$a")
+  waitfor '^run ' "$t/klog" && waitfor '^job=' "$lock" || fail "$how: the first run never started: $(cat "$t/errA")"
+  aj=$(sed -n 's/^job=\([0-9]*\).*/\1/p' "$lock")
+  sed -i.bak 's/^started=.*/started=Thu Jan  1 00:00:00 1970/' "$lock"
+  [[ $how = marks ]] || sed -i.bak '/^mark=/d' "$lock"
+  rm -f "$lock.bak"
+  code=0; "${docker[@]}" KLOG="$t/klogE" WORK_IDS=live0 "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/errB" || code=$?
+  [[ $code -eq 2 ]] || fail "$how: a second run on a busy work copy: exit $code, want 2: $(cat "$t/errB")"
+  if [[ $how = marks ]]; then grep -qF "wait for it to end, or stop it: kill $a" "$t/errB" || fail "$how: $(cat "$t/errB")"
+  else grep -qF "when no run works there any more, remove " "$t/errB" || fail "$how: the refusal does not say how to go on: $(cat "$t/errB")"; fi
+  grep -q '^run \|^rm ' "$t/klogE" 2>/dev/null && fail "$how: the refused run ran or removed containers: $(cat "$t/klogE")"
+  alive "$a" && alive "$aj" || fail "$how: the refused run stopped the live run"
+  kill -TERM "$a"; wait "$a" || true
+done
 [[ ! -e "$lock" ]] || fail "the lock outlived a stopped run"
+# a run on a machine with another name (a home two machines share) cannot be seen from here: refused, with how to go on
+printf 'pid=1\nstarted=x\nhost=%s-not\nwork=%s\n' "$(uname -n)" "$t/proj" > "$lock"
+code=0; "${docker[@]}" "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 2 ]] && grep -qF "remove $lock and run again" "$t/err" || fail "a lock of another machine: exit $code: $(cat "$t/err")"
+rm "$lock"
+"${docker[@]}" "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || fail "after removing it: $(cat "$t/err")"
 
 # overlays: the work copy is the overlay's name under the work root, so two overlay files of one name share it, in docker
 # and natively; a React Native overlay's is its work volume

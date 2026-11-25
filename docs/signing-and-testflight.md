@@ -133,7 +133,9 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   second run on the same work copy is refused (exit 2) while the first is running; runs on other work copies are not
   affected, and a dry run takes no lock. After a SIGKILL, which leaves no chance to clean up, the next run on that work
   copy sees that the run holding the lock is gone, and stops what it left before it starts: its containers (labelled
-  `xless.work=<hash>`) and, natively, the xless it was running.
+  `xless.work=<hash>`) and, natively, the xless it was running. Where it cannot tell (the lock was taken on a machine with
+  another name, say, or the process may be that run), it is refused too, with exit 2, and says which file to remove once no run
+  works there any more.
 - **Testers.** Internal testers must be App Store Connect users of the team: invite them with
   [`xless users invite`](apple-account.md#xless-users) (an Admin API key). List them in `testflight.testers` of
   [xless.yml](xless-yml.md#testflight) and every run adds the missing ones to the groups, or add them once with

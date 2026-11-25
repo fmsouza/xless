@@ -9,9 +9,13 @@ import Testing
     private var key: String { home.project }
     private var path: String { "\(home.home)/.cache/xless/locks/\(WorkCopyLock.hash(of: key)).lock" }
 
-    private func leave(pid: Int32, started: String = "Mon Nov 23 10:00:00 2026", more: String = "") throws {
+    private func leave(pid: Int32, started: String = "Mon Nov 23 10:00:00 2026", on machine: String = "here", more: String = "") throws {
+        try leave("pid=\(pid)\nstarted=\(started)\nhost=\(machine)\nwork=\(key)\n\(more)")
+    }
+
+    private func leave(_ lock: String) throws {
         try FileManager.default.createDirectory(atPath: RunFiles.parent(path), withIntermediateDirectories: true)
-        try Data("pid=\(pid)\nstarted=\(started)\nhost=there\nwork=\(key)\n\(more)".utf8).write(to: URL(fileURLWithPath: path))
+        try Data(lock.utf8).write(to: URL(fileURLWithPath: path))
     }
 
     private func run(_ host: FakeRunHost, docker: Bool = false) throws -> Int32 {
@@ -23,7 +27,8 @@ import Testing
         let host = FakeRunHost { host, step in
             guard step.words.contains("ship") else { return (0, "") }
             let lock = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            return (lock.contains("pid=4242\nstarted=Tue Nov 24 09:00:00 2026\nhost=here\n") && lock.contains("\njob=50") ? 0 : 1, "")
+            return (lock.contains("pid=4242\nstarted=Tue Nov 24 09:00:00 2026\nhost=here\nmark=own mark\nprogram=/own/xless\nwork=")
+                && lock.contains("\njob=50") && lock.contains("\njobmark=") ? 0 : 1, "")
         }
         #expect(try run(host) == 0)
         #expect(try FileManager.default.contentsOfDirectory(atPath: RunFiles.parent(path)).isEmpty)
@@ -31,14 +36,65 @@ import Testing
 
     @Test func aLiveRunIsNotDisturbed() throws {
         let runs = FakeRunHost.Process(started: "Mon Nov 23 10:00:00 2026", command: "anything")
-        for (process, started) in [(runs, runs.started), (.init(started: "", command: "x"), runs.started), (runs, ""),
-                                   // a clock that stepped: still a run of xless
-                                   (.init(command: "/a/b/xless run p"), "then"), (.init(command: "bash /s/scripts/testflight.sh p"), "then")] {
-            try leave(pid: 77, started: started)
+        for (process, started, more) in [(runs, runs.started, ""),
+                                         // a clock that stepped, while the system's own mark of the process stays
+                                         (.init(mark: "boot 12"), "then", "mark=boot 12\n")] {
+            try leave(pid: 77, started: started, more: more)
             let host = FakeRunHost(processes: [77: process])
             #expect(try run(host) == 2)
-            #expect(host.lines.last?.contains("is in use by another run (pid 77 on there") == true, "\(host.lines)")
+            #expect(host.lines.last?.contains("is in use by another run (pid 77 on here, started \(started)); wait for it to end, or stop it: kill 77") == true, "\(host.lines)")
             #expect(host.killed.isEmpty && home.exists(path))
+        }
+    }
+
+    /// No one value says that a run is gone: not its start time (a clock steps), nor what it was started as.
+    @Test func aRunThatMayBeLiveIsNotDisturbed() throws {
+        let old = "Mon Nov 23 10:00:00 2026"
+        for process in [FakeRunHost.Process(command: "/a/b/xless run p"), .init(command: "/a/b/xless --no-input run --docker p"),
+                        .init(command: "xless --no-input\nrun p"), .init(command: "/opt/xless-1.0/bin/xless run one\ntwo"),
+                        .init(command: "qemu-x86_64 /a/xless ship"), .init(command: "bash /s/scripts/testflight.sh p"),
+                        .init(command: "bash -c line\nscripts/testflight.sh"), .init(command: "ci-run run p", file: "/opt/tool"),
+                        .init(command: "ci-run run p", file: "/opt/tool (deleted)"), .init(command: "another", file: "/b/xless"),
+                        .init(command: "", file: ""), .init(started: "", command: "x")] {
+            try leave(pid: 77, started: old, more: "mark=boot 11\nprogram=/opt/tool\n")
+            try refused(FakeRunHost(processes: [77: process]), "pid 77 runs, and it cannot be told whether it is that run", "\(process)")
+        }
+        // one that says no start time, one on a machine with another name, and one that cannot be read
+        try leave(pid: 77, started: "")
+        try refused(FakeRunHost(processes: [77: .init()]), "pid 77 runs, and it cannot be told")
+        try leave(pid: 77, started: old, on: "there")
+        try refused(FakeRunHost(), "it is on there, and this machine's name is here")
+        try leave(pid: 4242, started: old, more: "program=/opt/tool\n") // this run's own PID
+        try refused(FakeRunHost(processes: [4242: .init(command: "xless run")]), "pid 4242 runs")
+        for text in ["", "pid=\n", "pid=77x\nhost=here\n", "pid=-1\nhost=here\n", "pid=0\nhost=here\n", "\u{0}\u{0}"] {
+            try leave(text)
+            try refused(FakeRunHost(), "its lock says no process", text)
+        }
+    }
+
+    private func refused(_ host: FakeRunHost, _ why: String, _ what: String = "") throws {
+        #expect(try run(host) == 2, "\(what)")
+        let last = host.lines.last ?? ""
+        #expect(last.contains("the work copy \(key) may be in use by another run") && last.contains(why), "\(what): \(last)")
+        #expect(last.hasSuffix("wait for it to end, or stop it; when no run works there any more, remove \(path) and run again"), "\(last)")
+        #expect(host.killed.isEmpty && home.exists(path), "\(what)")
+    }
+
+    /// What differs in everything is another process.
+    @Test func aReusedPIDIsNotTheRun() throws {
+        try leave(pid: 77, more: "mark=boot 11\nprogram=/opt/xless\n")
+        let host = FakeRunHost(processes: [77: .init(command: "bash -c x", mark: "boot 12", file: "/bin/bash")])
+        #expect(try run(host) == 0)
+        #expect(host.lines.contains { $0.contains("the run that held it (pid 77) is gone") } && host.killed.isEmpty)
+    }
+
+    /// The step of a gone run is known by the system's mark of it, also when a clock stepped since.
+    @Test func aStepIsKnownByItsMark() throws {
+        for (mark, stops) in [("boot 12", true), ("boot 11", false)] {
+            try leave(pid: 77, more: "job=88 then\njobmark=\(mark)\n")
+            let host = FakeRunHost(processes: [88: .init(started: mark == "boot 11" ? "then" : "now", mark: "boot 12")])
+            #expect(try run(host) == 0)
+            #expect(host.killed == (stops ? [88] : []), "\(mark)")
         }
     }
 

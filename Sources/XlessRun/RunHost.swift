@@ -70,11 +70,15 @@ public protocol RunHost: AnyObject, Sendable {
     /// A fault of this process's own that leaves no chance to clean up removes `path` too (a directory: once it is empty).
     func removeOnFault(_ path: String, isDirectory: Bool)
 
-    /// The process runs (and is not a dead one nobody waited for).
+    /// The process runs (and is not a dead one nobody waited for), whoever's it is.
     func isRunning(_ pid: Int32) -> Bool
     /// When it started, the same text whoever asks; empty: unknown.
     func started(_ pid: Int32) -> String
     func commandLine(_ pid: Int32) -> String
+    /// What tells the process from a later one that has its PID, whatever happens to the clock; empty: unknown.
+    func mark(_ pid: Int32) -> String
+    /// The file it runs; empty: unknown.
+    func programFile(_ pid: Int32) -> String
     /// The processes of this machine, by the process that started them.
     func children() -> [Int32: [Int32]]
     func terminate(_ pid: Int32)

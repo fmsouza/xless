@@ -183,6 +183,8 @@ int xless_pidfd_alive(int pidfd);
 /// When the process `pid` started, as an opaque non-zero number that a later process with the same pid does not share;
 /// 0 when there is no such process (or it cannot be seen, or it has ended).
 uint64_t xless_process_start(int pid);
+/// The file that the process `pid` runs, into `buffer`: its length, or -1 (there is no such process, or it is not to be seen).
+long xless_process_program(int pid, char *buffer, size_t length);
 
 /// A close-on-exec, non-blocking Unix stream socket bound to `path` (mode 0600) and listening; -errno on failure.
 int xless_unix_listen(const char *path, int backlog);

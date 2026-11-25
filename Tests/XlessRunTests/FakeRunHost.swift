@@ -4,7 +4,7 @@ import Foundation
 /// A host whose programs are a closure, and whose files are real ones.
 final class FakeRunHost: RunHost, @unchecked Sendable {
     typealias Answer = (code: Int32, output: String)
-    struct Process { var started = "Tue Nov 24 10:00:00 2026"; var command = "sleep"; var children: [Int32] = []; var stubborn = false }
+    struct Process { var started = "Tue Nov 24 10:00:00 2026"; var command = "sleep"; var children: [Int32] = []; var stubborn = false; var mark = ""; var file = "/bin/sleep" }
 
     private let lock = NSLock()
     private let files = PosixRunHost()
@@ -101,6 +101,8 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func isRunning(_ pid: Int32) -> Bool { lock.withLock { processes[pid] != nil } }
     func started(_ pid: Int32) -> String { lock.withLock { processes[pid]?.started ?? (pid == processID ? "Tue Nov 24 09:00:00 2026" : "") } }
     func commandLine(_ pid: Int32) -> String { lock.withLock { processes[pid]?.command ?? "" } }
+    func mark(_ pid: Int32) -> String { lock.withLock { processes[pid]?.mark ?? "own mark" } }
+    func programFile(_ pid: Int32) -> String { lock.withLock { processes[pid]?.file ?? (pid == processID ? "/own/xless" : "") } }
     func children() -> [Int32: [Int32]] { lock.withLock { processes.mapValues(\.children).filter { !$0.value.isEmpty } } }
     func terminate(_ pid: Int32) {
         lock.withLock {
