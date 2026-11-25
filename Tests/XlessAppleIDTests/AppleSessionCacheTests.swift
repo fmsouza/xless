@@ -26,6 +26,7 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
 
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         let bytes = secret.withUnsafeBytes { Array($0) }
+        if refusing { throw XlessError(.account, "not today", fix: "-") }
         lock.withLock {
             items[name] = (bytes, clock.now.addingTimeInterval(TimeInterval(hold.seconds)))
             maximums[name] = hold.maximum; timeouts[name] = hold.seconds
@@ -40,7 +41,17 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
         }
     }
 
-    func revoke(_ name: String) throws -> Bool { lock.withLock { items.removeValue(forKey: name) != nil } }
+    /// The drops that reach everything, and the ones that reach one place.
+    private(set) var revoked: [String] = [], discarded: [[String]] = []
+    func revoke(_ name: String) throws -> Bool { lock.withLock { revoked.append(name); return items.removeValue(forKey: name) != nil } }
+    func discard(_ names: [String]) throws {
+        lock.withLock {
+            discarded.append(names)
+            for name in names { items[name] = nil }
+        }
+    }
+    /// The next puts fail.
+    var refusing = false
 
     func raw(_ name: String) -> [UInt8]? { lock.withLock { items[name]?.bytes } }
     func tamper(_ name: String) { lock.withLock { items[name]?.bytes[20] ^= 0xFF } }
@@ -269,6 +280,29 @@ final class AppleSessionCacheTests: XCTestCase {
         _ = try store.revoke("xless-apple-session-key")
         XCTAssertNil(cache.info())
         XCTAssertEqual(store.names, [])
+    }
+
+    /// Another terminal's session, or a running script's, is not this one's to drop: only `forget` (logout) reaches those.
+    func testKeepingASessionOrFindingOneUnreadableDropsNothingElsewhere() async throws {
+        let clock = TestClock(t0), store = MemoryKeyStore(clock: clock)
+        let cache = AppleSessionCache(store: store, now: { clock.now })
+        for _ in 0..<2 { try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800)) }
+        XCTAssertEqual(store.revoked, [])
+        XCTAssertEqual(store.discarded, [])
+        XCTAssertNotNil(cache.info())
+        store.tamper("xless-apple-session")
+        XCTAssertNil(cache.info())
+        XCTAssertEqual(store.names, [])
+        XCTAssertEqual(store.discarded, [["xless-apple-session", "xless-apple-session-key"]])
+        store.refusing = true
+        do {
+            try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800))
+            XCTFail("kept")
+        } catch {}
+        XCTAssertEqual(store.discarded.count, 2)
+        XCTAssertEqual(store.revoked, [])
+        cache.forget()
+        XCTAssertEqual(store.revoked, ["xless-apple-session", "xless-apple-session-key"])
     }
 
     func testForgetSaysWhetherASessionWasKept() async throws {

@@ -15,6 +15,7 @@ protocol AgentHolding: Sendable {
     func get(_ name: String, using: Bool, witness: () -> AgentWitness?) -> SecretBytes?
     func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws
     func drop(prefix: String, label: String) -> AgentDropped
+    func discard(_ names: [String], witness: () -> AgentWitness?) -> Bool
     func statuses() -> [AgentStatus]
     func leases() -> [AgentStatus]
 }
@@ -176,6 +177,11 @@ struct HeldKeyCache: VaultKeyCache {
         if let unreached = dropped.unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
     }
 
+    /// Drops an unlock that was typed nobody knows when, or too long ago: the keyring's. An agent knows, and keeps none.
+    func forgetUndated(id: String, maximum: Int) throws {
+        if let held = keyring.held(id: id), (held.typedAgo ?? maximum) >= maximum { _ = try keyring.forget(id: id) }
+    }
+
     func held(id: String) -> HeldUnlock? {
         guard !isOff else { return nil }
         let name = HeldSecrets.name(ofVault: id), now = Date()
@@ -216,10 +222,10 @@ struct HeldSessionStore: SessionKeyStore {
 
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         guard isAvailable else { throw AppleSessionCache.unavailable(obstacle) }
-        _ = try revoke(name)
         do {
             if let obstacle = agents.obstacle { throw obstacle }
             try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], witness: witness)
+            _ = try keyring.revoke(name)
         } catch let e as AgentError {
             guard e.kind == .unavailable, keyring.isAvailable, keyring.allowed(hold) == hold.seconds else { throw e }
             say(HeldSecrets.fallback("the Apple ID session", seconds: hold.seconds, because: e.cause))
@@ -251,6 +257,10 @@ struct HeldSessionStore: SessionKeyStore {
         let dropped = agents.drop(prefix: name, label: "")
         failures.note(dropped.unreached)
         return try keyring.revoke(name) || dropped.count > 0
+    }
+
+    func discard(_ names: [String]) throws {
+        if !agents.discard(names, witness: witness) { try keyring.discard(names) }
     }
 
     /// Why not every agent was reached by what was revoked: the first failure.

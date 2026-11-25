@@ -98,11 +98,12 @@ public final class AgentClient: @unchecked Sendable {
 
     private var deadline: Int64 { xless_clock_awake_ms() + Int64(timeout) }
 
-    /// Connections to the agents this command uses: another session's is not one.
+    /// Connections to the agents this command uses: that of the `xless session` it runs in first, then those of the
+    /// terminal. Another `xless session`'s is not one.
     private func links() -> [AgentLink] {
         let (links, problem) = links { try directory.sockets() }
         lock.withLock { lastProblem = problem }
-        return links.filter { !$0.isLease || isMySession($0) }
+        return links.filter(isMySession) + links.filter { !$0.isLease }
     }
 
     private func isMySession(_ link: AgentLink) -> Bool {
@@ -227,6 +228,16 @@ public final class AgentClient: @unchecked Sendable {
             failure = error as? AgentError
         }
         return AgentDropped(count: count, unreached: failure)
+    }
+
+    /// Drops `names` from the first agent that has one of them and can be believed, as `get` finds it; whether there was one.
+    @discardableResult public func discard(_ names: [String], witness: () -> AgentWitness? = { nil }) -> Bool {
+        func drops(_ link: AgentLink) -> Bool { names.map { (try? link.drop(prefix: $0)) ?? 0 }.reduce(0, +) > 0 }
+        let links = links()
+        for link in links where link.isGranted && link.isSameSession && drops(link) { return true }
+        let others = links.filter { !($0.isGranted && $0.isSameSession) }
+        guard !others.isEmpty, let witness = witness() else { return false }
+        return others.contains { trusted($0, witness) && drops($0) }
     }
 
     /// Tells every agent, whatever its version, to drop everything and end. One that does not answer is ended where that

@@ -14,6 +14,12 @@ public protocol SessionKeyStore: Sendable {
     func get(_ name: String, using: Bool) throws -> SecretBytes?
     /// Drops `name`; whether there was one.
     @discardableResult func revoke(_ name: String) throws -> Bool
+    /// Drops `names` from the one place `get` reads them from first: a store that is in several places leaves the others.
+    func discard(_ names: [String]) throws
+}
+
+extension SessionKeyStore {
+    public func discard(_ names: [String]) throws { for name in names { try revoke(name) } }
 }
 
 /// The session keyring (possessor-only, expired by the kernel after at most an hour; see `KernelKeyring`).
@@ -114,7 +120,7 @@ public struct AppleSessionCache: Sendable {
     public var isAvailable: Bool { store.isAvailable }
 
     /// Seals `web`'s cookies and keeps them for the hold, or less when Apple's session cookie (`myacinfo`; any of them when
-    /// there is none) expires sooner. Replaces a kept session. `acrossReboots` also saves it, until then.
+    /// there is none) expires sooner. Replaces the session kept where it goes. `acrossReboots` also saves it, until then.
     /// - Parameter kept: the kept session `web` was restored from, when it is kept on: its longest hold counts from its sign-in.
     @discardableResult
     public func keep(_ web: AppleWebClient, appleID: String, hold: SecretHold, acrossReboots: Bool = false,
@@ -153,7 +159,8 @@ public struct AppleSessionCache: Sendable {
         let blob = SecretBytes(wiping: &combined)
         let keyBytes = key.withUnsafeBytes { SecretBytes(copying: $0) }
         defer { blob.wipe(); keyBytes.wipe() }
-        forget()
+        // What is held is replaced where this one goes: another terminal's, or a running script's, goes on.
+        _ = try? saved?.remove()
         if acrossReboots, let saved {
             let bytes = plain.withUnsafeBytes { SecretBytes(copying: $0) }
             defer { bytes.wipe() }
@@ -164,7 +171,8 @@ public struct AppleSessionCache: Sendable {
             try store.put(Self.blobName, blob, hold: left)
             try store.put(Self.keyName, keyBytes, hold: left)
         } catch {
-            forget()
+            forgetHeld()
+            _ = try? saved?.remove()
             throw XlessError(.account, "cannot keep the Apple ID session: \(error)", fix: "re-run without --keep")
         }
         return info
@@ -187,7 +195,7 @@ public struct AppleSessionCache: Sendable {
         return KeptSessionInfo(appleID: payload.appleID, created: payload.created, expires: payload.expires)
     }
 
-    /// Drops the kept session; whether there was one.
+    /// Drops the kept session, wherever one is; whether there was one.
     @discardableResult
     public func forget() -> Bool {
         let a = (try? store.revoke(Self.blobName)) ?? false
@@ -196,11 +204,8 @@ public struct AppleSessionCache: Sendable {
         return a || b || c
     }
 
-    /// Drops what is held, not what is saved.
-    private func forgetHeld() {
-        _ = try? store.revoke(Self.blobName)
-        _ = try? store.revoke(Self.keyName)
-    }
+    /// Drops what is held where this command finds it, not what is saved.
+    private func forgetHeld() { try? store.discard([Self.blobName, Self.keyName]) }
 
     /// What is left of the kept session's hold, to keep the session that replaces it for no longer.
     func remainingHold() -> SecretHold? {

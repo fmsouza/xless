@@ -118,8 +118,7 @@ struct SessionCommand: AsyncParsableCommand {
     /// The store's key, as the session's agent holds it.
     private func seed(_ vault: VaultSecretStore, _ file: VaultFile, _ hold: SecretHold) throws -> AgentSeed {
         // Held already: for no longer than it may be since it was typed. Held since nobody knows when: typed again.
-        let held = SecretStoreCLI.cache.held(id: file.id)
-        if let held, (held.typedAgo ?? hold.maximum) >= hold.maximum { _ = try SecretStoreCLI.cache.forget(id: file.id) }
+        try SecretStoreCLI.cache.forgetUndated(id: file.id, maximum: hold.maximum)
         let age = SecretStoreCLI.cache.held(id: file.id)?.typedAgo
         let key = try vault.key(for: file, remember: nil, reason: reason)
         return AgentSeed(name: HeldSecrets.name(ofVault: file.id), label: vault.vault.location.file.path, secret: VaultCrypto.keyBytes(key),

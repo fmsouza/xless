@@ -121,6 +121,44 @@ private func client(_ directory: AgentDirectory, session: String? = nil, starts:
     #expect(client(directory, session: leased.path).get("a") { $0.utf8String() == "one" } != nil)
 }
 
+@Test func whatIsKeptInASessionIsUsedThereAndReplacesNothingElsewhere() throws {
+    let box = ScratchBox(), directory = AgentDirectory(path: box.path + "/xless-agent")
+    let usual = try TestAgent(items: [("s", "terminal"), ("s-key", "k")], in: directory)
+    var leases: [(agent: TestAgent, holder: Int32)] = []
+    for _ in 0..<6 { leases.append(try lease([], in: directory)) } // (the sockets' names say nothing of the order)
+    defer { leases.forEach { close($0.holder) } }
+    func text(_ session: String?) -> String? { client(directory, session: session).get("s", witness: { nil })?.utf8String() }
+    for (i, l) in leases.enumerated() {
+        #expect(text(l.agent.path) == "terminal")
+        try client(directory, session: l.agent.path).put(["s", "s-key"].map { AgentSeed(name: $0, label: "", secret: SecretBytes(utf8: "in \(i)"), hold: hold) })
+    }
+    for (i, l) in leases.enumerated() { #expect(text(l.agent.path) == "in \(i)") }
+    #expect(text(nil) == "terminal")
+    // Replaced, or dropped for not being readable: there only.
+    try client(directory).put([AgentSeed(name: "s", label: "", secret: SecretBytes(utf8: "new"), hold: hold)])
+    #expect(text(nil) == "new" && text(leases[0].agent.path) == "in 0")
+    #expect(client(directory, session: leases[0].agent.path).discard(["s", "s-key"], witness: { nil }))
+    #expect(leases[0].agent.state.isEmpty && !usual.state.isEmpty)
+    #expect(text(leases[0].agent.path) == "new" && text(leases[1].agent.path) == "in 1")
+    #expect(client(directory).discard(["s", "s-key"], witness: { nil }) && usual.state.isEmpty)
+    #expect(!client(directory).discard(["s", "s-key"], witness: { nil }))
+    #expect(text(leases[1].agent.path) == "in 1")
+    // `xless auth logout` reaches all of them.
+    #expect(client(directory).drop(prefix: "s").count == 10)
+    #expect(leases.allSatisfy { $0.agent.state.isEmpty })
+}
+
+@Test func anUnreadableItemIsDroppedOnlyFromAnAgentThatMayBeBelieved() throws {
+    let agent = try TestAgent(grant: [AgentSession(id: 77, leaderStart: 7)], items: [("xless-vault:1", keyText), ("s", "x")])
+    let c = client(agent.directory)
+    c.seesEveryAgentAsAnotherSessions = true
+    #expect(!c.discard(["s"], witness: { nil }))
+    #expect(!c.discard(["s"], witness: { AgentWitness(item: "xless-vault:1", key: SecretBytes(utf8: "another key")) }))
+    #expect(agent.state.heldBytes("s") != nil)
+    #expect(c.discard(["s"], witness: { witness }))
+    #expect(agent.state.heldBytes("s") == nil)
+}
+
 @Test func withNothingElseThereWhatIsKeptOutsideASessionGetsAnAgentOfItsOwn() throws {
     let (agent, holder) = try lease()
     defer { close(holder) }

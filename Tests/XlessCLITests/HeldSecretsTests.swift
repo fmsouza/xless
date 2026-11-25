@@ -53,6 +53,14 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
         let failure = failures.isEmpty ? unreached : failures.removeFirst()
         return AgentDropped(count: remove(prefix, label), unreached: failure)
     }
+    /// What one agent, the first that has it, was told to drop.
+    private(set) var discarded: [[String]] = []
+    func discard(_ names: [String], witness: () -> AgentWitness?) -> Bool {
+        lock.withLock {
+            discarded.append(names)
+            return names.filter { items.removeValue(forKey: $0) != nil }.count > 0
+        }
+    }
     /// Of the next drops.
     var failures: [AgentError?] = []
     private func remove(_ prefix: String, _ label: String) -> Int {
@@ -319,6 +327,21 @@ extension HeldKeyCacheTests {
         #expect(c.held(id: "ID")?.typedAgo == 0) // the agent's word
     }
 
+    /// `xless session` asks again for one that was typed nobody knows when: that takes none from another terminal.
+    @Test func anUnlockOfUnknownAgeIsDroppedFromTheKeyringOnly() throws {
+        for age in [nil, 7 * 86400] as [Int?] {
+            let agents = FakeAgents(), keyring = FakeKeyring()
+            try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+            keyring.typedAgo = age
+            try cache(agents, keyring).forgetUndated(id: "ID", maximum: 7 * 86400)
+            #expect(keyring.names.isEmpty && agents.dropped.isEmpty)
+        }
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+        try cache(agents, keyring).forgetUndated(id: "ID", maximum: 7 * 86400)
+        #expect(keyring.names == ["ID"])
+    }
+
     @Test func aLoweredMaximumEndsAHoldOfTheKeyring() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
@@ -372,7 +395,23 @@ extension HeldKeyCacheTests {
         try s.put("xless-apple-session", key(4), hold: half)
         #expect(try keyring.get("xless-apple-session", using: true) == key(4))
         #expect(throws: AgentError.self) { try s.put("xless-apple-session", key(5), hold: day) }
-        #expect(try keyring.get("xless-apple-session", using: true) == nil)
+        try s.discard(["xless-apple-session", "xless-apple-session-key"])
+        #expect(keyring.names.isEmpty)
+    }
+
+    @Test func keepingASessionReplacesItWhereItGoesAndTellsNoOtherAgent() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        let s = store(agents, keyring)
+        try s.put("xless-apple-session", key(1), hold: day)
+        try s.put("xless-apple-session", key(2), hold: day)
+        #expect(agents.dropped.isEmpty)
+        #expect(try s.get("xless-apple-session", using: true) == key(2))
+        try keyring.put("xless-apple-session", key(3), hold: half)
+        try s.discard(["xless-apple-session", "xless-apple-session-key"])
+        #expect(agents.dropped.isEmpty && agents.discarded == [["xless-apple-session", "xless-apple-session-key"]])
+        #expect(keyring.names == ["xless-apple-session"]) // the one that was not read
+        try s.discard(["xless-apple-session", "xless-apple-session-key"])
+        #expect(keyring.names.isEmpty)
     }
 
     @Test func aSessionIsTakenFromAnotherTerminalsAgentOnlyWithTheStoresKey() throws {
