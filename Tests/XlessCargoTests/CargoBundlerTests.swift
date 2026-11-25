@@ -278,7 +278,7 @@ private let macTemplate = """
         let exe = out.appendingPathComponent("hello-bin")
         try Data([1]).write(to: exe)
         #if os(macOS)
-        let others = ["INFO.PLIST", "hello"] // the same files there
+        let others = ["INFO.PLIST", "hello", "Info.pli\u{17F}t", "In\u{66}o.PLI\u{17F}T"] // the same files there
         #else
         let others: [String] = []
         #endif
@@ -288,6 +288,21 @@ private let macTemplate = """
                 _ = try CargoBundler.assemble(resolved: r, platform: .ios, work: work, inputs: [:], vars: vars, executable: exe, privacyManifest: nil, into: out)
             }
         }
+    }
+
+    @Test func twoMatchesOfOneNameAreRefused() throws {
+        let work = try scratch(), out = try scratch()
+        try put(work, "ios/Info.plist", "<plist version=\"1.0\"><dict/></plist>")
+        for family in ["a", "b"] { try put(work, "fonts/\(family)/x/OFL.txt", family) }
+        let exe = out.appendingPathComponent("hello-bin")
+        try Data([1]).write(to: exe)
+        func assemble(_ from: String, _ times: Int = 1) throws {
+            let lines = String(repeating: "    - { from: \"\(from)\", to: Licenses/ }\n", count: times)
+            _ = try CargoBundler.assemble(resolved: resolved(.ios, iosExtra: "  resources:\n" + lines), platform: .ios, work: work, inputs: [:], vars: vars,
+                                          executable: exe, privacyManifest: nil, into: out)
+        }
+        expectBuildError(containing: ["two matches that land on x-OFL.txt"]) { try assemble("fonts/*/x/OFL.txt") }
+        try assemble("fonts/a/*/OFL.txt", 2) // a later line may replace what an earlier one put there
     }
 
     @Test func missingExecutableAndPrivacyManifestFail() throws {

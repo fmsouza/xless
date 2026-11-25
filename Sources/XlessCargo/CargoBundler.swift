@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 import XlessCore
 
 /// Builds the `.app` of a Cargo app from its executable, with no Xcode: the Info.plist (from the app's template, or
@@ -85,7 +90,7 @@ public enum CargoBundler {
         do {
             try? fm.removeItem(at: app)
             for dir in [at(layout.executableDir), resourcesRoot] { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
-            try copyResources(block.resources, to: resourcesRoot, reserved: Set(reserved.map(fileKey)), work: work, inputs: inputs, platform: platform)
+            try copyResources(block.resources, to: resourcesRoot, reserved: reserved, work: work, inputs: inputs, platform: platform)
             try fm.copyItem(at: executable, to: executablePath)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executablePath.path)
             try Plist.write(info, to: at(layout.infoPlist), format: .xml, stage: .build)
@@ -126,14 +131,11 @@ public enum CargoBundler {
 
     // MARK: resources
 
-    /// Two paths with the same key name the same file: macOS file systems take no notice of case (nor of how a letter is composed,
-    /// which Swift's strings do not tell apart either).
-    private static func fileKey(_ path: String) -> String {
-        #if os(macOS)
-        path.lowercased()
-        #else
-        path
-        #endif
+    /// Which file is at `path` (a symbolic link itself), nil when there is none. The file system decides which names are the same
+    /// one: macOS's takes no notice of case, as Unicode folds it, nor of how a letter is composed.
+    private static func file(at path: String) -> [UInt64]? {
+        var st = stat()
+        return lstat(path, &st) == 0 ? [UInt64(truncatingIfNeeded: st.st_dev), UInt64(truncatingIfNeeded: st.st_ino)] : nil
     }
 
     private static func copyResources(_ resources: [CargoResource], to resourcesRoot: URL, reserved: Set<String>, work: URL, inputs: [String: URL],
@@ -162,18 +164,20 @@ public enum CargoBundler {
             if sources.isEmpty {
                 throw XlessError(.build, "\(key).from '\(resource.from)' matches nothing", fix: "check the pattern, and that the input is the revision that has these files")
             }
-            var seen = Set<String>()
+            var seen = Set<[UInt64]>()
             for (source, name) in sources {
                 let dest = (keepsName ? resourcesRoot.appendingPathComponent(resource.to).appendingPathComponent(name) : resourcesRoot.appendingPathComponent(resource.to)).standardizedFileURL
-                guard dest.path.hasPrefix(root + "/"), !reserved.contains(fileKey(dest.path)) else {
-                    throw XlessError(.build, "\(key).to '\(resource.to)' would overwrite the bundle's own files or leave the bundle", fix: "name a location inside the bundle's resources, e.g. Licenses/")
-                }
-                guard seen.insert(fileKey(dest.path)).inserted else {
+                let overwrites = XlessError(.build, "\(key).to '\(resource.to)' would overwrite the bundle's own files or leave the bundle", fix: "name a location inside the bundle's resources, e.g. Licenses/")
+                guard dest.path.hasPrefix(root + "/"), !reserved.contains(dest.path) else { throw overwrites }
+                if let there = file(at: dest.path), seen.contains(there) {
                     throw XlessError(.build, "\(key).from '\(resource.from)' has two matches that land on \(dest.lastPathComponent)", fix: "narrow the pattern")
                 }
                 try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? fm.removeItem(at: dest)
                 try fm.copyItem(at: source.resolvingSymlinksInPath(), to: dest)
+                if let copied = file(at: dest.path) { seen.insert(copied) }
+                // The bundle's own files come after the resources, so none of them is there yet.
+                guard !reserved.contains(where: { file(at: $0) != nil }) else { throw overwrites }
             }
         }
     }
