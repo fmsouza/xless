@@ -80,7 +80,12 @@ public final class ProjectRun {
         xself = context.xless
         let home = environment["HOME"] ?? NSHomeDirectory()
         files = RunFiles(host: host, home: home)
-        environmentFile = value(of: "XLESS_TESTFLIGHT_ENV", in: context.environment) ?? "\(home)/.config/xless/testflight.env"
+        environmentFile = Self.environmentFile(context.environment)
+    }
+
+    /// $XLESS_TESTFLIGHT_ENV, else ~/.config/xless/testflight.env.
+    public static func environmentFile(_ environment: [String: String]) -> String {
+        value(of: "XLESS_TESTFLIGHT_ENV", in: environment) ?? "\(environment["HOME"] ?? NSHomeDirectory())/.config/xless/testflight.env"
     }
 
     /// Runs it, to its exit code: xless's (2 for a usage or configuration error of the run itself).

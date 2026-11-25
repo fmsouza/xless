@@ -72,6 +72,28 @@ run unlock --remember 5m; ok unlock; says unlock "nothing to do"
 run lock; ok lock; says lock "nothing to do"
 run passwd; refused passwd "is for the encrypted vault"
 
+# a testflight.env: data, whose secrets go into the store (one that is there already stays), and which is not changed
+openssl ecparam -name prime256v1 -genkey -noout -out "$t/ec.pem" 2>/dev/null
+openssl pkcs8 -topk8 -nocrypt -in "$t/ec.pem" -out "$t/asc.p8" 2>/dev/null
+openssl genrsa -out "$t/devid.pem" 2048 2>/dev/null
+printf '# keys\nASC_KEY_ID=KEY1234567\nASC_ISSUER_ID=69a6de7e-1234-47e3-e053-5b8c7c11a4d1\nASC_KEY_P8_FILE=%s/asc.p8  # the key\nexport XLESS_DEVID_KEY_FILE="$HOME/../devid.pem"\nXLESS_DEMO_PASSWORD_FILE=%s/password\nXLESS_IMAGE=img\n' "$t" "$t" > "$t/testflight.env"
+cp "$t/testflight.env" "$t/testflight.env.before"
+run import-env "$t/testflight.env"; ok import-env
+says import-env "imported ASC_KEY_P8 (asc-api-key)"; says import-env "imported XLESS_DEVID_KEY (signing-key)"
+says import-env "the store has XLESS_DEMO_PASSWORD already"; says import-env "not moved: XLESS_IMAGE "
+says import-env "remove the lines of ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_FILE, XLESS_DEVID_KEY_FILE, XLESS_DEMO_PASSWORD_FILE$"
+says import-env "asc.p8 still holds the secret" err
+cmp -s "$t/asc.p8" "$t/pw/xless/ASC_KEY_P8/secret.gpg" && cmp -s "$t/devid.pem" "$t/pw/xless/XLESS_DEVID_KEY/secret.gpg" || fail "import-env kept something else"
+cmp -s "$t/testflight.env" "$t/testflight.env.before" || fail "import-env changed the file"
+run materialize --check sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DEVID_KEY; ok "the store gives what the file did"
+run import-env "$t/testflight.env" --team-id ABCDE12345; ok "import-env of a team"; says "import-env of a team" "imported XLESS_DEVID_KEY@ABCDE12345"
+printf 'XLESS_DIST_KEY_FILE=%s/x\nA=$(touch %s/ran)\n' "$t" "$t" > "$t/testflight.env"
+run import-env "$t/testflight.env"; refused "import-env of commands" "line 2 would run a command"
+[[ ! -e "$t/ran" ]] || fail "import-env ran the file"
+printf 'XLESS_INSTALLER_KEY_FILE=%s/password\n' "$t" > "$t/testflight.env"
+run import-env "$t/testflight.env"; refused "import-env of something else" "XLESS_INSTALLER_KEY ($t/password): the file is not an RSA private key"
+for n in ASC_KEY_P8 XLESS_DEVID_KEY ASC_KEY_P8@ABCDE12345 XLESS_DEVID_KEY@ABCDE12345 XLESS_DEMO_PASSWORD@ABCDE12345; do run rm "$n" --yes; ok "rm $n"; done
+
 run rm XLESS_DEMO_PASSWORD --yes; ok rm
 [[ ! -e "$t/pw/xless/XLESS_DEMO_PASSWORD" ]] || fail "rm left the entry in pass"
 

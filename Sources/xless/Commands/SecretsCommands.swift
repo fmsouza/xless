@@ -34,7 +34,7 @@ struct SecretsCommand: AsyncParsableCommand {
         helper (xless-credential-<name> on PATH: your desktop keyring through secret-tool, pass, …) holds the secrets \
         instead, and these commands work on it the same way (docs/secrets.md).
         """,
-        subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self,
+        subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self, SecretsImportEnvCommand.self,
                       SecretsExportCommand.self, SecretsRmCommand.self, SecretsUnlockCommand.self, SecretsLockCommand.self,
                       SecretsPasswdCommand.self, SecretsMaterializeCommand.self, SecretsNamedByCommand.self, SecretsRedactCommand.self])
 }
