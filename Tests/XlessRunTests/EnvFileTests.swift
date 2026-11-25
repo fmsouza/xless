@@ -43,6 +43,29 @@ private func problem(_ text: String) -> EnvFile.Problem? {
     #expect(problem("A=hunter2; x")?.what.contains("hunter2") == false)
 }
 
+/// A problem is said with the line and the variable being set, and nothing of what follows the `=`: it may be a password.
+@Test(arguments: ["\"hunter$SecretTail9\"", "Pa$SecretTail", "Pa$5SecretTail", "\"Pa$5SecretTail\"", "x${SecretTail", "x${SecretTail}", "\"x${SecretTail-y}\"", "x$(SecretTail)", "x`SecretTail`",
+                  "'SecretTail", "\"SecretTail", "SecretTail more", "a;SecretTail", "SecretTail&", "~SecretTail", "x:~SecretTail", "$'SecretTail'", "$\"SecretTail\"", "$$SecretTail", "\"$@SecretTail\"", "$[SecretTail]"])
+func aProblemNeverSaysAnyPartOfAValue(value: String) throws {
+    for prefix in ["", "export "] {
+        let p = try #require(problem("A=1\n\(prefix)MY_PASSWORD=\(value)\n"), "\(value)")
+        #expect(p.line == 2 && p.what.contains("MY_PASSWORD") != p.what.contains("quote that is not closed"))
+        for part in ["Secret", "Tail", "hunter", "Pa", "5", ";", "&", "more"] { #expect(!p.what.contains(part), "\(value): \(p.what)") }
+    }
+    // a wrapped key's line looks like a name: it is not said either
+    #expect(problem("KEY=MIGTAgEA\nBG1SecretTail=$x\n")?.what.contains("Secret") == false)
+}
+
+/// What a shell does more than this with, is refused: never read as something else.
+@Test func whatAShellReadsInAnotherWayIsRefused() throws {
+    for text in ["A=$'a\\tb'", "A=$\"a\"", "A=$$", "A=$?", "A=$@", "A=$*", "A=$#", "A=$!", "A=$-", "A=$1", "A=\"$$\"", "A=\"$?\"", "A=\"$1\"", "A=$[1]", "A=~user/x", "A=~+", "A=~-/x", "A=x:~/y", "A=~:/x", "A=~/x:~"] {
+        #expect(problem(text)?.line == 1, "\(text)")
+    }
+    // and these stand for themselves in one, too
+    #expect(try read("A=\"a$\"\nB=a$\nC=\"$'x'\"\nD=a$/b$.c\nE='$$ $? ~x :~'\nF=\"~/x:~/y\"\nG=x~/y\nH=\\~/x\nI=a:\\~b\nJ=a\\$1\nK=~\nL=a$=b")
+            == ["A": "a$", "B": "a$", "C": "$'x'", "D": "a$/b$.c", "E": "$$ $? ~x :~", "F": "~/x:~/y", "G": "x~/y", "H": "~/x", "I": "a:~b", "J": "a$1", "K": "/home/u", "L": "a$=b"])
+}
+
 @Test func theLastAssignmentWinsAndEarlierOnesCanBeUsed() throws {
     #expect(try read("D=/k\nA=$D/a\nA=$A.b") == ["D": "/k", "A": "/k/a.b"])
     #expect(try read("P=a$", [:]) == ["P": "a$"])

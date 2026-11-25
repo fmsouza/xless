@@ -137,10 +137,15 @@ xless secrets import-env --team-id ABCDE12345  # ~/.config/xless/testflight.env,
 `import-env` reads the file as data (nothing in it is run) and imports what its variables name, with one passphrase: the
 App Store Connect API key (`ASC_KEY_P8_FILE`, with `ASC_KEY_ID` and `ASC_ISSUER_ID` or its `_FILE`), the three signing
 keys and `XLESS_DEMO_PASSWORD`, as `NAME@<TEAM_ID>` with `--team-id`, else `NAME`. Each is checked first as
-`xless secrets import` checks it, and one the store has already is left as it is. Then it offers to delete each key file,
-and says which lines of `testflight.env` have done their work and which it did not move (an image's name, a password
-under a name of your own): set those in the environment, or keep their lines. The file itself is not changed. The team
-goes into `teamID` of xless.yml or the overlay, the groups into its `testflight` block.
+`xless secrets import` checks it, and one the store has already is left as it is (the store's may be another one: it names
+those lines apart, to compare first). Then it offers to delete each key file, and says which lines of `testflight.env` have
+done their work and which it did not move (an image's name, a password under a name of your own): set those in the
+environment, or keep their lines. The file itself is not changed. The team goes into `teamID` of xless.yml or the overlay,
+the groups into its `testflight` block.
+
+A line that is not `NAME=value`, or whose value a shell would read in another way (a command, a `$` of something that is not
+set, `$'…'`, a `~` that is not `~/` at the start), is an error, for `xless run` too: with its number and the variable's name,
+and no part of the value. Put a value that is meant as it is, a password with a `$` say, in single quotes.
 
 The passphrase is read from the terminal (`/dev/tty`) only, never from a pipe, a file, an argument or the
 environment. A command that needs the store when it is locked and has no terminal (a script, `nohup`) stops with an

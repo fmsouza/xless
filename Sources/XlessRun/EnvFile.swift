@@ -2,7 +2,8 @@ import Foundation
 
 /// `~/.config/xless/testflight.env`, read as data: `NAME=value` lines as a shell writes them, never run by one. Comments,
 /// `export`, quotes, backslashes, a leading `~/` and `$NAME` or `${NAME}` mean what they do in a shell; anything that would
-/// run or redirect something is refused, with its line.
+/// run or redirect something, or that a shell reads in another way, is refused: with its line and the variable's name, and
+/// no part of its value, which may be a password.
 public enum EnvFile {
     public struct Problem: Error, Equatable {
         public let line: Int
@@ -53,7 +54,7 @@ public enum EnvFile {
                 environment[name] = value
                 skipBlanks()
                 if next == "#", at > 0, text[at - 1] == " " || text[at - 1] == "\t" { skipComment(); continue }
-                if let c = next, c != "\n" { throw Problem(line: line, what: "has more than the value of \(name)") }
+                if let c = next, c != "\n" { throw Problem(line: line, what: "has something after \(EnvFile.valueOf(name))") }
             }
             return out
         }
@@ -68,7 +69,8 @@ public enum EnvFile {
 
         mutating func value(of name: String) throws -> String {
             var out = String.UnicodeScalarView()
-            if next == "~", at + 1 >= text.count || ["/", "\n", " ", "\t"].contains(text[at + 1]) {
+            if next == "~" {
+                guard at + 1 >= text.count || ["/", "\n", " ", "\t"].contains(text[at + 1]) else { throw tilde(of: name) }
                 _ = take()
                 out.append(contentsOf: (environment["HOME"] ?? "~").unicodeScalars)
             }
@@ -90,9 +92,9 @@ public enum EnvFile {
                             let escaped = take()
                             if escaped != "\n" { out.append(escaped) }
                         } else if c == "$" {
-                            out.append(contentsOf: try variable(of: name).unicodeScalars)
+                            out.append(contentsOf: try variable(of: name, quoted: true).unicodeScalars)
                         } else {
-                            if c == "`" { throw Problem(line: line, what: "would run a command in the value of \(name)") }
+                            if c == "`" { throw runs(in: name) }
                             out.append(take())
                         }
                     }
@@ -103,31 +105,47 @@ public enum EnvFile {
                     guard next != nil else { break }
                     let escaped = take()
                     if escaped != "\n" { out.append(escaped) }
-                case "$": out.append(contentsOf: try variable(of: name).unicodeScalars)
-                case "`": throw Problem(line: line, what: "would run a command in the value of \(name)")
-                case ";", "&", "|", "<", ">", "(", ")": throw Problem(line: line, what: "has an unquoted \(c) in the value of \(name)")
+                case "$": out.append(contentsOf: try variable(of: name, quoted: false).unicodeScalars)
+                case "`": throw runs(in: name)
+                case ";", "&", "|", "<", ">", "(", ")":
+                    throw Problem(line: line, what: "has a character that means something to a shell in \(EnvFile.valueOf(name)) (put it in ' if it is meant as it is)")
+                case ":":
+                    out.append(take())
+                    if next == "~" { throw tilde(of: name) }
                 default: out.append(take())
                 }
             }
             return String(out)
         }
 
-        /// `$NAME` or `${NAME}`; a `$` before anything else stands for itself, as in a shell.
-        mutating func variable(of name: String) throws -> String {
+        func runs(in name: String) -> Problem { Problem(line: line, what: "would run a command in \(EnvFile.valueOf(name))") }
+        func tilde(of name: String) -> Problem {
+            Problem(line: line, what: "has a ~ that is not ~/ at the start in \(EnvFile.valueOf(name)) (put it in ' if it is meant as it is)")
+        }
+
+        /// `$NAME` or `${NAME}`; a `$` that means nothing to a shell stands for itself.
+        mutating func variable(of name: String, quoted: Bool) throws -> String {
             _ = take()
-            if next == "(" { throw Problem(line: line, what: "would run a command in the value of \(name)") }
+            if next == "(" { throw runs(in: name) }
             let braced = next == "{"
             if braced { _ = take() }
             let used = word()
-            if braced {
-                guard EnvFile.isName(used), next == "}" else { throw Problem(line: line, what: "uses more than a variable's name in the value of \(name)") }
-                _ = take()
-            } else if used.isEmpty { return "$" }
-            guard EnvFile.isName(used) else { throw Problem(line: line, what: "uses $\(used) in the value of \(name)") }
-            guard let value = environment[used] else { throw Problem(line: line, what: "uses \(used), which is not set") }
-            return value
+            if !braced, used.isEmpty {
+                // its special parameters, its other quotes and its old arithmetic
+                let means: [Unicode.Scalar] = ["@", "*", "#", "?", "-", "$", "!", "["] + (quoted ? [] : ["'", "\""])
+                guard let c = next, means.contains(c) else { return "$" }
+            } else if EnvFile.isName(used), !braced || next == "}", let value = environment[used] {
+                if braced { _ = take() }
+                return value
+            }
+            throw Problem(line: line, what: "has a $ of something that is not set, or not a variable, in \(EnvFile.valueOf(name)) (put it in ' if it is meant as it is)")
         }
     }
+
+    /// `name`, when it is a variable's as they are usually written: what a line of a wrapped key looks like is never said.
+    public static func shown(_ name: String) -> String? { name.wholeMatch(of: /[A-Z_][A-Z0-9_]{0,47}/) == nil ? nil : name }
+
+    fileprivate static func valueOf(_ name: String) -> String { shown(name).map { "the value of \($0)" } ?? "its value" }
 
     static func isName(_ text: String) -> Bool { text.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*/) != nil }
 }
