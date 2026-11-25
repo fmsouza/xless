@@ -308,6 +308,26 @@ private func revived(_ bound: AgentDirectory.Bound, in directory: AgentDirectory
     _ = box
 }
 
+@Test func whatCouldNotBeToldToDropStaysUnreached() throws {
+    let (box, directory) = sharedDirectory()
+    try directory.prepare()
+    let c = client(directory)
+    chmod(directory.path, 0o755)
+    c.drop(prefix: "a")
+    #expect(c.unreached?.kind == .unsafePath)
+    chmod(directory.path, 0o700)
+    c.drop(prefix: "a")
+    #expect(c.unreached?.kind == .unsafePath)
+    _ = box
+}
+
+@Test func nobodyIsToldToKillAProcessUnseen() {
+    let known = AgentUnanswered(pid: 4242, path: "/d/a.sock"), unknown = AgentUnanswered(pid: 0, path: "/d/a.sock")
+    #expect(known.fix.contains("ps -p 4242"))
+    #expect(known.fix.contains("xless __agent"))
+    #expect(unknown.fix.contains("pkill -9 -f 'xless __agent'"))
+}
+
 // MARK: agents that do not answer
 
 /// Listens in the agents' directory and never answers (a stopped agent).

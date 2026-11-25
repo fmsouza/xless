@@ -23,7 +23,11 @@ public struct AgentUnanswered: Sendable, Equatable {
     public init(pid: Int32, path: String) { self.pid = pid; self.path = path }
 
     public var cause: String { "an xless agent (\(pid > 0 ? "process \(pid), " : "")\(path)) does not answer: what it holds may still be held" }
-    public var fix: String { "end it (`\(pid > 0 ? "kill -9 \(pid)" : "pkill -9 -f 'xless __agent'")`), then run `xless lock`" }
+    public var fix: String {
+        // By the time it is read the process may have ended, and its pid be another one's.
+        let end = pid > 0 ? "if `ps -p \(pid) -o args=` still says `xless __agent`, end it (`kill -9 \(pid)`)" : "end every agent of yours (`pkill -9 -f 'xless __agent'`)"
+        return "\(end), then run `xless lock`"
+    }
 }
 
 /// What `lockAll` came to.
@@ -74,7 +78,7 @@ public final class AgentClient: @unchecked Sendable {
     /// Why an agent that is there could not be used, the last time one was looked for.
     public var problem: AgentError? { lock.withLock { lastProblem } }
 
-    /// Why not every agent could be told what to drop, the last time (`drop`).
+    /// Why not every agent could be told what to drop (`drop`), the first time that was so.
     public var unreached: AgentError? { lock.withLock { lastUnreached } }
 
     private var deadline: Int64 { xless_clock_awake_ms() + Int64(timeout) }
@@ -194,7 +198,7 @@ public final class AgentClient: @unchecked Sendable {
         } catch {
             failure = error as? AgentError
         }
-        lock.withLock { lastUnreached = failure }
+        lock.withLock { lastUnreached = lastUnreached ?? failure }
         return count
     }
 
