@@ -104,6 +104,77 @@ import XlessCore
         }
     }
 
+    /// On a Mac the build has no secret in any process of its own, as in containers.
+    @Test func nativelyOnAMacTheBuildAndTheSignatureAreTwo() throws {
+        let secrets = try home.files()
+        let host = FakeRunHost(isMac: true, answer: home.answer())
+        #expect(try home.run([home.project, "--build-number", "7"], docker: false, host: host, environment: secrets, session: "/agent") == 0)
+        let ships = host.allSteps.filter { $0.words.contains("ship") }
+        try #require(ships.count == 2)
+        #expect(ships[0].words == ["xless", "ship", "--platform", "ios", "--from", "build", "--to", "finalize", "--build-number", "7"])
+        #expect(secretsIn(ships[0], secrets).isEmpty && ships[0].environment["XLESS_NO_SECRET_STORE"] == "1" && ships[0].directory == home.project)
+        #expect(ships[1].words == ["xless", "ship", "--project", home.project, "--platform", "ios", "--from", "sign", "--to", "upload", "--build-number", "7"])
+        #expect(ships[1].directory == "/" && ships[1].environment["XLESS_DIST_KEY"] == "DIST-VALUE" && ships[1].environment["XLESS_SESSION"] == "/agent")
+        #expect(ships[1].environment["XLESS_NO_SECRET_STORE"] == nil)
+        // without a build, or without a signature, it is one
+        for (arguments, words) in [(["--from", "package"], ["xless", "ship", "--platform", "ios", "--from", "package"]), (["--to", "finalize"], ["xless", "ship", "--platform", "ios", "--to", "finalize"])] {
+            let one = FakeRunHost(isMac: true, answer: home.answer())
+            #expect(try home.run([home.project] + arguments, docker: false, host: one, environment: secrets, session: "/agent") == 0)
+            #expect(one.allSteps.filter { $0.words.contains("ship") }.map(\.words) == [words])
+        }
+        // a build that fails is the end of it
+        let failing = FakeRunHost(isMac: true, answer: home.answer { $0.words.contains("ship") ? (12, "") : nil })
+        #expect(try home.run([home.project], docker: false, host: failing, environment: secrets, session: "/agent") == 12)
+        #expect(failing.allSteps.filter { $0.words.contains("ship") }.count == 1)
+    }
+
+    @Test func onAMacAConfigurationThatTheBuildChangedIsNotSigned() throws {
+        for change in ["written", "link"] {
+            let home = try RunHome(), file = "\(home.project)/xless.yml"
+            let host = FakeRunHost(isMac: true, answer: home.answer { step in
+                if step.words.contains("finalize") {
+                    let text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+                    if change == "link" {
+                        try? text.write(toFile: file + ".other", atomically: true, encoding: .utf8)
+                        try? FileManager.default.removeItem(atPath: file)
+                        try? FileManager.default.createSymbolicLink(atPath: file, withDestinationPath: file + ".other")
+                    } else { try? (text + "bundleID: app.other\n").write(toFile: file, atomically: true, encoding: .utf8) }
+                }
+                return nil
+            })
+            #expect(try home.run([home.project], docker: false, host: host, environment: home.files(), session: "/agent") == 2)
+            #expect(host.allSteps.filter { $0.words.contains("ship") }.count == 1)
+            #expect(host.lines.contains { $0.contains("xless.yml is not what it was when this run began, so nothing is signed") })
+        }
+    }
+
+    @Test func onAMacWhatANativeRunNeedsIsThereBeforeAnythingIsAsked() throws {
+        struct Asked: Error {}
+        for (mac, docker, arguments, expected) in [(true, false, ["--to", "finalize"], ["- false"]), (true, false, [], ["- true"]), (true, true, ["--to", "finalize"], []),
+                                                   (false, false, ["--to", "finalize"], []), (true, false, ["--dry-run"], [])] as [(Bool, Bool, [String], [String])] {
+            let notes = Notes()
+            _ = try home.run([home.project] + arguments, docker: docker, host: FakeRunHost(isMac: mac, answer: home.answer()), environment: home.files(), session: "/agent",
+                             prepareMac: { pin, signs in notes.add("\(pin ?? "-") \(signs)") })
+            #expect(notes.lines == expected)
+        }
+        let host = FakeRunHost(isMac: true, answer: home.answer())
+        #expect(throws: Asked.self) { try home.run([home.project], docker: false, host: host, prepareMac: { _, _ in throw Asked() }) }
+        #expect(host.allSteps.isEmpty && host.became == nil)
+    }
+
+    @Test func aProjectIsBuiltForTheSimulatorOnAMacNatively() throws {
+        let host = FakeRunHost(isMac: true, answer: home.answer())
+        #expect(try home.run([home.project, "--destination", "simulator"], docker: false, host: host, environment: home.files()) == 0)
+        let ship = try #require(host.allSteps.last)
+        #expect(ship.words == ["xless", "ship", "--platform", "ios", "--destination", "simulator"])
+        #expect(ship.environment["XLESS_NO_SECRET_STORE"] == "1" && ship.environment["XLESS_DIST_KEY"] == nil)
+        for (mac, docker) in [(true, true), (false, false), (false, true)] {
+            let other = FakeRunHost(isMac: mac, answer: home.answer())
+            #expect(try home.run([home.project, "--destination", "simulator"], docker: docker, host: other, environment: home.files()) == 2)
+            #expect(other.lines.contains { $0.contains("--destination simulator needs --config") })
+        }
+    }
+
     @Test func theStoresSecretsGoContainerByContainer() throws {
         let home = home
         let left = Notes()

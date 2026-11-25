@@ -22,7 +22,7 @@ private func stop(_ body: () throws -> Void) -> RunStop? {
 
 @Test func argumentsThatMeanNothingAreUsageErrors() {
     for bad in [[], ["--dry-run"], ["--config"], ["--config", "o.yml", "proj"], ["proj", "--config", "o.yml"], ["proj", "--config=o.yml"],
-                ["--platform"], ["--platform", "tvos", "p"], ["--destination", "tv", "p"], ["p", "--platform", "macos"], ["p", "--destination", "simulator"]] {
+                ["--platform"], ["--platform", "tvos", "p"], ["--destination", "tv", "p"], ["p", "--platform", "macos"]] {
         let e = stop { _ = try RunRequest.parse(bad) }
         #expect(e?.code == 2 && e?.message?.hasPrefix("testflight: ") == true, "\(bad)")
     }
