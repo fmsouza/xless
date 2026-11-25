@@ -20,7 +20,7 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releas
 │   → xtool, rcodesign and the Xcode's open-source Swift, pinned downloads   │
 │   → xtool (open source) unpacks the SDK from the .xip; installed for Swift │
 │ xless setup --docker --xcode Xcode_27.xip         (or: the images)         │
-│   → images xless-base, xless, xless-tauri, xless-rn (:local-<arch>…)       │
+│   → the image xless:local-<arch>-xcode<version>                           │
 └───────────────────────────────────────────────────────────────────────────┘
 ┌─ every build ─────────────────────────────────────────────────────────────┐
 │ xless run <project-dir>                           (native)                 │
@@ -32,12 +32,13 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releas
 
 - **The native install.** `xless setup` installs the toolset and the SDK under your home directory, with no Docker
   ([native-install.md](native-install.md)). It builds `xless.yml` projects.
-- **The images.** `xless setup --docker` builds them from the `.xip` ([images.md](images.md) shows each step, for building them
-  by hand). `xless-base` holds xless, xtool and rcodesign; `xless` adds the Darwin SDK and the open-source Swift
+- **The image.** `xless setup --docker` builds one per Xcode and architecture from the `.xip`, for example
+  `xless:local-arm64-xcode26.2` ([images.md](images.md) shows each step, for building it by hand). It holds xless, xtool,
+  rcodesign, Swift Build, replacements of the Xcode tools a build calls, the Darwin SDK and the open-source Swift
   release whose version matches that Xcode's Swift (6.4.2 for 27.2, 6.4 for 27.1 and 27.0, 6.3.3 for 26.6, 6.3.2 for 26.5, 6.3.1 for 26.4.1, 6.3 for 26.4, 6.2.4 for 26.3, 6.2.3 for 26.2, 6.2.1 for 26.1.1 and 26.1, 6.2 for 26.0.1; Apple's own toolchain is never in
-  an image); `xless-tauri` adds Node, pnpm and Rust; `xless-rn` adds Ruby, Bundler, Swift Build, Hermes and the Xcode
-  tool replacements a React Native build calls. They are tagged `<image>:local-<arch>-xcode<version>` (for
-  example `xless:local-arm64-xcode26.2`), and also plain `<image>:local-<arch>` for Xcode 27.0, the default.
+  an image). Node, Rust, Ruby and Hermes are not in it: the two **kits**, `…-tauri` and `…-react-native`, are small images on
+  top of it that `xless run` builds when an app needs one, and a project can name an image of its own (`image:`).
+  A run uses the image of the Xcode the project pins (`xcode:`), and without a pin the image of the newest Xcode there is one of.
 - **`xless run`** runs a build, natively or, with `--docker`, in those images (`xless docker` is `xless run --docker`).
   With a project directory (an `xless.yml` project) it runs `xless ship` in one process or container. With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs three containers,
   so that the app's own build code never runs next to a signing key ([signing-and-testflight.md](signing-and-testflight.md#the-three-step-split)).

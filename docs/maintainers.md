@@ -21,23 +21,23 @@ VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except
 
 ## Building the images on the Mac
 
-On Linux, `xless setup --docker` builds the images ([images.md](images.md)). On the Mac, from a checkout:
+`xless setup --docker` builds the image of a release ([images.md](images.md)). On the Mac, from a checkout:
 
 ```sh
 make images XCODE=/Applications/Xcode.app            # or XCODE=<Xcode_*.xip>, ARCHS=arm64 for one architecture
+make kits                                            # KITS=tauri,react-native, the Dockerfiles of the checkout
 ```
 
-`make images` (`scripts/build-images.sh`) builds the whole chain (`xless-base`, `xless`, `xless-tauri`, `xless-rn`)
-from one Xcode, tags it `:local-<arch>-xcode<version>-<build>` and `:local-<arch>-xcode<version>` (plus the plain
-`:local-<arch>` tags for `versions.env`'s default Xcode), and keeps the SDK export in `dist/sdk-xcode<version>/`
-(git-ignored). A `.xip` is expanded once with Apple's `xip --expand` into `~/.cache/xless/xcode/<name>/`. Unlike
-`xless setup`, `xless-base` gets an `xless` compiled from the checkout.
+`make images` (`scripts/build-images.sh`) builds `xless:local-<arch>-xcode<version>` from one Xcode and keeps the SDK
+export in `dist/sdk-xcode<version>/` (git-ignored). A `.xip` is expanded once with Apple's `xip --expand` into
+`~/.cache/xless/xcode/<name>/`. Unlike `xless setup`, the image gets an `xless` compiled from the checkout.
 
-The single targets: `make base-local` (`xless-base`), `make sdk-export` (`xless sdk export`: `xtool sdk build` inside
-the per-arch base image with Xcode mounted read-only, into `dist/sdk/`), `make sdk-local`, `make tauri-local`,
-`make rn-local`. They take `ARCHS`, `IMAGE_SUFFIX` and `SDK_DIR`; each image is built by `scripts/docker-images.sh`,
-the same recipe `xless setup` uses. Every download (the static Swift SDK, xtool, rcodesign, Node, rustup, Ruby, Swift
-Build, Hermes) is sha256-pinned in `versions.env`, the single place for versions.
+`make sdk-export` is the export alone (`xless sdk export`: `xtool sdk build` in `xless:local-<arch>-setup`, with Xcode
+mounted read-only, into `dist/sdk/`). The images are built by `scripts/docker-images.sh`, the same recipe `xless setup`
+uses, and the kits by `xless setup --docker --with`, so a kit of the checkout has the labels a run looks for. Every
+download of the image (the static Swift SDK, xtool, rcodesign, Swift Build) is sha256-pinned in `versions.env`; those of
+the kits (Node, rustup, Ruby, Bundler, Hermes) in `docker/tauri/Dockerfile` and `docker/react-native/Dockerfile`, which
+are complete by themselves so that a person can start from a copy.
 
 The Docker VM must be able to see Xcode. Colima: `colima start --mount /Applications:r --mount $HOME:w`. Docker
 Desktop does not share `/Applications`; make an APFS clone under your home directory (cheap, copy-on-write) and point
@@ -58,10 +58,10 @@ They compare what xless builds with what Xcode builds from the same sources.
 
 | Command | Where | What it checks |
 |---|---|---|
-| `make test-rn-linux` | Docker | `samples/HelloRN` through `finalize` in `xless-rn`, against the Mac reference in `samples/HelloRN/reference/` ([react-native.md](react-native.md#linux-parity-test)) |
+| `make test-rn-linux` | Docker | `samples/HelloRN` through `finalize` in the React Native kit, against the Mac reference in `samples/HelloRN/reference/` ([react-native.md](react-native.md#linux-parity-test)) |
 | `make test-tauri-linux` | Docker | `samples/HelloTauri`, iOS (and `--platform macos`), against `samples/HelloTauri/reference/` ([tauri.md](tauri.md#linux-parity-test)) |
 | `ARCH=amd64 make test-rn-linux` (`test-tauri-linux`) | Docker | The same in the amd64 images |
-| `scripts/arch-compare.sh <app-a> <app-b>` | anywhere | An app built in the arm64 chain against one built in the amd64 chain: byte for byte outside the code signature |
+| `scripts/arch-compare.sh <app-a> <app-b>` | anywhere | An app built in the arm64 image against one built in the amd64 image: byte for byte outside the code signature |
 | `make parity` | Mac | HelloShip built by Xcode against the xless build: Info.plist keys, `LC_BUILD_VERSION`, files, `Assets.car` ([research/parity-known-gaps.md](research/parity-known-gaps.md)) |
 | `make ib-parity` | Mac | The storyboard compiler: golden drift, and a simulator screenshot of a launch screen compiled both ways |
 | `make rn-reference`, `make tauri-reference APP=… OUT=…` | Mac | Record the references the Linux tests compare with |
@@ -80,32 +80,33 @@ xless accepts only the Xcode releases it has measured. Adding one takes, on a Ma
    Apple's and the highest patch not above it; for a release other than `SWIFT_VERSION`, its
    `SWIFT_TOOLCHAIN_<x_y_z>_*` download pins. `scripts/xcode-swift.sh <B>` checks the entry and prints what is missing.
 3. **The `TARGET_OS_*` macros:** `scripts/target-os-macros.sh <Xcode.app> > docker/toolchain/target-os/<B>.txt`. The
-   `sdk` image build fails without this file.
+   image build fails without this file.
 4. **The asset and storyboard tools profile:** `scripts/xcode-tools.sh <B>` prints the commands. With
    `DEVELOPER_DIR=<Xcode.app>/Contents/Developer`, run `scripts/assetkit-golden.sh`, `scripts/ib-golden.sh` and
    `scripts/copypng-golden.sh`, compare their outputs with the measured builds
    ([research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)), and add the entry to
    `Sources/XlessCore/XcodeToolsProfile.swift`.
 5. **The references and the tests:** `make images XCODE=…`, then `make rn-reference` and `make tauri-reference` with
-   that Xcode, `make test-rn-linux` and `make test-tauri-linux` in its images, and `xless setup --xcode <the .xip>` on
+   that Xcode, `make kits`, `make test-rn-linux` and `make test-tauri-linux` in its images, and `xless setup --xcode <the .xip>` on
    Linux.
 
 ## Private registries
 
 Images hold Apple's SDK, so they are never published. If you need them on other machines (a CI runner, a build
-server), push them only to a registry that you have checked is private:
+server), build them there (`xless setup --docker --sdk <dir>`, from a copy of the SDK export), or push them only to a
+registry that you have checked is private. xless has no command or make target that pushes; by hand:
 
 ```sh
 cp registry.env.example registry.env     # set XLESS_REGISTRY; then XLESS_REGISTRY_PRIVATE=true once you have verified it is private
-make base-push sdk-export sdk-push
+r=$(scripts/check-private-registry.sh) &&
+  docker tag xless:local-arm64-xcode27.0 "$r/xless:xcode27.0" && docker push "$r/xless:xcode27.0"
 ```
 
-- `make base-push` builds and pushes `<registry>/xless-base:v<version>` for arm64 and amd64, with `xless`
-  cross-compiled by Swift's static Linux SDK. The base image never contains SDK files.
-- `make sdk-push` builds the SDK image on top of it, `<registry>/xless:xcode<version>-<build>-v<version>`, and pushes
-  it. Both refuse to push unless `registry.env` sets `XLESS_REGISTRY_PRIVATE=true`; `scripts/check-private-registry.sh`
-  also refuses Docker Hub (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and bare names such as
-  `myuser`, which Docker would push to Docker Hub).
+- `scripts/check-private-registry.sh` refuses unless `registry.env` sets `XLESS_REGISTRY_PRIVATE=true`, and refuses
+  Docker Hub (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and bare names such as `myuser`, which
+  Docker would push to Docker Hub).
+- A machine that pulls it uses it as `docker tag <registry>/xless:xcode27.0 xless:local-arm64-xcode27.0`: `xless run` looks
+  for that name, checks the image's labels, and never pulls.
 - On a machine with a native install, `xless sdk install --image <registry>/xless:<tag>` installs the SDK from such
   an image (`docker login <registry>` first; [native-install.md](native-install.md)).
 - [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow that runs such an image as the job

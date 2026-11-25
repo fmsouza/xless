@@ -7,7 +7,7 @@ jobs:
   ship:
     runs-on: ubuntu-latest
     container:
-      image: ${{ vars.XLESS_IMAGE }}           # e.g. ghcr.io/you/xless:xcode27.0-27A266a-v0.1.0 (private)
+      image: ${{ vars.XLESS_IMAGE }}           # e.g. ghcr.io/you/xless:xcode27.0 (private)
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.XLESS_REGISTRY_TOKEN }}

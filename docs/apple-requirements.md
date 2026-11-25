@@ -34,7 +34,7 @@ of which nothing is kept unless you say so ([xcode-download.md](xcode-download.m
 xless identifies the file by its SHA-256 (recorded in `versions.env` for each download it has been checked against),
 so renaming it changes nothing, and refuses any other file with the list of supported versions. An already unpacked
 `Xcode.app` is accepted too, identified by its `Contents/version.plist`. The `.xip` is unpacked by
-[xtool](https://github.com/xtool-org/xtool), which is open source, inside the `xless-base` image; Apple's `xip` tool
+[xtool](https://github.com/xtool-org/xtool), which is open source, inside an image without any Apple file; Apple's `xip` tool
 is not used.
 
 ## From `Xcode.xip`
@@ -42,8 +42,8 @@ is not used.
 `xless setup` runs `xtool sdk build` on the `.xip`, which writes a Darwin SDK bundle (`darwin.xtoolsdk`, about 3 GB)
 into `~/.cache/xless/sdk/xcode<version>-<build>/<arch>/`; xtool unpacks the `.xip` there first, so that directory
 peaks at about 15 GB. That bundle, and the metadata read from it, is all xless takes from the download. A native setup installs it for
-Swift under your home directory ([native-install.md](native-install.md)); with `--docker` it goes into the `xless`
-image and from there into the images built on it.
+Swift under your home directory ([native-install.md](native-install.md)); with `--docker` it goes into the
+xless image, and is in the images built on that.
 
 | File or tree (inside the Xcode bundle) | Used by | Why there is no open replacement |
 |---|---|---|
@@ -51,7 +51,7 @@ image and from there into the images built on it.
 | `iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk`: headers, `.tbd` link stubs, module maps, Swift module interfaces | every iOS build: SwiftPM through xtool (`xless build`), Swift Build (React Native), cargo and Swift (Tauri) | These files define Apple's iOS APIs. The open-source Swift toolchains do not include any Apple platform SDK. |
 | `MacOSX.platform/Developer/SDKs/MacOSX.sdk` | macOS builds (SwiftPM `xless.yml` apps, the Tauri DMG) | The same, for macOS. |
 | `iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk` | React Native simulator builds (`--destination simulator`) | The same, for the iOS Simulator. |
-| The default toolchain's `usr/lib/swift` and `usr/lib/swift_static`: Swift's shims, C++ interoperability overlays, compatibility and back-deployment libraries for Apple platforms | Swift compiles and links for iOS and macOS (`docker/Dockerfile.sdk` keeps them as the SDK bundle's Swift resource directory) | They belong to the SDK: its Swift module interfaces are built against these files, so both must come from the same Xcode. |
+| The default toolchain's `usr/lib/swift` and `usr/lib/swift_static`: Swift's shims, C++ interoperability overlays, compatibility and back-deployment libraries for Apple platforms | Swift compiles and links for iOS and macOS (`docker/Dockerfile` keeps them as the SDK bundle's Swift resource directory) | They belong to the SDK: its Swift module interfaces are built against these files, so both must come from the same Xcode. |
 | The default toolchain's `usr/lib/clang/<version>/lib/darwin/libclang_rt.*.a`: compiler runtime libraries for Apple targets | every link for iOS and macOS (for example `@available` checks call into it) | Open-source LLVM releases for Linux do not ship the Darwin builds of compiler-rt. |
 | Each SDK's `SDKSettings.json` and `System/Library/CoreServices/SystemVersion.plist`, and each platform's `Info.plist` | `ToolchainMetaCollector` writes `toolchain-meta.json` from them; `finalize` stamps them into the app's Info.plist (`DTSDKName`, `DTSDKBuild`, `DTPlatformVersion`, `DTPlatformBuild`, `DTXcode`, `DTXcodeBuild`) and every binary's `LC_BUILD_VERSION` | App Store Connect checks that an app names the SDK and Xcode it was built with. The values describe Apple's SDK, so they can only come from it. |
 | `Contents/version.plist` (an `Xcode.app` only) | `XcodeSource` identifies an unpacked `Xcode.app` by its build | A `.xip` is identified by its hash instead. |
@@ -170,12 +170,11 @@ classes:
 | `Sources/xless/Commands/ShimCommands.swift` | 13, 35, 37, 154, 231, 232, 236 | Replacement |
 | `Sources/xless/Commands/TauriCommands.swift` | 33, 48, 59 | Maintainer (`xless tauri compare --assets-only`) |
 | `ThirdParty/AssetKit/Sources/AssetKit/CAR/KeyFormat.swift` | 6 | Text |
-| `docker/Dockerfile.rn` | 127, 128, 129 | Text |
-| `docker/Dockerfile.rn` | 136, 140, 142, 144 | Replacement (installs the `PlistBuddy` stand-in and checks the stand-ins answer) |
-| `docker/Dockerfile.tauri` | 51 | Replacement (the image build asks the `xcrun` stand-in for the SDK path) |
-| `docker/shims/rn/lipo`, `docker/shims/rn/otool` | 2 | Replacement |
-| `docker/shims/rn/xcodebuild` | 2 | Text |
-| `docker/shims/rn/xcodebuild` | 10 | Replacement |
+| `docker/Dockerfile` | 322, 323, 324 | Text |
+| `docker/Dockerfile` | 333, 335, 337, 339, 341 | Replacement (installs the `PlistBuddy` stand-in and checks the stand-ins answer) |
+| `docker/shims/lipo`, `docker/shims/otool` | 2 | Replacement |
+| `docker/shims/xcodebuild` | 2 | Text |
+| `docker/shims/xcodebuild` | 10 | Replacement |
 | `docker/shims/xcrun` | 2 | Replacement |
 
 No hit outside these classes: the user path (install, `xless setup`, `xless run`, every build stage, signing,

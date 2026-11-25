@@ -37,7 +37,7 @@ build. The pages below go further.
   audit behind that list.
 - [xcode-download.md](xcode-download.md): `xless xcode download`, one terminal sign-in to Apple for any number of Xcode
   `.xip`s, and what happens to your Apple ID and password.
-- [images.md](images.md): the Docker images (`--docker`), and how to build each one by hand.
+- [images.md](images.md): the Docker image (`--docker`), the kits for Tauri, Cargo and React Native apps, an image of your own, and how to build it by hand.
 - [native-install.md](native-install.md): the native install `xless setup` makes (the default): what goes where, and its limits.
 - [uninstall.md](uninstall.md): `xless clean`, freeing disk space after an upgrade, and uninstalling.
 

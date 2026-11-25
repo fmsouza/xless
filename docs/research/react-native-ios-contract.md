@@ -10,6 +10,10 @@ Versions measured (all from the acceptance app's lockfiles, none chosen by xless
 pnpm 10.28.1 (corepack, from `packageManager`); image: Ruby 3.4.8, Bundler 2.7.2, Node 24.22.0, Ubuntu 22.04 arm64.
 Another Expo SDK or React Native minor is off-contract until re-measured.
 
+`xless-rn`, `xless-tauri` and `xless-base` below are the images of xless 0.10 and older, which these measurements ran in.
+What `xless-rn` held is now the xless image (Swift Build, the shims) and the `react-native` kit on it
+([images.md](../images.md)).
+
 ## Method
 
 A local script (not committed; it names the private app) runs one `xless-rn:local-arm64` container:
@@ -637,7 +641,7 @@ End-to-end (`scripts/xcode-pif-linux.sh`, G2 environment):
 
 Swift Build runs Xcode's tools by name (`actool`, `ibtool`, from `PATH`) and the CocoaPods / React Native / Expo / React
 Native Firebase build phases run `lipo`, `otool` (also through `xcrun`) and `/usr/libexec/PlistBuddy`. In the
-`xless-rn` image these are thin scripts (`docker/shims/rn`) that run `xless shim <tool>`; each implements exactly the
+`xless-rn` image these are thin scripts (`docker/shims`) that run `xless shim <tool>`; each implements exactly the
 command lines measured here and refuses anything else with exit 70 and the argv (the `XcrunShim` pattern), so an
 unmeasured call fails the build loudly instead of being guessed. Expected outputs were taken black-box from Xcode 27.0
 (27A266a) tools on our own inputs (`DEVELOPER_DIR=~/.cache/xless/Xcode.app/Contents/Developer`); argv shapes from
@@ -810,7 +814,7 @@ ExpoModulesJSI's nested package build forced to run (arm64 Colima VM, 8 CPUs):
 ### What each fix is for
 
 In build order. "xless" fixes are code with tests (`XlessXcode`, `XlessCore`, `XlessAssets`) and image changes
-(`docker/Dockerfile.rn`, `docker/shims/rn`); "env" fixes are build settings or environment that Task 8 sets.
+(`docker/Dockerfile`, `docker/react-native/Dockerfile`, `docker/shims`); "env" fixes are build settings or environment that Task 8 sets.
 
 **Swift packages** (xless: `xless xcode packages`). The extension of the acceptance app uses one remote package pinned
 to a revision. Each is cloned at its revision into a directory named by its identity, and its PIF dumped with
@@ -826,7 +830,7 @@ the checkout: with one root package SwiftPM materializes the root's library prod
 library product is a `packageProduct`, whose clients link the package targets' objects as Xcode does (each prelinked
 `<target>.o`, force-loaded by the linker shim: 715 KB). The product GUIDs are the same either way.
 
-**Nested `xcodebuild`** (xless: `xless shim xcodebuild`, `docker/shims/rn/xcodebuild`). `expo-modules-jsi`'s
+**Nested `xcodebuild`** (xless: `xless shim xcodebuild`, `docker/shims/xcodebuild`). `expo-modules-jsi`'s
 `build-xcframework.sh` runs, from the package directory, under `env -i` (PATH, HOME, PODS_ROOT, RN_ROOT kept):
 
 ```
@@ -876,7 +880,7 @@ which loads it as the object it stands for. Swift Build applies a toolset's `lin
 `ALTERNATE_LINKER_PATH` cannot be overridden; xless writes its own toolset (`SwiftBuildEnvironment.toolset()`: the SDK's
 `llvm-lib` librarian, the shim as linker) and passes it as `SWIFT_SDK_TOOLSETS`.
 
-**`strip`** (xless: `xless shim strip`, `docker/shims/rn/swift-build/strip`; env: `__XCODE_BUILT_PRODUCTS_DIR_PATHS`;
+**`strip`** (xless: `xless shim strip`, `docker/shims/swift-build/strip`; env: `__XCODE_BUILT_PRODUCTS_DIR_PATHS`;
 image: LLVM 21 `llvm-strip`). Swift Build resolves `strip` through its executable search paths, built-products
 directories from `__XCODE_BUILT_PRODUCTS_DIR_PATHS` first, then the toolchain (`/usr/bin`: GNU strip), then `PATH`
 (`Core.createExecutableSearchPaths`), and runs it in two forms seen here: the copy phase's `strip -D -S -no_atom_info
@@ -1059,7 +1063,7 @@ which holds `command` (as a program) and the `clang` that retargets the stub-dyl
 For a generated `ios/`, steps 4–5 are skipped when a SHA-256 of their inputs equals the one recorded after the last
 successful prepare (`.xless/rn-prepare.json`) and the pods are installed: the source's `git ls-files -s` and
 `git diff`; the overlay's `env`, `app.dir`, `configuration` and `prepare.run`; the xless version; and the toolchain
-identity, hashed on its own: the image (`XLESS_IMAGE_ID`, which `make rn-local` bakes into `xless-rn` from the commit
+identity, hashed on its own: the image (`XLESS_IMAGE_ID`, which `scripts/docker-images.sh` bakes into the image from the commit
 and `versions.env`), the running xless executable, `node --version`, the package manager's `--version`, `ruby -v` and
 `bundle -v` (scheme `xless-rn-prepare-4`). Any change regenerates `ios/` from scratch, as `expo prebuild --clean`
 would; `XLESS_RN_CLEAN=1` forces it. Only the overlay's `env:` is part of the fingerprint: a variable the app's tooling

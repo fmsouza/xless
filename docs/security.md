@@ -428,7 +428,9 @@ stopped after 20 seconds. `xless auth status --json` says beforehand what is hel
 An app's build runs code you did not write. What that code can reach depends on how it is built:
 
 - **An overlay app (Tauri, Cargo, React Native: `xless run --docker --config`)** builds in three containers. The build
-  container (step 2) gets no secret and no secret file; the store is in no container. Before the first step, the
+  container (step 2) gets no secret and no secret file, and is the only one that runs in an image with the app's
+  toolchains (the kit, or an image you name); the next-build and signing containers run in the xless image, where no
+  Node, Rust, Ruby or Hermes is. The store is in no container. Before the first step, the
   xless on your machine writes the secrets each other step needs to a tmpfs (`$XDG_RUNTIME_DIR/xless/<random>/`,
   0700 and 0600), mounts each step's directory read-only into that step's container only, and removes it when that
   container ends; without a tmpfs the run refuses unless `--allow-disk-secrets`
@@ -445,7 +447,23 @@ An app's build runs code you did not write. What that code can reach depends on 
   names (the store keeps keys sealed on disk), and the environment of your shell, or of any other process of yours
   (`xless run` itself is not one: it is non-dumpable too) that exported a secret variable (`/proc/<pid>/environ`): keep keys in the store rather than in exported variables.
 
-If that matters for a project you do not fully trust, keep the signing in a second run, so no build code runs while a
+**Which image a container runs in.** An image with toolchains of other languages never holds a secret. The table is
+each step of `xless run --docker`:
+
+| | Next build number (API key) | Build (no secret) | Sign and upload (the secrets) |
+|---|---|---|---|
+| Tauri, Cargo | xless image | `tauri` kit, or your `image:` | xless image |
+| React Native, Expo | xless image | `react-native` kit, or your `image:` | xless image |
+| `xless.yml`, no `image:` | (none) | xless image, in the one container with the secrets | the same container |
+| `xless.yml` with `image:` or `XLESS_IMAGE` | (none) | your image, without a secret | xless image |
+
+Images are never pulled (`--pull=never`), so a name that is not on your machine stops the run instead of asking a
+registry. xless checks an image's labels (its Xcode, architecture and xless) and that an image of your own starts with the
+layers of the xless image. That finds an image left behind by an upgrade or built on the wrong one; it is not a proof of
+what the image holds, since whoever can write to your Docker can make one that passes. Only the Dockerfiles shipped with
+xless are ever built by a run, from its own share directory, with no secret in the context, an argument or a layer.
+
+When you do not fully trust the code of an `xless.yml` project, keep the signing in a second run, so no build code runs while a
 key is in use:
 
 ```sh
