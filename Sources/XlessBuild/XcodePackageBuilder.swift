@@ -61,26 +61,24 @@ public enum XcodePackageBuilder {
         let platform = destination.platform, pc = try config.platform(platform)
         let name = destination == .mac ? "macos" : destination == .device ? "ios" : "ios-simulator"
         let wrapper = project.appendingPathComponent(".xless/xcode-pkg-\(name)", isDirectory: true)
-        try? FileManager.default.removeItem(at: wrapper)
-        let sources = wrapper.appendingPathComponent("Sources/\(pc.product)App", isDirectory: true)
-        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
-        try Data().write(to: sources.appendingPathComponent("stub.c"))
-        try wrapperPackage(product: pc.product, minimumOS: pc.minimumOS, platform: platform)
-            .write(to: wrapper.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        try writeWrapper(wrapper, project: project, product: pc.product, minimumOS: pc.minimumOS, platform: platform)
         // Another Xcode builds in a directory of its own, and reuses nothing of this one's.
         let scratch = project.appendingPathComponent(".xless/xcode-build-\(name)-\(xcode.build)", isDirectory: true)
+        let products = scratch.appendingPathComponent("out/Products/\(productsDirectory(destination))", isDirectory: true)
+        // Every bundle there goes into the app, and one of a package that the app no longer has would stay. (Swift Build makes those
+        // it needs again.)
+        for bundle in bundles(of: products) { try FileManager.default.removeItem(at: bundle) }
         let environment = xcode.environment(env)
         try Shell.run(try xcode.require(.swift, stage: .build).path,
                       arguments(destination, wrapper: wrapper, scratch: scratch, product: pc.product, minimumOS: pc.minimumOS),
                       cwd: project, env: environment, baseEnvironment: env, stage: .build, passthrough: true)
-        let products = scratch.appendingPathComponent("out/Products/\(productsDirectory(destination))", isDirectory: true)
+        if let note = unpinnedNote(project: project, wrapper: wrapper) { FileHandle.standardError.write(Data("xless: note: \(note)\n".utf8)) }
         guard let executable = MacBuilder.builtExecutable(named: "\(pc.product)App", under: products) else {
             throw XlessError(.build, "no \(pc.product)App executable under \(products.path)",
                              fix: "check the swift build output above, and that platforms.\(platform.rawValue).product matches a library product in Package.swift")
         }
         let frameworks = try embedded(executable, products: products)
-        let resources = ((try? FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "bundle" }.sorted { $0.path < $1.path }
+        let resources = bundles(of: products)
         let built = try Files.atomicOutput(paths.app) { partial in
             let app = try PackageApp.assemble(in: partial, executable: try Data(contentsOf: executable), resources: resources, frameworks: frameworks,
                                               project: project, config: config, platform: platform)
@@ -97,6 +95,42 @@ public enum XcodePackageBuilder {
         let dSYMs = try DSYM.keep(executables: [executable], app: built, into: paths.dSYMs)
         FileHandle.standardError.write(Data("xless: dSYMs: \(dSYMs.summary)\n".utf8))
         return built
+    }
+
+    /// The wrapper package, with the app's own Package.resolved: the root package's is the one that SwiftPM keeps to, and the root is
+    /// the wrapper here.
+    static func writeWrapper(_ wrapper: URL, project: URL, product: String, minimumOS: String, platform: Platform) throws {
+        try? FileManager.default.removeItem(at: wrapper)
+        let sources = wrapper.appendingPathComponent("Sources/\(product)App", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try Data().write(to: sources.appendingPathComponent("stub.c"))
+        try wrapperPackage(product: product, minimumOS: minimumOS, platform: platform)
+            .write(to: wrapper.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let resolved = project.appendingPathComponent("Package.resolved")
+        guard FileManager.default.fileExists(atPath: resolved.path) else { return }
+        do { try Data(contentsOf: resolved).write(to: wrapper.appendingPathComponent("Package.resolved")) } catch {
+            throw XlessError(.build, "cannot read \(resolved.path): \(error.localizedDescription)", fix: "make it readable: it says which versions of its packages the app is built with")
+        }
+    }
+
+    /// The packages that were built in a version that the app's Package.resolved does not name, for the build's log.
+    static func unpinnedNote(project: URL, wrapper: URL) -> String? {
+        func pins(_ directory: URL) -> [String: [String: String]]? {
+            guard let data = FileManager.default.contents(atPath: directory.appendingPathComponent("Package.resolved").path),
+                  let file = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let pins = file["pins"] as? [[String: Any]] else { return nil }
+            return Dictionary(pins.compactMap { pin in (pin["identity"] as? String).map { ($0, pin["state"] as? [String: String] ?? [:]) } }) { first, _ in first }
+        }
+        let own = pins(project)
+        let others = (pins(wrapper) ?? [:]).filter { own?[$0.key] != $0.value }
+            .map { "\($0.key) \($0.value["version"] ?? $0.value["branch"] ?? $0.value["revision"] ?? "?")" }.sorted()
+        guard !others.isEmpty else { return nil }
+        return (own == nil ? "the project has no Package.resolved, which would hold these packages to a version: " : "Package.resolved does not name these, which were built: ")
+            + others.joined(separator: ", ") + " (`swift package resolve` writes it: keep it with the project)"
+    }
+
+    static func bundles(of products: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "bundle" }.sorted { $0.path < $1.path }
     }
 
     /// The frameworks and dynamic libraries of the build that `executable` loads, and those that they load. One that is neither of

@@ -70,6 +70,52 @@ app="$build/macos/final/HelloShip.app"
 for arch in arm64 x86_64; do [[ " $(lipo -archs "$app/Contents/MacOS/HelloShip") " == *" $arch "* ]] || fail "the macOS app is of $(lipo -archs "$app/Contents/MacOS/HelloShip")"; done
 [[ -f "$app/Contents/Resources/AppIcon.icns" ]] || fail "no AppIcon.icns"
 
+# A package that the app no longer has leaves nothing in it.
+mkdir -p "$t/q/Sources/Demo" "$t/q/Dep/Sources/Dep"
+printf '%s\n' 'public func word() -> String { "hi" }' > "$t/q/Dep/Sources/Dep/d.swift"
+echo '{}' > "$t/q/Dep/Sources/Dep/data.json"
+cat > "$t/q/Dep/Package.swift" <<'P'
+// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(name: "Dep", platforms: [.macOS(.v14)], products: [.library(name: "Dep", targets: ["Dep"])], targets: [.target(name: "Dep", resources: [.process("data.json")])])
+P
+manifest() {   # DEPENDENCY TARGET-DEPENDENCY
+  printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' \
+    "let package = Package(name: \"Demo\", platforms: [.macOS(.v14)], products: [.library(name: \"Demo\", targets: [\"Demo\"])], dependencies: [$1], targets: [.target(name: \"Demo\", dependencies: [$2])])" > "$t/q/Package.swift"
+}
+app() { printf '%s\n' "import SwiftUI" "$1" "@main struct Demo: App { var body: some Scene { WindowGroup { Text($2) } } }" > "$t/q/Sources/Demo/a.swift"; }
+printf '%s\n' 'bundleID: com.example.demo' 'teamID: ABCDE12345' 'version: 1.0.0' 'build: 1' 'platforms:' '  macos: { minimumOS: "14.0", product: Demo, distribution: developer-id }' > "$t/q/xless.yml"
+manifest '.package(path: "Dep")' '"Dep"'; app 'import Dep' 'word()'
+app="$t/q/.xless/build/macos/app/Demo.app"
+ok build --project "$t/q" --platform macos
+[[ -d "$app/Contents/Resources/Dep_Dep.bundle" ]] || fail "no resources of a package: $(find "$app")"
+ok build --project "$t/q" --platform macos   # nothing to do for Swift Build
+[[ -d "$app/Contents/Resources/Dep_Dep.bundle" ]] || fail "no resources of a package in a second build: $(find "$app")"
+manifest '' ''; app '' '"hi"'
+ok build --project "$t/q" --platform macos
+[[ ! -e "$app/Contents/Resources/Dep_Dep.bundle" ]] || fail "the resources of a package that is gone are in the app"
+
+# Package.resolved decides. (SwiftPM keeps a copy of the package in this user's caches: not on a machine of your own.)
+if [[ -n "$all" ]]; then
+  mkdir -p "$t/dep"; cp -R "$t/q/Dep/." "$t/dep/"
+  g() { git -C "$t/dep" -c user.name=x -c user.email=x@example.com -c commit.gpgsign=false -c tag.gpgsign=false "$@" >/dev/null; }
+  g init; g add -A; g commit -m one; g tag 1.0.0
+  printf '%s\n' 'public func word() -> String { "second" }' > "$t/dep/Sources/Dep/d.swift"
+  g commit -am two; g tag 1.1.0
+  printf '{"pins":[{"identity":"dep","kind":"localSourceControl","location":"%s","state":{"revision":"%s","version":"1.0.0"}}],"version":3}\n' \
+    "$t/dep" "$(git -C "$t/dep" rev-parse 1.0.0)" > "$t/q/Package.resolved"
+  cp "$t/q/Package.resolved" "$t/kept"
+  manifest ".package(url: \"$t/dep\", from: \"1.0.0\")" '.product(name: "Dep", package: "dep")'; app 'import Dep' 'word()'
+  ok build --project "$t/q" --platform macos
+  ! strings "$app/Contents/MacOS/Demo" | grep -qx second || fail "built with 1.1.0, not the 1.0.0 of Package.resolved"
+  cmp "$t/kept" "$t/q/Package.resolved" || fail "the project's Package.resolved was changed"
+  ! grep -q 'note: .*Package.resolved' "$t/err" || fail "a note of $(grep Package.resolved "$t/err")"
+  rm "$t/q/Package.resolved"
+  ok build --project "$t/q" --platform macos
+  grep -q 'the project has no Package.resolved, .*: dep 1' "$t/err" || fail "no note of what was built"
+  [[ ! -e "$t/q/Package.resolved" ]] || fail "a Package.resolved was written into the project"
+fi
+
 # Nothing of xless's was fetched for any of it.
 left="$(find "$t/home/.local" "$t/home/.config" "$t/home/.cache" -type f -not -path '*/xless/locks/*' 2>/dev/null || true)"
 [[ -z "$left" ]] || fail "a build left something: $left"

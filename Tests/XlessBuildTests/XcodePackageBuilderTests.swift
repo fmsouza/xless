@@ -39,6 +39,34 @@ private func temporary() throws -> URL {
     #expect(mac.contains(#"platforms: [.macOS("14.0")]"#) && mac.contains(#""@executable_path/../Frameworks""#))
 }
 
+@Test func theAppsPackageResolvedIsWhatItIsBuiltWith() throws {
+    let project = try temporary(), wrapper = project.appendingPathComponent(".xless/xcode-pkg-ios"), fm = FileManager.default
+    defer { try? fm.removeItem(at: project) }
+    func write() throws { try XcodePackageBuilder.writeWrapper(wrapper, project: project, product: "X", minimumOS: "17.0", platform: .ios) }
+    func resolved(_ pins: [(String, String)]) -> String {
+        "{\"pins\":[" + pins.map { "{\"identity\":\"\($0.0)\",\"state\":{\"revision\":\"r\($0.1)\",\"version\":\"\($0.1)\"}}" }.joined(separator: ",") + "],\"version\":3}"
+    }
+    let own = project.appendingPathComponent("Package.resolved"), built = wrapper.appendingPathComponent("Package.resolved")
+    try write()
+    #expect(fm.fileExists(atPath: wrapper.path + "/Package.swift") && fm.fileExists(atPath: wrapper.path + "/Sources/XApp/stub.c") && !fm.fileExists(atPath: built.path))
+    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper) == nil) // no packages
+    try resolved([("dep", "1.1.0")]).write(to: built, atomically: true, encoding: .utf8)
+    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper)?.hasPrefix("the project has no Package.resolved, which would hold these packages to a version: dep 1.1.0 (") == true)
+
+    try resolved([("dep", "1.0.0")]).write(to: own, atomically: true, encoding: .utf8)
+    try write()
+    #expect(try Data(contentsOf: built) == Data(contentsOf: own))
+    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper) == nil)
+    try resolved([("new", "2.0.0"), ("dep", "1.0.0")]).write(to: built, atomically: true, encoding: .utf8)
+    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper)?.hasPrefix("Package.resolved does not name these, which were built: new 2.0.0 (") == true)
+    try resolved([("dep", "1.1.0")]).write(to: built, atomically: true, encoding: .utf8)
+    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper)?.contains("dep 1.1.0") == true)
+
+    try fm.removeItem(at: own)
+    try fm.createDirectory(at: own, withIntermediateDirectories: false)
+    #expect(throws: XlessError.self) { try write() } // not built without it
+}
+
 @Test func swiftBuildOfXcodesKeepsItsSandboxAndLeavesTheKeychain() {
     let w = URL(fileURLWithPath: "/p/w"), s = URL(fileURLWithPath: "/p/s")
     let base = ["build", "--package-path", "/p/w", "--scratch-path", "/p/s", "-c", "release", "--build-system", "swiftbuild", "--disable-keychain", "--product", "XApp"]
