@@ -975,18 +975,17 @@ if [[ $step3 == 1 ]]; then
       exit 0
     fi
     set +e
-    shiplog="$(mktemp)"; shipout="$(mktemp)"; tmpfiles+=("$shiplog" "$shipout")
-    waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
+    shipout="$(mktemp)"; tmpfiles+=("$shipout")
+    waited_tee "$shipout" ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
     code=$?
-    [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }
+    [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code" >&2; exit "$code"; }
     dmg="$(grep '\.dmg$' "$shipout" | tail -1 || true)"
     echo "==> DMG: $dmg" >&2
     echo "==> DMG build finished" >&2
     if [[ "$(index "$to")" -ge 6 ]]; then
-      : > "$shiplog"
-      waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
+      waited_tee "$shipout" ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
       code=$?
-      [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
+      [[ $code -eq 0 ]] || { set -e; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
       pkg="$(grep '\.pkg$' "$shipout" | tail -1 || true)"
       echo "==> PKG: $pkg" >&2
     fi

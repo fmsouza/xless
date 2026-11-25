@@ -271,7 +271,8 @@ code=0; "${mac[@]}" XLESS_DEVID_KEY_FILE="$t/sec/devid.pem" "$S" --config "$t/se
 cat > "$t/bin/xless" <<'X'
 #!/bin/sh
 echo "$* | DEVID=${XLESS_DEVID_KEY_FILE-unset} ASC_KEY_ID=${ASC_KEY_ID-unset}" >> "$XLOG"
-case "$*" in *"--to package"*) echo "==> package"; echo "/work/out/App_1.0.0_universal.dmg" ;; esac
+case "$*" in *"--to package"*) echo "xless: sign: 1 change on the account:" >&2; echo "==> package"; echo "/work/out/App_1.0.0_universal.dmg" ;; esac
+case "$*" in *"--distribution app-store"*) echo "next: submit" >&2; echo "/work/out/App.pkg"; exit "${LANE_EXIT:-0}" ;; esac
 exit 0
 X
 : > "$t/xlog"; msg=$("${real[@]}" XLESS_DEVID_KEY_FILE="$t/devid.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>&1 >/dev/null) || fail "native macos run failed: $msg"
@@ -279,6 +280,14 @@ X
 grep -q -- "--platform macos .*--to finalize | DEVID=unset ASC_KEY_ID=unset$" "$t/xlog" || fail "macos step 2 env: $(cat "$t/xlog")"
 grep -q -- "--from sign --to package | DEVID=$t/devid.pem ASC_KEY_ID=KEYID$" "$t/xlog" || fail "macos step 3 env: $(cat "$t/xlog")"
 [[ "$msg" == *"==> DMG: /work/out/App_1.0.0_universal.dmg"* ]] || fail "DMG path not reported: $msg"
+# what sign changes on the account is shown while it does, not only when it fails; each line once
+[[ "$(grep -c "xless: sign: 1 change on the account:" <<<"$msg")" -eq 1 ]] || fail "native macos hides what sign prints: $msg"
+for want in 0 17; do
+  code=0; msg=$("${real[@]}" LANE_EXIT=$want "${lane[@]: -3}" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>&1) || code=$?
+  [[ $code -eq $want && "$(grep -c "^xless: sign: 1 change" <<<"$msg")" -eq 1 && "$(grep -c "^next: submit" <<<"$msg")" -eq 1 ]] || fail "native macos lane (exit $code): $msg"
+  [[ $want -eq 0 ]] || continue
+  [[ "$(grep -c "^==> PKG: /work/out/App.pkg" <<<"$msg")" -eq 1 && "$(grep -c "^==> DMG: /work/out/App_1.0.0_universal.dmg" <<<"$msg")" -eq 1 ]] || fail "native macos lane paths: $msg"
+done
 # a native dry run prints every step of both channels and runs none
 : > "$t/xlog"; out=$("${lane[@]}" XLESS_USE_DOCKER=0 XLOG="$t/xlog" "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>"$t/err") || fail "native macos dry run: $(cat "$t/err")"
 ! grep -q "^ship" "$t/xlog" || fail "a native macos dry run started xless: $(cat "$t/xlog")"
