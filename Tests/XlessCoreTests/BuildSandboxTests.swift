@@ -119,7 +119,7 @@ private final class Sandboxed {
     let outside = "/private/tmp/xless-\(getpid())-\(UInt16.random(in: 0 ... .max)).s"
     let server = Process()
     server.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-    server.arguments = ["-MIO::Socket::UNIX", "-e", "$s = IO::Socket::UNIX->new(Local => $ARGV[0], Listen => 5) or die; print \"ready\\n\"; $|=1; print \"\"; $s->accept; $s->accept", outside]
+    server.arguments = ["-MIO::Socket::UNIX", "-e", "alarm 60; $s = IO::Socket::UNIX->new(Local => $ARGV[0], Listen => 5) or die; print \"ready\\n\"; $|=1; print \"\"; $s->accept; $s->accept", outside]
     let pipe = Pipe()
     server.standardOutput = pipe
     try server.run()
