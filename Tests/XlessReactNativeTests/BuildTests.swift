@@ -617,8 +617,8 @@ private func jsWorkCopy() throws -> (ctx: ReactNativeBuildContext, outside: URL)
     #expect(try write() == nil)
     try XlessReactNativeTests.write(root.appendingPathComponent("Package.resolved"), "of the last build") // what SwiftPM resolved then
     #expect(try write() == "of the last build")
-    try XlessReactNativeTests.write(file, "the project's")
-    #expect(try write() == "the project's")
+    try XlessReactNativeTests.write(file, #"{"pins":[],"version":2}"#)
+    #expect(try write() == #"{"pins":[],"version":2}"#)
 }
 
 @Test func packageIdentitiesThatCannotNameADirectoryAreRefused() throws {

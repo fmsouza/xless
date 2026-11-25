@@ -66,7 +66,8 @@ public enum SwiftPackageCheckouts {
     }
 
     /// Writes that root package. The workspace's Package.resolved (where Xcode keeps it) pins the package's dependencies, when there is
-    /// one: SwiftPM takes those it names, and drops what this package does not need.
+    /// one: SwiftPM takes those it names. It fetches every repository that the file names, for each package, and checks out those that
+    /// this one needs.
     static func writeRoot(_ identity: String, checkout: URL, workspace: Workspace, in directory: URL) throws -> URL {
         let root = directory.appendingPathComponent(".root-\(identity)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources/Root"), withIntermediateDirectories: true)
@@ -94,10 +95,7 @@ public enum SwiftPackageCheckouts {
         do { file = try JSONDecoder().decode(File.self, from: data) } catch {
             throw XlessError(.build, "cannot read a Package.resolved SwiftPM wrote: \(error)", fix: "report this as an xless bug")
         }
-        let old = file.object?.pins.map { pin in // an identity is the URL's last component
-            let name = pin.repositoryURL.split(separator: "/").last.map { $0.lowercased() } ?? ""
-            return File.Pin(identity: name.hasSuffix(".git") ? String(name.dropLast(4)) : name, location: pin.repositoryURL, state: pin.state)
-        }
+        let old = file.object?.pins.map { File.Pin(identity: PackageResolved.identity(ofURL: $0.repositoryURL), location: $0.repositoryURL, state: $0.state) }
         guard let pins = file.pins ?? old else {
             throw XlessError(.build, "cannot read a Package.resolved SwiftPM wrote: it has no pins", fix: "report this as an xless bug")
         }
