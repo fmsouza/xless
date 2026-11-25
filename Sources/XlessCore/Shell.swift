@@ -81,7 +81,7 @@ public enum Shell {
         let stderr = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
         if status != 0 {
             let tail = stderr.split(separator: "\n").filter(keepErrorLine).suffix(20).joined(separator: "\n")
-            throw XlessError(stage, "`\(executable) \(arguments.joined(separator: " "))` exited with \(status)\(tail.isEmpty ? "" : ":\n\(tail)")",
+            throw XlessError(stage, "`\(TerminalText.escaped("\(executable) \(arguments.joined(separator: " "))"))` exited with \(status)\(tail.isEmpty ? "" : ":\n\(tail)")",
                              fix: "see the tool output above")
         }
         return ShellResult(status: status, stdout: stdout, stderr: stderr)

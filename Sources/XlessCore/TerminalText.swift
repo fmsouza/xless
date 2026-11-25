@@ -37,8 +37,14 @@ public enum TerminalText {
 }
 
 extension XlessError {
-    /// The same error with nothing in it that drives the terminal (`TerminalText.escaped`); its line breaks stay.
-    public var printable: XlessError {
-        XlessError(stage, TerminalText.escaped(cause, keepingLines: true), fix: TerminalText.escaped(fix, keepingLines: true), code: code)
+    /// The same error as one line, with nothing in it that drives the terminal (`TerminalText.escaped`): a name in it starts
+    /// no line of its own.
+    public var printable: XlessError { XlessError(stage, TerminalText.escaped(cause), fix: TerminalText.escaped(fix), code: code) }
+
+    /// For a tool's error, whose cause ends with the lines the tool wrote: they stay lines, each set in under the first, so
+    /// none looks like one of xless's own.
+    public var printableOutput: XlessError {
+        let lines = TerminalText.escaped(cause, keepingLines: true).split(separator: "\n", omittingEmptySubsequences: false)
+        return XlessError(stage, lines.joined(separator: "\n  "), fix: TerminalText.escaped(fix), code: code)
     }
 }

@@ -569,6 +569,36 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
     catch let e as XlessError { #expect(e.stage == .sign && !e.description.contains("\u{1B}") && e.cause.contains(#"org.other.\u{1B}[2J"#)) }
 }
 
+/// A line break in a name starts no line: not in the plan, not in an error, not in the tool's.
+@Test func whatTheBuildNamedItsExtensionStartsNoLine() async throws {
+    let name = "W\n[sign] forged.appex"
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    try f.renameExtension(to: name)
+    var said = ""
+    _ = try await f.run(say: { said += $0 })
+    #expect(said.contains(#"PlugIns/W\u{A}[sign] forged.appex"#) && !said.contains("\n[sign]"))
+
+    func cause(_ f: MultiBundleFixture) async throws -> String {
+        do { _ = try await f.run(); Issue.record("expected throw"); return "" } catch let e as XlessError { return e.description }
+    }
+    let other = try MultiBundleFixture(app: [:], ext: [:])
+    try other.renameExtension(to: name)
+    try Plist.write(["CFBundleExecutable": "Ext", "CFBundleIdentifier": "org.other\n[sign] x"], to: other.input.appendingPathComponent("PlugIns/\(name)/Info.plist"), stage: .sign)
+    let refused = try await cause(other)
+    #expect(!refused.contains("\n") && refused.contains(#"org.other\u{A}[sign] x"#), "\(refused)")
+
+    let failing = try MultiBundleFixture(app: [:], ext: [:])
+    let client = ASCClient(credentials: testCreds, transport: failing.asc, sleep: { _ in })
+    do {
+        _ = try await SignStage.run(input: failing.input, outputDir: failing.outputDir, platform: .ios, config: failing.config, project: failing.root,
+                                    secrets: Secrets(env: ["XLESS_DIST_KEY": failing.key.pem]), client: client, manifest: EntitlementsManifest(file: failing.manifestURL),
+                                    codesign: { _ in throw XlessError(.sign, "`rcodesign sign` exited with 1:\nsigning W\u{1B}\nerror: forged", fix: "see the tool output above") })
+        Issue.record("expected throw")
+    } catch let e as XlessError {
+        #expect(e.cause == "`rcodesign sign` exited with 1:\n  signing W\\u{1B}\n  error: forged")
+    }
+}
+
 /// Apple's own text in an error is no different.
 @Test func whatAppleAnswersCannotDriveTheTerminal() async throws {
     let f = try MultiBundleFixture(app: ["aps-environment": "development"], ext: [:])

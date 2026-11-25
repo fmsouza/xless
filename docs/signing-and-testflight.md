@@ -206,7 +206,8 @@ xless: sign: 3 changes on the account:
 ```
 
 - The names in it come from the project, the built app and Apple: control and invisible characters in them are written
-  out (`\u{1B}`), here, in `sign`'s errors and in the plan of `xless provision`, so none can hide or forge a line.
+  out (`\u{1B}`, a line break as `\u{A}`), here, in `sign`'s errors, in the plan of `xless provision` and in what its
+  `apply` says, so none can hide or forge a line. (What rcodesign wrote is set in below its error.)
 - It asks nothing and needs no Apple ID: the App Store Connect API key makes these changes, in CI too.
 - It registers bundle IDs, enables capabilities (a capability that is enabled keeps its settings) and creates
   profiles. The only thing it ever deletes is a profile of that name, which xless made, when the profile cannot be

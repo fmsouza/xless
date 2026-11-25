@@ -627,10 +627,28 @@ private final class TypingPassphrase: PassphrasePrompter {
     plan.notes = [hostile]
     #expect(TerminalText.escaped(plan.text, keepingLines: true) == plan.text)
     #expect(plan.text.split(separator: "\n").count == 13, "\(plan.text)")
-    #expect(throws: XlessError(.account, #"\u{1B}[2J"# + "\n" + #"  + create\u{202E}\u{200B}; nothing was sent"#,
-                               fix: #"\u{1B}[2J"# + "\n" + #"  + create\u{202E}\u{200B}"#)) { try plan.requireUnblocked() }
+    #expect(throws: XlessError(.account, #"\u{1B}[2J\u{D}\u{A}  + create\u{202E}\u{200B}; nothing was sent"#,
+                               fix: #"\u{1B}[2J\u{D}\u{A}  + create\u{202E}\u{200B}"#)) { try plan.requireUnblocked() }
     let json = try ASCOutput.json(plan)
     #expect(try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))["notes"] == .array([.string(hostile)]), "JSON keeps the values")
+}
+
+/// What `apply` says as it goes, and the error it stops with, are one line each, whatever the names in them.
+@Test func nothingThatApplySaysStartsALineOfItsOwn() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    var plan = ProvisionPlan(team: team)
+    plan.add(.bundleIDs, .create, "com.example.a", [], .bundleID("com.example.app.a"))
+    plan.add(.appGroups, .create, "group.x\n2/2 forged\u{1B}", [], web: true, .bundleID("com.example.app.b"))
+    let lines = Lines()
+    let applier = ProvisionApplier(inputs: s.inputs, account: s.account, web: { throw XlessError(.account, "no\nerror: forged", fix: "a\nb") },
+                                   vault: s.vault.vault, store: s.store, say: { lines.add($0) }, now: now)
+    do { _ = try await applier.apply(plan); Issue.record("expected throw") }
+    catch let f as ProvisionApplyFailure {
+        #expect(!f.error.description.contains("\n") && f.error.cause.contains(#"group.x\u{A}2/2 forged\u{1B}: no\u{A}error: forged (0 of 2 "#), "\(f.error)")
+    }
+    #expect(lines.all.count == 2 && lines.all.allSatisfy { TerminalText.escaped($0) == $0 } && lines.all[1].contains(#"group.x\u{A}2/2 forged"#), "\(lines.all)")
 }
 
 @Test func blockersStopApplyBeforeAnythingIsSent() async throws {

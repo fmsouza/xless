@@ -17,7 +17,7 @@ public enum SignStage {
 
     /// `codesign` runs rcodesign with the given arguments (a test seam: tests read the entitlement files it names).
     /// Errors name what the build and Apple chose (an extension's path and bundle ID, Apple's own text): they leave as
-    /// `[sign]` errors with nothing in them that drives the terminal.
+    /// `[sign]` errors of one line (rcodesign's with its own lines below), with nothing in them that drives the terminal.
     static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL, secrets: Secrets,
                     client: ASCClient, manifest: EntitlementsManifest?, updatesOff: String? = nil, say: (String) -> Void = { _ in },
                     codesign: ([String]) throws -> Void) async throws -> URL {
@@ -26,12 +26,17 @@ public enum SignStage {
                 try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
                                client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: codesign)
             }
+        } catch let failed as ToolFailed {
+            throw failed.error.printableOutput
         } catch {
             throw XlessError.wrapping(error, stage: .sign).printable
         }
     }
 
     public static let standardError: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+
+    /// rcodesign failed: its error ends with what it wrote.
+    private struct ToolFailed: Error { var error: XlessError }
 
     /// A bundle with the profile it is signed under.
     struct Provisioned {
@@ -104,8 +109,9 @@ public enum SignStage {
                 if p.target.path.isEmpty { entURL = try files.write(plist: merged[i], as: "ent.plist"); continue }
                 nestedEntitlements.append((p.target.path, try files.write(plist: merged[i], as: "ent-\(i).plist")))
             }
-            try codesign(RCodesign.signArguments(bundle: app, keyPEM: signer.key, certPEM: signer.certificate, entitlements: entURL, distribution: distribution,
-                                                 runtimePaths: runtimePaths, nestedEntitlements: nestedEntitlements))
+            let arguments = RCodesign.signArguments(bundle: app, keyPEM: signer.key, certPEM: signer.certificate, entitlements: entURL, distribution: distribution,
+                                                    runtimePaths: runtimePaths, nestedEntitlements: nestedEntitlements)
+            do { try codesign(arguments) } catch { throw ToolFailed(error: XlessError.wrapping(error, stage: .sign)) }
         }
         return app
     }

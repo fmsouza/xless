@@ -198,7 +198,7 @@ enum ProvisionCLI {
 
         func applier(web: @escaping () async throws -> ProvisionWebSide) -> ProvisionApplier {
             ProvisionApplier(inputs: inputs, account: account, web: web, vault: vault, store: store,
-                             say: { AppleWebCLI.say(TerminalText.escaped($0, keepingLines: true)) })
+                             say: { AppleWebCLI.say($0) })
         }
     }
 
@@ -228,7 +228,7 @@ enum ProvisionCLI {
         let read = ManifestReader.read(dir)
         let issues = read.issues + ManifestValidator.validate(read.manifest, at: dir, draft: true, inheritedBundleID: bundleID, checkApp: read.appReadable)
         let errors = issues.filter { $0.severity == .error }
-        for issue in errors { AppleWebCLI.say("error: \(issue)") }
+        for issue in errors { AppleWebCLI.say(TerminalText.escaped("error: \(issue)")) }
         guard errors.isEmpty else {
             return .failure(ProvisionBlocker(area: .listing, message: "\(dir.lastPathComponent)/ has \(errors.count) error\(errors.count == 1 ? "" : "s")",
                                              fix: "fix \(errors.count == 1 ? "it" : "them") (`xless store validate --draft --dir \(dir.path)` lists them)"))
@@ -240,7 +240,7 @@ enum ProvisionCLI {
     static func kept(team: String, verbose: Bool) async -> (session: AppleWebSession, transport: URLSessionAppleTransport)? {
         guard AppleWebCLI.cache.info() != nil else { return nil }
         do { return try await ReleaseWeb.kept(team: team, verbose: verbose) } catch {
-            AppleWebCLI.say("note: the kept Apple ID session cannot be used (\(XlessError.wrapping(error, stage: .account).cause)); the steps that need it are checked when applied")
+            AppleWebCLI.say(TerminalText.escaped("note: the kept Apple ID session cannot be used (\(XlessError.wrapping(error, stage: .account).cause)); the steps that need it are checked when applied"))
             return nil
         }
     }
