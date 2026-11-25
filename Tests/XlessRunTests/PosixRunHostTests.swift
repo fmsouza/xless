@@ -34,6 +34,42 @@ import Testing
         }
     }
 
+    /// Two names that differ only there are two.
+    @Test func variablesWhoseNamesAreNotUTF8AreKeptApart() async {
+        await #expect(processExitsWith: .success) {
+            func set(_ name: [UInt8], _ value: String) { (Array("N".utf8) + name + [0]).withUnsafeBufferPointer { b in b.withMemoryRebound(to: CChar.self) { _ = setenv($0.baseAddress!, value, 1) } } }
+            for (name, value): ([UInt8], String) in [([0xFF], "1"), ([0xFE], "1"), ([0xFD], "2"), (Array("\u{FFFD}".utf8), "3")] { set(name, value) }
+            let host = PosixRunHost()
+            func kept(_ environment: [String: String]) throws -> [[UInt8]] { // without a shell: it would drop them
+                let file = try host.temporaryFile()
+                defer { host.removeFile(file) }
+                _ = host.finish(try host.start(RunStep(["env"], environment: environment, output: .file(file))))
+                return try Data(contentsOf: URL(fileURLWithPath: file)).split(separator: 10).map(Array.init).filter { $0.count > 1 && $0[0] == 0x4E && $0[1] >= 0x80 }
+            }
+            let mine = ProcessInfo.processInfo.environment
+            guard try Set(kept(mine)) == [[0x4E, 0xFF, 0x3D, 0x31], [0x4E, 0xFE, 0x3D, 0x31], [0x4E, 0xFD, 0x3D, 0x32], [0x4E, 0xEF, 0xBF, 0xBD, 0x3D, 0x33]] else { exit(1) }
+            guard try kept(["PATH": mine["PATH"] ?? "/usr/bin:/bin"]).isEmpty else { exit(2) }
+        }
+    }
+
+    /// Arguments that differ only in bytes that are not UTF-8 are two.
+    @Test func argumentsThatAreNotUTF8AreKeptApart() {
+        func texts(_ words: [[UInt8]]) -> [String] { PosixRunHost.texts(words) }
+        let a = Array("--a=".utf8)
+        #expect(texts([Array("xless".utf8), a + [0xFF]]) == ["xless", "--a=\u{FFFD}"])
+        #expect(texts([a + [0xFF], a + [0xFF]]) == ["--a=\u{FFFD}", "--a=\u{FFFD}"]) // the same
+        let cases: [[[UInt8]]] = [[a + [0xFF], a + [0xFE]], [a + [0xFF], a + [0xFE], a + [0xFD], a + [0xFE]], [a + [0xFF], Array("--a=\u{FFFD}".utf8)],
+                                  [a + [0xFF], a + [0xFE], Array("--a=\u{FFFD}\u{FFFD}".utf8)], [Array("e\u{301}".utf8) + [0xFF], Array("\u{e9}".utf8) + [0xFF]]]
+        for words in cases {
+            let texts = texts(words).map { Array($0.utf8) }
+            for i in words.indices {
+                for j in words.indices { #expect((words[i] == words[j]) == (texts[i] == texts[j]), "\(words)") }
+                if PosixRunHost.utf8(words[i]) != nil { #expect(texts[i] == words[i], "\(words)") }
+            }
+        }
+        #expect(PosixRunHost.arguments == CommandLine.arguments)
+    }
+
     @Test func aStepHasNothingToReadAndNoDescriptorOfTheRuns() throws {
         let file = try host.temporaryFile()
         defer { host.removeFile(file) }

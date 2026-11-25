@@ -17,21 +17,53 @@ public final class PosixRunHost: RunHost {
         var description: String { String(cString: strerror(code)) }
     }
 
-    /// This process's arguments and variables (`NAME=value`) that are not UTF-8, by what Swift makes of them: for a step they are
-    /// the bytes that they were.
-    private let given: (words: [String: [CChar]], variables: [String: [CChar]])
+    /// This process's arguments that are not UTF-8, by the bytes of what `arguments` makes of them: for a step they are the bytes
+    /// that they were.
+    private let words: [[UInt8]: [UInt8]]
+    /// Its variables (`NAME=value`), where one is not UTF-8, by what Swift makes of their names.
+    private let variables: [String: [[UInt8]]]
+
+    /// This process's arguments. What is not UTF-8 in them is U+FFFD, and as many more of those as tell them apart.
+    public static var arguments: [String] { texts(strings(UnsafePointer(CommandLine.unsafeArgv))) }
+
+    static func texts(_ words: [[UInt8]]) -> [String] {
+        var known: [[UInt8]: String] = [:], taken: Set<[UInt8]> = []
+        for word in words {
+            guard let text = utf8(word) else { continue }
+            known[word] = text
+            taken.insert(word)
+        }
+        return words.map { word in
+            if let text = known[word] { return text }
+            var text = String(decoding: word, as: UTF8.self)
+            while !taken.insert(Array(text.utf8)).inserted { text += "\u{FFFD}" }
+            known[word] = text
+            return text
+        }
+    }
+
+    /// nil: they are not UTF-8.
+    static func utf8(_ bytes: [UInt8]) -> String? {
+        let text = String(decoding: bytes, as: UTF8.self)
+        return text.utf8.elementsEqual(bytes) ? text : nil
+    }
+
+    private static func strings(_ list: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [[UInt8]] {
+        var out: [[UInt8]] = [], next = list
+        while let here = next, let text = here.pointee {
+            out.append(UnsafeBufferPointer(start: text, count: strlen(text)).map { UInt8(bitPattern: $0) })
+            next = here + 1
+        }
+        return out
+    }
+
+    private static func name(_ variable: [UInt8]) -> ArraySlice<UInt8> { variable.prefix { $0 != UInt8(ascii: "=") } }
 
     public init() {
-        func bytes(_ list: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [String: [CChar]] {
-            var out: [String: [CChar]] = [:]
-            var next = list
-            while let here = next, let text = here.pointee {
-                if String(validatingCString: text) == nil { out[String(cString: text)] = Array(UnsafeBufferPointer(start: text, count: strlen(text) + 1)) }
-                next = here + 1
-            }
-            return out
-        }
-        given = (bytes(UnsafePointer(CommandLine.unsafeArgv)), bytes(xless_environment()))
+        let given = Self.strings(UnsafePointer(CommandLine.unsafeArgv))
+        words = Dictionary(zip(Self.texts(given).map { Array($0.utf8) }, given)) { first, _ in first }.filter { $0.key != $0.value }
+        variables = Dictionary(grouping: Self.strings(xless_environment())) { String(decoding: Self.name($0), as: UTF8.self) }
+            .filter { $0.value.contains { Self.utf8($0) == nil } }
         // Output nobody reads any more must not end the run before it has cleaned up.
         signal(SIGPIPE, SIG_IGN)
         // Ignored (xless may have been started so), the system would keep no step's exit code.
@@ -135,8 +167,8 @@ public final class PosixRunHost: RunHost {
         }
         if step.quiet { quiet = open("/dev/null", O_WRONLY | O_CLOEXEC) }
         var pid: Int32 = 0
-        let code = withStrings(step.words, given.words) { words in
-            withStrings(step.environment.map { "\($0.key)=\($0.value)" }, given.variables) { environment in
+        let code = withStrings(bytes(step.words)) { words in
+            withStrings(bytes(step.environment)) { environment in
                 xless_spawn_step(path, words, environment, step.directory, out, quiet, &pid)
             }
         }
@@ -201,8 +233,8 @@ public final class PosixRunHost: RunHost {
 
     public func become(_ words: [String], environment: [String: String]) -> String {
         guard let path = program(words[0], path: environment["PATH"]) else { return String(cString: strerror(ENOENT)) }
-        withStrings(words, given.words) { words in
-            withStrings(environment.map { "\($0.key)=\($0.value)" }, given.variables) { environment in
+        withStrings(bytes(words)) { words in
+            withStrings(bytes(environment)) { environment in
                 signal(SIGPIPE, SIG_DFL)
                 _ = execve(path, words, environment)
             }
@@ -210,8 +242,22 @@ public final class PosixRunHost: RunHost {
         return String(cString: strerror(errno))
     }
 
-    private func withStrings<R>(_ strings: [String], _ given: [String: [CChar]], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
-        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { text in given[text].map { strdup($0) } ?? strdup(text) } + [nil]
+    private func bytes(_ words: [String]) -> [[UInt8]] { words.map { Array($0.utf8) }.map { self.words[$0] ?? $0 } }
+
+    /// Those that have the value that they were given are the bytes that they were, also those whose names Swift takes for one.
+    private func bytes(_ environment: [String: String]) -> [[UInt8]] {
+        environment.flatMap { name, value -> [[UInt8]] in
+            let given = variables[name] ?? []
+            func isSame(_ variable: [UInt8]) -> Bool {
+                String(decoding: variable.dropFirst(Self.name(variable).count + 1), as: UTF8.self).utf8.elementsEqual(value.utf8)
+            }
+            guard given.contains(where: isSame) else { return [Array("\(name)=\(value)".utf8)] }
+            return Dictionary(grouping: given, by: Self.name).values.map { named in named.first(where: isSame) ?? named[0] }
+        }
+    }
+
+    private func withStrings<R>(_ strings: [[UInt8]], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { text in (text + [0]).withUnsafeBufferPointer { $0.withMemoryRebound(to: CChar.self) { strdup($0.baseAddress!) } } } + [nil]
         defer { for pointer in pointers { free(pointer) } }
         return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
     }

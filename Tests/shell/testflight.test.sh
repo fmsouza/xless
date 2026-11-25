@@ -51,6 +51,14 @@ printf '#!/bin/sh\nfor a in "$@"; do last=$a; done; printf "%%s" "$last" | od -A
 rm -f "$t/bytes"
 "${base[@]}" XLESS_TESTFLIGHT_DRY_RUN= XLESS_USE_DOCKER=0 python3 "$t/bytes.py" "$S" "$t/proj" --to finalize x >/dev/null 2>"$t/err" || fail "an argument that is not UTF-8: $(cat "$t/err")"
 grep -qF 2d2d783d636166e9 "$t/bytes" || fail "an argument that is not UTF-8 is another one for xless: $(cat "$t/bytes")"
+# also those that differ only there
+printf '#!/bin/sh\n[ "$1" != ship ] || for a in "$@"; do printf "%%s\\n" "$a"; done | od -An -v -tx1 | tr -d " \\n" > "%s/bytes"\n' "$t" > "$t/bin/xless"
+cat > "$t/two.py" <<'P'
+import os, sys
+os.execvp(sys.argv[1], [a.encode() for a in sys.argv[1:]] + [b"--a=\xff", b"--a=\xfe", b"--a=\xef\xbf\xbd", b"--a=\xff"])
+P
+"${base[@]}" XLESS_TESTFLIGHT_DRY_RUN= XLESS_USE_DOCKER=0 python3 "$t/two.py" "$S" "$t/proj" --to finalize >/dev/null 2>"$t/err" || fail "arguments that are not UTF-8: $(cat "$t/err")"
+grep -qF 2d2d613dff0a2d2d613dfe0a2d2d613defbfbd0a2d2d613dff0a "$t/bytes" || fail "arguments that differ only in bytes that are not UTF-8: $(cat "$t/bytes")"
 code=0; "${base[@]}" python3 "$t/bytes.py" "$S" "$t" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q "xless.yml not found" "$t/err" || fail "a project whose path is not UTF-8: exit $code: $(cat "$t/err")"
 printf '#!/bin/sh\n' > "$t/bin/xless"
