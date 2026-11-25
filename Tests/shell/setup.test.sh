@@ -242,7 +242,7 @@ if [[ "$(uname)" != Linux ]]; then
       [[ $code == 11 ]] && grep -q "is not used: .*/${tool##*/} is no program" "$t/err" || fail "an Xcode with a script as ${tool##*/}: $code $(cat "$t/err")"
       forge; rm "$forged/$tool"; cp /bin/sh "$forged/$tool"; chmod 755 "$forged/$tool"
       run ok
-      [[ $code == 11 ]] && grep -q "is not used: .*/${tool##*/} is not signed by Apple" "$t/err" || fail "an Xcode with Apple's shell as ${tool##*/}: $code $(cat "$t/err")"
+      [[ $code == 11 ]] && grep -q "is not used: .*/${tool##*/} is not signed by Apple as " "$t/err" || fail "an Xcode with Apple's shell as ${tool##*/}: $code $(cat "$t/err")"
     done
     forge; chmod +a 'everyone allow add_file,delete_child' "$forged/$bin"
     run ok

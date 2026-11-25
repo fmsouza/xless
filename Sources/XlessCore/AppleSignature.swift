@@ -10,8 +10,10 @@ public enum AppleSignature {
     /// would do (its shell, under another's name); nil: not told. A script is none: what runs it does not look at a signature.
     public static func problem(program path: String, identifier: String?) -> String? {
         guard isMachO(path) else { return "\(path) is no program" }
-        return problem(path: path, requirement: (identifier.map { "identifier \"\($0)\" and " } ?? "") + "anchor apple", resources: true)
+        return problem(path: path, requirement: programRequirement(identifier: identifier), resources: true).map { $0 + (identifier.map { " as \($0)" } ?? "") }
     }
+
+    static func programRequirement(identifier: String?) -> String { (identifier.map { "identifier \"\($0)\" and " } ?? "") + "anchor apple" }
 
     /// Why the bundle at `path` is not Apple's own Xcode, as the App Store or developer.apple.com has it. Its main program, its
     /// Info.plist and the list of its files are looked at, not the files on it (gigabytes).
