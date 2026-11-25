@@ -79,11 +79,12 @@ import Testing
     @Test func aRunNotesWhereItsSecretsReallyAre() throws {
         let (printed, real) = try makeLinkedSecrets()
         let path = path, locks = Notes()
-        let host = FakeRunHost { _, step in
+        let answer = home.answer { step in
+            step.words.contains("materialize") && !step.words.contains("--check") ? (0, "\(printed)\n") : nil
+        }
+        let host = FakeRunHost { host, step in
             if step.isContainer { locks.add((try? String(contentsOfFile: path, encoding: .utf8)) ?? "") }
-            if step.words.contains("materialize"), !step.words.contains("--check") { return (0, "\(printed)\n") }
-            if step.words.contains("sha256sum") { return (0, String(repeating: "ab", count: 32) + "  /usr/local/bin/xless\n") }
-            return (0, step.words.contains("next-build") ? "42\n" : "")
+            return answer(host, step)
         }
         #expect(try home.run([home.project], docker: true, host: host) == 0, "\(host.lines)")
         #expect(locks.lines.first?.contains("\nsecrets=\(printed)\nsecrets_real=\(real)\n") == true, "\(locks.lines)")
