@@ -184,6 +184,10 @@ private func submitUploaded(_ t: RoutedTransport, _ record: UploadRecord.Found, 
     let notes = Notes()
     let attached = try await submitUploaded(RoutedTransport(routes), uploaded("B9"), dryRun: true, notes: notes)
     #expect(attached.buildID == "B1" && attached.buildSource == .attached)
+    #expect(notes.lines == ["note: version 1.1 carries build 1.1+42 (B1), not the one uploaded last from here (B9, which --build would take)"])
+    notes.lines = []
+    _ = try await submitUploaded(RoutedTransport(routes), uploaded("B1"), dryRun: true, notes: notes)
+    _ = try await submitUploaded(RoutedTransport(routes), uploaded("B9", version: "1.0"), dryRun: true, notes: notes)
     let named = try await submitUploaded(RoutedTransport(releaseApp()), uploaded("B9"), build: .id("B1"), dryRun: true, notes: notes)
     #expect(named.buildID == "B1" && named.buildSource == .named)
     #expect(notes.lines.isEmpty && attached.notes.isEmpty && named.notes.isEmpty)

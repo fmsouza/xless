@@ -138,6 +138,10 @@ public struct ReleaseSubmission: Sendable {
         }
         out.build = build?.name
         out.buildID = build?.id
+        if r.build == nil, let build, attachedID != nil, case .found(let record) = r.uploaded, Self.isOf(record, r),
+           let id = record.buildID, BuildReference.isBuildID(id), id != build.id {
+            say("note: version \(v.versionString) carries build \(build.name) (\(build.id)), not the one uploaded last from here (\(id), which --build would take)")
+        }
         if build != nil { out.buildSource = r.build != nil ? .named : attachedID != nil ? .attached : .lastUpload }
 
         let report = try await preflight.run(ReleasePreflight.Input(
@@ -241,6 +245,10 @@ public struct ReleaseSubmission: Sendable {
         return out
     }
 
+    private static func isOf(_ record: UploadRecord, _ r: Request) -> Bool {
+        record.bundleID == r.app.bundleID && record.version == r.version.versionString && record.platform?.ascPlatform == r.platform
+    }
+
     /// The build the last upload from here made, when App Store Connect says that it is the newest valid build of the
     /// version; it is named on standard error then, before anything is sent. Otherwise nil, and a note says why.
     private func uploadedBuild(_ r: Request, notes: inout [String]) async throws -> ASCBuildDetail? {
@@ -252,7 +260,7 @@ public struct ReleaseSubmission: Sendable {
         }
         let version = r.version.versionString
         let name = "\(r.app.bundleID) \(version) (\(BuildPlatform.display(r.platform)))"
-        guard record.bundleID == r.app.bundleID, record.version == version, record.platform?.ascPlatform == r.platform else {
+        guard Self.isOf(record, r) else {
             notes.append("the last upload from here is not of \(name): its build is not taken")
             return nil
         }

@@ -106,7 +106,9 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   exits with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove what is left with
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
-  warning. The exit code is xless's (17 for a failed upload or delivery). Afterwards,
+  warning. The exit code is xless's (17 for a failed upload or delivery). Then it prints the `xless release submit` command
+  that sends this build to App Review ([from TestFlight to the App Store](account.md#release-a-version)); nothing is
+  sent there without it. Afterwards,
   [`xless builds`](apple-account.md#xless-builds) lists the build, waits for its processing, answers its export
   compliance and expires old builds.
 - **One run per work copy.** A run holds a lock on the work copy it builds (the project directory; for an overlay,

@@ -881,8 +881,7 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   | products | when the manifest lists in-app purchases or subscriptions (and no `--no-products`): each one on App Store Connect, none missing metadata |
 
   `--release manual|auto|<date>` and `--phased` are what the submission sets: app.yml's `release` values are not
-  compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (`--build`;
-  default: the one attached), the release type (`manual`: [`publish`](#xless-release) releases it; `auto`: on
+  compared then. When everything passes, only what App Store Connect does not have yet is sent: the build (below), the release type (`manual`: [`publish`](#xless-release) releases it; `auto`: on
   approval; a date `2026-12-01` (midnight UTC) or a time on the hour `2026-12-01T09:00:00Z`: not before then), the
   phased release (`--phased` adds one, `--no-phased` removes one that has not started), then the review submission:
   created, the version added, the in-app purchases and subscriptions the manifest lists added
@@ -890,10 +889,20 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   a build attached) is **resumed** by running it again; a version rejected by App Review is submitted again in its
   submission. `--dry-run` runs the pre-flight and lists the steps.
 
+  **The build** is the one `--build` names, else the one the version carries. With neither, it is the one uploaded last
+  from this project (`upload.json` in `.xless/build/<platform>/`, or in the overlay's work copy with `--config`; a React
+  Native build in Docker keeps it in a volume, so name the build there). That file is only a hint: App Store Connect
+  must say that the build is of this app, platform and version, valid, not expired, and the newest valid one of the
+  version. It is named on standard error before anything is sent, also with `--dry-run`. In every other case a note says
+  why none was taken, and the pre-flight that the version has no build. A version that carries another build than the one
+  uploaded last keeps it, with a note. A file that is a link, larger than 64 KiB or not
+  readable is ignored with a note. `xless run`, `ship` and `upload` print the whole command, with `--build`, once the
+  build is processed.
+
   Exit codes: **0** submitted (or a dry run that passed), **21** the pre-flight failed (nothing was sent), **22** the
   version is already in review (nothing was sent), **20** any other error. With `--json`, one document:
   `{"outcome": "submitted" | "dryRun" | "preflightFailed" | "alreadyInReview", "appID", "bundleID", "platform",
-  "version", "versionID", "versionState", "build", "buildID", "submissionID", "submissionState", "steps", "notes",
+  "version", "versionID", "versionState", "build", "buildID", "buildSource": "named" | "attached" | "lastUpload", "submissionID", "submissionState", "steps", "notes",
   "preflight": {"passed", "checks": [{"name", "status": "ok" | "failed" | "warning" | "skipped", "message", "fix"}]}}`.
 - **`status`** shows the version's state, its release type, its build, its phased release (state, day of 7) and the
   review submissions that hold it, with their items' states. App Review's reasons for a rejection are not in the App
