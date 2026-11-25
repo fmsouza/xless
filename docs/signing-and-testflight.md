@@ -136,10 +136,14 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   affected, and a dry run takes no lock. After a SIGKILL, which leaves no chance to clean up, the next run on that work
   copy sees that the run holding the lock is gone, and removes what it left before it starts: its containers (labelled
   `xless.work=<hash>`), the secrets it wrote for them and, natively, the xless it was running. Where it cannot tell (the lock is
-  another machine's, in a home that two share, or the process may be that run), it is refused too, with exit 2, and says what to
-  remove once no run works there any more: the secrets that run may have left, and the lock. A machine is known by its own ID,
-  of which the lock has a hash, so a Mac whose name follows the network stays the same one. A container has no such ID: it is
-  known by its name.
+  another machine's or container's, in a home that they share, or the process may be that run), it is refused too, with exit 2,
+  and says what to remove once no run works there any more: the secrets that run may have left, and the lock. A machine is known
+  by its own ID, of which the lock has a hash: another ID is another machine, whatever its name. So a Mac whose name follows the
+  network stays the same one. On Linux copies of a virtual machine may share an ID: a machine whose name changed is the same one
+  only until it is started again. A container is known by the system it runs on and its name, and its processes are its own: the
+  lock of a run in another container, or of one that was started again, says nothing to see from here. Of the secrets only a
+  directory that nobody else may use is removed, by the path that the lock names, without a symbolic link in it; another one is
+  named and left.
 - **Testers.** Internal testers must be App Store Connect users of the team: invite them with
   [`xless users invite`](apple-account.md#xless-users) (an Admin API key). List them in `testflight.testers` of
   [xless.yml](xless-yml.md#testflight) and every run adds the missing ones to the groups, or add them once with

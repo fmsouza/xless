@@ -109,9 +109,9 @@ rm "$lock"
 # a run killed with SIGKILL, then the machine has another name (a Mac's follows the network): its secrets, its step and its
 # containers go all the same. On another machine nothing can be told: refused, and the message says what to remove there.
 # (The machine is known by a hash: its own ID is not in the lock.)
-left="$t/home/run/xless/0123456789abcdef0123456789abcdef"
+left="$(cd -P "$t" && pwd -P)/home/run/xless/0123456789abcdef0123456789abcdef"
 for where in renamed other; do
-  : > "$t/klog"; mkdir -p "$left/sign"; echo v > "$left/sign/XLESS_DIST_KEY"; echo "$left" > "$t/out"
+  : > "$t/klog"; mkdir -p "$left/sign"; chmod 700 "$left"; echo v > "$left/sign/XLESS_DIST_KEY"; echo "$left" > "$t/out"
   "${docker[@]}" RUN_SLEEP=120 "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/errA" & a=$!; bg+=("$a")
   waitfor '^run ' "$t/klog" && waitfor '^job=' "$lock" || fail "$where: the first run never started: $(cat "$t/errA")"
   aj=$(sed -n 's/^job=\([0-9]*\).*/\1/p' "$lock"); bg+=("$aj")
@@ -134,7 +134,7 @@ for where in renamed other; do
     [[ ! -e "$lock" ]] || fail "the lock outlived the run that took it over"
   else
     [[ $code -eq 2 && -e "$left" && -e "$lock" ]] && alive "$aj" || fail "another machine's run: exit $code: $(cat "$t/err")"
-    grep -qF "stop its step, if it still runs (on elsewhere.example: kill $aj), then remove the secrets that it may have left (on elsewhere.example: rm -rf $left), then remove $lock and run again" "$t/err" \
+    grep -qF "stop its step, if it still runs (on elsewhere.example: kill $aj, the process that started $(sed -n 's/^job=[0-9]* //p' "$lock")), then remove the secrets that it may have left (on elsewhere.example: rm -rf $left), then remove $lock and run again" "$t/err" \
       || fail "the refusal does not say what may be left: $(cat "$t/err")"
     grep -q '^run \|^rm ' "$t/klog" && fail "the refused run ran or removed containers: $(cat "$t/klog")"
     kill "$aj" || true; rm -rf "$left" "$lock"

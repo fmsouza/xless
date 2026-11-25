@@ -118,9 +118,9 @@ final class RunCleanup: @unchecked Sendable {
         host.removeTree(set.map { "\(directory)/\($0)" } ?? directory)
     }
 
-    static func firstLine(_ path: String) -> String? {
-        (try? String(contentsOfFile: path, encoding: .utf8)).map { String(decoding: $0.utf8.prefix { $0 != UInt8(ascii: "\n") }, as: UTF8.self) }
-    }
+    static func firstLine(_ path: String) -> String? { (try? String(contentsOfFile: path, encoding: .utf8)).map(firstLine(of:)) }
+
+    static func firstLine(of text: String) -> String { String(decoding: text.utf8.prefix { $0 != UInt8(ascii: "\n") }, as: UTF8.self) }
 
     /// The lock at `path` is still this process's.
     static func isOwn(_ path: String, _ host: any RunHost) -> Bool {

@@ -52,7 +52,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     var processID: Int32 { 4242 }
     var hostName: String { "here" }
-    var machine: String { "this one" }
+    var machine = "this one", boot = "boot", namespace = "pid:[1]"
     var architecture: String { "arm64" }
     var now: Date { Date(timeIntervalSince1970: 1_800_000_000) }
     var currentDirectory: String { directory }
@@ -139,7 +139,10 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func makeDirectory(_ path: String) -> Bool { files.makeDirectory(path) }
     func removeFile(_ path: String) { files.removeFile(path) }
     func removeEmptyDirectory(_ path: String) { files.removeEmptyDirectory(path) }
-    func removeTree(_ path: String) { files.removeTree(path) }
+    func removeTree(_ path: String) { if !keepsTrees { files.removeTree(path) } }
+    var keepsTrees = false
+    func isPrivateDirectory(_ path: String) -> Bool { files.isPrivateDirectory(path) }
+    func ownFile(_ path: String) -> String? { files.ownFile(path) }
 }
 
 /// A home with a project, an overlay and its source, of one test.

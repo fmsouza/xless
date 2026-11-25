@@ -211,6 +211,38 @@ import Testing
         #expect(PosixRunHost.machine("") .isEmpty && PosixRunHost.machine("a", "b") != PosixRunHost.machine("ab", ""))
     }
 
+    /// The system's mark of a process is of this start of it too, where that can be told; and PIDs are of a namespace.
+    @Test func thisStartOfTheSystem() {
+        let mark = host.mark(host.processID).split(separator: " ").map(String.init)
+        #if os(Linux)
+        #expect(mark.count == 2 && mark.first == host.boot)
+        #expect(host.namespace.hasPrefix("pid:[") && host.namespace.hasSuffix("]"))
+        #else
+        #expect(mark.count == 1 && host.boot.isEmpty && host.namespace.isEmpty)
+        #endif
+        #expect(PosixRunHost.mark(12, boot: "b", isMac: false) == "b 12" && PosixRunHost.mark(12, boot: "", isMac: false).isEmpty)
+        #expect(PosixRunHost.mark(12, boot: "", isMac: true) == "12" && PosixRunHost.mark(0, boot: "b", isMac: false).isEmpty)
+    }
+
+    @Test func whatIsThisUsersAlone() throws {
+        let file = try host.temporaryFile(), root = try #require(host.realPath(FileManager.default.temporaryDirectory.path)) + "/xless-own-\(UUID().uuidString)"
+        defer { host.removeFile(file); host.removeTree(root) }
+        try #require(mkdir(root, 0o700) == 0)
+        #expect(host.isPrivateDirectory(root) && !host.isPrivateDirectory(root + "/") && !host.isPrivateDirectory(root + "/none") && !host.isPrivateDirectory(file))
+        for mode: mode_t in [0o755, 0o710, 0o701, 0o500] {
+            chmod(root, mode)
+            #expect(!host.isPrivateDirectory(root), "\(mode)")
+        }
+        chmod(root, 0o700)
+        try Data("first\nsecond\n".utf8).write(to: URL(fileURLWithPath: root + "/file"))
+        for (link, to) in [("/link", "file"), ("/self", ".")] { try FileManager.default.createSymbolicLink(atPath: root + link, withDestinationPath: to) }
+        #expect(!host.isPrivateDirectory(root + "/self"))
+        #expect(host.ownFile(root + "/file") == "first\nsecond\n")
+        try #require(mkfifo(root + "/fifo", 0o600) == 0)
+        for name in ["/link", "/self", "/fifo", "/none", ""] { #expect(host.ownFile(root + name) == nil, "\(name)") }
+        if geteuid() != 0 { #expect(host.ownFile("/etc/passwd") == nil && !host.isPrivateDirectory("/root")) }
+    }
+
     @Test func files() throws {
         let a = try host.temporaryFile(), b = a + ".b"
         defer { host.removeFile(a); host.removeFile(b) }

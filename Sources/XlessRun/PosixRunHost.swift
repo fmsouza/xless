@@ -97,13 +97,21 @@ public final class PosixRunHost: RunHost {
         return gethostuuid(&id, &wait) == 0 ? Self.machine(id.map { String(format: "%02x", $0) }.joined()) : ""
         #else
         let firstNamespace = "pid:[4026531836]" // PROC_PID_INIT_INO, the same on every Linux
-        if (try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/ns/pid")) == firstNamespace {
+        if namespace == firstNamespace {
             let id = Self.word("/etc/machine-id")
             if id.wholeMatch(of: /[0-9a-f]{32}/) != nil { return Self.machine(id) }
         }
-        let boot = Self.word("/proc/sys/kernel/random/boot_id")
+        let boot = self.boot
         return boot.isEmpty ? "" : Self.machine(boot, hostName)
         #endif
+    }
+
+    public var boot: String { isMac ? "" : Self.word("/proc/sys/kernel/random/boot_id") }
+
+    public var namespace: String {
+        var name = [CChar](repeating: 0, count: 256)
+        let n = isMac ? 0 : readlink("/proc/self/ns/pid", &name, name.count)
+        return n > 0 ? String(decoding: name[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self) : ""
     }
 
     /// A hash, as machine-id(5) asks for: the ID itself is nobody else's to know.
@@ -287,12 +295,12 @@ public final class PosixRunHost: RunHost {
     public func started(_ pid: Int32) -> String { ps(["-o", "lstart=", "-p", "\(pid)"]) }
     public func commandLine(_ pid: Int32) -> String { ps(["-o", "command=", "-p", "\(pid)"]) }
 
-    public func mark(_ pid: Int32) -> String {
-        let start = xless_process_start(pid)
-        guard start != 0 else { return "" }
-        // On Linux it counts from the start of the system.
-        let boot = Self.word("/proc/sys/kernel/random/boot_id")
-        return boot.isEmpty ? "\(start)" : "\(boot) \(start)"
+    public func mark(_ pid: Int32) -> String { Self.mark(xless_process_start(pid), boot: boot, isMac: isMac) }
+
+    /// On Linux a start counts from the system's: without a word on which that was it marks nothing.
+    static func mark(_ start: UInt64, boot: String, isMac: Bool) -> String {
+        if start == 0 { return "" }
+        return isMac ? "\(start)" : boot.isEmpty ? "" : "\(boot) \(start)"
     }
 
     public func programFile(_ pid: Int32) -> String {
@@ -347,6 +355,30 @@ public final class PosixRunHost: RunHost {
     public func isFile(_ path: String) -> Bool {
         var info = stat()
         return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+    }
+
+    public func isPrivateDirectory(_ path: String) -> Bool {
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == geteuid(), info.st_mode & 0o777 == 0o700,
+              let real = realPath(path) else { return false }
+        return real.utf8.elementsEqual(path.utf8)
+    }
+
+    public func ownFile(_ path: String) -> String? {
+        // (O_NONBLOCK: opening a FIFO waits for who writes to it.)
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == geteuid() else { return nil }
+        var bytes: [UInt8] = [], buffer = [UInt8](repeating: 0, count: 16384)
+        while true {
+            let n = read(descriptor, &buffer, buffer.count)
+            if n < 0, errno == EINTR { continue }
+            guard n >= 0 else { return nil }
+            if n == 0 { return Self.utf8(bytes) }
+            bytes += buffer[..<n]
+        }
     }
 
     public func temporaryFile() throws -> String {

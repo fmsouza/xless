@@ -18,6 +18,14 @@ import Testing
         try Data(lock.utf8).write(to: URL(fileURLWithPath: path))
     }
 
+    /// A directory of secrets, as `materialize` makes one.
+    private func makeSecrets(_ path: String? = nil) throws -> String {
+        let path = path ?? home.secrets
+        try FileManager.default.createDirectory(atPath: "\(path)/sign", withIntermediateDirectories: true)
+        chmod(path, 0o700)
+        return path
+    }
+
     private func run(_ host: FakeRunHost, docker: Bool = false) throws -> Int32 {
         try home.run([home.project, "--to", "finalize"], docker: docker, host: host)
     }
@@ -27,7 +35,7 @@ import Testing
         let host = FakeRunHost { host, step in
             guard step.words.contains("ship") else { return (0, "") }
             let lock = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-            return (lock.contains("pid=4242\nstarted=Tue Nov 24 09:00:00 2026\nhost=here\nmark=own mark\nprogram=/own/xless\nmachine=this one\nwork=")
+            return (lock.contains("pid=4242\nstarted=Tue Nov 24 09:00:00 2026\nhost=here\nmark=own mark\nprogram=/own/xless\nmachine=this one\nnamespace=pid:[1]\nwork=")
                 && lock.contains("\njob=50") && lock.contains("\njobmark=") ? 0 : 1, "")
         }
         #expect(try run(host) == 0)
@@ -40,7 +48,7 @@ import Testing
                                                   // a clock that stepped, while the system's own mark of the process stays
                                                   (.init(mark: "boot 12"), "then", "here", "mark=boot 12\n"),
                                                   // a machine that had another name
-                                                  (.init(mark: "boot 12"), "then", "there", "mark=boot 12\nmachine=this one\n")] {
+                                                  (.init(mark: "boot 12"), "then", "there", "mark=boot 12\nmachine=this one\nnamespace=pid:[1]\n")] {
             try leave(pid: 77, started: started, on: machine, more: more)
             let host = FakeRunHost(processes: [77: process])
             #expect(try run(host) == 2)
@@ -96,10 +104,9 @@ import Testing
 
     /// A refused run says what is left once the lock is gone, which is the only place that has it.
     @Test func aRefusalNamesWhatTheOtherRunMayHaveLeft() throws {
-        let secrets = home.secrets, out = try home.write("out", "\(secrets)\n"), old = "Mon Nov 23 10:00:00 2026"
-        try FileManager.default.createDirectory(atPath: "\(secrets)/sign", withIntermediateDirectories: true)
+        let secrets = try makeSecrets(), out = try home.write("out", "\(secrets)\n"), old = "Mon Nov 23 10:00:00 2026"
         let sure = [Int32(77): FakeRunHost.Process(command: "xless run"), 88: .init(started: "then")]
-        let job = "stop its step, if it still runs (kill 88), then ", there = "stop its step, if it still runs (on there: kill 88), then "
+        let job = "stop its step, if it still runs (kill 88), then ", there = "stop its step, if it still runs (on there: kill 88, the process that started then), then "
         for lines in ["secrets_out=\(out)\n", "secrets=\(secrets)\n", "secrets_out=\(out)\nsecrets=\(secrets)\n"] {
             try leave(pid: 77, started: old, more: lines + "job=88 then\n")
             try refused(FakeRunHost(processes: sure), "pid 77 runs", first: job + "remove the secrets that it may have left (rm -rf \(secrets)), then ")
@@ -108,15 +115,20 @@ import Testing
         try leave(pid: 77, started: old, on: "there", more: "secrets_out=\(out)\nsecrets=\(secrets)\njob=88 then\n")
         try refused(FakeRunHost(), "it is on there", first: there + "remove the secrets that it may have left (on there: rm -rf \(secrets)), then ")
         try leave(pid: 77, started: old, on: "there", more: "secrets_out=/tmp/of there\n")
-        try refused(FakeRunHost(), "it is on there", first: "remove the secrets that it may have left (on there: rm -rf \"$(head -n 1 '/tmp/of there')\"), then ")
+        try refused(FakeRunHost(), "it is on there", first: "remove the secrets that it may have left (on there: the directory \u{2026}/xless/<32 hex digits> that the first line of '/tmp/of there' names), then ")
         // on this machine, what is not there (any more) is not named
         for lines in ["secrets=\(home.root)/xless/\(String(repeating: "1b", count: 16))\n", "secrets_out=\(home.root)/none\n", "secrets=\(home.root)\n", "job=99 then\n", "job=88 before\n"] {
             try leave(pid: 77, started: old, more: lines)
             try refused(FakeRunHost(processes: sure), "pid 77 runs", lines)
         }
+        // one that is not as a run's secrets are is nothing to remove unseen
+        chmod(secrets, 0o755)
+        try leave(pid: 77, started: old, more: "secrets=\(secrets)\n")
+        try refused(FakeRunHost(processes: sure), "pid 77 runs", first: "look whether it left secrets in \(secrets), then ")
+        chmod(secrets, 0o700)
         // a name that a shell would take apart
         let odd = "\(home.root)/it's $x/xless/\(String(repeating: "0a", count: 16))"
-        try FileManager.default.createDirectory(atPath: odd, withIntermediateDirectories: true)
+        _ = try makeSecrets(odd)
         try leave(pid: 77, started: old, more: "secrets=\(odd)\n")
         try refused(FakeRunHost(processes: sure), "pid 77 runs", first: "remove the secrets that it may have left (rm -rf '\(home.root)/it'\\''s $x/xless/\(String(repeating: "0a", count: 16))'), then ")
     }
@@ -141,20 +153,89 @@ import Testing
             try taken(77, .init(command: command, file: file), "program=/opt/tool\n")
             try taken(77, .init(command: command, file: file), "")
         }
-        // this run's own PID, as in a container that was started again
-        try taken(4242, .init(started: old, command: "xless run", file: "/own/xless"), "program=/own/xless\n")
+        // this run's own PID, in the same PID namespace
+        try taken(4242, .init(started: old, command: "xless run", file: "/own/xless"), "program=/own/xless\nnamespace=pid:[1]\n")
     }
 
-    /// The machine is known by what does not move with the network: its name may have.
-    @Test(arguments: ["machine=this one\n", "machine=another\n", ""]) func aGoneRunOfThisMachineIsTakenOver(_ machine: String) throws {
-        let secrets = home.secrets
-        try FileManager.default.createDirectory(atPath: "\(secrets)/sign", withIntermediateDirectories: true)
-        let named = machine == "machine=this one\n" // else by its name
-        for pid: Int32 in [77, 78] {
-            try leave(pid: pid, on: named ? "there" : "here", more: "\(machine)secrets=\(secrets)\njob=88 then\n")
-            let host = FakeRunHost(processes: [78: .init(), 88: .init(started: "then")])
+    /// What is known of the machine that a lock is from, and of the one the new run is on.
+    struct Place: Sendable, CustomTestStringConvertible {
+        var what: String
+        var name = "here", lines = "", pid: Int32 = 77, isMac = false, machine = "this one", boot = "boot", namespace = "pid:[1]"
+        var testDescription: String { what }
+
+        func host() -> FakeRunHost {
+            let host = FakeRunHost(isMac: isMac, processes: [78: .init(), 88: .init(started: "then"), 99: .init(started: "Mon Nov 23 10:00:00 2026", command: "xless run", mark: "boot 9", file: "/own/xless")])
+            (host.machine, host.boot, host.namespace) = (machine, isMac ? "" : boot, isMac ? "" : namespace)
+            return host
+        }
+    }
+
+    /// The run is of this machine, and of its PIDs: its name may have changed, or the system been started again, since.
+    @Test(arguments: [
+        Place(what: "the same machine and name", lines: "machine=this one\nnamespace=pid:[1]\n"),
+        Place(what: "another process has the PID", lines: "machine=this one\nnamespace=pid:[1]\n", pid: 78),
+        Place(what: "a Mac by another name", name: "there", lines: "machine=this one\nnamespace=\n", isMac: true),
+        Place(what: "a Mac by another name, another process has the PID", name: "there", lines: "machine=this one\n", pid: 78, isMac: true),
+        Place(what: "a Mac, this run's own PID", lines: "machine=this one\n", pid: 4242, isMac: true),
+        Place(what: "Linux by another name, the same boot", name: "there", lines: "machine=this one\nnamespace=pid:[1]\nmark=boot 11\n"),
+        Place(what: "Linux, no boot ID to be seen", lines: "machine=this one\nnamespace=pid:[1]\nmark=\n", boot: ""),
+        Place(what: "started again since", lines: "machine=this one\nnamespace=pid:[1]\nmark=before 11\n"),
+        Place(what: "started again since, an xless of the same second has the PID", lines: "machine=this one\nnamespace=pid:[1]\nmark=before 9\nprogram=/own/xless\n", pid: 99),
+        Place(what: "started again since, in another PID namespace", lines: "machine=this one\nnamespace=pid:[2]\nmark=before 11\n"),
+        Place(what: "started again since, with this run's PID", lines: "machine=this one\nmark=before 11\n", pid: 4242),
+        Place(what: "this run's own PID", lines: "machine=this one\nnamespace=pid:[1]\nmark=boot 11\n", pid: 4242),
+        Place(what: "no ID in the lock"), Place(what: "no ID in the lock, started again since", lines: "mark=before 11\n"),
+        Place(what: "no ID of this machine", lines: "machine=this one\nnamespace=pid:[1]\n", machine: ""),
+    ]) func aGoneRunOfThisMachineIsTakenOver(_ place: Place) throws {
+        let secrets = try makeSecrets()
+        try leave(pid: place.pid, on: place.name, more: "\(place.lines)secrets=\(secrets)\njob=88 then\n")
+        let host = place.host()
+        #expect(try run(host) == 0, "\(host.lines)")
+        #expect(host.lines.contains("==> removed the secrets it left in \(secrets)"))
+        // (its step: a lock that has a mark says it for the step too)
+        #expect(host.killed == (place.lines.contains("mark=") && !place.lines.contains("mark=\n") ? [] : [88]) && !home.exists(secrets) && !home.exists(path))
+    }
+
+    /// Another machine may have the same name (a container that was given it), or the same ID (a copy of a virtual machine); and in
+    /// another PID namespace a PID that is not there says nothing.
+    @Test(arguments: [
+        Place(what: "Linux by another name, no boot in the lock", name: "there", lines: "machine=this one\nnamespace=pid:[1]\n"),
+        Place(what: "Linux by another name, another boot", name: "there", lines: "machine=this one\nnamespace=pid:[1]\nmark=before 11\n"),
+        Place(what: "Linux by another name, no boot ID to be seen", name: "there", lines: "machine=this one\nnamespace=pid:[1]\nmark=boot 11\n", boot: ""),
+        Place(what: "the same name, another ID", lines: "machine=another\nnamespace=pid:[1]\nmark=boot 11\n"),
+        Place(what: "the same name, another ID and boot", lines: "machine=another\nnamespace=pid:[1]\nmark=before 11\n"),
+        Place(what: "a Mac of the same name, another ID", lines: "machine=another\n", isMac: true),
+        Place(what: "another name, no ID in the lock", name: "there"),
+        Place(what: "another name, the same boot, no ID in the lock", name: "there", lines: "mark=boot 11\n"),
+        Place(what: "another name, no ID of this machine", name: "there", lines: "machine=this one\n", machine: ""),
+        Place(what: "a Mac by another name, no ID in the lock", name: "there", isMac: true),
+        Place(what: "another PID namespace", lines: "machine=this one\nnamespace=pid:[2]\nmark=boot 11\n"),
+        Place(what: "another PID namespace, no boot in the lock", lines: "machine=this one\nnamespace=pid:[2]\n"),
+        Place(what: "another PID namespace, no ID in the lock", lines: "namespace=pid:[2]\nmark=boot 11\n"),
+        Place(what: "another PID namespace, this run's own PID", lines: "machine=this one\nnamespace=pid:[2]\nmark=boot 11\n", pid: 4242),
+        Place(what: "no PID namespace to be seen", lines: "machine=this one\nnamespace=pid:[1]\nmark=boot 11\n", namespace: ""),
+        Place(what: "this run's own PID, in what PID namespace is not said", lines: "machine=this one\nmark=boot 11\n", pid: 4242),
+        Place(what: "this run's own PID, nothing else said", pid: 4242),
+        Place(what: "in what PID namespace is not said", lines: "machine=this one\nmark=boot 11\n"),
+        Place(what: "in what PID namespace was not known", lines: "machine=this one\nnamespace=\nmark=boot 11\n"),
+    ]) func whatMayBeAnothersIsNotTakenOver(_ place: Place) throws {
+        let secrets = try makeSecrets()
+        try leave(pid: place.pid, on: place.name, more: "\(place.lines)secrets=\(secrets)\njob=88 then\n")
+        let host = place.host()
+        #expect(try run(host) == 2, "\(host.lines)")
+        let last = host.lines.last ?? ""
+        #expect(last.contains("may be in use by another run") && last.contains("rm -rf \(secrets)") && last.hasSuffix("remove \(path) and run again"), "\(last)")
+        #expect(host.killed.isEmpty && home.exists(secrets) && home.exists(path))
+    }
+
+    /// A lock that has the system's mark of its run has it of its step too, which is never the process that all others are under.
+    @Test func aStepIsNotBelievedByItsTimeWhereThereAreMarks() throws {
+        for (lines, stops) in [("mark=boot 11\njob=88 then\n", false), ("mark=boot 11\njob=88 then\njobmark=\n", false), ("job=88 then\n", true),
+                               ("job=1 then\n", false), ("job=1 then\njobmark=boot 1\n", false), ("job=0 then\n", false), ("job=-88 then\n", false), ("job=4242 then\n", false)] {
+            try leave(pid: 77, more: lines)
+            let host = FakeRunHost(processes: [1: .init(started: "then", children: [88], mark: "boot 1"), 88: .init(started: "then"), 4242: .init(started: "then")])
             #expect(try run(host) == 0)
-            #expect(host.killed == [88] && !home.exists(secrets) && !home.exists(path))
+            #expect(host.killed == (stops ? [88] : []), "\(lines)")
         }
     }
 
@@ -169,8 +250,7 @@ import Testing
     }
 
     @Test func aGoneRunsLeftoversAreStopped() throws {
-        let secrets = home.secrets
-        try FileManager.default.createDirectory(atPath: "\(secrets)/sign", withIntermediateDirectories: true)
+        let secrets = try makeSecrets()
         let out = try home.write("out", "\(secrets)\n")
         try leave(pid: 77, more: "secrets_out=\(out)\njob=88 Mon Nov 23 10:00:01 2026\n")
         // 77 is another process by now
@@ -181,6 +261,51 @@ import Testing
         #expect(host.killed == [89, 88] && !home.exists(secrets))
         #expect(host.allSteps.contains { $0.line == "docker rm -f c0ffee dead" })
         #expect(!home.exists(path) && !home.exists("\(path).takeover"))
+    }
+
+    /// What a lock names is removed as secrets only where it is as `materialize` made it.
+    @Test func onlyAPrivateDirectoryIsRemoved() throws {
+        let id = String(repeating: "0c", count: 16), behind = try makeSecrets("\(home.root)/behind/xless/\(id)")
+        func left(_ lines: String, _ path: String, says: Bool = true) throws {
+            try leave(pid: 77, more: lines)
+            let host = FakeRunHost()
+            #expect(try run(host) == 0, "\(host.lines)")
+            #expect(home.exists(path) && !host.lines.contains { $0.contains("removed the secrets") }, "\(lines)")
+            #expect(host.lines.contains { $0.contains("is not removed: it is no directory that only you may use") } == says, "\(host.lines)")
+        }
+        // a link in the path, and as its last part
+        try FileManager.default.createDirectory(atPath: "\(home.root)/d", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: "\(home.root)/d/xless", withDestinationPath: "\(home.root)/behind/xless")
+        try left("secrets=\(home.root)/d/xless/\(id)\n", behind)
+        let link = "\(home.root)/run/xless/\(String(repeating: "0d", count: 16))"
+        try FileManager.default.createDirectory(atPath: "\(home.root)/run/xless", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: behind)
+        try left("secrets=\(link)\n", link)
+        #expect(home.exists(behind))
+        // one that others may read, and a file
+        let shared = try makeSecrets("\(home.root)/run/xless/\(String(repeating: "0e", count: 16))")
+        chmod(shared, 0o755)
+        try left("secrets=\(shared)\n", shared)
+        let file = try home.write("run/xless/\(String(repeating: "0f", count: 16))", "x")
+        try left("secrets=\(file)\n", file)
+        // the lock says where they are: the file does not
+        let other = try makeSecrets(), out = try home.write("out", "\(other)\n")
+        try left("secrets=\(home.root)/run/xless/\(String(repeating: "1a", count: 16))\nsecrets_out=\(out)\n", other, says: false)
+        // a file that is no file of the run's: a link, a FIFO (which nobody writes to), a directory
+        try FileManager.default.createSymbolicLink(atPath: "\(home.root)/outlink", withDestinationPath: out)
+        try #require(mkfifo("\(home.root)/fifo", 0o600) == 0)
+        for name in ["outlink", "fifo", "run", "none"] { try left("secrets_out=\(home.root)/\(name)\n", other, says: false) }
+    }
+
+    /// What was not removed is not said to be.
+    @Test func secretsThatCannotBeRemovedStopTheRun() throws {
+        let secrets = try makeSecrets()
+        try leave(pid: 77, more: "secrets=\(secrets)\n")
+        let host = FakeRunHost()
+        host.keepsTrees = true
+        #expect(try run(host) == 2)
+        #expect(host.lines.last == "testflight: could not remove the secrets that the run that held the work copy \(key) left in \(secrets); remove them with: rm -rf \(secrets)")
+        #expect(!host.lines.contains { $0.contains("removed the secrets") } && !host.allSteps.contains { $0.words.contains("ship") })
     }
 
     /// A lock names a directory to remove: only one that a run's secrets were written to.

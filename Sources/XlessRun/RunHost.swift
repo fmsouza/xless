@@ -43,6 +43,11 @@ public protocol RunHost: AnyObject, Sendable {
     var hostName: String { get }
     /// What tells this machine from another one, whatever its name is now (not its own ID, but a hash); empty: unknown.
     var machine: String { get }
+    /// What tells this start of the system from another one, as the first word of `mark` does; empty: unknown (macOS has none).
+    var boot: String { get }
+    /// The PID namespace, where a system has such: a process of another one has another PID here, or is not to be seen. Empty:
+    /// unknown (macOS has none).
+    var namespace: String { get }
     /// As the images' names have it: arm64 or amd64.
     var architecture: String { get }
     var isMac: Bool { get }
@@ -100,6 +105,10 @@ public protocol RunHost: AnyObject, Sendable {
     func isReadable(_ path: String) -> Bool
     /// A regular file, or a link to one.
     func isFile(_ path: String) -> Bool
+    /// A directory of this user's (no link to one) that nobody else may use, by a path without a link in it.
+    func isPrivateDirectory(_ path: String) -> Bool
+    /// What a regular file of this user's has (no link to one); nil: there is no such file.
+    func ownFile(_ path: String) -> String?
     /// A new empty file that only this user can read.
     func temporaryFile() throws -> String
     /// Makes `path` another name of `file`; false: there is a `path` already (or it cannot).

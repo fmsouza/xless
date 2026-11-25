@@ -230,7 +230,8 @@ extension ProjectRun {
             throw RunStop.usage("\"\(xself)\" secrets materialize printed '\(directory)', not a run directory")
         }
         cleanup.note(secrets: directory, secrets.sets)
-        lock?.note("secrets=\(directory)")
+        // (By its real path: a takeover removes it by no other.)
+        lock?.note("secrets=\(host.realPath(directory) ?? directory)")
         try refuseInBuildMounts(directory)
         secrets.directory = directory
     }
