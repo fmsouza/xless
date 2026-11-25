@@ -75,7 +75,7 @@ platforms:
         while [ $# -gt 0 ]; do case "$1" in --package-path) w="$2" ;; --scratch-path) s="$2" ;; --triple) a="${2%%-*}" ;; esac; shift; done
         mkdir -p "$s/out/Products/Release/Now_Now.bundle"
         cp '\(root.path)'/"$a" "$s/out/Products/Release/DemoMac"
-        cp "$w/Package.resolved" '\(root.path)/used-'"$a" 2>/dev/null || true
+        [ -f '\(root.path)/used-'"$a" ] || cp "$w/Package.resolved" '\(root.path)/used-'"$a" 2>/dev/null || true
         echo '{"pins":[{"identity":"dep","state":{"version":"9.0.0"}}],"version":3}' > "$w/Package.resolved"
 
         """, to: bin.appendingPathComponent("swift"), stage: .build)
@@ -86,7 +86,10 @@ platforms:
     for arch in ["arm64", "x86_64"] {
         try fm.createDirectory(at: project.appendingPathComponent(".xless/macos-build-\(arch)/out/Products/Release/Gone_Gone.bundle"), withIntermediateDirectories: true)
     }
-    let app = try MacBuilder.build(project: project, config: config, paths: StagePaths(project: project, platform: .macos), env: env)
+    var notes: [String] = []
+    let app = try MacBuilder.build(project: project, config: config, paths: StagePaths(project: project, platform: .macos), env: env, note: { notes.append($0) })
+    #expect(notes.filter { $0.hasPrefix("Package.resolved does not name these, which were built: dep 9.0.0") }.count == 1)
+    #expect(notes.filter { $0.contains("Gone_Gone.bundle was not built again") }.count == 2 && notes.count == 3, "once for each architecture")
     #expect(try fm.contentsOfDirectory(atPath: app.path + "/Contents/Resources") == ["Now_Now.bundle"])
     #expect(try String(contentsOf: root.appendingPathComponent("used-arm64"), encoding: .utf8) == text)
     #expect(try String(contentsOf: root.appendingPathComponent("used-x86_64"), encoding: .utf8).contains("9.0.0"), "the other architecture: the versions of the first")
@@ -97,4 +100,61 @@ platforms:
     try fm.removeItem(at: root.appendingPathComponent("used-arm64"))
     _ = try MacBuilder.build(project: project, config: config, paths: StagePaths(project: project, platform: .macos), env: env)
     #expect(!fm.fileExists(atPath: root.path + "/used-arm64"))
+}
+
+// MARK: - The resource bundles of a build
+
+/// A `swift build` in miniature: it makes what is missing of its products, or (`blind`) only where it has never built.
+private final class Products {
+    let scratch: URL, products: URL
+    var bundles: Set<String>, blind: Bool, builds = 0, notes: [String] = [], fails = false
+    init(_ bundles: Set<String>, blind: Bool) {
+        scratch = FileManager.default.temporaryDirectory.appendingPathComponent("xless-bundles-\(UUID().uuidString)")
+        products = scratch.appendingPathComponent("out/Products/Release")
+        (self.bundles, self.blind) = (bundles, blind)
+    }
+    func build() throws {
+        builds += 1
+        let done = FileManager.default.fileExists(atPath: products.path)
+        try FileManager.default.createDirectory(at: products, withIntermediateDirectories: true)
+        if !(blind && done) { for name in bundles { try FileManager.default.createDirectory(at: products.appendingPathComponent(name), withIntermediateDirectories: true) } }
+        if fails { throw XlessError(.build, "it does not compile", fix: "-") }
+    }
+    /// What goes into the app.
+    func app() throws -> Set<String> {
+        builds = 0
+        notes = []
+        try ResourceBundles.fresh(scratch: scratch, products: { [self.products] }, note: { self.notes.append($0) }, build: build)
+        return Set(ResourceBundles.of(products).map(\.lastPathComponent))
+    }
+}
+
+@Test(arguments: [false, true])
+func anAppHasEveryBundleOfItsPackagesAndNoOther(blind: Bool) throws {
+    let fm = FileManager.default, swift = Products(["A_A.bundle", "B_B.bundle"], blind: blind)
+    defer { try? fm.removeItem(at: swift.scratch) }
+    #expect(try swift.app() == ["A_A.bundle", "B_B.bundle"] && swift.builds == 1)
+    let fetched = swift.scratch.appendingPathComponent("checkouts/dep")
+    try fm.createDirectory(at: fetched, withIntermediateDirectories: true)
+    // the same again
+    #expect(try swift.app() == ["A_A.bundle", "B_B.bundle"] && swift.builds == (blind ? 2 : 1) && swift.notes.isEmpty == !blind)
+    // a package goes
+    swift.bundles = ["B_B.bundle"]
+    #expect(try swift.app() == ["B_B.bundle"] && swift.builds == 2 && swift.notes.first?.hasPrefix("A_A.bundle") == true)
+    #expect(fm.fileExists(atPath: fetched.path))
+    // a build that fails after its bundles were taken away (the build before it kept no record: an older xless's)
+    try fm.removeItem(at: swift.scratch.appendingPathComponent("xless-bundles"))
+    swift.fails = true
+    #expect(throws: XlessError.self) { try swift.app() }
+    swift.fails = false
+    try fm.removeItem(at: swift.products.appendingPathComponent("B_B.bundle"), ifThere: true)
+    #expect(try swift.app() == ["B_B.bundle"])
+    // one whose last bundle goes
+    swift.bundles = []
+    #expect(try swift.app() == [] && swift.builds == 2)
+    #expect(try swift.app() == [] && swift.builds == 1 && swift.notes.isEmpty)
+}
+
+extension FileManager {
+    fileprivate func removeItem(at url: URL, ifThere: Bool) throws { if fileExists(atPath: url.path) { try removeItem(at: url) } }
 }

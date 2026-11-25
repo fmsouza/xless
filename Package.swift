@@ -116,7 +116,7 @@ let package = Package(
         .testTarget(name: "XlessCoreTests", dependencies: ["XlessCore", "CXlessProcess"]),
         .testTarget(name: "XlessImagesTests", dependencies: ["XlessImages", "XlessCore"]),
         .testTarget(name: "XlessSDKTests", dependencies: ["XlessSDK", "XlessImages", "XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
-        .testTarget(name: "XlessBuildTests", dependencies: ["XlessBuild", "XlessCore"]),
+        .testTarget(name: "XlessBuildTests", dependencies: ["XlessBuild", "XlessCore", "XlessMachO"]),
         .testTarget(name: "XlessAssetsTests", dependencies: [
             "XlessAssets", "XlessCore", "XlessMachO",
             .product(name: "PNG", package: "swift-png"),

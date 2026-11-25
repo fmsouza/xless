@@ -71,8 +71,10 @@ public enum MacBuilder {
         return args
     }
 
-    public static func build(project: URL, config: ProjectConfig, paths: StagePaths,
-                             env: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
+    public static func note(_ text: String) { FileHandle.standardError.write(Data("xless: note: \(text)\n".utf8)) }
+
+    public static func build(project: URL, config: ProjectConfig, paths: StagePaths, env: [String: String] = ProcessInfo.processInfo.environment,
+                             note: (String) -> Void = Self.note) throws -> URL {
         let mac = try config.platform(.macos)
         let sdk = DarwinSDKLocator.bundle(env: env)
         let toolset = sdk.appendingPathComponent("toolset-swb.json")
@@ -104,26 +106,26 @@ public enum MacBuilder {
                 builtExecutable(named: "\(mac.product)Mac", under: scratch.appendingPathComponent("out/Products"))
                     ?? (own == nil ? nil : builtExecutable(named: "\(mac.product)Mac", under: scratch))
             }
-            // Every bundle next to the executable goes into the app, and one of a package that the app no longer has would stay.
-            // (Swift Build makes those it needs again.)
-            let products = (try? FileManager.default.contentsOfDirectory(at: scratch.appendingPathComponent("out/Products"), includingPropertiesForKeys: nil)) ?? []
-            for directory in Set(products + [executable()?.deletingLastPathComponent()].compactMap { $0 }) {
-                for bundle in XcodePackageBuilder.bundles(of: directory) { try FileManager.default.removeItem(at: bundle) }
+            func products() -> [URL] {
+                let there = (try? FileManager.default.contentsOfDirectory(at: scratch.appendingPathComponent("out/Products"), includingPropertiesForKeys: nil)) ?? []
+                return Set(there + [executable()?.deletingLastPathComponent()].compactMap { $0 }).sorted { $0.path < $1.path }
             }
-            try Shell.run("swift", swiftBuildArguments(wrapper: wrapper, scratch: scratch, arch: arch, minimumOS: mac.minimumOS,
-                                                       toolset: toolset, product: mac.product, own: own),
-                          cwd: project, env: buildEnv, stage: .build, passthrough: true)
+            try ResourceBundles.fresh(scratch: scratch, products: products, note: note) {
+                try Shell.run("swift", swiftBuildArguments(wrapper: wrapper, scratch: scratch, arch: arch, minimumOS: mac.minimumOS,
+                                                           toolset: toolset, product: mac.product, own: own),
+                              cwd: project, env: buildEnv, stage: .build, passthrough: true)
+            }
             guard let exe = executable() else {
                 throw XlessError(.build, "no \(mac.product)Mac executable under \(scratch.path)/out/Products", fix: "check the swift build output above")
             }
             slices.append(try Data(contentsOf: exe))
             executables.append(exe)
             if resourceBundles.isEmpty {
-                resourceBundles = XcodePackageBuilder.bundles(of: exe.deletingLastPathComponent())
+                resourceBundles = ResourceBundles.of(exe.deletingLastPathComponent())
             }
         }
 
-        if let note = PackageResolved.unpinnedNote(project: project, wrapper: wrapper) { FileHandle.standardError.write(Data("xless: note: \(note)\n".utf8)) }
+        if let unpinned = PackageResolved.unpinnedNote(project: project, wrapper: wrapper) { note(unpinned) }
         let built = try Files.atomicOutput(paths.app) { partial in
             try PackageApp.assemble(in: partial, executable: MachO.makeFat(slices), resources: resourceBundles, project: project, config: config, platform: .macos)
         }

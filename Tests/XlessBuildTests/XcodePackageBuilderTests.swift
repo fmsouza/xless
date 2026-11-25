@@ -127,8 +127,23 @@ private func temporary() throws -> URL {
         let left = try Data(contentsOf: library), want = try slices(kept)
         #expect(calls == expected && left == want, "\(paths)")
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["V"] && FileManager.default.isExecutableFile(atPath: library.path))
+        if expected.count == 2 { // (by each architecture: its own mode is as it was)
+            #expect(try FileManager.default.attributesOfItem(atPath: library.path)[.posixPermissions] as? Int == 0o555)
+        }
         try FileManager.default.removeItem(at: library)
     }
+}
+
+@Test func aFrameworksLinkToItsBinaryStaysALink() throws {
+    let dir = try temporary(), fm = FileManager.default
+    defer { try? fm.removeItem(at: dir) }
+    let binary = dir.appendingPathComponent("Versions/A/V"), link = dir.appendingPathComponent("V")
+    try fm.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try MachO.makeFat([image(loading: [], runPaths: ["/x"]), image(loading: [], runPaths: [], cpu: 0x01000007)]).write(to: binary)
+    try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "Versions/A/V")
+    try XcodePackageBuilder.removeRunPaths(of: link, where: { $0.hasPrefix("/") }) { _, file in try image(loading: [], runPaths: []).write(to: file) }
+    #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == "Versions/A/V")
+    #expect(try Data(contentsOf: binary) == MachO.makeFat([image(loading: [], runPaths: []), image(loading: [], runPaths: [], cpu: 0x01000007)]))
 }
 
 @Test func theDSYMOfALibraryIsKeptOnlyWhenItIsOfThatBuild() throws {

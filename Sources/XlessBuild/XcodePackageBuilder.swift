@@ -65,20 +65,18 @@ public enum XcodePackageBuilder {
         // Another Xcode builds in a directory of its own, and reuses nothing of this one's.
         let scratch = project.appendingPathComponent(".xless/xcode-build-\(name)-\(xcode.build)", isDirectory: true)
         let products = scratch.appendingPathComponent("out/Products/\(productsDirectory(destination))", isDirectory: true)
-        // Every bundle there goes into the app, and one of a package that the app no longer has would stay. (Swift Build makes those
-        // it needs again.)
-        for bundle in bundles(of: products) { try FileManager.default.removeItem(at: bundle) }
-        let environment = xcode.environment(env)
-        try Shell.run(try xcode.require(.swift, stage: .build).path,
-                      arguments(destination, wrapper: wrapper, scratch: scratch, product: pc.product, minimumOS: pc.minimumOS),
-                      cwd: project, env: environment, baseEnvironment: env, stage: .build, passthrough: true)
-        if let note = PackageResolved.unpinnedNote(project: project, wrapper: wrapper) { FileHandle.standardError.write(Data("xless: note: \(note)\n".utf8)) }
+        let environment = xcode.environment(env), swift = try xcode.require(.swift, stage: .build)
+        try ResourceBundles.fresh(scratch: scratch, products: { [products] }, note: MacBuilder.note) {
+            try Shell.run(swift.path, arguments(destination, wrapper: wrapper, scratch: scratch, product: pc.product, minimumOS: pc.minimumOS),
+                          cwd: project, env: environment, baseEnvironment: env, stage: .build, passthrough: true)
+        }
+        if let unpinned = PackageResolved.unpinnedNote(project: project, wrapper: wrapper) { MacBuilder.note(unpinned) }
         guard let executable = MacBuilder.builtExecutable(named: "\(pc.product)App", under: products) else {
             throw XlessError(.build, "no \(pc.product)App executable under \(products.path)",
                              fix: "check the swift build output above, and that platforms.\(platform.rawValue).product matches a library product in Package.swift")
         }
         let images = try embedded(executable, products: products)
-        let resources = bundles(of: products)
+        let resources = ResourceBundles.of(products)
         let built = try Files.atomicOutput(paths.app) { partial in
             let app = try PackageApp.assemble(in: partial, executable: try Data(contentsOf: executable), resources: resources, frameworks: images.map(\.item),
                                               project: project, config: config, platform: platform)
@@ -117,11 +115,6 @@ public enum XcodePackageBuilder {
         try wrapperPackage(product: product, minimumOS: minimumOS, platform: platform)
             .write(to: wrapper.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         try PackageResolved.copy(from: project, to: wrapper)
-    }
-
-    static func bundles(of products: URL) -> [URL] {
-        ((try? FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "bundle" }.sorted { $0.path < $1.path }
     }
 
     /// The frameworks and dynamic libraries of the build that `executable` loads, and those that they load. One that is neither of
@@ -181,11 +174,11 @@ public enum XcodePackageBuilder {
     /// `delete` takes run paths out of an image, and fails where one of its architectures does not have one of them: then each is
     /// done by itself.
     static func removeRunPaths(of executable: URL, where goes: (String) -> Bool, delete: ([String], URL) throws -> Void) throws {
+        let executable = executable.resolvingSymlinksInPath() // (a framework's is a link into its Versions, and stays one)
         let data = try Data(contentsOf: executable)
         let slices = try MachO.sliceArchitectures(in: data).map { (range: $0.range, paths: Set(try MachO.rpaths(in: data, slice: $0.range).filter(goes)).sorted()) }
         guard let first = slices.first, slices.contains(where: { !$0.paths.isEmpty }) else { return }
         if slices.allSatisfy({ $0.paths == first.paths }) { return try delete(first.paths, executable) }
-        let mode = try FileManager.default.attributesOfItem(atPath: executable.path)[.posixPermissions]
         let thin = executable.deletingLastPathComponent().appendingPathComponent(".thin-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: thin) }
         let done = try slices.map { slice in
@@ -196,7 +189,6 @@ public enum XcodePackageBuilder {
             return try Data(contentsOf: thin)
         }
         try MachO.makeFat(done).write(to: executable, options: .atomic)
-        if let mode { try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: executable.path) }
     }
 
     static func isForeign(_ path: String) -> Bool { path.hasPrefix("/") && path != "/usr/lib/swift" }
