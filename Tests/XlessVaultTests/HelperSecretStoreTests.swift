@@ -97,6 +97,20 @@ private let pem = "-----BEGIN PRIVATE KEY-----\nMIG\"quote\\back/slash\té\n----
     #expect(try store.catalog()?.entries.isEmpty == true)
 }
 
+@Test func aHelperIsGivenNeitherTheSavedSessionNorItsName() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    try dir.script("files", fileHelper)
+    let store = try dir.store("files")
+    for (name, kind) in [("xless-apple-session", .generic), ("xless-apple-session", .appleSession), ("NOTE", .appleSession)] as [(String, VaultEntry.Kind)] {
+        let e = #expect(throws: VaultError.self) { try store.update(reason: "test") { _ in [.add(name: name, kind: kind, metadata: .init(), secret: SecretBytes(utf8: "x"))] } }
+        #expect(e?.kind == .invalidName)
+    }
+    #expect(try store.catalog()?.entries.isEmpty == true)
+    try store.update(reason: "test") { _ in [.add(name: "xless-sparkle", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "x"))] }
+    #expect(try store.catalog()?.entries.map(\.name) == ["xless-sparkle"])
+}
+
 @Test func aCredentialTheHelperNoLongerHasIsMissing() throws {
     let dir = try HelperDir()
     defer { dir.cleanup() }

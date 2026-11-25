@@ -247,8 +247,10 @@ process of the login rather than of a terminal, and it has no idle time, no slee
 (`xless-apple-session`), sealed under the store's data key as every entry is: after a reboot, a command that needs the
 session opens it once the store is unlocked, so the passphrase is asked, and not the Apple ID's password and code. It is
 off by default, needs xless's own encrypted store, ends at the time given at the latest, and is removed by `xless auth
-logout`, `xless lock`, a later `--keep` without it, or its end. It is never read as a secret by name, exported, or given
-to a build or a container.
+logout`, `xless lock`, a later `--keep` without it, or its end. It is an entry of a kind of its own, which no command
+imports, and which is never read as a secret by name, exported, or given to a build or a container; an older xless lists
+it and cannot open it. That one name is xless's: an import under it is refused, and an entry of your own that has had the
+name since before is left alone (and `--across-reboots` refused until it is renamed).
 
 The **macOS Keychain** and the **Secret Service** (GNOME Keyring, KWallet) were considered for the key that would open it
 without a passphrase, and are not used: they cannot keep it from build code.

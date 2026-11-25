@@ -18,16 +18,26 @@ private struct Fixture {
         func say(_ line: String) {}
     }
 
-    init() throws {
+    /// - Parameter cache: what holds an unlock.
+    init(cache: FakeKeyring? = nil) throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-saved-\(UUID().uuidString)")
         let store = VaultStore(location: VaultLocation(directory: dir))
         try store.create(try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"), kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1)).0)
         let asked = asked
-        vault = VaultSecretStore(store: store, cache: nil, prompter: { asked })
+        vault = VaultSecretStore(store: store, cache: cache, prompter: { asked })
     }
 
     var saved: VaultSavedSession { VaultSavedSession { [vault] in vault } }
     func cleanup() { try? FileManager.default.removeItem(at: dir) }
+}
+
+/// Nothing is held.
+private struct NoHold: SessionKeyStore {
+    var isAvailable: Bool { false }
+    func allowed(_ hold: SecretHold) -> Int { 0 }
+    func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {}
+    func get(_ name: String, using: Bool) throws -> SecretBytes? { nil }
+    func revoke(_ name: String) throws -> Bool { false }
 }
 
 @Test func aSessionSavedInTheStoreIsSealedThereAndOpensWithThePassphrase() throws {
@@ -72,7 +82,63 @@ private struct Fixture {
 }
 
 @Test func theSavedSessionIsNeverWrittenInClear() throws {
-    #expect(throws: XlessError.self) { try SecretsExportCommand.parse(["xless-apple-session", "--out", "/tmp/x"]).run() }
+    let f = try Fixture()
+    defer { f.cleanup() }
+    try f.saved.save(SecretBytes(utf8: "COOKIES"), expires: Date() + 5000)
+    try f.vault.update(reason: "test") { _ in ["xless-sparkle", "xless-apple-session@ABCDE12345"].map { .add(name: $0, kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "mine")) } }
+    let catalog = try f.vault.existingCatalog()
+    let session = try #require(catalog.entry(named: SecretEnvironment.savedSession))
+    #expect(session.kind == .appleSession)
+    let e = #expect(throws: XlessError.self) { try SecretsExportCommand.refuseSession(session) }
+    #expect(e?.fix.contains("xless auth logout") == true)
+    for entry in catalog.entries where entry.name != session.name { try SecretsExportCommand.refuseSession(entry) }
+}
+
+/// Before the file is so much as opened, and before any passphrase is asked.
+@Test func aNameThatIsTakenByTheSavedSessionIsRefusedFirst() throws {
+    let e = #expect(throws: XlessError.self) { try SecretsImportCommand.parse(["xless-apple-session", "--file", "/nonexistent/secret"]).run() }
+    #expect(e?.cause.contains("xless-apple-session is the name of xless's own entry") == true && e?.fix.contains("another name") == true, "\(String(describing: e))")
+    let other = #expect(throws: XlessError.self) { try SecretsImportCommand.parse(["xless-sparkle", "--file", "/nonexistent/secret"]).run() }
+    #expect(other?.cause.contains("cannot open /nonexistent/secret") == true, "\(String(describing: other))")
+    #expect(throws: (any Error).self) { try CertsCreateCommand.parse(["--type", "distribution", "--name", "xless-apple-session"]) }
+    #expect(throws: Never.self) { try CertsCreateCommand.parse(["--type", "distribution", "--name", "xless-sparkle"]) }
+}
+
+/// The kind is xless's to give, not `--kind`'s.
+@Test func noEntryOfAUsersIsAnAppleSession() throws {
+    #expect(throws: (any Error).self) { try SecretsImportCommand.parse(["NOTE", "--file", "x", "--kind", "apple-session"]) }
+    #expect(throws: Never.self) { try SecretsImportCommand.parse(["NOTE", "--file", "x", "--kind", "generic"]) }
+    #expect(!VaultEntry.Kind.allValueStrings.contains("apple-session"))
+    #expect(throws: VaultError.self) { try VaultImport.validate(SecretBytes(utf8: "x"), kind: .appleSession) }
+}
+
+/// An entry of a user's own, which had the name before xless took it.
+@Test func anEntryOfAUsersOwnIsNeitherTakenForTheSavedSessionNorReplacedByIt() throws {
+    let f = try Fixture()
+    defer { f.cleanup() }
+    let past = VaultEntry.Metadata(created: Date(timeIntervalSince1970: 1), expires: Date(timeIntervalSince1970: 2))
+    try f.vault.vault.update { file in
+        var next = file
+        next.entries.append(try VaultCrypto.seal(name: "xless-apple-session", kind: .generic, metadata: past, secret: SecretBytes(utf8: "mine"),
+                                                 dataKey: try f.vault.key(for: file, remember: nil, reason: "test")))
+        return next
+    }
+    let cache = AppleSessionCache(store: NoHold(), saved: f.saved)
+    #expect(f.saved.expires == nil && cache.savedUntil == nil)
+    #expect(try f.saved.load(asking: true) == nil)
+    #expect(try !f.saved.remove())
+    #expect(throws: XlessError.self) { try f.saved.requireFreeName() }
+    let e = #expect(throws: XlessError.self) { try f.saved.save(SecretBytes(utf8: "COOKIES"), expires: Date() + 5000) }
+    #expect(e?.cause.contains("xless-apple-session") == true && e?.fix.contains("xless secrets") == true, "\(String(describing: e))")
+    let catalog = try f.vault.existingCatalog()
+    let entry = try #require(catalog.entry(named: "xless-apple-session"))
+    try SecretsExportCommand.refuseSession(entry)
+    #expect(try f.vault.secret(entry, in: catalog, reason: "test").utf8String() == "mine")
+    try f.vault.update(reason: "test") { _ in [.remove(name: "xless-apple-session")] }
+    try f.saved.requireFreeName()
+    try f.saved.save(SecretBytes(utf8: "COOKIES"), expires: Date() + 5000)
+    try f.saved.requireFreeName() // its own is there to be replaced
+    #expect(try f.saved.load(asking: false)?.utf8String() == "COOKIES")
 }
 
 @Test func acrossRebootsNeedsKeep() {

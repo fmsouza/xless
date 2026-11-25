@@ -7,7 +7,16 @@ import XlessAppleID
 import XlessSign
 import XlessVault
 
-extension VaultEntry.Kind: ExpressibleByArgument {}
+/// What `--kind` takes: what people keep, not what xless saves itself.
+extension VaultEntry.Kind: ExpressibleByArgument {
+    static var arguments: [Self] { allCases.filter { $0 != .appleSession } }
+    public static var allValueStrings: [String] { arguments.map(\.rawValue) }
+
+    public init?(argument: String) {
+        guard let kind = Self.arguments.first(where: { $0.rawValue == argument }) else { return nil }
+        self = kind
+    }
+}
 
 struct SecretsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -238,6 +247,7 @@ struct SecretsImportCommand: ParsableCommand {
                 throw VaultError(.invalidName, "\(name) is not a valid entry name", fix: "use letters, digits and . _ @ - (e.g. XLESS_DIST_KEY@ABCDE12345)")
             }
             let kind = kind ?? VaultImport.inferredKind(for: name)
+            try VaultEntry.requireAllowed(name: name, kind: kind)
             let remember = try SecretStoreCLI.remember(options.remember)
             let metadata = VaultEntry.Metadata(
                 teamID: teamId, keyID: keyId ?? (kind == .ascAPIKey || kind == .authKey ? VaultImport.keyID(fromFileName: URL(fileURLWithPath: file).lastPathComponent) : nil),
@@ -311,13 +321,11 @@ struct SecretsExportCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
-            if name.lowercased().hasPrefix(SecretEnvironment.ownEntryPrefix) {
-                throw XlessError(.config, "\(name) is xless's own (an Apple ID session): it is never written in clear", fix: "remove it with `xless auth logout`")
-            }
             let remember = try SecretStoreCLI.remember(options.remember)
             let store = try SecretStoreCLI.store()
             let file = try store.existingCatalog()
             let entry = try SecretStoreCLI.entry(name, in: file)
+            try Self.refuseSession(entry)
             try store.unlock(file, remember: remember, reason: "exporting \(name)")
             let secret = try store.secret(entry, in: file, reason: "exporting \(name)")
             var data = secret.withUnsafeBytes { Data($0) }
@@ -331,6 +339,11 @@ struct SecretsExportCommand: ParsableCommand {
             print("wrote \(name) to \(out)")
             SecretStoreCLI.say("warning: \(out) holds the secret in clear (mode 0600); delete it as soon as it has served")
         }
+    }
+
+    static func refuseSession(_ entry: VaultEntry) throws {
+        guard entry.kind == .appleSession else { return }
+        throw XlessError(.config, "\(entry.name) is xless's own (an Apple ID session): it is never written in clear", fix: "remove it with `xless auth logout`")
     }
 }
 

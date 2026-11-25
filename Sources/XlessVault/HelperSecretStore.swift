@@ -70,15 +70,25 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
             for change in try body(current) {
                 switch change {
                 case .add(let name, let kind, let metadata, let secret):
+                    try Self.requireAllowed(name: name, kind: kind)
                     guard current.entry(named: name) == nil else { throw VaultSecretStore.exists(name) }
                     try store(name: name, kind: kind, metadata: metadata, secret: secret)
                 case .replace(let name, let kind, let metadata, let secret):
+                    try Self.requireAllowed(name: name, kind: kind)
                     guard current.entry(named: name) != nil else { throw VaultSecretStore.missing(name) }
                     try store(name: name, kind: kind, metadata: metadata, secret: secret)
                 case .remove(let name):
                     if current.entry(named: name) != nil { try erase(name) }
                 }
             }
+        }
+    }
+
+    /// As in the vault, where an Apple ID session is saved and nowhere else.
+    private static func requireAllowed(name: String, kind: VaultEntry.Kind) throws {
+        try VaultEntry.requireAllowed(name: name, kind: kind)
+        guard kind != .appleSession else {
+            throw VaultError(.invalidName, "a credential helper is not given an Apple ID session", fix: "run without --across-reboots")
         }
     }
 

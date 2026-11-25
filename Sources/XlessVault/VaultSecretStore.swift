@@ -48,10 +48,12 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
             for change in try body(SecretCatalog(file)) {
                 switch change {
                 case .add(let name, let kind, let metadata, let secret):
+                    try VaultEntry.requireAllowed(name: name, kind: kind)
                     guard next.entry(named: name) == nil else { throw Self.exists(name) }
                     next.entries.append(try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
                                                              dataKey: try key(for: file, remember: nil, reason: reason)))
                 case .replace(let name, let kind, let metadata, let secret):
+                    try VaultEntry.requireAllowed(name: name, kind: kind)
                     guard let index = next.entries.firstIndex(where: { $0.name == name }) else { throw Self.missing(name) }
                     var sealed = try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
                                                       dataKey: try key(for: file, remember: nil, reason: reason))

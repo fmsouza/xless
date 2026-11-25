@@ -152,6 +152,12 @@ rc, shown, _ = a.run("$X secrets init", PASS, PASS)
 check(rc == 0, "a store is created", shown)
 rc, shown, n = a.run("$X secrets import NOTE --file $T/note", PASS, "n")
 check(rc == 0, "a secret is imported", shown)
+rc, shown, n = a.run("$X secrets import xless-own --file $T/note", PASS, "n")
+check(rc == 0, "a name that starts with xless- is one like any", shown)
+rc, shown, n = a.run("$X secrets export xless-own --out $T/out.own", PASS)
+check(rc == 0 and open(t + "/out.own").read() == VALUE, "and comes out again", shown)
+rc, shown, n = a.run("$X secrets import xless-apple-session --file $T/note")
+check(rc != 0 and n == 0 and "choose another name" in shown and open(t + "/note").read() == VALUE, "the saved session's name is refused before anything is asked", shown)
 
 # ---- nothing is held by default --------------------------------------------------------------------------------------
 rc, shown, n = a.run("$X secrets export NOTE --out $T/out0", PASS)

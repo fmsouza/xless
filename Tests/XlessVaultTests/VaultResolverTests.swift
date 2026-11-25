@@ -213,12 +213,20 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     _ = try InputGate.$forced.withValue(true) { try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test") }
 }
 
-@Test func xlessOwnEntriesAreNoSecretOfTheEnvironment() throws {
+@Test func theSavedSessionIsNoSecretOfTheEnvironment() throws {
     let t = try TempStore()
     defer { t.cleanup() }
-    try t.make()
+    try t.make(entries: [("xless-sparkle", .generic, .init(), "a key"), ("xless-apple-session@ABCDE12345", .generic, .init(), "mine")])
     let store = VaultSecretStore(store: t.store, cache: nil, prompter: { ScriptedPrompter(Array(repeating: "correct horse battery", count: 3)) })
-    try store.update(reason: "test") { _ in [.add(name: SecretEnvironment.savedSession, kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "cookies"))] }
-    #expect(try VaultResolver(secrets: store).lookup(SecretEnvironment.savedSession, stage: .config) == nil)
-    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup("xless-apple-session", stage: .config) == nil)
+    let name = SecretEnvironment.savedSession
+    #expect(try VaultResolver(secrets: store).lookup(name, stage: .config) == "mine")
+    try store.update(reason: "test") { _ in [.add(name: name, kind: .appleSession, metadata: .init(), secret: SecretBytes(utf8: "cookies"))] }
+    // Neither its value nor a word that it is there.
+    #expect(try VaultResolver(secrets: store).lookup(name, stage: .config) == "mine")
+    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup(name, stage: .config) == "mine")
+    #expect(try VaultResolver(secrets: store).preferring(team: "FGHIJ67890").lookup(name, stage: .config) == nil)
+    #expect(try VaultResolver(secrets: store).lookup("xless-apple", stage: .config) == nil)
+    // Another entry whose name starts so is one like any.
+    #expect(try VaultResolver(secrets: store).lookup("xless-sparkle", stage: .config) == "a key")
+    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup("xless-sparkle", stage: .config) == "a key")
 }

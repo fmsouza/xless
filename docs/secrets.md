@@ -31,7 +31,9 @@ xless ship --platform ios                            # asks the passphrase once,
 Kinds: `asc-api-key` (an App Store Connect API key: `.p8`, key ID and issuer ID required), `signing-key` (an RSA
 private key PEM from `xless sign bootstrap` or `xless certs create`), `auth-key` (an APNs, Sign in with Apple, DeviceCheck or MusicKit `.p8`),
 `password` and `generic`. Keys are checked when imported: a `.p8` must be a P-256 private key, a signing key an RSA one.
-A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID.
+A file named `AuthKey_<KEY_ID>.p8`, as Apple names them, gives the key ID. One name is xless's own,
+`xless-apple-session` (kind `apple-session`): the Apple ID session that `xless auth login --across-reboots` saves
+([security.md](security.md#across-reboots)).
 
 [`xless auth api-key create`](apple-account.md#xless-auth-api-key) puts a new App Store Connect API key straight into
 the store (as `ASC_KEY_P8@<TEAM_ID>`, with its key ID, issuer ID, team and role), and `xless auth api-key import`
@@ -292,7 +294,9 @@ Apple, with an error that says to upgrade xless (`[config]`, exit 10 from `xless
 the account commands); the file is left as it was. Fields it does not know are written back unchanged whenever it does
 change the file. A key revoked (or a webhook deleted) at Apple before that refusal stays revoked: `xless auth api-key
 revoke`, `xless keys revoke`, `xless webhooks delete` and `xless certs revoke` say so, and that the entry is removed with
-`xless secrets rm` once xless is upgraded. Releases before format 2 do not open a format-2 store at all ("the secret store is format version 2;
+`xless secrets rm` once xless is upgraded. A [saved Apple ID
+session](security.md#across-reboots) is an entry of a format of its own (3): a release that does not know it lists it as
+`generic`, keeps it and says that a newer xless wrote it. Releases before format 2 do not open a format-2 store at all ("the secret store is format version 2;
 this xless reads version 1"): after an upgrade has moved the store, going back to such a release means restoring a
 copy of the old file.
 

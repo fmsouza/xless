@@ -41,6 +41,8 @@ public enum VaultImport {
             }
         case .password, .generic:
             break
+        case .appleSession:
+            throw VaultError(.invalidSecret, "an Apple ID session is never imported", fix: "sign in with `xless auth login --keep <duration> --across-reboots`")
         }
     }
 }

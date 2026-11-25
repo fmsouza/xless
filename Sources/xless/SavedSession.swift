@@ -34,10 +34,28 @@ struct VaultSavedSession: SavedSession {
     func save(_ plain: SecretBytes, expires: Date) throws {
         let metadata = VaultEntry.Metadata(created: Date(), expires: expires)
         try vault().update(reason: Self.reason) { catalog in
+            try Self.requireFreeName(in: catalog)
             let name = SecretEnvironment.savedSession
-            return [catalog.entry(named: name) == nil ? .add(name: name, kind: .generic, metadata: metadata, secret: plain)
-                                                      : .replace(name: name, kind: .generic, metadata: metadata, secret: plain)]
+            return [Self.entry(in: catalog) == nil ? .add(name: name, kind: .appleSession, metadata: metadata, secret: plain)
+                                                   : .replace(name: name, kind: .appleSession, metadata: metadata, secret: plain)]
         }
+    }
+
+    /// What is saved; not an entry of the user's own that has had the name since before it was xless's.
+    private static func entry(in catalog: SecretCatalog) -> VaultEntry? {
+        catalog.entry(named: SecretEnvironment.savedSession).flatMap { $0.kind == .appleSession ? $0 : nil }
+    }
+
+    /// Refuses a store where a session cannot be saved because an entry of the user's own has the name.
+    func requireFreeName() throws {
+        if let catalog = try vault().catalog() { try Self.requireFreeName(in: catalog) }
+    }
+
+    private static func requireFreeName(in catalog: SecretCatalog) throws {
+        let name = SecretEnvironment.savedSession
+        guard let entry = catalog.entry(named: name), entry.kind != .appleSession else { return }
+        throw XlessError(.account, "the secret store has an entry \(name) of your own, and that is where a session saved across reboots goes",
+                         fix: "keep it under another name (`xless secrets export`, `xless secrets import`, then `xless secrets rm \(name)`), or run without --across-reboots")
     }
 
     func load(asking: Bool) throws -> SecretBytes? {
@@ -49,14 +67,14 @@ struct VaultSavedSession: SavedSession {
 
     /// At the end of its time, or of the longest time the settings allow now.
     var expires: Date? {
-        guard let metadata = ((try? vault().catalog()) ?? nil)?.entry(named: SecretEnvironment.savedSession)?.metadata, let end = metadata.expires else { return nil }
+        guard let metadata = ((try? vault().catalog()) ?? nil).flatMap(Self.entry)?.metadata, let end = metadata.expires else { return nil }
         return metadata.created.map { min(end, $0.addingTimeInterval(TimeInterval(maximum()))) } ?? end
     }
 
     @discardableResult func remove() throws -> Bool {
         let vault = try vault()
-        guard try vault.catalog()?.entry(named: SecretEnvironment.savedSession) != nil else { return false }
-        try vault.update(reason: Self.reason) { $0.entry(named: SecretEnvironment.savedSession) == nil ? [] : [.remove(name: SecretEnvironment.savedSession)] }
+        guard try vault.catalog().flatMap(Self.entry) != nil else { return false }
+        try vault.update(reason: Self.reason) { Self.entry(in: $0) == nil ? [] : [.remove(name: SecretEnvironment.savedSession)] }
         return true
     }
 }

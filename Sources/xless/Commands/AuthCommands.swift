@@ -53,6 +53,7 @@ struct AuthLoginCommand: AsyncParsableCommand {
             if hold != nil, !AppleWebCLI.cache.isAvailable { throw AppleSessionCache.unavailable(AppleWebCLI.held.obstacle) }
             if acrossReboots {
                 // The store's passphrase, before the sign-in.
+                try AppleWebCLI.saved.requireFreeName()
                 let store = try VaultSavedSession.configured()
                 try store.unlock(try store.existingCatalog(), remember: nil, reason: "saving the Apple ID session")
             }

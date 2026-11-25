@@ -228,7 +228,7 @@ private func opens(_ entry: VaultEntry?, _ key: SymmetricKey) -> String? {
         var list = try entries(o)
         var future = list[0]
         future["name"] = "FUTURE"
-        future["version"] = 3
+        future["version"] = 4
         list.append(future)
         o["entries"] = list
     }
@@ -358,4 +358,81 @@ private func opens(_ entry: VaultEntry?, _ key: SymmetricKey) -> String? {
     file.version = 3
     file.minimumReaderVersion = 3
     #expect(VaultReport.status(location: t.location, file: file, held: nil).contains("upgrade xless"))
+}
+
+// The saved Apple ID session (`xless auth login --across-reboots`): a kind of its own, in a store older releases read.
+
+@Test func theSavedSessionIsAnEntryThatOlderReleasesKeepAndCannotOpen() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (_, key) = try t.make(entries: [("KNOWN", .generic, .init(), "known")])
+    let store = secretStore(t, prompter: ScriptedPrompter(["correct horse battery"]))
+    try store.update(reason: "test") { _ in [.add(name: SecretEnvironment.savedSession, kind: .appleSession, metadata: full, secret: SecretBytes(utf8: "cookies"))] }
+    let file = try #require(try t.store.read())
+    let entry = try #require(file.entry(named: SecretEnvironment.savedSession))
+    #expect(entry.kind == .appleSession && entry.format == 3 && opens(entry, key) == "cookies")
+    #expect(file.version == 2 && file.minimumReaderVersion == 2 && file.entry(named: "KNOWN")?.format == 2)
+    // On disk: a kind they know (or they could not read the store at all), and a format they do not (so they never
+    // open it, and write it back as it is).
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: t.location.file)) as? [String: Any])
+    let onDisk = try #require(try entries(json).last)
+    #expect(onDisk["kind"] as? String == "generic" && onDisk["version"] as? Int == 3)
+    // Neither is for anyone to change.
+    for change in [{ $0["version"] = 2 }, { $0["kind"] = "password" }, { $0["name"] = "NOTE" }, { $0.removeValue(forKey: "version") }] as [(inout [String: Any]) -> Void] {
+        let before = try Data(contentsOf: t.location.file)
+        try editJSON(t) { o in
+            var list = try entries(o)
+            change(&list[1])
+            o["entries"] = list
+        }
+        let altered = try #require(try t.store.read()).entries[1]
+        #expect(opens(altered, key) == nil)
+        try before.write(to: t.location.file)
+    }
+    // Nor is another entry's.
+    try editJSON(t) { o in
+        var list = try entries(o)
+        list[0]["version"] = 3
+        o["entries"] = list
+    }
+    #expect(opens(try #require(try t.store.read()).entry(named: "KNOWN"), key) == nil)
+}
+
+@Test func theSavedSessionsNameIsForItAlone() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make()
+    let store = secretStore(t, prompter: ScriptedPrompter(["correct horse battery"]))
+    for kind in VaultEntry.Kind.allCases where kind != .appleSession {
+        let e = #expect(throws: VaultError.self) {
+            try store.update(reason: "test") { _ in [.add(name: "xless-apple-session", kind: kind, metadata: .init(), secret: SecretBytes(utf8: "x"))] }
+        }
+        #expect(e?.kind == .invalidName && e?.cause.contains("xless-apple-session") == true)
+    }
+    #expect(throws: VaultError.self) {
+        try store.update(reason: "test") { _ in [.add(name: "NOTE", kind: .appleSession, metadata: .init(), secret: SecretBytes(utf8: "x"))] }
+    }
+    #expect(throws: VaultError.self) {
+        try store.update(reason: "test") { _ in [.add(name: "OK", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "x")),
+                                                 .replace(name: "OK", kind: .appleSession, metadata: .init(), secret: SecretBytes(utf8: "x"))] }
+    }
+    #expect(try store.existingCatalog().entries.isEmpty)
+    // Others of the kind are anyone's.
+    for name in ["xless-sparkle", "xless-", "xless-apple-session@ABCDE12345", "xless-apple-session2", "XLESS-APPLE-SESSION"] {
+        try store.update(reason: "test") { _ in [.add(name: name, kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "x"))] }
+    }
+    #expect(try store.existingCatalog().entries.count == 5)
+}
+
+/// One of a user's own, from before the name was taken.
+@Test func anEntryThatHadTheSavedSessionsNameStaysItsOwners() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (_, key) = try t.make(entries: [("xless-apple-session", .generic, .init(), "mine")])
+    let file = try #require(try t.store.read())
+    #expect(file.entry(named: "xless-apple-session")?.kind == .generic && opens(file.entry(named: "xless-apple-session"), key) == "mine")
+    let store = secretStore(t, prompter: ScriptedPrompter(["correct horse battery"]))
+    #expect(try VaultResolver(secrets: store).lookup("xless-apple-session", stage: .config) == "mine")
+    try store.update(reason: "test") { _ in [.remove(name: "xless-apple-session")] }
+    #expect(try store.existingCatalog().entries.isEmpty)
 }
