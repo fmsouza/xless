@@ -28,6 +28,9 @@ enum RunningCommand {
 /// `xless session -- <command…>`, as the commands inside see it.
 enum XlessSession {
     /// The path of the session's agent.
+    #if os(Windows) || XLESS_WINDOWS_TARGETS
+    static let agent: String? = nil // there are none
+    #else
     static let variable = ChildProcess.session
 
     /// The session this command was told of.
@@ -40,4 +43,5 @@ enum XlessSession {
         agent = path.isEmpty ? nil : path
         unsetenv(variable)
     }
+    #endif
 }

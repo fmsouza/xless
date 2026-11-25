@@ -134,6 +134,15 @@ func theSystemAndTheAdministratorsAndRefusalsAreAccepted(_ sddl: String) throws 
     set(place.dir, "D:P(A;OICI;FA;;;%)")
 }
 
+@Test func accessThatOnlyWhatIsMadeInADirectoryWouldGetIsRefusedToo() throws {
+    let place = try Place()
+    defer { place.cleanup() }
+    set(place.dir, "D:P(A;OICI;FA;;;%)(A;OICIIO;FR;;;WD)")
+    let refused = refusal { try PrivateFile.inDirectory(place.dir, .builtInDrive) {} }
+    #expect(refused?.kind == .unsafe && refused?.cause.contains("S-1-1-0") == true, "\(refused?.cause ?? "")")
+    set(place.dir, "D:P(A;OICI;FA;;;%)")
+}
+
 @Test func noAccessListIsRefused() throws {
     let place = try Place()
     defer { place.cleanup() }

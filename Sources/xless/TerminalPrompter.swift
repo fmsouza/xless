@@ -1,9 +1,12 @@
+#if !os(Windows)
 import CXlessProcess
+#endif
 import Foundation
 import XlessAppleID
 import XlessCore
 import XlessVault
 
+#if !os(Windows)
 /// Prompts on the controlling terminal (`/dev/tty`) only: an Apple ID, password, code or the secret store's passphrase is
 /// never read from stdin, a pipe, a file, an argument or the environment. Secrets are read with echo off; a signal at
 /// that prompt gives the terminal its echo back (see `EchoGuard`).
@@ -26,12 +29,6 @@ final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sen
         }
     }
 
-    /// The terminal for the secret store's passphrase.
-    static func forSecretStore() throws -> TerminalPrompter {
-        try TerminalPrompter(stage: .config, what: "the secret store's passphrase", need: "the secret store's passphrase is read from a terminal, and there is none",
-                             fix: "run this in an interactive terminal; the passphrase is never read from a pipe, a file, an argument or the environment")
-    }
-
     deinit { close(fd) }
 
     // Synchronous: they satisfy both the sign-in's async requirements and the secret store's synchronous ones.
@@ -43,12 +40,6 @@ final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sen
             write(prompt)
             return String(decoding: try readLine(), as: UTF8.self)
         }
-    }
-
-    /// A yes/no question; anything but y/yes is no.
-    func confirm(_ question: String) throws -> Bool {
-        let answer = try ask("\(question) [y/N] ").trimmingCharacters(in: .whitespaces).lowercased()
-        return answer == "y" || answer == "yes"
     }
 
     func askSecret(_ prompt: String) throws -> SecretBytes {
@@ -176,5 +167,46 @@ private enum EchoGuard {
             _ = tcsetattr(fd, TCSANOW, &quiet)
             install(sig)
         }
+    }
+}
+#else
+/// Prompts on the console only, as elsewhere on /dev/tty: nothing is ever read from stdin, a pipe, a file, an argument or the
+/// environment. Where there is no console of this process's, or only the pipes of a Git Bash window, there is nobody to ask.
+final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sendable {
+    private let console: WindowsConsole
+    private let stage: Stage
+
+    init(stage: Stage = .sdk, what: String = "the Apple ID's password and code", need: String = "signing in to Apple needs an interactive terminal",
+         fix: String = "run this in a terminal; the Apple ID, password and code are never read from a pipe, a file or the environment") throws {
+        try InputGate.require(what, fix: fix)
+        self.stage = stage
+        do { console = try WindowsConsole() } catch WindowsConsole.Problem.pseudoTerminal {
+            throw XlessError(stage, "\(need): \(WindowsConsole.Problem.pseudoTerminal.cause)", fix: WindowsConsole.Problem.pseudoTerminal.fix)
+        } catch {
+            throw XlessError(stage, need, fix: fix)
+        }
+    }
+
+    func ask(_ prompt: String) throws -> String { try answer { try console.ask(prompt) } }
+    func askSecret(_ prompt: String) throws -> SecretBytes { try answer { try console.askSecret(prompt) } }
+    func say(_ line: String) { console.say(line + "\n") }
+
+    private func answer<T>(_ body: () throws -> T) throws -> T {
+        do { return try body() } catch let problem as WindowsConsole.Problem { throw XlessError(stage, problem.cause, fix: problem.fix) }
+    }
+}
+#endif
+
+extension TerminalPrompter {
+    /// The terminal for the secret store's passphrase.
+    static func forSecretStore() throws -> TerminalPrompter {
+        try TerminalPrompter(stage: .config, what: "the secret store's passphrase", need: "the secret store's passphrase is read from a terminal, and there is none",
+                             fix: "run this in an interactive terminal; the passphrase is never read from a pipe, a file, an argument or the environment")
+    }
+
+    /// A yes/no question; anything but y/yes is no.
+    func confirm(_ question: String) throws -> Bool {
+        let answer = try ask("\(question) [y/N] ").trimmingCharacters(in: .whitespaces).lowercased()
+        return answer == "y" || answer == "yes"
     }
 }

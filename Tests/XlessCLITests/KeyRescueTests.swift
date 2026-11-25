@@ -9,9 +9,12 @@ private struct RuntimeDir {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("xless-runtime-\(UUID().uuidString)")
     var path: String { url.path }
 
-    init(mode: Int = 0o700) throws {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: mode])
-        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+    init(open: Bool = false) throws {
+        if !open { try makePrivateDirectory(url); return }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        #if !os(Windows) // there it has its directory's access list
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        #endif
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: url) }
@@ -19,8 +22,6 @@ private struct RuntimeDir {
 
 private let key = SecretBytes(utf8: "-----BEGIN PRIVATE KEY-----\nMIG\n-----END PRIVATE KEY-----\n")
 private let noTerminal: @Sendable (String) -> String? = { _ in nil }
-
-private func mode(_ path: String) throws -> Int { try #require(try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) }
 
 @Test func aRescuedKeyGoesToANewPrivateFileInTheRuntimeDirectory() throws {
     let dir = try RuntimeDir()
@@ -30,14 +31,14 @@ private func mode(_ path: String) throws -> Int { try #require(try FileManager.d
     let path = "\(dir.path)/xless-rescued-AuthKey_2X9R4HXF34.p8"
     #expect(first == .saved(path: path, temporary: true))
     #expect(FileManager.default.contents(atPath: path) == Data(key.utf8String().utf8))
-    #expect(try mode(path) == 0o600)
+    #expect(try isPrivateFile(path))
     // A second rescue of the same key never overwrites the first.
     #expect(rescue.save(SecretBytes(utf8: "other"), keyID: "2X9R4HXF34") == .saved(path: "\(dir.path)/xless-rescued-AuthKey_2X9R4HXF34.2.p8", temporary: true))
     #expect(FileManager.default.contents(atPath: path) == Data(key.utf8String().utf8))
 }
 
 @Test func aRuntimeDirectoryOthersCanEnterOrASymlinkIsNotUsed() throws {
-    let open = try RuntimeDir(mode: 0o755)
+    let open = try RuntimeDir(open: true)
     defer { open.cleanup() }
     let rescue = KeyRescue(env: ["XDG_RUNTIME_DIR": open.path], ask: noTerminal)
     guard case .notSaved(let why) = rescue.save(key, keyID: "K") else { Issue.record("saved"); return }
@@ -67,10 +68,10 @@ private func mode(_ path: String) throws -> Int { try #require(try FileManager.d
 
     // `~/` is HOME's; a directory that does not exist is asked again.
     let retry = Answers(["\(dir.path)/missing/key.p8", "~/key.p8"])
-    let saved = KeyRescue(env: ["HOME": dir.path], ask: retry.next).save(key, keyID: "K")
+    let saved = KeyRescue(env: ["HOME": dir.path, "USERPROFILE": dir.path], ask: retry.next).save(key, keyID: "K")
     #expect(saved == .saved(path: "\(dir.path)/key.p8", temporary: false))
     #expect(retry.prompts.last?.hasPrefix("Cannot write \(dir.path)/missing/key.p8") == true)
-    #expect(try mode("\(dir.path)/key.p8") == 0o600)
+    #expect(try isPrivateFile("\(dir.path)/key.p8"))
 }
 
 @Test func secretsImportTakesTheRoleAndServicesARescueCarries() throws {

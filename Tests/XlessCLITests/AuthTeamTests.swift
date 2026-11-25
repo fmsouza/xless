@@ -13,9 +13,16 @@ private func tempEnv() throws -> ([String: String], URL) {
 }
 
 @Test func theConfigFileFollowsXDGElseHome() {
+    #if os(Windows)   // an XDG directory on a drive, else the system's answer (PathOwnersTests)
+    #expect(UserConfig.file(env: ["XDG_CONFIG_HOME": #"D:\cfg"#]).path == "D:/cfg/xless/config.yml")
+    let local = UserConfig.file(env: [:]).path
+    #expect(local.hasSuffix("/xless/config.yml"))
+    for other in ["relative", "/x/cfg", #"D:cfg"#, #"\\server\share"#] { #expect(UserConfig.file(env: ["XDG_CONFIG_HOME": other, "HOME": #"C:\home"#]).path == local, "\(other)") }
+    #else
     #expect(UserConfig.file(env: ["XDG_CONFIG_HOME": "/x/cfg", "HOME": "/home/u"]).path == "/x/cfg/xless/config.yml")
     #expect(UserConfig.file(env: ["XDG_CONFIG_HOME": "relative", "HOME": "/home/u"]).path == "/home/u/.config/xless/config.yml")
     #expect(UserConfig.file(env: ["HOME": "/home/u"]).path == "/home/u/.config/xless/config.yml")
+    #endif
 }
 
 @Test func theSavedTeamRoundTripsAndKeepsOtherKeys() throws {
@@ -30,8 +37,10 @@ private func tempEnv() throws -> ([String: String], URL) {
     #expect(AccountSession.savedTeam(env: env) == "ABCDE12345")
     let text = try String(contentsOf: file, encoding: .utf8)
     #expect(text.contains("theme: dark") && text.contains("team: ABCDE12345"), "\(text)")
+    #if !os(Windows)
     let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
     #expect(mode?.intValue == 0o644)
+    #endif
     try UserConfig.update(env: env) { $0.team = nil }
     #expect(try UserConfig.load(env: env).team == nil)
     #expect(try String(contentsOf: file, encoding: .utf8).contains("theme: dark"))

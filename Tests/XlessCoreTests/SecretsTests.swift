@@ -14,6 +14,18 @@ import Foundation
     #expect(try s.required("ASC_KEY_P8", stage: .upload).contains("BEGIN PRIVATE KEY"))
 }
 
+@Test func aByteOrderMarkIsNoPartOfASecret() throws {
+    #expect(Secrets.withoutMark(Data([0xEF, 0xBB, 0xBF, 0x61])) == Data([0x61]))
+    #expect(Secrets.withoutMark(Data([0x61, 0xEF, 0xBB, 0xBF])).count == 4 && Secrets.withoutMark(Data([0xEF, 0xBB])).count == 2 && Secrets.withoutMark(Data()).isEmpty)
+    #if os(Windows) // Windows PowerShell's Set-Content -Encoding UTF8 writes one
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try Data([0xEF, 0xBB, 0xBF] + "p\u{e4}ss".utf8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let text = try Secrets(env: ["XLESS_DEMO_PASSWORD_FILE": url.path]).required("XLESS_DEMO_PASSWORD", stage: .config)
+    #expect(text.unicodeScalars.elementsEqual("p\u{e4}ss".unicodeScalars))
+    #endif
+}
+
 @Test func missingSecretNamesBothVariables() {
     let s = Secrets(env: [:])
     do { _ = try s.required("XLESS_DIST_KEY", stage: .sign); Issue.record("expected throw") }

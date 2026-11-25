@@ -19,7 +19,7 @@ private struct TempVault {
 
     init(entries: [(String, VaultEntry.Kind, VaultEntry.Metadata)] = []) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-apikey-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try makePrivateDirectory(root)
         store = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
         var (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"),
                                                    kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
@@ -185,7 +185,7 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
     #expect(String(decoding: FileManager.default.contents(atPath: taken) ?? Data(), as: UTF8.self) == "keep me")
     #expect(String(decoding: FileManager.default.contents(atPath: target) ?? Data(), as: UTF8.self) == pem)
     #expect(e?.cause.contains("API key 2X9R4HXF34 was created, but the secret store could not keep it") == true)
-    #expect(e?.cause.contains("saved in \(target) (mode 0600)") == true, "\(e?.cause ?? "")")
+    #expect(e?.cause.contains("saved in \(target) (\(privateFileWords))") == true, "\(e?.cause ?? "")")
     #expect(e?.fix.contains("`xless secrets import ASC_KEY_P8@\(team) --file '\(target)' --kind asc-api-key --team-id \(team) --key-id 2X9R4HXF34 --issuer-id \(issuer) --role APP_MANAGER`") == true,
             "\(e?.fix ?? "")")
     #expect(e?.fix.contains("xless auth api-key revoke 2X9R4HXF34") == true)
@@ -362,6 +362,7 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
 
 // MARK: a credential helper that cannot keep a key (#141)
 
+#if !os(Windows) && !XLESS_WINDOWS_TARGETS // a credential helper is a program, which the store does not start there
 /// A credential helper that lists nothing and fails every `store` (or runs `script`); removed by `cleanup()`.
 struct BrokenHelper {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-broken-helper-\(UUID().uuidString)")
@@ -410,7 +411,7 @@ struct BrokenHelper {
     let helper = try BrokenHelper(script: BrokenHelper.failsTheRealStore)
     defer { helper.cleanup() }
     let runtime = helper.root.appendingPathComponent("runtime")
-    try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    try makePrivateDirectory(runtime)
     // The test write passes (and leaves nothing behind), so the key is created...
     let keys = try APIKeyWebCLI.unlocked(store: helper.store, reason: "storing the new API key") { APIKeyStore(store: $0, catalogID: $1.id) }
     #expect(!FileManager.default.fileExists(atPath: helper.root.appendingPathComponent("probe").path))
@@ -422,8 +423,9 @@ struct BrokenHelper {
     // ...and when the helper then fails the real write, the key is saved for `xless secrets import`, not lost.
     let path = runtime.appendingPathComponent("xless-rescued-AuthKey_2X9R4HXF34.p8").path
     #expect(String(decoding: FileManager.default.contents(atPath: path) ?? Data(), as: UTF8.self) == pem)
-    #expect((try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) == 0o600)
+    #expect(try isPrivateFile(path))
     #expect(e?.cause.contains("the secret store could not keep it (xless-credential-broken store failed") == true, "\(e?.cause ?? "")")
     #expect(e?.fix.contains("`xless secrets import ASC_KEY_P8@\(team) --file \(path) --kind asc-api-key") == true, "\(e?.fix ?? "")")
     #expect(!journal.events.contains("verify"))
 }
+#endif

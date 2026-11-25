@@ -7,7 +7,6 @@ import XlessAppleID
 import XlessASC
 import XlessCore
 import XlessStore
-import XlessTauri
 
 struct StoreCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -59,7 +58,7 @@ struct StoreDirOption: ParsableArguments {
     /// - Parameter platform: App Store Connect's name.
     func uploadRecord(platform: String, env: [String: String] = ProcessInfo.processInfo.environment) -> UploadRecord.Found {
         guard let platform = Platform.allCases.first(where: { $0.ascPlatform == platform }) else { return .none }
-        let project = configURL.map { OverlayPaths(overlay: $0, env: env).workRoot } ?? url.deletingLastPathComponent()
+        let project = configURL.map { Self.workRoot($0, env: env) } ?? url.deletingLastPathComponent()
         return UploadRecord.read(StagePaths(project: project, platform: platform).uploadRecord)
     }
 
@@ -173,8 +172,23 @@ enum StoreDownload {
     /// One download attempt's file: created empty (or emptied), written piece by piece.
     final class FileSink: @unchecked Sendable {
         struct WriteError: Error, CustomStringConvertible { let description: String }
-        private let handle: FileHandle
         private let lock = NSLock()
+
+        #if os(Windows)
+        private let handle: OutputFile
+
+        init(_ file: URL) throws {
+            _ = InputFile.remove(file.path)
+            do { handle = try OutputFile(creating: file.path) } catch let refusal as PrivateFile.Refusal { throw WriteError(description: refusal.cause) }
+        }
+
+        func write(_ data: Data) throws {
+            do { try lock.withLock { try handle.write(data) } } catch { throw WriteError(description: (error as? PrivateFile.Refusal)?.cause ?? "\(error)") }
+        }
+
+        func close() { lock.withLock { handle.close() } }
+        #else
+        private let handle: FileHandle
 
         init(_ file: URL) throws {
             let fd = open(file.path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o644)
@@ -187,6 +201,7 @@ enum StoreDownload {
         }
 
         func close() { lock.withLock { try? handle.close() } }
+        #endif
     }
 }
 

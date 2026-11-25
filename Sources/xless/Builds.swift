@@ -1,3 +1,6 @@
+#if os(Windows)
+import CXlessWindows
+#endif
 import Foundation
 import XlessASC
 import XlessCore
@@ -197,6 +200,20 @@ enum Interrupt {
         func raise() { lock.lock(); raised = true; lock.unlock() }
     }
 
+    #if os(Windows)
+    /// Ctrl-C and Ctrl-Break; a thread waits for them.
+    static func cancelling<T: Sendable>(flag: Flag, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        let task = Task { try await body() }
+        guard xless_interrupt_begin() == 0 else { return try await task.value }
+        Thread.detachNewThread {
+            guard xless_interrupt_wait() != 0 else { return }
+            flag.raise()
+            task.cancel()
+        }
+        defer { xless_interrupt_end() }
+        return try await task.value
+    }
+    #else
     nonisolated(unsafe) static var pipeWrite: Int32 = -1
 
     static func cancelling<T: Sendable>(on sig: Int32 = SIGINT, flag: Flag, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
@@ -228,4 +245,5 @@ enum Interrupt {
         }
         return try await task.value
     }
+    #endif
 }

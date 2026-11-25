@@ -124,7 +124,11 @@ void *xless_input_open(const wchar_t *path, int nolink, struct xless_private *wh
 void *xless_output_create(const wchar_t *path, struct xless_private *why);
 /// `from` gets the name `to` (on the same drive), which no other may have unless `replace`. 0, or the Windows error.
 unsigned long xless_move(const wchar_t *from, const wchar_t *to, int replace);
+/// Removes a file (the link, of a link), never a directory. 0, or the Windows error.
+unsigned long xless_delete(const wchar_t *path);
 
+/// Whether two names are one file's in a directory, as NTFS tells: unit by unit, without case by Windows' own table (never by language).
+int xless_same_name(const wchar_t *one, size_t one_length, const wchar_t *other, size_t other_length);
 /// The path Windows has for what `path` names, links followed (\\\\?\\C:\\...), into `out`: its length, or 0 (nothing there, or not
 /// to be told).
 size_t xless_final_path(const wchar_t *path, wchar_t *out, size_t length);
@@ -137,6 +141,99 @@ size_t xless_error_text(unsigned long code, wchar_t *out, size_t length);
 
 /// The user of this process's token as text, into `out` (XLESS_SID_LENGTH): 1, or 0.
 int xless_user_sid(wchar_t *out);
+
+// --- The process ---
+
+/// First of all: DLLs that are loaded from here on come from System32 alone (or a path that names one), never from the current directory
+/// or PATH, a broken heap ends the process, and standard output and error are UTF-8 and have the line ends they are given (a console
+/// gets its own code page back at exit). 0, or a Windows error: what could not be had.
+unsigned long xless_process_start(void);
+
+/// Sets a variable of this process's environment, for GetEnvironmentVariableW and the C library alike. 0, or an errno.
+int xless_set_environment(const wchar_t *name, const wchar_t *value);
+
+/// Zeroed pages for a secret, outside the heap, locked in memory when Windows lets it (`*locked`) and in no error report. NULL: none to be had.
+void *xless_secret_map(size_t length, int *locked);
+/// Zeroed, unlocked and given back.
+void xless_secret_unmap(void *pages, size_t length);
+
+// --- The console ---
+
+enum xless_console_problem {
+    XLESS_CONSOLE_NONE = 0,
+    XLESS_CONSOLE_ERROR,      // a Windows error (`code`)
+    XLESS_CONSOLE_ABSENT,     // there is no console, or nothing of this process is connected to it
+    XLESS_CONSOLE_PSEUDO,     // the terminal is a pipe to one (mintty), behind which no console can be read
+    XLESS_CONSOLE_ECHO,       // what is typed would be shown
+    XLESS_CONSOLE_CLOSED,     // it ended (Ctrl-Z) before an answer
+    XLESS_CONSOLE_TOO_LONG,   // an answer longer than there is room for
+    XLESS_CONSOLE_CONTROL,    // a control character was typed
+    XLESS_CONSOLE_TEXT,       // what was typed is not text
+};
+
+struct xless_console;
+
+/// This process's console, whatever its standard input is. NULL: `*problem`.
+struct xless_console *xless_console_open(int *problem, unsigned long *code);
+void xless_console_close(struct xless_console *console);
+void xless_console_write(struct xless_console *console, const wchar_t *text, size_t length);
+/// One line, as it is typed, without its end, into `out` (UTF-8): its length, or -1 (`*problem`). What was typed before the prompt is shown
+/// is thrown away.
+/// While this and the next wait, Ctrl-C and the closing of the console give the console its mode back and end the process with 130.
+int64_t xless_console_line(struct xless_console *console, const wchar_t *prompt, size_t prompt_length, char *out, size_t length, int *problem, unsigned long *code);
+/// The same, with nothing of it shown, nor kept anywhere but in `out`.
+int64_t xless_console_secret(struct xless_console *console, const wchar_t *prompt, size_t prompt_length, char *out, size_t length, int *problem, unsigned long *code);
+
+/// Whether a pipe of this name is the terminal of an MSYS2 or Cygwin program.
+int xless_is_pseudo_terminal(const wchar_t *pipe, size_t length);
+
+// --- Ctrl-C ---
+
+/// From here on Ctrl-C (and Ctrl-Break) is told to `xless_interrupt_wait`, and ends nothing. 0, or a Windows error.
+unsigned long xless_interrupt_begin(void);
+/// Waits for one: 1, or 0 once `xless_interrupt_end` was called.
+int xless_interrupt_wait(void);
+void xless_interrupt_end(void);
+/// As if one were typed.
+void xless_interrupt_raise(void);
+
+// --- HTTP ---
+
+enum xless_http_proxy { XLESS_HTTP_PROXY_SYSTEM = 0, XLESS_HTTP_PROXY_NONE, XLESS_HTTP_PROXY_NAMED };
+
+/// Not a Windows error: an https request that was answered by something else than the server (a proxy).
+#define XLESS_HTTP_NOT_THE_SERVER 0xffffffffu
+
+struct xless_http_session;
+struct xless_http_exchange;
+
+struct xless_http_request {
+    const wchar_t *method, *host, *target; // path and query, as they are sent
+    const wchar_t *headers;                // lines that end in CRLF, or NULL
+    uint16_t port;
+    int https;
+    uint32_t timeout_ms;                   // for which nothing may happen
+};
+
+/// No cookies, no cache, no redirects, no names or passwords of Windows; TLS 1.2 or later, with the system's certificates.
+/// `server`, `bypass`: WinHTTP's lists, for a named proxy. NULL: `*code`.
+struct xless_http_session *xless_http_open(int proxy, const wchar_t *server, const wchar_t *bypass, unsigned long *code);
+void xless_http_close(struct xless_http_session *session);
+
+/// Of one request, in this order, each a wait: send, write (as often as needed), receive, read (until 0), end. An error ends all but `end`.
+struct xless_http_exchange *xless_http_begin(struct xless_http_session *session, const struct xless_http_request *request, unsigned long *code);
+unsigned long xless_http_send(struct xless_http_exchange *exchange, uint32_t body_length);
+unsigned long xless_http_write(struct xless_http_exchange *exchange, const void *bytes, size_t length);
+unsigned long xless_http_receive(struct xless_http_exchange *exchange, int *status);
+/// The answer's status line and headers, into `out`: their length; larger than `length`: the room they need; 0: none.
+size_t xless_http_headers(struct xless_http_exchange *exchange, wchar_t *out, size_t length);
+/// What was read (0: the end), or -1 (`*code`).
+int64_t xless_http_read(struct xless_http_exchange *exchange, void *out, size_t length, unsigned long *code);
+/// What was wrong with the server's certificate: WINHTTP_CALLBACK_STATUS_FLAG_*.
+unsigned int xless_http_secure_failure(struct xless_http_exchange *exchange);
+/// Any thread: what is waited for, and all that comes after it, fails.
+void xless_http_cancel(struct xless_http_exchange *exchange);
+void xless_http_end(struct xless_http_exchange *exchange);
 
 #ifdef __cplusplus
 }

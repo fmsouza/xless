@@ -108,6 +108,16 @@ unsigned long xless_test_junction(const wchar_t *link, const wchar_t *target) {
     return code;
 }
 
+int xless_test_hardening(void) { return (GetErrorMode() & SEM_NOGPFAULTERRORBOX) != 0; }
+
+unsigned long xless_test_load(const wchar_t *name) {
+    // As LoadLibraryW looks for it.
+    HMODULE module = LoadLibraryExW(name, NULL, LOAD_LIBRARY_AS_DATAFILE);
+    if (!module) return GetLastError();
+    FreeLibrary(module);
+    return 0;
+}
+
 void xless_test_allow_reports(void) { SetErrorMode(0); }
 
 void xless_test_crash(const char *how) {

@@ -19,7 +19,7 @@ private struct HookVault {
 
     init(entries: [String] = []) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-webhook-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try makePrivateDirectory(root)
         store = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
         var (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"),
                                                    kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
