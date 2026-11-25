@@ -49,18 +49,18 @@ private func temporary() throws -> URL {
     let own = project.appendingPathComponent("Package.resolved"), built = wrapper.appendingPathComponent("Package.resolved")
     try write()
     #expect(fm.fileExists(atPath: wrapper.path + "/Package.swift") && fm.fileExists(atPath: wrapper.path + "/Sources/XApp/stub.c") && !fm.fileExists(atPath: built.path))
-    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper) == nil) // no packages
+    #expect(PackageResolved.unpinnedNote(project: project, wrapper: wrapper) == nil) // no packages
     try resolved([("dep", "1.1.0")]).write(to: built, atomically: true, encoding: .utf8)
-    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper)?.hasPrefix("the project has no Package.resolved, which would hold these packages to a version: dep 1.1.0 (") == true)
+    #expect(PackageResolved.unpinnedNote(project: project, wrapper: wrapper)?.hasPrefix("the project has no Package.resolved, which would hold these packages to a version: dep 1.1.0 (") == true)
 
     try resolved([("dep", "1.0.0")]).write(to: own, atomically: true, encoding: .utf8)
     try write()
     #expect(try Data(contentsOf: built) == Data(contentsOf: own))
-    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper) == nil)
+    #expect(PackageResolved.unpinnedNote(project: project, wrapper: wrapper) == nil)
     try resolved([("new", "2.0.0"), ("dep", "1.0.0")]).write(to: built, atomically: true, encoding: .utf8)
-    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper)?.hasPrefix("Package.resolved does not name these, which were built: new 2.0.0 (") == true)
+    #expect(PackageResolved.unpinnedNote(project: project, wrapper: wrapper)?.hasPrefix("Package.resolved does not name these, which were built: new 2.0.0 (") == true)
     try resolved([("dep", "1.1.0")]).write(to: built, atomically: true, encoding: .utf8)
-    #expect(XcodePackageBuilder.unpinnedNote(project: project, wrapper: wrapper)?.contains("dep 1.1.0") == true)
+    #expect(PackageResolved.unpinnedNote(project: project, wrapper: wrapper)?.contains("dep 1.1.0") == true)
 
     try fm.removeItem(at: own)
     try fm.createDirectory(at: own, withIntermediateDirectories: false)

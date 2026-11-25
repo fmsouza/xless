@@ -72,7 +72,7 @@ public enum XcodePackageBuilder {
         try Shell.run(try xcode.require(.swift, stage: .build).path,
                       arguments(destination, wrapper: wrapper, scratch: scratch, product: pc.product, minimumOS: pc.minimumOS),
                       cwd: project, env: environment, baseEnvironment: env, stage: .build, passthrough: true)
-        if let note = unpinnedNote(project: project, wrapper: wrapper) { FileHandle.standardError.write(Data("xless: note: \(note)\n".utf8)) }
+        if let note = PackageResolved.unpinnedNote(project: project, wrapper: wrapper) { FileHandle.standardError.write(Data("xless: note: \(note)\n".utf8)) }
         guard let executable = MacBuilder.builtExecutable(named: "\(pc.product)App", under: products) else {
             throw XlessError(.build, "no \(pc.product)App executable under \(products.path)",
                              fix: "check the swift build output above, and that platforms.\(platform.rawValue).product matches a library product in Package.swift")
@@ -117,26 +117,7 @@ public enum XcodePackageBuilder {
         try Data().write(to: sources.appendingPathComponent("stub.c"))
         try wrapperPackage(product: product, minimumOS: minimumOS, platform: platform)
             .write(to: wrapper.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
-        let resolved = project.appendingPathComponent("Package.resolved")
-        guard FileManager.default.fileExists(atPath: resolved.path) else { return }
-        do { try Data(contentsOf: resolved).write(to: wrapper.appendingPathComponent("Package.resolved")) } catch {
-            throw XlessError(.build, "cannot read \(resolved.path): \(error.localizedDescription)", fix: "make it readable: it says which versions of its packages the app is built with")
-        }
-    }
-
-    /// The packages that were built in a version that the app's Package.resolved does not name, for the build's log.
-    static func unpinnedNote(project: URL, wrapper: URL) -> String? {
-        func pins(_ directory: URL) -> [String: [String: String]]? {
-            guard let data = FileManager.default.contents(atPath: directory.appendingPathComponent("Package.resolved").path),
-                  let file = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let pins = file["pins"] as? [[String: Any]] else { return nil }
-            return Dictionary(pins.compactMap { pin in (pin["identity"] as? String).map { ($0, pin["state"] as? [String: String] ?? [:]) } }) { first, _ in first }
-        }
-        let own = pins(project)
-        let others = (pins(wrapper) ?? [:]).filter { own?[$0.key] != $0.value }
-            .map { "\($0.key) \($0.value["version"] ?? $0.value["branch"] ?? $0.value["revision"] ?? "?")" }.sorted()
-        guard !others.isEmpty else { return nil }
-        return (own == nil ? "the project has no Package.resolved, which would hold these packages to a version: " : "Package.resolved does not name these, which were built: ")
-            + others.joined(separator: ", ") + " (`swift package resolve` writes it: keep it with the project)"
+        try PackageResolved.copy(from: project, to: wrapper)
     }
 
     static func bundles(of products: URL) -> [URL] {

@@ -56,3 +56,45 @@ platforms:
     #expect(MacBuilder.swiftBuildArguments(wrapper: w, scratch: scratch, arch: "x86_64", minimumOS: "14.0", toolset: t, product: "HelloShip",
                                            own: nil) == base + ["--triple", "x86_64-apple-macosx14.0", "--toolset", "/sdk/toolset-swb.json"])
 }
+
+/// A build on Linux, with a stand-in for `swift` that leaves an executable and the bundle of the one package that the app has.
+@Test func aMacAppIsBuiltWithTheProjectsPackageResolvedAndOnlyWithTheBundlesOfThisBuild() throws {
+    let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("xless-macbuilder-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: root) }
+    let project = root.appendingPathComponent("p"), home = root.appendingPathComponent("home")
+    let env = ["PATH": "/usr/bin:/bin", "HOME": home.path, "XDG_CONFIG_HOME": home.path, "XLESS_SWIFT_TOOLCHAIN": root.path + "/none"]
+    let sdk = DarwinSDKLocator.bundle(env: env), bin = sdk.appendingPathComponent("toolset/bin")
+    for directory in [project, bin] { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
+    try Data("{}".utf8).write(to: sdk.appendingPathComponent("toolset-swb.json"))
+    for (name, cpu) in [("arm64", 0x0100000c), ("x86_64", 0x01000007)] as [(String, UInt32)] {
+        let words: [UInt32] = [0xfeedfacf, cpu, 0, 2, 0, 0, 0, 0]
+        try Data(words.flatMap { withUnsafeBytes(of: $0.littleEndian) { Array($0) } }).write(to: root.appendingPathComponent(name))
+    }
+    try ExecutableFile.write("""
+        #!/bin/sh
+        while [ $# -gt 0 ]; do case "$1" in --package-path) w="$2" ;; --scratch-path) s="$2" ;; --triple) a="${2%%-*}" ;; esac; shift; done
+        mkdir -p "$s/out/Products/Release/Now_Now.bundle"
+        cp '\(root.path)'/"$a" "$s/out/Products/Release/DemoMac"
+        cp "$w/Package.resolved" '\(root.path)/used-'"$a" 2>/dev/null || true
+        echo '{"pins":[{"identity":"dep","state":{"version":"9.0.0"}}],"version":3}' > "$w/Package.resolved"
+
+        """, to: bin.appendingPathComponent("swift"), stage: .build)
+    let config = try ProjectConfig.parse(yaml: macYAML.replacingOccurrences(of: "HelloShip", with: "Demo"))
+    let own = project.appendingPathComponent("Package.resolved"), text = #"{"pins":[{"identity":"dep","state":{"version":"1.0.0"}}],"version":3}"#
+    try Data(text.utf8).write(to: own)
+    // what another build left, of a package that the app had then
+    for arch in ["arm64", "x86_64"] {
+        try fm.createDirectory(at: project.appendingPathComponent(".xless/macos-build-\(arch)/out/Products/Release/Gone_Gone.bundle"), withIntermediateDirectories: true)
+    }
+    let app = try MacBuilder.build(project: project, config: config, paths: StagePaths(project: project, platform: .macos), env: env)
+    #expect(try fm.contentsOfDirectory(atPath: app.path + "/Contents/Resources") == ["Now_Now.bundle"])
+    #expect(try String(contentsOf: root.appendingPathComponent("used-arm64"), encoding: .utf8) == text)
+    #expect(try String(contentsOf: root.appendingPathComponent("used-x86_64"), encoding: .utf8).contains("9.0.0"), "the other architecture: the versions of the first")
+    #expect(try String(contentsOf: own, encoding: .utf8) == text)
+
+    // one that a project no longer has is not built with
+    try fm.removeItem(at: own)
+    try fm.removeItem(at: root.appendingPathComponent("used-arm64"))
+    _ = try MacBuilder.build(project: project, config: config, paths: StagePaths(project: project, platform: .macos), env: env)
+    #expect(!fm.fileExists(atPath: root.path + "/used-arm64"))
+}
