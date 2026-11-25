@@ -230,6 +230,9 @@ extension ProjectRun {
             throw RunStop.usage("\"\(xself)\" secrets materialize printed '\(directory)', not a run directory")
         }
         cleanup.note(secrets: directory, secrets.sets)
+        // And where that is: a takeover removes it only while the one still leads to the other.
+        let real = host.realPath(directory).flatMap { $0.utf8.contains(UInt8(ascii: "\n")) ? nil : "\nsecrets_real=\($0)" } ?? ""
+        lock?.note("secrets=\(directory)\(real)")
         try refuseInBuildMounts(directory)
         secrets.directory = directory
     }

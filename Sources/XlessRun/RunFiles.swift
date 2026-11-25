@@ -52,6 +52,15 @@ struct RunFiles {
         return real
     }
 
+    /// The same for the home directory, which no container gets.
+    private func realHome() throws -> String {
+        guard let real = host.realPath(home) else {
+            let why = home.isEmpty ? "HOME is empty" : "HOME: \(home), which is not there, or not to be seen"
+            throw RunStop.usage("cannot tell where your home directory is (\(why)), and so not whether it would be in what the build container gets; set HOME to a directory that is there")
+        }
+        return real
+    }
+
     private func unknown(_ path: String) -> RunStop {
         .usage("cannot tell where \(path) is, and so not whether a secret would be in what the build container gets; check that it is there, that you may reach it, and that its name is UTF-8")
     }
@@ -62,21 +71,26 @@ struct RunFiles {
     }
 
     /// `directory` or one above it is `other`: compared as files, so that neither a symbolic link nor another spelling of the
-    /// path (case, on macOS file systems) hides it. Throws where that cannot be told.
+    /// path (case and Unicode on macOS file systems, and the folders that macOS shows in two places) hides it. Throws where that
+    /// cannot be told.
     func directory(_ directory: String, isIn other: String) throws -> Bool {
-        var here = try real(directory)
-        while try !isSame(here, other) {
-            if here == "/" { return false }
-            here = Self.parent(here)
+        let path = try real(directory)
+        guard let physical = host.physicalPath(path), RunText.isAbsolute(physical) else { throw unknown(directory) }
+        return try [path, physical].contains {
+            var here = $0
+            while try !isSame(here, other) {
+                if here == "/" { return false }
+                here = Self.parent(here)
+            }
+            return true
         }
-        return true
     }
 
     /// The file is somewhere below `directory`, wherever a link to it is.
     func file(_ path: String, isIn other: String) throws -> Bool { try directory(Self.parent(real(path)), isIn: other) }
 
     /// `/`, the home directory or a directory above it.
-    func isBroad(_ path: String) throws -> Bool { try isSame(path, "/") || directory(home, isIn: path) }
+    func isBroad(_ path: String) throws -> Bool { try isSame(path, "/") || directory(realHome(), isIn: path) }
 
     /// The file or directory itself, or one below it.
     func file(_ path: String, isOrIsIn other: String) throws -> Bool { try isSame(path, other) || file(path, isIn: other) }

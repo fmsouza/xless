@@ -61,11 +61,18 @@ enum RunText {
     /// A run directory as `xless secrets materialize` makes it, <…>/xless/<32 hex digits> or <…>/xless/secrets/<32 hex digits>:
     /// nothing else is ever removed as one.
     static func isSecretsDirectory(_ path: String) -> Bool {
-        guard isAbsolute(path) else { return false }
-        var parts = Array(cut(path, at: "/", keepingEmpty: true).dropFirst())
-        guard !parts.contains(where: { ["", ".", ".."].contains($0) }), let id = parts.popLast(), isRunID(id) else { return false }
+        guard isNamedAsSecrets(path) else { return false }
+        var parts = cut(path, at: "/", keepingEmpty: true).dropFirst().dropLast()
         if parts.last == "secrets" { parts.removeLast() }
         return parts.last == "xless"
+    }
+
+    /// The last part of it is as that of a run directory, wherever that is.
+    static func isNamedAsSecrets(_ path: String) -> Bool {
+        guard isAbsolute(path) else { return false }
+        let parts = cut(path, at: "/", keepingEmpty: true).dropFirst()
+        guard !parts.contains(where: { ["", ".", ".."].contains($0) }), let id = parts.last else { return false }
+        return isRunID(id)
     }
 
     /// Where a run in containers keeps a project's xless.yml, as it names it: <home>/.cache/xless/run/<32 hex digits>.

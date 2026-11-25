@@ -91,7 +91,7 @@ enum ProjectRunner {
         // It reads no secret's value, but passes some on (from its environment to the step that uses them).
         SecretScope.enter()
         let context = RunContext(environment: env, xless: isScript(env) ? env["XLESS_SELF"].flatMap { $0.isEmpty ? nil : $0 } ?? "xless" : exe.path,
-                                 again: [exe.path] + CommandLine.arguments.dropFirst(), share: share.path, useDocker: useDocker,
+                                 again: [exe.path] + PosixRunHost.arguments.dropFirst(), share: share.path, useDocker: useDocker,
                                  session: XlessSession.agent, unlocked: !(env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty)
         let code = try ProjectRun(arguments, context: context, host: PosixRunHost()).run()
         if code != 0 { throw ExitCode(code) }
