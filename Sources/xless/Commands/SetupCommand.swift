@@ -86,7 +86,8 @@ struct SetupCommand: AsyncParsableCommand {
                                  fix: "drop --arch, or add --docker to build the images for those architectures")
             }
             guard Self.isLinux else {
-                throw XlessError(.sdk, "a native setup runs on Linux only", fix: "build the images instead: xless setup --docker\(sourceArgs)")
+                throw XlessError(.sdk, "a native setup runs on Linux only; on macOS xless builds in Docker",
+                                 fix: "install Docker Desktop or colima and run xless setup --docker\(sourceArgs), then xless run --docker; the account commands (xless auth, provision, store, testflight, release, …) need no setup")
             }
         }
         var archs: [String] = []
@@ -566,6 +567,9 @@ struct SetupCommand: AsyncParsableCommand {
         "amd64"
         #endif
     }
+
+    /// The setup there is on this system.
+    static var name: String { isLinux ? "xless setup" : "xless setup --docker" }
 
     static var isLinux: Bool {
         #if os(Linux)

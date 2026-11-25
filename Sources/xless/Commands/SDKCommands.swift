@@ -116,7 +116,7 @@ struct SDKExportCommand: AsyncParsableCommand {
 #endif
 
 struct SDKInstallCommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "install", abstract: "Install the Darwin SDK + toolchain metadata on this Linux machine.")
+    static let configuration = CommandConfiguration(commandName: "install", abstract: "Install the Darwin SDK + toolchain metadata on this machine.")
 
     @Option(help: "darwin.xtoolsdk produced by `xless sdk export` for this machine's architecture.") var xtoolsdk: String?
     @Option(help: "toolchain-meta.json from the same export.") var meta: String?

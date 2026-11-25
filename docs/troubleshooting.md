@@ -58,7 +58,8 @@ Natively (the default):
 | `… has sha256 …, not versions.env's …: nothing was installed` | The download is not the pinned file (cut short by a proxy, or changed upstream). Run `xless setup` again; if it persists, report it. |
 | `… GB free under … for the native install (…)` | Free some space, or put the native install on a larger disk: `XLESS_NATIVE_HOME=/big/disk/xless-native xless setup …` (set it for `xless run` too). |
 | `--arch … needs --docker` | A native setup installs for this machine's architecture only. Drop `--arch`, or build the images with `--docker`. |
-| `a native setup runs on Linux only` | On a Mac, build the images: `xless setup --docker --xcode …`. |
+| `a native setup runs on Linux only` | On a Mac, build the images: `xless setup --docker --xcode …` (Docker Desktop or colima), then `xless run --docker`. The account commands (`xless auth`, `provision`, `store`, `testflight`, `release` and so on) need no setup. |
+| `note: xless installs no build tools on macOS yet` | `xless run` without `--docker` uses the build tools you installed yourself, and found no `xtool`. Build in Docker: `xless run --docker …`. |
 | `xcode: "…" is pinned, but … SDK from Xcode …` when building | The native install holds another Xcode. Run `xless setup --xcode <that Xcode's .xip>` (it replaces the installed one), or build in its images with `--docker`. |
 | `a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images` | Overlays build in Docker only: `xless setup --docker --xcode …` once, then `xless run --docker --config …`. |
 
