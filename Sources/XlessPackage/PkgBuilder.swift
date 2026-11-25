@@ -12,8 +12,7 @@ import XlessSign
 /// the App Store distribution the DMG path never covers (TestFlight for macOS uploads an App Store flat
 /// package, uti `com.apple.pkg`). The shape is the one Apple's own tooling and every Linux packager produce
 /// (verified 2026-10-31 against `productbuild --component/--synthesize` runs on macOS, the `xar -tf` dumps of
-/// real signed product packages, and the apple-flat-package format docs — Amendment A of
-/// docs/superpowers/specs/2026-10-31-mac-testflight-design.md):
+/// real signed product packages, and the apple-flat-package format docs; docs/research/mas-pkg.md):
 ///
 /// ```
 /// <xar>

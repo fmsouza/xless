@@ -84,8 +84,8 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
-        // The xless agent (docs/security.md#the-xless-agent): the opt-in process that holds the store's data key and an
-        // Apple ID session in memory for `xless unlock`, `--remember` and `--keep`, and its client.
+        // The xless agent (docs/security.md#holding-an-unlock-off-by-default-in-memory): the opt-in process that holds the store's
+        // data key and an Apple ID session in memory for `xless unlock`, `--remember` and `--keep`, and its client.
         .target(name: "XlessAgent", dependencies: [
             "XlessCore", "CXlessProcess",
             .product(name: "Crypto", package: "swift-crypto"),

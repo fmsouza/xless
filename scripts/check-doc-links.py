@@ -2,11 +2,12 @@
 """Checks the relative links of Markdown files: each must name an existing file or directory, and a `#anchor` must name
 a heading of the target Markdown file (GitHub's anchor rules: lowercase, punctuation dropped, spaces to hyphens, `-1`,
 `-2`… for repeated headings) or an explicit `<a id>`/`<a name>`. Links with a scheme (https:, mailto:) are not checked;
-neither is anything inside code blocks or inline code.
+neither is anything inside code blocks or inline code. With --index, every file given must also be reached by links from that
+page, over other Markdown files too.
 
-    python3 -I scripts/check-doc-links.py README.md CONTRIBUTING.md docs/*.md
+    python3 -I scripts/check-doc-links.py --index docs/README.md README.md CONTRIBUTING.md docs/*.md docs/research/*.md
 
-Exit 0 when every link resolves, 1 when one does not (each printed as file:line: target: reason), 2 for a usage error.
+Exit 0 when every link resolves, 1 when one does not or a page is not reached (each printed as file:line: target: reason), 2 for a usage error.
 Standard library only.
 """
 import os
@@ -119,11 +120,34 @@ def check(path):
     return count, problems
 
 
+def reached(index):
+    """The real paths of the Markdown files that links lead to from `index`, itself included."""
+    found = set()
+    todo = [index]
+    while todo:
+        path = todo.pop()
+        key = os.path.realpath(path)
+        if key in found:
+            continue
+        found.add(key)
+        for kind, _, target in scan(path):
+            file_part = unquote(target.strip("<>").partition("#")[0])
+            if kind != "link" or SCHEME.match(target.strip("<>")) or not file_part.endswith(".md") or file_part.startswith("/"):
+                continue
+            dest = os.path.normpath(os.path.join(os.path.dirname(path), file_part))
+            if os.path.isfile(dest):
+                todo.append(dest)
+    return found
+
+
 def main(argv):
+    index = None
+    if argv[:1] == ["--index"]:
+        index, argv = (argv[1:2] or [None])[0], argv[2:]
     if not argv:
-        print("usage: check-doc-links.py <file.md>...", file=sys.stderr)
+        print("usage: check-doc-links.py [--index <page.md>] <file.md>...", file=sys.stderr)
         return 2
-    missing = [p for p in argv if not os.path.isfile(p)]
+    missing = [p for p in argv + ([index] if index else []) if not os.path.isfile(p)]
     if missing:
         print(f"check-doc-links: no such file: {' '.join(missing)}", file=sys.stderr)
         return 2
@@ -133,10 +157,13 @@ def main(argv):
         c, probs = check(p)
         total += c
         problems += probs
+    if index:
+        pages = reached(index)
+        problems += [f"{p}: no link leads to it from {index}" for p in argv if os.path.realpath(p) not in pages]
     for line in problems:
         print(line, file=sys.stderr)
     if problems:
-        print(f"check-doc-links: {len(problems)} broken of {total} relative links in {len(argv)} files", file=sys.stderr)
+        print(f"check-doc-links: {len(problems)} problems, {total} relative links in {len(argv)} files", file=sys.stderr)
         return 1
     print(f"check-doc-links: ok, {total} relative links in {len(argv)} files")
     return 0

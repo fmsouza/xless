@@ -165,7 +165,7 @@ public final class ProjectRun {
             guard let text = String(data: pinned, encoding: .utf8) else { throw RunStop.usage("\(pinFile) is not UTF-8 text") }
             top = try RunTop(yaml: text)
         } catch let stop as RunStop { throw stop } catch {
-            throw XlessError(.config, "\(pinFile) is not valid YAML: \(error)", fix: "fix it (docs/configuration.md)")
+            throw XlessError(.config, "\(pinFile) is not valid YAML: \(error)", fix: "fix it (docs/xless-yml.md)")
         }
         xcodePin = top["xcode"]
         if let pin = xcodePin {
