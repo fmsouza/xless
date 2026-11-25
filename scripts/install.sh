@@ -14,6 +14,7 @@ main() {
   home="${HOME:-}"
   prefix="${XLESS_PREFIX:-}"
   version="${XLESS_VERSION:-}"
+  homeprefix=0
 
   die() { echo "install.sh: $*" >&2; exit 1; }
 
@@ -28,6 +29,7 @@ main() {
   if [ -z "$prefix" ]; then
     [ -n "$home" ] || die "HOME is unset: set XLESS_PREFIX or pass --prefix"
     prefix="$home/.local"
+    homeprefix=1
   fi
   case "$prefix" in /*) ;; *) prefix="$(pwd)/$prefix" ;; esac
   while [ "$prefix" != / ] && [ "${prefix%/}" != "$prefix" ]; do prefix="${prefix%/}"; done
@@ -42,6 +44,11 @@ main() {
         ''|*[!0-9]*) ;;  # not told: the program itself says which macOS it needs
         *) [ "${macos%%.*}" -ge 14 ] || die "xless needs macOS 14 or later (this is macOS $macos)" ;;
       esac
+      # macOS's sudo keeps the person's HOME: root's files would be in it, where a later install without sudo could not replace them.
+      # shellcheck disable=SC2012  # POSIX has no stat; the owner's number is the third word whatever the name is
+      if [ "$homeprefix" = 1 ] && [ "$(id -u 2>/dev/null)" = 0 ] && [ "$(ls -ldn "$home/" 2>/dev/null | awk 'NR == 1 { print $3 }')" != 0 ]; then
+        die "this runs as root, and $home is another user's: run it without sudo (it needs none), or set XLESS_PREFIX"
+      fi
       # A shell that Rosetta translates says x86_64 on a Mac with Apple silicon.
       if [ "$machine" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then machine=arm64; fi
       ;;

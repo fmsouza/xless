@@ -137,12 +137,21 @@ x86_64`. They are for macOS 14.0 and later and run in CI on macOS 15 (arm64 and 
 macOS 14 runner any more. `swift test` runs on arm64 only, since no Intel runner has that Swift: there the installed
 program is run, with the shell tests of the agent and the prompts.
 
-- **Nothing of Apple's is in them.** The Swift runtime and everything else is the system's: `scripts/check-macos-binary.sh`
-  (run by `package-release.sh`) refuses a binary that needs a library outside `/usr/lib` and `/System/Library`, has a run
-  path of its own (`package-release.sh` takes out the Xcode's) or is for another macOS or architecture;
-  `scripts/check-package.sh` refuses a tarball with any file but the listed ones. The build passes
+- **Nothing of Apple's is in them.** The Swift runtime and everything else is the system's. The build passes
   `-runtime-compatibility-version none`, so the compiler adds none of its `libswiftCompatibility*` archives, which only
-  systems before macOS 14 need. Nothing of the build is cached or uploaded but the tarball.
+  systems before macOS 14 need. `package-release.sh` runs the checks, and makes no package when one fails:
+  - `scripts/check-link-map.sh` reads the linker's map (`-Xlinker -map`, `XLESS_LINK_MAP`): every object must be one that the build
+    compiled, the system's libraries are there by name only (`.tbd`), and no archive, library file or object of the toolchain
+    or of a package is. It lists what may be in a map, with the reason. It takes the paths and the symbols of the build
+    directory as they are: it keeps out what the toolchain adds, not somebody who can write there.
+  - `scripts/check-macos-binary.sh` refuses a binary that needs a library outside `/usr/lib` and `/System/Library`, has a run
+    path of its own (`package-release.sh` takes out the Xcode's), is for another macOS or architecture, or has the section of
+    a compatibility archive. The release's `verify` jobs run it again on the installed program.
+  - `scripts/check-package.sh` compares the tarball with the checkout, on every system that handles it: the names, the owner, the
+    modes, no extended attributes; every file but `bin/xless`, `VERSION`, the `XLESS_VERSION` line and the packages' own licences
+    byte for byte or by sha256; those licences by name and as text; and `bin/xless` as a program of that system and architecture.
+
+  Nothing of the build is cached or uploaded but the tarball.
 - **Signed ad hoc**, with the hardened runtime and `restrict`, by `package-release.sh`. There is no Developer ID in CI and
   the program is not notarized: it needs no secret, and needs none of the two, because `curl` and `tar` set no quarantine
   mark, so Gatekeeper never asks. It names nobody: what vouches for a download are `SHA256SUMS`, which `install.sh` always

@@ -5,8 +5,9 @@
 # <out-dir>/SHA256SUMS (sha256sum's format; the other lines are kept). Layout (checked by scripts/check-package.sh):
 #   bin/xless (stripped)  LICENSE  share/xless/{VERSION,versions.env,docker/,scripts/,credential-helpers/,samples/HelloShip/,licenses/}
 # docker/ and samples/HelloShip are the tracked files only. The macOS binary is freed of the run paths of the Xcode it was
-# built with, signed ad hoc (with the hardened runtime, and without any identity) and checked by scripts/check-macos-binary.sh.
-# XLESS_STRIP overrides the strip command, XLESS_CODESIGN and XLESS_CHECK_BINARY (a macOS package's) codesign and that check;
+# built with, signed ad hoc (with the hardened runtime, and without any identity) and checked by scripts/check-macos-binary.sh;
+# XLESS_LINK_MAP is the linker's map of it (scripts/check-link-map.sh, which says what may be linked in), without which none is made.
+# XLESS_STRIP overrides the strip command, XLESS_CODESIGN, XLESS_CHECK_BINARY and XLESS_CHECK_MAP (a macOS package's) codesign and those checks;
 # XLESS_CHECKOUTS is passed on to third-party-licenses.sh.
 set -euo pipefail
 os=linux
@@ -33,10 +34,12 @@ elif [[ "$os" == linux ]] && command -v llvm-strip >/dev/null 2>&1; then strip_c
 else strip_cmd="strip"; fi
 "$strip_cmd" "$stage/bin/xless"
 if [[ "$os" == macos ]]; then
+  if [[ -z "${XLESS_CHECK_MAP:-}" && -z "${XLESS_LINK_MAP:-}" ]]; then echo "package-release: XLESS_LINK_MAP is not set: swift build … -Xlinker -map -Xlinker <file>" >&2; exit 1; fi
+  "${XLESS_CHECK_MAP:-$root/scripts/check-link-map.sh}" "${XLESS_LINK_MAP:-}" "$bin" "$arch"
   # The Swift runtime is the system's: a run path of the build machine's Xcode (or of the program's own directory) is a place
   # where a library could be put in its stead.
   if command -v otool >/dev/null 2>&1; then
-    while IFS= read -r rpath; do install_name_tool -delete_rpath "$rpath" "$stage/bin/xless" 2>/dev/null
+    while IFS= read -r rpath; do install_name_tool -delete_rpath "$rpath" "$stage/bin/xless" || { echo "package-release: cannot take the run path $rpath out" >&2; exit 1; }
     done < <(otool -l "$stage/bin/xless" 2>/dev/null | sed -n '/cmd LC_RPATH/,/path /s/^ *path \(.*\) (offset [0-9]*)$/\1/p' | grep -vx /usr/lib/swift || true)
   fi
   # Ad hoc: no identity, so nobody but the checksums and the attestation vouches for it (docs/maintainers.md#releases). The

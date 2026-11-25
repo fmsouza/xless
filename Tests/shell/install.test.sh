@@ -8,7 +8,7 @@ trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 sh_bin=$(command -v dash || command -v sh)
 echo "install.sh runs under $sh_bin"
-export XLESS_CHECKOUTS="$t/checkouts" XLESS_STRIP=true XLESS_CODESIGN=true XLESS_CHECK_BINARY=true
+export XLESS_CHECKOUTS="$t/checkouts" XLESS_STRIP=true XLESS_CODESIGN=true XLESS_CHECK_BINARY=true XLESS_CHECK_MAP=true XLESS_STUB=true
 mkdir -p "$t/checkouts"
 for id in $(sed -n 's/.*"identity" : "\(.*\)",/\1/p' "$repo/Package.resolved"); do
   mkdir -p "$t/checkouts/$id"; echo "licence of $id" > "$t/checkouts/$id/LICENSE"
@@ -72,6 +72,20 @@ rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.2.3 PATH="$p/bin:$t/tools" "$sh_bi
 [[ "$(ls -ld "$p/share/xless/vault" | cut -c1-10)" == drwx------ && "$(ls -l "$p/share/xless/vault/secrets.vault" | cut -c1-10)" == -rw------- ]] || fail "the store's permissions changed"
 rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.3.0 PATH="$p/bin:$t/tools" "$sh_bin" "$repo/scripts/install.sh" --prefix "$p" 2>&1) || rc=$?
 [[ $rc == 0 && "$(cat "$p/share/xless/vault/secrets.vault" 2>/dev/null)" == sealed ]] || fail "the second upgrade lost the secret store: $out"
+
+# `curl … | sudo sh` on a Mac keeps the person's HOME: root's files would be in it, and a later install without sudo could not replace them.
+mkdir -p "$t/asroot" "$t/other"; printf '#!/bin/sh\n[ "$*" = -u ] && echo 0\n' > "$t/asroot/id"; printf '#!/bin/sh\necho 14.0\n' > "$t/asroot/sw_vers"; chmod +x "$t/asroot"/*
+if [[ "$(id -u)" == 0 ]]; then chown 12345 "$t/other"; mine=12345; else mine=$(id -u); fi
+mac=(XLESS_RELEASE_BASE="file://$rel" XLESS_UNAME_S=Darwin XLESS_UNAME_M=arm64)
+run "${mac[@]}" HOME="$t/other" PATH="$t/asroot:$t/tools"
+[[ $rc != 0 ]] && grep -qF "run it without sudo" <<< "$out" && [[ -z "$(ls -A "$t/other")" ]] || fail "installed as root into another's HOME (owner $mine): $rc $out"
+run "${mac[@]}" HOME="$t/other" XLESS_PREFIX="$t/rootprefix" PATH="$t/asroot:$t/tools"
+[[ $rc == 0 && -x "$t/rootprefix/bin/xless" ]] || fail "root with a prefix of its own: $out"
+mkdir "$t/roothome"; printf '#!/bin/sh\nprintf "drwxr-xr-x 2 0 0 64 Jan 1 00:00 x\\n"\n' > "$t/asroot/ls"; chmod +x "$t/asroot/ls"
+run "${mac[@]}" HOME="$t/roothome" PATH="$t/asroot:$t/tools"
+[[ $rc == 0 && -x "$t/roothome/.local/bin/xless" ]] || fail "root in root's own HOME: $out"
+run "${base[@]}" HOME="$t/other" PATH="$t/asroot:$t/tools"
+[[ $rc == 0 ]] || fail "Linux as before: $out"
 
 # A pinned version uses /download/v<version>/ and nothing else.
 rm -rf "$rel/latest"

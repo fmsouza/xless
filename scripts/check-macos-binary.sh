@@ -15,15 +15,16 @@ archs="$(lipo -archs "$bin")" || die "$bin is not a Mach-O file"
 
 libraries="$(otool -L "$bin" | sed 1d | sed 's/^[[:space:]]*//; s/ (compatibility version .*$//')"
 [[ -n "$libraries" ]] || die "$bin has no libraries: otool told nothing"
-odd="$(grep -vE '^(/usr/lib|/System/Library)/' <<< "$libraries" || true)"
+odd="$(grep -vE '^(/usr/lib|/System/Library)/' <<< "$libraries" || true; grep -E '/\.\.?(/|$)' <<< "$libraries" || true)"
 [[ -z "$odd" ]] || die "$bin needs what is not the system's: $odd"
 
 commands="$(otool -l "$bin")"
 rpaths="$(sed -n '/cmd LC_RPATH/,/path /s/^ *path \(.*\) (offset [0-9]*)$/\1/p' <<< "$commands")"
 odd="$(grep -vx -e /usr/lib/swift -e '' <<< "$rpaths" || true)"
 [[ -z "$odd" ]] || die "$bin has a run path of its own: $odd"
-# The archives of Xcode's toolchain that the compiler adds for systems older than 14.0 (-runtime-compatibility-version none).
-hooks="$(grep -oE '__swift[0-9]+_hooks' <<< "$commands" || true)"
+# The archives of Xcode's toolchain that the compiler adds for systems older than 14.0 (-runtime-compatibility-version none), as far
+# as a program shows them: which objects it was linked of is for check-link-map.sh, where it is built.
+hooks="$(grep -oE '__swift[0-9]*_hooks' <<< "$commands" || true)"
 [[ -z "$hooks" ]] || die "$bin holds a compatibility library of Swift: $hooks"
 grep -q 'cmd LC_DYLD_ENVIRONMENT' <<< "$commands" && die "$bin sets variables of the dynamic linker"
 

@@ -55,9 +55,12 @@ runs:
         git config --global http.version HTTP/1.1
         xcodebuild -version
         swift --version
-        build=(swift build -c release --product xless --arch "$ARCH" -Xswiftc -runtime-compatibility-version -Xswiftc none)
+        # The linker's map says what was linked in (scripts/check-link-map.sh, which package-release.sh runs).
+        map="$RUNNER_TEMP/xless-$ARCH.map"
+        build=(swift build -c release --product xless --arch "$ARCH" -Xswiftc -runtime-compatibility-version -Xswiftc none -Xlinker -map -Xlinker "$map")
         "${build[@]}"
         echo "XLESS_BIN=$("${build[@]}" --show-bin-path)/xless" >> "$GITHUB_ENV"
+        echo "XLESS_LINK_MAP=$map" >> "$GITHUB_ENV"
     - name: The binary reports the stamped version
       if: inputs.stamp == 'true'
       shell: bash
