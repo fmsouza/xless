@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import XlessBuild
 @testable import XlessCore
+import XlessMachO
 
 private let yaml = """
 bundleID: app.example.helloship
@@ -13,8 +14,8 @@ platforms:
   macos: { minimumOS: "14.0", product: HelloShip, distribution: developer-id }
 """
 
-/// A thin arm64 Mach-O executable that loads `libraries`.
-private func image(loading libraries: [String]) -> Data {
+/// A thin Mach-O executable (arm64's) that loads `libraries`.
+private func image(loading libraries: [String], runPaths: [String] = [], uuid: UInt8? = nil, cpu: UInt32 = 0x0100000c) -> Data {
     func u32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
     var commands = Data()
     for name in libraries {
@@ -22,7 +23,14 @@ private func image(loading libraries: [String]) -> Data {
         while (24 + text.count) % 8 != 0 { text.append(0) }
         commands += u32(0xc) + u32(UInt32(24 + text.count)) + u32(24) + u32(0) + u32(0) + u32(0) + text
     }
-    return u32(0xfeedfacf) + u32(0x0100000c) + u32(0) + u32(2) + u32(UInt32(libraries.count)) + u32(UInt32(commands.count)) + u32(0) + u32(0) + commands
+    for path in runPaths {
+        var text = Data(path.utf8) + [0]
+        while (12 + text.count) % 8 != 0 { text.append(0) }
+        commands += u32(0x8000001c) + u32(UInt32(12 + text.count)) + u32(12) + text
+    }
+    if let uuid { commands += u32(0x1b) + u32(24) + Data(repeating: uuid, count: 16) }
+    let count = libraries.count + runPaths.count + (uuid == nil ? 0 : 1)
+    return u32(0xfeedfacf) + u32(cpu) + u32(0) + u32(2) + u32(UInt32(count)) + u32(UInt32(commands.count)) + u32(0) + u32(0) + commands
 }
 
 private func temporary() throws -> URL {
@@ -85,6 +93,62 @@ private func temporary() throws -> URL {
     let xcode = InstalledXcode(app: URL(fileURLWithPath: "/Applications/Xcode.app"), version: "27.2", build: "27B52", source: "-")
     for path in ["/Applications/Xcode.app/Contents/Developer/x", "/var/run/com.apple.security.cryptexd/mnt/x"] { #expect(XcodePackageBuilder.isOfXcode(path, xcode)) }
     for path in ["/Applications/Xcode.app.other/x", "/vendor/lib", "/usr/lib/swift", "@loader_path"] { #expect(!XcodePackageBuilder.isOfXcode(path, xcode)) }
+}
+
+@Test func aRunPathOfOneArchitectureIsTakenOutOfThatOneOnly() throws {
+    let dir = try temporary(), library = dir.appendingPathComponent("V")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    func slices(_ paths: [[String]]) throws -> Data { try MachO.makeFat([image(loading: [], runPaths: paths[0]), image(loading: [], runPaths: paths[1], cpu: 0x01000007)]) }
+    var calls: [[String]] = []
+    /// As `install_name_tool`: an image in which a path is not in each architecture is an error.
+    func delete(_ paths: [String], _ file: URL) throws {
+        calls.append(paths)
+        let data = try Data(contentsOf: file)
+        let left = try MachO.sliceArchitectures(in: data).map { slice in
+            let has = try MachO.rpaths(in: data, slice: slice.range)
+            for path in paths where !has.contains(path) { throw XlessError(.build, "no LC_RPATH load command with path: \(path)", fix: "-") }
+            return image(loading: [], runPaths: has.filter { !paths.contains($0) }, cpu: UInt32(bitPattern: slice.cpuType))
+        }
+        try (left.count == 1 ? left[0] : MachO.makeFat(left)).write(to: file)
+    }
+    for (paths, kept, expected) in [
+        ([["/x", "/y", "@a"], ["@b"]], [["@a"], ["@b"]], [["/x", "/y"]]),
+        ([["/x", "@a"], ["/y", "/x"]], [["@a"], []], [["/x"], ["/x", "/y"]]),
+        ([["/x", "@a"], ["@b", "/x"]], [["@a"], ["@b"]], [["/x"]]), // the same of both: at once
+        ([["@a"], []], [["@a"], []], []),
+    ] as [([[String]], [[String]], [[String]])] {
+        calls = []
+        try slices(paths).write(to: library)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: library.path)
+        try XcodePackageBuilder.removeRunPaths(of: library, where: { $0.hasPrefix("/") }) { paths, file in
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            try delete(paths, file)
+        }
+        let left = try Data(contentsOf: library), want = try slices(kept)
+        #expect(calls == expected && left == want, "\(paths)")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["V"] && FileManager.default.isExecutableFile(atPath: library.path))
+        try FileManager.default.removeItem(at: library)
+    }
+}
+
+@Test func theDSYMOfALibraryIsKeptOnlyWhenItIsOfThatBuild() throws {
+    let products = try temporary(), item = products.appendingPathComponent("PackageFrameworks/B.framework")
+    defer { try? FileManager.default.removeItem(at: products) }
+    func write(_ path: String, uuid: UInt8?) throws {
+        let url = products.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try image(loading: [], uuid: uuid).write(to: url)
+    }
+    func dSYM() -> String? { XcodePackageBuilder.dSYM(ofLibrary: "B.framework/B", item: item, products: products)?.lastPathComponent }
+    try write("PackageFrameworks/B.framework/B", uuid: 1)
+    #expect(dSYM() == nil)
+    try write("B.framework.dSYM/Contents/Resources/DWARF/B", uuid: 1)
+    #expect(dSYM() == "B.framework.dSYM")
+    try write("B.framework.dSYM/Contents/Resources/DWARF/B", uuid: 2)
+    #expect(dSYM() == nil)
+    try write("B.framework.dSYM/Contents/Resources/DWARF/B", uuid: nil)
+    try write("PackageFrameworks/B.framework/B", uuid: nil)
+    #expect(dSYM() == nil)
 }
 
 @Test func theFrameworksAnAppLoadsAreEmbeddedWithWhatTheyLoad() throws {

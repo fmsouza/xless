@@ -100,8 +100,7 @@ public enum XcodePackageBuilder {
         let dSYMs = try DSYM.keep(executables: [executable], app: built, into: paths.dSYMs)
         FileHandle.standardError.write(Data("xless: dSYMs: \(dSYMs.summary)\n".utf8))
         for image in images { // a library of the app's own packages, which Swift Build wrote one for
-            let dSYM = DSYM.companion(of: products.appendingPathComponent(image.item.lastPathComponent))
-            guard case .kept = dSYMs, FileManager.default.fileExists(atPath: dSYM.path) else { continue }
+            guard case .kept = dSYMs, let dSYM = dSYM(ofLibrary: image.library, item: image.item, products: products) else { continue }
             try FileManager.default.copyItem(at: dSYM, to: paths.dSYMs.appendingPathComponent(dSYM.lastPathComponent))
             FileHandle.standardError.write(Data("xless: dSYMs: \(dSYM.lastPathComponent)\n".utf8))
         }
@@ -151,6 +150,13 @@ public enum XcodePackageBuilder {
         return found.values.sorted { $0.item.path < $1.item.path }
     }
 
+    /// The dSYM that Swift Build wrote for a library that is embedded; nil: none, or one of another build.
+    static func dSYM(ofLibrary library: String, item: URL, products: URL) -> URL? {
+        let dSYM = DSYM.companion(of: products.appendingPathComponent(item.lastPathComponent)), have = DSYM.uuids(ofDSYM: dSYM)
+        let binary = item.deletingLastPathComponent().appendingPathComponent(library)
+        return !have.isEmpty && have == Set((try? MachO.uuids(in: Data(contentsOf: binary))) ?? []) ? dSYM : nil
+    }
+
     /// What `image` loads by @rpath, without that.
     static func rpathLibraries(of image: URL) throws -> [String] {
         let data: Data
@@ -167,12 +173,30 @@ public enum XcodePackageBuilder {
     /// Swift Build adds directories of the Xcode to where the app looks for its libraries: they name this Mac's files, and are not on
     /// the device. `install_name_tool` takes them out.
     static func removeRunPaths(of executable: URL, xcode: InstalledXcode, environment: [String: String?], where goes: (String) -> Bool) throws {
+        try removeRunPaths(of: executable, where: goes) { paths, image in
+            try Shell.run(try xcode.require(.installNameTool, stage: .build).path, paths.flatMap { ["-delete_rpath", $0] } + [image.path], env: environment, stage: .build)
+        }
+    }
+
+    /// `delete` takes run paths out of an image, and fails where one of its architectures does not have one of them: then each is
+    /// done by itself.
+    static func removeRunPaths(of executable: URL, where goes: (String) -> Bool, delete: ([String], URL) throws -> Void) throws {
         let data = try Data(contentsOf: executable)
-        var paths: Set<String> = []
-        for (_, _, range) in try MachO.sliceArchitectures(in: data) { paths.formUnion(try MachO.rpaths(in: data, slice: range).filter(goes)) }
-        guard !paths.isEmpty else { return }
-        try Shell.run(try xcode.require(.installNameTool, stage: .build).path, paths.sorted().flatMap { ["-delete_rpath", $0] } + [executable.path],
-                      env: environment, stage: .build)
+        let slices = try MachO.sliceArchitectures(in: data).map { (range: $0.range, paths: Set(try MachO.rpaths(in: data, slice: $0.range).filter(goes)).sorted()) }
+        guard let first = slices.first, slices.contains(where: { !$0.paths.isEmpty }) else { return }
+        if slices.allSatisfy({ $0.paths == first.paths }) { return try delete(first.paths, executable) }
+        let mode = try FileManager.default.attributesOfItem(atPath: executable.path)[.posixPermissions]
+        let thin = executable.deletingLastPathComponent().appendingPathComponent(".thin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: thin) }
+        let done = try slices.map { slice in
+            let bytes = Data(data[slice.range])
+            if slice.paths.isEmpty { return bytes }
+            try bytes.write(to: thin)
+            try delete(slice.paths, thin)
+            return try Data(contentsOf: thin)
+        }
+        try MachO.makeFat(done).write(to: executable, options: .atomic)
+        if let mode { try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: executable.path) }
     }
 
     static func isForeign(_ path: String) -> Bool { path.hasPrefix("/") && path != "/usr/lib/swift" }
