@@ -28,6 +28,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <bsm/libbsm.h>
+#include <crt_externs.h>
 #include <dlfcn.h>
 #include <libproc.h>
 #include <mach/mach_time.h>
@@ -501,6 +502,15 @@ static void tool_ended(int tool) {
         int it = tool;
         if (atomic_compare_exchange_strong(&tools[i], &it, 0)) return;
     }
+}
+
+char *const *xless_environment(void) {
+#ifdef __APPLE__
+    return *_NSGetEnviron();
+#else
+    extern char **environ;
+    return environ;
+#endif
 }
 
 int xless_tool_runs(int pid) {

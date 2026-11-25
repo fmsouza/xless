@@ -20,6 +20,20 @@ import Testing
         #expect(Set(names) == ["PATH", "ONLY"])
     }
 
+    /// What is not UTF-8 in this process's environment is the same bytes in a step's.
+    @Test func variablesThatAreNotUTF8ReachAStepAsTheyAre() async {
+        await #expect(processExitsWith: .success) {
+            let bytes: [UInt8] = Array("caf".utf8) + [0xE9, 0xFF] + Array("x".utf8) + [0]
+            for name in ["KEPT", "CHANGED", "REMOVED"] { bytes.withUnsafeBufferPointer { b in b.withMemoryRebound(to: CChar.self) { _ = setenv(name, $0.baseAddress!, 1) } } }
+            var environment = ProcessInfo.processInfo.environment
+            environment["CHANGED"] = "other"
+            environment["REMOVED"] = nil
+            let host = PosixRunHost()
+            let step = try host.start(RunStep(["sh", "-c", "printf '%s|%s|%s' \"$KEPT\" \"$CHANGED\" \"${REMOVED-none}\" | od -An -tx1 | tr -d ' \\n'"], environment: environment, output: .captured))
+            guard host.finish(step).output == "636166e9ff78" + "7c6f74686572" + "7c6e6f6e65" else { exit(1) }
+        }
+    }
+
     @Test func aStepHasNothingToReadAndNoDescriptorOfTheRuns() throws {
         let file = try host.temporaryFile()
         defer { host.removeFile(file) }

@@ -42,6 +42,19 @@ printf '#!/bin/sh\n' > "$t/bin/xless"; chmod +x "$t/bin/xless"
 out=$("${base[@]}" XLESS_USE_DOCKER=0 "$S" "$t/proj" --from upload 2>/dev/null)
 [[ "$out" == "xless ship --platform ios --from upload " ]] || fail "native command wrong: '$out'"
 
+# arguments that are not UTF-8 are the same bytes for xless; a project whose path is not is refused
+cat > "$t/bytes.py" <<'P'
+import os, sys
+os.execvp(sys.argv[1], [a.encode() for a in sys.argv[1:-1]] + [b"--x=caf\xe9"] if sys.argv[-1] == "x" else [a.encode() for a in sys.argv[1:-1]] + [sys.argv[-1].encode() + b"/caf\xe9"])
+P
+printf '#!/bin/sh\nfor a in "$@"; do last=$a; done; printf "%%s" "$last" | od -An -tx1 | tr -d " \\n" >> "%s/bytes"\n' "$t" > "$t/bin/xless"
+rm -f "$t/bytes"
+"${base[@]}" XLESS_TESTFLIGHT_DRY_RUN= XLESS_USE_DOCKER=0 python3 "$t/bytes.py" "$S" "$t/proj" --to finalize x >/dev/null 2>"$t/err" || fail "an argument that is not UTF-8: $(cat "$t/err")"
+grep -qF 2d2d783d636166e9 "$t/bytes" || fail "an argument that is not UTF-8 is another one for xless: $(cat "$t/bytes")"
+code=0; "${base[@]}" python3 "$t/bytes.py" "$S" "$t" >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 2 ]] && grep -q "xless.yml not found" "$t/err" || fail "a project whose path is not UTF-8: exit $code: $(cat "$t/err")"
+printf '#!/bin/sh\n' > "$t/bin/xless"
+
 # without XLESS_USE_DOCKER: docker, unless a native SDK's toolchain-meta.json exists
 out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto dry run failed"
 [[ "$out" == *"docker "* && "$out" == *"xless ship --platform ios"* ]] || fail "auto without a native SDK does not use docker: $out"

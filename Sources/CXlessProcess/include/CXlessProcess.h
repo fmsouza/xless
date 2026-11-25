@@ -90,6 +90,9 @@ void *xless_remove_when_ended(const char *path, int is_directory);
 /// Forgets it: it is gone, or not private any more.
 void xless_keep_when_ended(void *entry);
 
+/// This process's variables (environ).
+char *const *xless_environment(void);
+
 /// Whether `pid` is a tool that signals are passed on to.
 int xless_tool_runs(int pid);
 

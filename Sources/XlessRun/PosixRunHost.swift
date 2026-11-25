@@ -16,7 +16,21 @@ public final class PosixRunHost: RunHost {
         var description: String { String(cString: strerror(code)) }
     }
 
+    /// This process's arguments and variables (`NAME=value`) that are not UTF-8, by what Swift makes of them: for a step they are
+    /// the bytes that they were.
+    private let given: (words: [String: [CChar]], variables: [String: [CChar]])
+
     public init() {
+        func bytes(_ list: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [String: [CChar]] {
+            var out: [String: [CChar]] = [:]
+            var next = list
+            while let here = next, let text = here.pointee {
+                if String(validatingCString: text) == nil { out[String(cString: text)] = Array(UnsafeBufferPointer(start: text, count: strlen(text) + 1)) }
+                next = here + 1
+            }
+            return out
+        }
+        given = (bytes(UnsafePointer(CommandLine.unsafeArgv)), bytes(xless_environment()))
         // Output nobody reads any more must not end the run before it has cleaned up.
         signal(SIGPIPE, SIG_IGN)
         // Ignored (xless may have been started so), the system would keep no step's exit code.
@@ -90,8 +104,8 @@ public final class PosixRunHost: RunHost {
         }
         if step.quiet { quiet = open("/dev/null", O_WRONLY | O_CLOEXEC) }
         var pid: Int32 = 0
-        let code = withStrings(step.words) { words in
-            withStrings(step.environment.map { "\($0.key)=\($0.value)" }) { environment in
+        let code = withStrings(step.words, given.words) { words in
+            withStrings(step.environment.map { "\($0.key)=\($0.value)" }, given.variables) { environment in
                 xless_spawn_step(path, words, environment, step.directory, out, quiet, &pid)
             }
         }
@@ -156,8 +170,8 @@ public final class PosixRunHost: RunHost {
 
     public func become(_ words: [String], environment: [String: String]) -> String {
         guard let path = program(words[0], path: environment["PATH"]) else { return String(cString: strerror(ENOENT)) }
-        withStrings(words) { words in
-            withStrings(environment.map { "\($0.key)=\($0.value)" }) { environment in
+        withStrings(words, given.words) { words in
+            withStrings(environment.map { "\($0.key)=\($0.value)" }, given.variables) { environment in
                 signal(SIGPIPE, SIG_DFL)
                 _ = execve(path, words, environment)
             }
@@ -165,8 +179,8 @@ public final class PosixRunHost: RunHost {
         return String(cString: strerror(errno))
     }
 
-    private func withStrings<R>(_ strings: [String], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
-        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { strdup($0) } + [nil]
+    private func withStrings<R>(_ strings: [String], _ given: [String: [CChar]], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { text in given[text].map { strdup($0) } ?? strdup(text) } + [nil]
         defer { for pointer in pointers { free(pointer) } }
         return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
     }
