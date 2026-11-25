@@ -169,7 +169,9 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
 
 - the overlay (or xless.yml) must ask for the mac distribution explicitly:
   `platforms.macos.distribution: app-store` — or `xless ship --platform macos --distribution app-store`;
-- `--to upload` reaches it: the run ships **both** channels — the Developer-ID DMG exactly as the
+- `--to upload` must be on the command line: `xless ship --platform macos` without it ends at the package, also for an
+  app-store distribution, and with it a Developer ID build still ends there;
+- with it, `xless run --platform macos` ships **both** channels — the Developer-ID DMG exactly as the
   [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (the app signed with
   `XLESS_DIST_KEY_FILE` under a `MAC_APP_STORE` provisioning profile embedded as
   `Contents/embedded.provisionprofile`, the pkg signed with `XLESS_INSTALLER_KEY_FILE`, uploaded, delivered to the

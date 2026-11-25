@@ -66,7 +66,7 @@ stage also removes its previous output.
 | finalize | `xless finalize` | `final/`: Xcode's metadata stamped into Info.plist, binaries patched. The app is complete but unsigned. | 14 |
 | sign | `xless sign` | `signed/` | 15; 24 when the account lacks something signing needs and [provisioning updates are off](signing-and-testflight.md#what-sign-changes-on-the-account) |
 | package | `xless package` | `out/`: the `.ipa`, the notarized `.zip`, (Tauri and Cargo macOS) the notarized and stapled `.dmg`, or (App-Store macOS) the `.pkg`; next to it, `<App>.app.dSYM.zip` when the build kept dSYMs ([below](#dsyms)) | 16 |
-| upload | `xless upload` | `upload.json` (iOS only; rewritten at every state change, so it keeps the build ID if processing fails or times out; [`xless release submit`](apple-account.md#xless-release) can take that build). With a [`testflight:` block](xless-yml.md#testflight) it then delivers the processed build to your TestFlight groups. | 17 |
+| upload | `xless upload` | `upload.json` (iOS, and the macOS App Store package; rewritten at every state change, so it keeps the build ID if processing fails or times out; [`xless release submit`](apple-account.md#xless-release) can take that build). With a [`testflight:` block](xless-yml.md#testflight) it then delivers the processed build to your TestFlight groups. | 17 |
 
 Config errors exit 10, SDK errors exit 11 and the Apple account commands' errors exit 20
 ([apple-account.md](apple-account.md#errors)); a command that would have to ask something with `--no-input` exits 23.

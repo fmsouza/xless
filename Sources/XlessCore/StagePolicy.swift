@@ -11,6 +11,20 @@ public enum StagePolicy {
     /// `ship`'s last stage: `--to`, else upload (build for a simulator build, which has no later stage).
     public static func lastStage(to: Stage?, simulator: Bool) -> Stage { to ?? (simulator ? .build : .upload) }
 
+    /// The stages `ship` runs. An overlay build without a freshly synced work copy is never right: starting at build
+    /// includes prepare. A Mac app is uploaded only when `--to upload` says so and it is built for the App Store: without
+    /// either, `ship` ends at its package.
+    public static func shipStages(from: Stage, to: Stage?, simulator: Bool, hasPrepare: Bool, platform: Platform, distribution: Distribution) -> [Stage] {
+        let start: Stage = from == .build && hasPrepare ? .prepare : from
+        let last = lastStage(to: to, simulator: simulator)
+        return pipeline.filter { stage in
+            guard stage >= start, stage <= last else { return false }
+            if stage == .prepare { return hasPrepare }
+            if stage == .upload, platform == .macos { return to == .upload && distribution == .appStore }
+            return true
+        }
+    }
+
     /// `ship --from … --to …`: nil when the range is allowed, else the usage message.
     public static func shipRangeProblem(from: Stage, last: Stage, simulator: Bool) -> String? {
         let stages = "use one of: " + pipeline.map(\.rawValue).joined(separator: ", ")
