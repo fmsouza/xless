@@ -5,6 +5,9 @@ import Foundation
 public enum ImageName {
     public static let repository = "xless"
 
+    /// The images of xless up to 0.10: one Xcode's SDK, Tauri's and React Native's toolchains, each an image of its own.
+    public static let oldRepositories = ["xless-base", "xless-tauri", "xless-rn"]
+
     public static func base(arch: String, xcode: String) -> String { "\(repository):local-\(arch)-xcode\(xcode)" }
 
     /// The base image of one build of an Xcode: the tag that `XLESS_XCODE_RETAG=1` keeps when another build of that version comes.

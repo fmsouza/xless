@@ -5,8 +5,13 @@ public struct LocalImages {
     /// Runs docker with these arguments: its exit code, and what it printed.
     public typealias Docker = (_ arguments: [String]) -> (code: Int32, output: String)
     private let docker: Docker
+    private let exports: (_ arch: String) -> [SDKExport]
 
-    public init(_ docker: @escaping Docker) { self.docker = docker }
+    /// - Parameter exports: the SDK exports in the cache (for what the messages tell the person to run).
+    public init(exports: @escaping (_ arch: String) -> [SDKExport] = { _ in [] }, _ docker: @escaping Docker) {
+        self.docker = docker
+        self.exports = exports
+    }
 
     public func image(_ name: String) -> LocalImage? {
         let answer = docker(["image", "inspect", "--format", "{{json .}}", name])
@@ -31,10 +36,35 @@ public struct LocalImages {
         "xless setup --docker --xcode \(xcode.map { "<path to Xcode \($0)'s .app or .xip>" } ?? "<Xcode.xip>") --arch \(arch)"
     }
 
-    private func build(again xcode: String, arch: String) -> String { "build it again from Xcode \(xcode): \(Self.setUp(xcode: xcode, arch: arch))" }
+    /// The setup that needs no Xcode, where the cache has, or an older xless may have left there, an export to build from; nil: there
+    /// is none.
+    private func again(xcode: String?, arch: String, older: Bool) -> String? {
+        let all = exports(arch), right = xcode.map { wanted in all.filter { $0.xcode == wanted } } ?? all
+        guard let export = right.last else { return older && all.isEmpty ? "xless setup --docker --arch \(arch)" : nil }
+        let named = all.count == 1 ? "" : " --sdk \(Self.quoted(export.directory))"
+        return "xless setup --docker\(named) --arch \(arch)"
+    }
 
-    private func missing(_ name: String, xcode: String, arch: String, why: String = "") -> ImageProblem {
-        ImageProblem("the image \(name) is missing\(why)", fix: "build it from Xcode \(xcode): \(Self.setUp(xcode: xcode, arch: arch))")
+    private static func gone(xcode: String?, arch: String) -> String { "from the SDK export in the cache; when that is gone: \(setUp(xcode: xcode, arch: arch))" }
+
+    /// "`what`: the command" that makes the image of `xcode`.
+    private func fix(_ what: String, xcode: String, arch: String, older: Bool) -> String {
+        guard let again = again(xcode: xcode, arch: arch, older: older) else { return "\(what) from Xcode \(xcode): \(Self.setUp(xcode: xcode, arch: arch))" }
+        return "\(what): \(again) (\(Self.gone(xcode: xcode, arch: arch)))"
+    }
+
+    private func build(again xcode: String, arch: String) -> String { fix("build it again", xcode: xcode, arch: arch, older: true) }
+
+    /// An image of an older xless is here: whoever made it exported the SDK for it.
+    private func hasOlder(arch: String) -> Bool {
+        ((try? names()) ?? []).contains { name in
+            ImageName.oldRepositories.contains { name.hasPrefix("\($0):local-\(arch)") }
+                || name.hasPrefix(ImageName.plain(arch: arch)) && name != ImageName.tools(arch: arch) && image(name)?.sdk == nil
+        }
+    }
+
+    private static func quoted(_ path: String) -> String {
+        path.wholeMatch(of: /[A-Za-z0-9_.\/:@%+=-]+/) != nil ? path : "'\(path.replacing("'", with: "'\\''"))'"
     }
 
     /// The image of the pinned Xcode; without a pin, that of the newest Xcode there is one of.
@@ -48,7 +78,7 @@ public struct LocalImages {
             let name = ImageName.base(arch: arch, xcode: pin)
             if let found = image(name) { return Base(image: try checked(found, arch: arch, xcode: pin)) }
             if let plain, plain.sdk != nil, plain.xcode == pin { return old(try checked(plain, arch: arch, xcode: pin)) }
-            throw missing(name, xcode: pin, arch: arch)
+            throw ImageProblem("the image \(name) is missing", fix: fix("build it", xcode: pin, arch: arch, older: hasOlder(arch: arch)))
         }
         let found = try names().compactMap { name in ImageName.xcode(ofBase: name, arch: arch).map { (name: name, xcode: $0) } }
             .sorted { ImageName.isOlder($1.xcode, than: $0.xcode) }
@@ -62,8 +92,11 @@ public struct LocalImages {
             if let xcode = plain.xcode, plain.sdk != nil { return old(try checked(plain, arch: arch, xcode: xcode)) }
             older.append(plain.name)
         }
+        let again = again(xcode: nil, arch: arch, older: !older.isEmpty || hasOlder(arch: arch))
+        let notes = (again == nil ? [] : [Self.gone(xcode: nil, arch: arch)])
+            + (older.isEmpty ? [] : ["those of an older xless, as \(older[0]), are not used: xless clean --old removes them"])
         throw ImageProblem("there is no xless image on this machine (xless images are never pulled from a registry)",
-                           fix: "build it with: \(Self.setUp(arch: arch))" + (older.isEmpty ? "" : " (those of an older xless, as \(older[0]), are not used; xless clean --old removes them)"))
+                           fix: "build it with: \(again ?? Self.setUp(arch: arch))" + (notes.isEmpty ? "" : " (\(notes.joined(separator: "; ")))"))
     }
 
     private func checked(_ image: LocalImage, arch: String, xcode: String) throws -> LocalImage {
@@ -106,7 +139,7 @@ public struct LocalImages {
         if base?.sdk != sdk { base = self.image(ofBuild) ?? (base?.sdk == nil ? nil : base) }
         guard let base, base.sdk == sdk else {
             throw ImageProblem("\(what) is built for Xcode \(xcode) (\(sdk)), and the image \(base == nil ? name : ofBuild) is missing, which the steps with the secrets run in",
-                               fix: "build it from Xcode \(xcode): \(Self.setUp(xcode: xcode, arch: arch))")
+                               fix: fix("build it", xcode: xcode, arch: arch, older: hasOlder(arch: arch)))
         }
         _ = try checked(base, arch: arch, xcode: xcode)
         guard image.isBuilt(on: base) else {
@@ -116,6 +149,17 @@ public struct LocalImages {
     }
 
     // MARK: - The kits
+
+    /// docker's own builder, which is named after the context: the others (a builder container) do not see the local images, and
+    /// would look for them in a registry. nil: docker is too old to say.
+    public var builder: String? {
+        let answer = docker(["context", "show"])
+        let name = answer.output.hasSuffix("\n") ? String(answer.output.dropLast()) : answer.output
+        return answer.code == 0 && name.wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9_.+-]*/) != nil ? name : nil
+    }
+
+    /// What of the environment chooses another builder.
+    public static let builderVariables = ["BUILDX_BUILDER", "DOCKER_BUILDKIT"]
 
     /// Whether the image of `kit` on `base` is the one this xless would build.
     public func state(of kit: Kit, on base: LocalImage, share: URL) throws -> Kit.State {

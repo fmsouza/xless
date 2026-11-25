@@ -58,6 +58,29 @@ import Testing
         #expect(renamed != more)
     }
 
+    /// An installed share directory can be links (Homebrew's, stow's): the files are what counts.
+    @Test func theRecipeOfAFolderBehindALinkIsTheFiles() throws {
+        let linked = FileManager.default.temporaryDirectory.appendingPathComponent("kit-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: linked) }
+        try FileManager.default.createDirectory(at: linked.appendingPathComponent("docker"), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: linked.appendingPathComponent("docker/tauri"), withDestinationURL: Kit.tauri.directory(share: share))
+        let before = try Kit.tauri.recipe(share: linked)
+        let files = try Kit.tauri.recipe(share: share)
+        #expect(before == files)
+        try Data("FROM newer\n".utf8).write(to: Kit.tauri.directory(share: share).appendingPathComponent("Dockerfile"))
+        let after = try Kit.tauri.recipe(share: linked)
+        #expect(after != before)
+    }
+
+    /// The builder is docker's own, which sees the local images: named after the context.
+    @Test func dockersOwnBuilderBuildsIt() throws {
+        let words = try Kit.tauri.build(on: base, share: share, builder: "colima")
+        #expect(words.starts(with: ["build", "--builder", "colima", "--platform", "linux/arm64", "--pull=false"]))
+        func builder(_ code: Int32, _ output: String) -> String? { LocalImages { words in words == ["context", "show"] ? (code, output) : (1, "") }.builder }
+        #expect(builder(0, "colima\n") == "colima" && builder(0, "default\n") == "default")
+        for (code, output) in [(1, "colima\n"), (0, ""), (0, "--x\n"), (0, "a b\n")] as [(Int32, String)] { #expect(builder(code, output) == nil, "\(output)") }
+    }
+
     @Test func aKitImageIsCurrentMissingOrStale() throws {
         func state() throws -> Kit.State { try docker.local.state(of: .tauri, on: base, share: share) }
         #expect(try state() == .missing)

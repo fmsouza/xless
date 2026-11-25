@@ -41,12 +41,17 @@ public enum Kit: String, CaseIterable, Sendable {
 
     /// The SHA-256 of what it is built from: every file of its folder, by path.
     public func recipe(share: URL) throws -> String {
-        let directory = directory(share: share)
+        // (an install can be links: what they lead to is what docker builds)
+        let directory = directory(share: share).resolvingSymlinksInPath()
         guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("Dockerfile").path) else {
             throw ImageProblem("xless's Dockerfile for \(apps) is missing: \(directory.path)/Dockerfile", fix: "install xless again, or set XLESS_SHARE to its share directory")
         }
         var hash = SHA256()
-        for path in try FileManager.default.subpathsOfDirectory(atPath: directory.path).sorted() {
+        let paths = try FileManager.default.subpathsOfDirectory(atPath: directory.path).sorted()
+        guard paths.contains("Dockerfile") else {
+            throw ImageProblem("\(directory.path) cannot be listed, which xless's Dockerfile for \(apps) is in", fix: "check its permissions, or install xless again")
+        }
+        for path in paths {
             let file = directory.appendingPathComponent(path)
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
@@ -59,8 +64,8 @@ public enum Kit: String, CaseIterable, Sendable {
 
     /// docker's arguments that build it on `base`. Nothing is in the context but its folder of xless's share directory, and no
     /// argument or layer holds anything of a project or a person.
-    public func build(on base: LocalImage, share: URL) throws -> [String] {
-        ["build", "--platform", "linux/\(base.architecture)", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=\(base.name)",
+    public func build(on base: LocalImage, share: URL, builder: String? = nil) throws -> [String] {
+        ["build"] + (builder.map { ["--builder", $0] } ?? []) + ["--platform", "linux/\(base.architecture)", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=\(base.name)",
          "--label", "\(ImageLabel.kit)=\(rawValue)", "--label", "\(ImageLabel.kitBase)=\(base.id)", "--label", "\(ImageLabel.kitRecipe)=\(try recipe(share: share))",
          "-t", image(on: base), directory(share: share).path]
     }
