@@ -183,13 +183,20 @@ extension ProjectRun {
     /// the build. Then the passphrase is asked, once, for all of them: the run starts again inside `xless session`, which drops
     /// the unlock when it ends. The build (step 2, and the tools of every step) is outside: its xless does not look for an
     /// unlock, and its tools are in POSIX sessions of their own, which the session's agent refuses.
-    func unlockStore() throws {
+    ///
+    /// In WSL nothing is unlocked for a run that `builds`: code of the project may become root there, and read what an agent holds.
+    /// Each step asks by itself, when it needs it.
+    func unlockStore(builds: @autoclosure () throws -> Bool) throws {
         guard !secrets.sets.isEmpty else { return }
         let code = step([xself, "secrets", "materialize", "--check"] + secrets.team + setTexts, .nothing).code
         guard code == 0 else { throw RunStop(code: code) }
         var needed: [String] = []
         for name in secrets.sets.flatMap(\.names) where !name.hasPrefix("?") && !needed.contains(name) { needed.append(name) }
         guard !context.unlocked, context.session == nil, !needed.isEmpty, !dryRun else { return }
+        if host.isWSL, try builds() {
+            host.say("note: in WSL nothing is unlocked while the project's code is built: what the store holds is read after that, and the passphrase asked then")
+            return
+        }
         cleanup.finish()
         let words = [xself, "session", "--if-possible", "--purpose", "xless run", "--reason", "reading \(needed.joined(separator: ", "))", "--"] + context.again
         let why = host.become(words, environment: context.environment.merging(["XLESS_RUN_UNLOCKED": "1"]) { $1 })

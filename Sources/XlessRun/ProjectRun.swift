@@ -3,6 +3,9 @@ import XlessCore
 
 /// What `xless run` is started with, besides its arguments.
 public struct RunContext: Sendable {
+    /// Set for a step that keeps nothing of what is typed for it: it does not offer to, and `unlock: { keep: always }` does not count.
+    public static let keepsNothing = "XLESS_RUN_KEEPS_NOTHING"
+
     /// This process's environment.
     public var environment: [String: String]
     /// The xless that the steps run.
@@ -212,8 +215,8 @@ public final class ProjectRun {
     }
 
     /// Asks a program something: its exit code and what it printed. Not a step of the run.
-    func ask(_ words: [String], quiet: Bool = false) -> (code: Int32, output: String) {
-        guard let started = try? cleanup.start(RunStep(words, environment: environment(.nothing), output: .captured, quiet: quiet)) else { return (127, "") }
+    func ask(_ words: [String], quiet: Bool = false, confined: Bool = false) -> (code: Int32, output: String) {
+        guard let started = try? cleanup.start(RunStep(words, environment: environment(.nothing), output: .captured, quiet: quiet, confined: confined)) else { return (127, "") }
         let answer = host.finish(started)
         cleanup.change { $0.job = nil }
         return answer
@@ -222,13 +225,13 @@ public final class ProjectRun {
     /// A step: to its exit code, and what it printed when that is `captured` or `both`. A dry run prints it instead.
     @discardableResult
     func step(_ words: [String], _ sees: Sees, told: Bool = false, directory: String? = nil, output: RunStep.Output = .shown, shown: [String]? = nil,
-              adding: [String: String] = [:], without: [String] = []) -> (code: Int32, output: String) {
+              adding: [String: String] = [:], without: [String] = [], confined: Bool = false) -> (code: Int32, output: String) {
         if dryRun {
             host.show(RunText.commandLine(shown ?? words))
             return (0, "")
         }
         let environment = environment(sees, told: told).merging(adding) { $1 }.filter { !without.contains($0.key) }
-        let step = RunStep(words, environment: environment, directory: directory, output: output)
+        let step = RunStep(words, environment: environment, directory: directory, output: output, confined: confined)
         let started: StartedStep
         do { started = try cleanup.start(step) } catch {
             host.say("testflight: cannot run \(words[0]): \(error)")
@@ -284,7 +287,8 @@ public final class ProjectRun {
     /// One `xless ship`. Secrets are mounted, and xless scrubs them from the environment of the tools it runs, but the files stay
     /// readable to package code (SwiftPM plugins and macros) built in the same container. In containers, with an image of the
     /// project's own (`image:`, XLESS_IMAGE), it is two: the build in that one without a secret, the rest in xless's own. Natively on a
-    /// Mac it is two as well: the build has no secret in any of its processes.
+    /// Mac and in WSL it is two as well: the build has no secret in any of its processes. In WSL nothing is unlocked before it has ended,
+    /// either (`unlockStore`).
     private func run(project: String, top: RunTop) throws -> Int32 {
         var span = try RunSpan.project(request)
         try chooseDocker()
@@ -310,7 +314,7 @@ public final class ProjectRun {
             split = try RunSpan.overlay(request)
             images = try chooseImages(top, builds: split.from <= .finalize, other: signs)
             if images.areTwo { try refuseSecretsInBuild(project) }
-        } else { try unlockStore() }
+        } else { try unlockStore(builds: RunSpan.overlay(request).from <= .finalize) }
 
         try holdWorkCopy(host.realPath(project) ?? project) // the project is its own work copy
         host.say("==> TestFlight: build number " + (span.buildNumberGiven ? "from --build-number" : environment["XLESS_BUILD_NUMBER"] ?? ""))
@@ -343,9 +347,9 @@ public final class ProjectRun {
         } else if signs {
             var words = [xself, "ship", "--platform", "ios"] + span.extra, directory = project
             let stages = try RunSpan.overlay(request)
-            if host.isMac, stages.from <= .finalize {
+            if host.splitsNative, stages.from <= .finalize {
                 let expected = [RunConfiguration.option, RunConfiguration.digest(pinned)]
-                code = step([xself, "ship", "--platform", "ios", "--from", stages.from.name, "--to", "finalize"] + expected + stages.extra, .nothing, directory: project, adding: noStore).code
+                code = step([xself, "ship", "--platform", "ios", "--from", stages.from.name, "--to", "finalize"] + expected + stages.extra, .nothing, directory: project, adding: noStore, confined: true).code
                 if code == 0, !dryRun, !configurationIsWhatItWas {
                     throw RunStop.usage("\(pinFile) is not what it was when this run began, so nothing is signed. Look at what changed it, then run this project again")
                 }
@@ -355,7 +359,7 @@ public final class ProjectRun {
             }
             if code == 0 { code = step(words, .everything, told: true, directory: directory).code }
         } else {
-            code = step([xself, "ship", "--platform", "ios"] + span.extra, .nothing, directory: project, adding: noStore).code
+            code = step([xself, "ship", "--platform", "ios"] + span.extra, .nothing, directory: project, adding: noStore, confined: true).code
         }
         if code == 0, !signs {
             host.say("==> TestFlight: stopped after \(span.to.name) (--to), nothing delivered")

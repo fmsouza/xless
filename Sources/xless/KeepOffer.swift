@@ -2,6 +2,7 @@ import Foundation
 import XlessAgent
 import XlessAppleID
 import XlessCore
+import XlessRun
 import XlessVault
 
 /// What is said before the passphrase's question and asked after it, or after a sign-in: one question per command, at
@@ -47,11 +48,11 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// This process's.
     static let shared = KeepOffer()
 
-    /// CI, `--no-input`, inside `xless session` (which keeps what its script needs, for as long as it runs) and the
-    /// environment of build code.
+    /// CI, `--no-input`, inside `xless session` (which keeps what its script needs, for as long as it runs), the
+    /// environment of build code, and a step of `xless run` before a build that may become root (`RunContext.keepsNothing`).
     static func isOff(env: [String: String], inSession: Bool) -> Bool {
         func on(_ name: String) -> Bool { !["", "0", "false"].contains(env[name] ?? "") }
-        return on("CI") || on(InputGate.variable) || on("XLESS_NO_SECRET_STORE") || inSession
+        return on("CI") || on(InputGate.variable) || on("XLESS_NO_SECRET_STORE") || on(RunContext.keepsNothing) || inSession
     }
 
     /// `xless session`: what is typed is kept while `name` runs, and nothing is offered.

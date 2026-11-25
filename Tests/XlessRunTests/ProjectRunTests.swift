@@ -152,6 +152,90 @@ import XlessCore
         }
     }
 
+    /// In WSL too, where code of the build may become root: nothing is unlocked, and no session is started, before it has ended.
+    @Test func nativelyInWSLTheBuildAndTheSignatureAreTwo() throws {
+        let host = FakeRunHost(isWSL: true, answer: home.answer())
+        #expect(try home.run([home.project, "--build-number", "7"], docker: false, host: host) == 0)
+        #expect(host.became == nil)
+        #expect(host.lines.contains { $0.contains("in WSL nothing is unlocked while the project's code is built") })
+        let expected = ["--expect-config", RunText.sha256(try String(contentsOfFile: "\(home.project)/xless.yml", encoding: .utf8))]
+        let names = host.allSteps.map { $0.words.prefix(3).joined(separator: " ") }
+        #expect(names == ["xless secrets named-by", "xless secrets materialize", "xless ship --platform", "xless ship --project"] || names == ["xless secrets materialize", "xless ship --platform", "xless ship --project"], "\(names)")
+        #expect(host.allSteps.first { $0.words.contains("materialize") }?.words.contains("--check") == true) // the names alone
+        let ships = host.allSteps.filter { $0.words.contains("ship") }
+        try #require(ships.count == 2)
+        #expect(ships[0].words == ["xless", "ship", "--platform", "ios", "--from", "build", "--to", "finalize"] + expected + ["--build-number", "7"])
+        #expect(ships[0].environment["XLESS_NO_SECRET_STORE"] == "1" && ships[0].directory == home.project && ships[0].confined)
+        #expect(ships[1].words == ["xless", "ship", "--project", home.project, "--platform", "ios", "--from", "sign", "--to", "upload"] + expected + ["--build-number", "7"])
+        #expect(ships[1].environment["XLESS_NO_SECRET_STORE"] == nil && ships[1].directory == "/" && !ships[1].confined) // (its credential helper may be Windows')
+        // a secret given in the environment is the second's alone
+        let secrets = try home.files(), given = FakeRunHost(isWSL: true, answer: home.answer())
+        #expect(try home.run([home.project], docker: false, host: given, environment: secrets) == 0)
+        let two = given.allSteps.filter { $0.words.contains("ship") }
+        try #require(two.count == 2)
+        #expect(secretsIn(two[0], secrets).isEmpty && two[1].environment["XLESS_DIST_KEY"] == "DIST-VALUE")
+        #expect(!given.lines.contains { $0.contains("in WSL") }) // nothing is asked
+    }
+
+    @Test func inWSLARunThatBuildsNothingIsAsElsewhere() throws {
+        let host = FakeRunHost(isWSL: true, answer: home.answer())
+        #expect(try home.run([home.project, "--from", "sign"], docker: false, host: host) == 127) // the fake session does not start
+        #expect(host.became?.prefix(2) == ["xless", "session"])
+        let inside = FakeRunHost(isWSL: true, answer: home.answer())
+        #expect(try home.run([home.project, "--from", "sign"], docker: false, host: inside, unlocked: true) == 0)
+        #expect(inside.allSteps.last?.words == ["xless", "ship", "--platform", "ios", "--from", "sign"])
+        // no Xcode is looked for
+        let notes = Notes()
+        _ = try home.run([home.project, "--to", "finalize"], docker: false, host: FakeRunHost(isWSL: true, answer: home.answer()), prepareMac: { _, _, _ in notes.add("asked") })
+        #expect(notes.lines.isEmpty)
+        // in containers nothing is different
+        for wsl in [true, false] {
+            let container = FakeRunHost(isWSL: wsl, answer: home.answer())
+            #expect(try home.run([home.project], docker: true, host: container, session: "/agent") == 0)
+            #expect(container.allSteps.filter { $0.isContainer }.count == 1 && container.allSteps.allSatisfy { !$0.confined } && !container.lines.contains { $0.contains("in WSL") })
+        }
+    }
+
+    /// An overlay's next-build step asks too, when it needs the key: for itself, and keeps nothing.
+    @Test func inWSLAnOverlayThatBuildsNativelyUnlocksNothing() throws {
+        let host = FakeRunHost(isWSL: true, answer: home.answer())
+        #expect(try home.run(["--config", home.overlay], docker: false, host: host) == 0)
+        #expect(host.became == nil)
+        let build = try #require(host.allSteps.first { $0.line.contains("--to finalize") })
+        #expect(build.confined && build.environment["XLESS_NO_SECRET_STORE"] == "1")
+        #expect(host.allSteps.filter(\.confined).count == 1)
+        #expect(host.allSteps.filter { $0.environment["XLESS_RUN_KEEPS_NOTHING"] == "1" }.map { $0.words.contains("next-build") } == [true])
+        let elsewhere = FakeRunHost(answer: home.answer())
+        #expect(try home.run(["--config", home.overlay], docker: false, host: elsewhere) == 127 && elsewhere.became != nil)
+        for (wsl, docker) in [(false, false), (false, true), (true, true)] {
+            let other = FakeRunHost(isWSL: wsl, answer: home.answer())
+            #expect(try home.run(["--config", home.overlay], docker: docker, host: other, unlocked: true) == 0)
+            #expect(other.allSteps.contains { $0.words.contains("next-build") } && other.allSteps.allSatisfy { $0.environment["XLESS_RUN_KEEPS_NOTHING"] == nil })
+        }
+    }
+
+    /// Any other Linux: one xless ship, in the project, inside the session that was unlocked up front.
+    @Test func nativelyOnLinuxItIsOne() throws {
+        let host = FakeRunHost(answer: home.answer())
+        #expect(try home.run([home.project], docker: false, host: host, unlocked: true) == 0)
+        #expect(host.allSteps.filter { $0.words.contains("ship") }.map(\.words) == [["xless", "ship", "--platform", "ios"]])
+        #expect(!host.splitsNative && FakeRunHost(isMac: true).splitsNative && FakeRunHost(isWSL: true).splitsNative)
+        // --from is ship's to read
+        let odd = FakeRunHost(answer: home.answer())
+        #expect(try home.run([home.project, "--to", "finalize", "--from", "nothing"], docker: false, host: odd) == 0)
+    }
+
+    @Test func inWSLAConfigurationThatTheBuildChangedIsNotSigned() throws {
+        let home = try RunHome(), file = "\(home.project)/xless.yml"
+        let host = FakeRunHost(isWSL: true, answer: home.answer { step in
+            if step.words.contains("finalize") { try? "bundleID: app.other\n".write(toFile: file, atomically: true, encoding: .utf8) }
+            return nil
+        })
+        #expect(try home.run([home.project], docker: false, host: host) == 2)
+        #expect(host.allSteps.filter { $0.words.contains("ship") }.count == 1)
+        #expect(host.lines.contains { $0.contains("so nothing is signed") })
+    }
+
     /// What it says is what counts: the build and the signature are told to take this and nothing else.
     @Test func onAMacAnXlessYmlThatIsALinkIsFollowed() throws {
         let home = try RunHome(), file = "\(home.project)/xless.yml"
