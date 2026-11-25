@@ -10,18 +10,19 @@ struct RunCommand: ParsableCommand {
         commandName: "run",
         abstract: "Build, sign and ship a project natively, or in the local xless images with --docker.",
         discussion: """
-        Usage: xless run [--docker] [<project-dir> | --config <overlay.yml>] [testflight.sh options …] [-- xless ship args]
+        Usage: xless run [--docker] [<project-dir> | --config <overlay.yml>] [options …] [-- xless ship args]
 
-        Runs <share>/scripts/testflight.sh with the other arguments unchanged, XLESS_SHARE set to the share directory and \
-        XLESS_SELF to this xless executable, and XLESS_USE_DOCKER=1 with --docker, else 0 (an XLESS_USE_DOCKER already \
-        set wins over the default, not over --docker). Natively on Linux it builds xless.yml projects; Tauri, plain Cargo \
-        and React Native overlays (--config) build in the images: add --docker. Secrets not set in the environment or \
-        ~/.config/xless/testflight.env come from the secret store (`xless secrets`); with --docker they are written to \
-        a tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
+        Options, anywhere: --platform ios|macos and --destination device|simulator (with --config), --dry-run (print what \
+        would run), --allow-disk-secrets. The other arguments go to xless ship, --from and --to among them.
+
+        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native. Natively on Linux it builds \
+        xless.yml projects; Tauri, plain Cargo and React Native overlays (--config) build in the images: add --docker. \
+        Secrets not set in the environment come from the secret store (`xless secrets`); with --docker they are written to a \
+        tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
         """)
 
-    @Argument(parsing: .allUnrecognized, help: "--docker, a project directory or --config <overlay.yml>, then testflight.sh's options.")
+    @Argument(parsing: .allUnrecognized, help: "--docker, a project directory or --config <overlay.yml>, then the run's options.")
     var arguments: [String] = []
 
     func run() throws {
@@ -57,13 +58,13 @@ struct DockerCommand: ParsableCommand {
         commandName: "docker",
         abstract: "Build, sign and ship a project in the local xless images (the same as xless run --docker).",
         discussion: """
-        Usage: xless docker [<project-dir> | --config <overlay.yml>] [testflight.sh options …] [-- xless ship args]
+        Usage: xless docker [<project-dir> | --config <overlay.yml>] [options …] [-- xless ship args]
 
-        Runs <share>/scripts/testflight.sh with the arguments unchanged, with XLESS_USE_DOCKER=1 unless you set it, \
-        XLESS_SHARE set to the share directory and XLESS_SELF to this xless executable. Example: xless docker MyApp --build-number 1 --to finalize
+        The same as xless run --docker, which is its name now, but for an XLESS_USE_DOCKER that you set. \
+        Example: xless docker MyApp --build-number 1 --to finalize
         """)
 
-    @Argument(parsing: .allUnrecognized, help: "A project directory or --config <overlay.yml>, then testflight.sh's options.")
+    @Argument(parsing: .allUnrecognized, help: "A project directory or --config <overlay.yml>, then the run's options.")
     var arguments: [String] = []
 
     func run() throws {

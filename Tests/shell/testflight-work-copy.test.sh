@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One run per work copy (fmsouza/xless#57): scripts/testflight.sh holds a lock on the work copy while it runs. A run
+# One run per work copy (fmsouza/xless#57): xless run holds a lock on the work copy while it runs. A run
 # refuses to start while a live run holds it, and stops what a run killed with SIGKILL left behind (its containers,
 # natively its xless) before it starts. A fake docker logs what it is asked; no daemon, no network, no secrets.
 set -euo pipefail

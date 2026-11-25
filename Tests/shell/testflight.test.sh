@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks scripts/testflight.sh's command construction in dry-run mode (no docker, no network, no secrets).
+# Checks xless run's command construction in dry-run mode (no docker, no network, no secrets).
 set -euo pipefail
 t=$(mktemp -d)
 . "$(dirname "$0")/run-entry.sh"

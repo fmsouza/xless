@@ -31,10 +31,10 @@ struct SessionCommand: AsyncParsableCommand {
 
     @Flag(help: "Also have an Apple ID session for the script: the kept one when Apple still takes it, else a sign-in now.")
     var signIn = false
-    /// scripts/testflight.sh: the command that asks; what is typed is offered to be kept, as that command's.
+    /// `xless run`: the command that asks; what is typed is offered to be kept, as that command's.
     @Option(help: .hidden) var purpose: String?
     @Option(help: .hidden) var reason = "unlocking"
-    /// scripts/testflight.sh: where no agent can run, the command runs without one.
+    /// `xless run`: where no agent can run, the command runs without one.
     @Flag(help: .hidden) var ifPossible = false
     @OptionGroup var trace: VerboseOption
     @Argument(parsing: .postTerminator, help: "The command, after --.") var command: [String] = []

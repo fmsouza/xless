@@ -47,7 +47,7 @@ public enum NextBuild {
 }
 
 extension ReactNativeProject {
-    /// The overlay is read without its work copy (step 1 of scripts/testflight.sh has none): the version comes from the
+    /// The overlay is read without its work copy (step 1 of `xless run` has none): the version comes from the
     /// overlay's `version:`, else the app's app.json / package.json in the source; the bundle ID is the app target's
     /// `bundleIDs` entry (the one named like the scheme, or the only one).
     public static func nextBuild(overlay: ReactNativeOverlay, source: URL, work: URL, compute: NextBuild.Compute) async throws -> String {

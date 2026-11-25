@@ -56,8 +56,7 @@ public enum SecretEnvironment {
     /// password is read from the variable of that name (and the secret store's entry), and every program xless runs loses
     /// that variable (`scrub`), so it may name none that something else relies on: a key or a token (`isKeyOrToken`), a
     /// secret's `_FILE` variable, one of xless's own `XLESS_*` variables (other than `XLESS_DEMO_PASSWORD`), a variable
-    /// of the system or the shell (`PATH`, `HOME`, `ENV`, `LD_*`, …), or one of scripts/testflight.sh's own (it reads the
-    /// password with `${!NAME}`). Compared without case, before any `@TEAMID`.
+    /// of the system or the shell (`PATH`, `HOME`, `ENV`, `LD_*`, …), or one of those that `xless run`'s script had for itself. Compared without case, before any `@TEAMID`.
     public static func passwordNameProblem(_ name: String) -> String? {
         let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
         if isKeyOrToken(name) { return "names a key or token, not a password" }
@@ -70,8 +69,8 @@ public enum SecretEnvironment {
         return nil
     }
 
-    /// Variables of the system, the shell, the build toolchains, and scripts/testflight.sh's globals (a test keeps those
-    /// in step).
+    /// Variables of the system, the shell, the build toolchains, and the globals of the script that was `xless run` before (refused then,
+    /// refused still).
     static let reservedVariables: Set<String> = [
         // POSIX and the shells
         "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TERM", "TERMINFO", "COLUMNS", "LINES", "TZ", "TMPDIR",
@@ -83,7 +82,7 @@ public enum SecretEnvironment {
         "SDKROOT", "DEVELOPER_DIR", "NO_PROXY", "ALL_PROXY", "CI",
         // the toolchains of the Rust, Tauri and React Native builds
         "RUSTFLAGS", "RUSTDOCFLAGS", "JAVA_HOME", "JAVA_OPTS",
-        // scripts/testflight.sh
+        // the script that was `xless run` before
         "ALLOW_DISK", "ARGS", "CARGO", "CONFIG", "DESTINATION", "ENV_FILE", "NAME", "OVERLAY", "PLATFORM", "PROJECT", "SIM",
         "SOURCE", "SOURCE_MOUNT", "SOURCE_SUB", "TEAM", "XCODE_PIN", "XCODE_TAG", "XCODE_VERSION",
     ]

@@ -99,7 +99,7 @@ public enum WorkCopy {
     }
 
     /// `<work>/.xless/source` names the source a work copy was first synced from; a different one is refused. `volume`
-    /// (`XLESS_WORK_VOLUME`, set by scripts/testflight.sh) is the docker volume the work copy lives in.
+    /// (`XLESS_WORK_VOLUME`, set by `xless run`) is the docker volume the work copy lives in.
     static func checkOrigin(_ origin: String, work: URL, volume: String? = nil) throws {
         let file = work.appendingPathComponent(".xless/source")
         if let recorded = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .newlines), !recorded.isEmpty {

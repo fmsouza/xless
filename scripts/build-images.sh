@@ -3,7 +3,7 @@
 # xless-rn. The chain compiles app code with the Swift toolchain that Xcode ships (Ruling R10): scripts/xcode-swift.sh
 # measures the Xcode's Swift and maps its build through versions.env's XCODE_SWIFT_<build> (an Xcode without an entry is
 # refused); docker/Dockerfile.sdk installs that open-source release under /opt/xless/toolchains/ unless it is the
-# image's own Swift (SWIFT_VERSION). A project pins its Xcode with `xcode: "<version>"` (xless.yml or an overlay); scripts/testflight.sh selects
+# image's own Swift (SWIFT_VERSION). A project pins its Xcode with `xcode: "<version>"` (xless.yml or an overlay); xless run selects
 # the images made from that Xcode, and prepare (exit 19) and the build stage refuse an image whose SDK comes from another one.
 # Usage: scripts/build-images.sh <Xcode.app | Xcode_*.xip> [arch ...]        (or: make images XCODE=<…> [ARCHS="arm64"])
 #   Mac only: the SDK is exported from the Xcode bundle (`xless sdk export`, which runs `xtool sdk build` in xless-base).
@@ -53,7 +53,7 @@ version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$xcod
 build="$(/usr/libexec/PlistBuddy -c 'Print :ProductBuildVersion' "$xcode/Contents/version.plist")"
 [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || die "unexpected Xcode version '$version' in $xcode"
 [[ "$build" =~ ^[0-9A-Za-z]+$ ]] || die "unexpected Xcode build '$build' in $xcode"
-# As scripts/testflight.sh looks a pin up: major.minor, plus the patch when it is not 0 (26.2.0 → 26.2).
+# As xless run looks a pin up: major.minor, plus the patch when it is not 0 (26.2.0 → 26.2).
 canonical_xcode() { local IFS=.; local p=($1); local v="$((10#${p[0]})).$((10#${p[1]:-0}))"
   [[ -z "${p[2]:-}" ]] || [[ $((10#${p[2]})) -eq 0 ]] || v+=".$((10#${p[2]}))"; echo "$v"; }
 version="$(canonical_xcode "$version")"

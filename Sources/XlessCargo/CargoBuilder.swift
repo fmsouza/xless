@@ -45,7 +45,7 @@ public enum CargoBuilder {
     public static func prepare(ctx: CargoBuildContext) async throws -> URL {
         try await withStage(.prepare) {
             log("syncing \(ctx.sourceRoot.path) → \(ctx.workRoot.path)")
-            // In docker every source is mounted at /source; scripts/testflight.sh names the host path in XLESS_SOURCE_ORIGIN.
+            // In docker every source is mounted at /source; `xless run` names the host path in XLESS_SOURCE_ORIGIN.
             let origin = ctx.env["XLESS_SOURCE_ORIGIN"].flatMap { $0.isEmpty ? nil : $0 }
             let count = try WorkCopy.sync(source: ctx.sourceRoot, to: ctx.workRoot, origin: origin, baseEnvironment: ctx.env)
             log("\(count) tracked files")

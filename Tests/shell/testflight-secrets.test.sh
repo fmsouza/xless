@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/testflight.sh with the secret store (fmsouza/xless#102): a secret whose *_FILE variable is not set comes from
+# xless run with the secret store (fmsouza/xless#102): a secret whose *_FILE variable is not set comes from
 # the store. In docker, the host's xless writes them once (`xless secrets materialize`) into a fresh run directory, one
 # set per container, each mounted read-only into its container only and removed when it ends; the rest goes when the
 # run ends, fails, or is stopped by INT, TERM or HUP. Natively, xless reads the store itself (checked up front), and the

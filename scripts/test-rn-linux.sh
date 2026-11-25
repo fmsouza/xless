@@ -40,7 +40,7 @@
 #     host path; mounted read-only). With the Xcode 26.2 pin: XLESS_IMAGE=xless-rn:local-arm64-xcode26.2
 #     XLESS_RN_OVERLAY=samples/HelloRN/xless.overlay-26.2.yml XLESS_RN_REFERENCE=<`DEVELOPER_DIR=<26.2> make rn-reference`'s OUT>
 #     XLESS_RN_TEST_VOLUME=xless-rn-test-work-26.2 (the reference's directory also needs the allowed-gaps.txt of the default one).
-# The repository is mounted read-only. Caches are the docker volumes scripts/testflight.sh uses: xless-corepack,
+# The repository is mounted read-only. Caches are the docker volumes xless run uses: xless-corepack,
 # xless-bundle, xless-cocoapods-home, xless-cocoapods-cache (created on first use).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -132,7 +132,7 @@ check "$final/Info.plist" CFBundleIdentifier com.example.hellorn
 check "$final/Info.plist" CFBundleVersion 1.0.0.2026101601
 check "$final/PlugIns/HelloExtension.appex/Info.plist" CFBundleIdentifier com.example.hellorn.HelloExtension
 check "$final/PlugIns/HelloExtension.appex/Info.plist" CFBundleVersion 1.0.0.2026101601
-# what the sign step (scripts/testflight.sh step 3) reads next to the app
+# what the sign step (xless run, step 3) reads next to the app
 python3 - "$w/.xless/build/ios" <<'PY'
 import json, sys
 d = sys.argv[1]
