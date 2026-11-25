@@ -137,7 +137,7 @@ public struct AgentDirectory: Sendable {
         }
         let fd = xless_unix_listen(path, 128)
         guard fd >= 0 else {
-            throw AgentError(.init(system: -fd), "the xless agent cannot listen on \(path): \(String(cString: strerror(-fd)))", fix: "set XDG_RUNTIME_DIR to a directory of yours")
+            throw AgentError(.init(binding: -fd), "the xless agent cannot listen on \(path): \(String(cString: strerror(-fd)))", fix: "set XDG_RUNTIME_DIR to a directory of yours")
         }
         guard let identity = identity(of: path) else {
             close(fd)

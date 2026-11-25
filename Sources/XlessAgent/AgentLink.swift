@@ -83,7 +83,7 @@ final class AgentLink {
                 let refused = fd == -ECONNREFUSED || fd == -EAGAIN
                 if refused, round == 9 {
                     if fd == -EAGAIN || mayListen(socket.path) {
-                        out.busy.append(AgentUnanswered(pid: 0, path: socket.path))
+                        out.busy.append(AgentUnanswered(busy: socket.path))
                     } else if !removeStale(socket, directory) {
                         out.dead.append(socket)
                     }

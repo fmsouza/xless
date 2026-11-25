@@ -137,10 +137,10 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// Until when a yes given in this terminal lasts; nil: none was.
     func agreedUntil(now: Date = Date()) -> Date? { consented { nil }.map { now.addingTimeInterval(TimeInterval($0)) } }
 
-    /// Forgets a yes given in this terminal.
-    func withdraw() {
+    /// Forgets a yes, whichever terminal it was given in; why one may not be.
+    @discardableResult func withdraw() -> AgentError? {
         lock.withLock { answer = nil }
-        _ = agents.drop(prefix: Self.consent, label: "")
+        return agents.drop(prefix: Self.consent, label: "").unreached
     }
 
     /// Only a typed y or yes; a terminal that closes is a no.

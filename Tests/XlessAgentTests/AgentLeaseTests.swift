@@ -47,7 +47,7 @@ private func client(_ directory: AgentDirectory, session: String? = nil, starts:
     defer { close(holder) }
     let c = client(agent.directory, session: agent.path)
     try c.put([AgentSeed(name: "a", label: "", secret: key, hold: hold)])
-    #expect(c.drop(prefix: "a") == 1)
+    #expect(c.drop(prefix: "a").count == 1)
     #expect(agent.waitForExit(0.3) == nil)
 }
 

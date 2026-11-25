@@ -30,6 +30,9 @@ public struct AgentError: Error, Equatable, Sendable, StageReportableError, Cust
             default: self = .failed
             }
         }
+
+        /// One of binding a socket in the directory, which is there: that it is gone (ENOENT) is of the moment.
+        init(binding error: Int32) { self = error == ENOENT ? .failed : Self(system: error) }
     }
 
     public let kind: Kind

@@ -22,12 +22,25 @@ public struct AgentUnanswered: Sendable, Equatable {
 
     public init(pid: Int32, path: String) { self.pid = pid; self.path = path }
 
+    /// Nobody takes connections there: the process its name says, when that one runs (here: a container may have
+    /// another's directory, and other pids).
+    init(busy path: String) { self.init(pid: AgentDirectory.Owner(of: path).flatMap { $0.isRunning ? $0.pid : nil } ?? 0, path: path) }
+
     public var cause: String { "an xless agent (\(pid > 0 ? "process \(pid), " : "")\(path)) does not answer: what it holds may still be held" }
     public var fix: String {
         // By the time it is read the process may have ended, and its pid be another one's.
         let end = pid > 0 ? "if `ps -p \(pid) -o args=` still says `xless __agent`, end it (`kill -9 \(pid)`)" : "end every agent of yours (`pkill -9 -f 'xless __agent'`)"
         return "\(end), then run `xless lock`"
     }
+}
+
+/// What a drop came to.
+public struct AgentDropped: Sendable, Equatable {
+    public let count: Int
+    /// Why not every agent could be told; nil: every one was.
+    public let unreached: AgentError?
+
+    public init(count: Int, unreached: AgentError?) { self.count = count; self.unreached = unreached }
 }
 
 /// What `lockAll` came to.
@@ -49,7 +62,6 @@ public final class AgentClient: @unchecked Sendable {
     private let startAgent: @Sendable ([AgentSeed], AgentDirectory) throws -> Void
     private let lock = NSLock()
     private var lastProblem: AgentError?
-    private var lastUnreached: AgentError?
     /// The sockets that did not answer this process, and who listens: they are not waited for again.
     private var silent: [AgentDirectory.Socket: Int32] = [:]
     /// Where nobody listened.
@@ -83,9 +95,6 @@ public final class AgentClient: @unchecked Sendable {
 
     /// Why an agent that is there could not be used, the last time one was looked for.
     public var problem: AgentError? { lock.withLock { lastProblem } }
-
-    /// Why not every agent could be told what to drop (`drop`), the first time that was so.
-    public var unreached: AgentError? { lock.withLock { lastUnreached } }
 
     private var deadline: Int64 { xless_clock_awake_ms() + Int64(timeout) }
 
@@ -202,9 +211,8 @@ public final class AgentClient: @unchecked Sendable {
         try startAgent(seeds, directory)
     }
 
-    /// Drops what is held under names that start with `prefix` (for `label` only, unless it is empty), in every agent;
-    /// how many. `unreached` says why that may not be all.
-    @discardableResult public func drop(prefix: String, label: String = "") -> Int {
+    /// Drops what is held under names that start with `prefix` (for `label` only, unless it is empty), in every agent.
+    @discardableResult public func drop(prefix: String, label: String = "") -> AgentDropped {
         var failure: AgentError?
         var count = 0
         do {
@@ -218,8 +226,7 @@ public final class AgentClient: @unchecked Sendable {
         } catch {
             failure = error as? AgentError
         }
-        lock.withLock { lastUnreached = lastUnreached ?? failure }
-        return count
+        return AgentDropped(count: count, unreached: failure)
     }
 
     /// Tells every agent, whatever its version, to drop everything and end. One that does not answer is ended where that

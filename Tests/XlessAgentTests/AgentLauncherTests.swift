@@ -58,3 +58,22 @@ private func refusing(_ why: AgentRefusal) -> String {
     for e in [EACCES, EPERM, EROFS, ENOENT, ENOTDIR, EAFNOSUPPORT, EOPNOTSUPP, ENOSYS] { #expect(AgentError.Kind(system: e) == .unavailable, "\(e)") }
     for e in [EADDRINUSE, EMFILE, ENFILE, ENOMEM, ENOSPC, EIO, EINTR] { #expect(AgentError.Kind(system: e) == .failed, "\(e)") }
 }
+
+@Test func anAgentsDirectoryRemovedBeforeItsSocketIsBoundIsNoLastingObstacle() {
+    // It was just made: ENOENT is of the moment there, where for making it it means that its parent is not there.
+    #expect(AgentError.Kind(binding: ENOENT) == .failed)
+    for e in [EACCES, EROFS, EAFNOSUPPORT] { #expect(AgentError.Kind(binding: e) == .unavailable, "\(e)") }
+    #expect(AgentError.Kind(binding: ENOSPC) == .failed)
+}
+
+@Test func onlyAKernelWithoutPidfdsMeansThatNoAgentCanRunHere() {
+    #expect(AgentLauncher.obstacle(pidfd: ENOSYS).kind == .unavailable)
+    #expect(AgentLauncher.obstacle(pidfd: ENOSYS).cause.contains("Linux 5.3"))
+    // A seccomp profile's refusal lasts as long as the container.
+    #expect(AgentLauncher.obstacle(pidfd: EPERM).kind == .unavailable)
+    #expect(AgentLauncher.obstacle(pidfd: EPERM).fix.contains("seccomp"))
+    for e in [EMFILE, ENFILE, ENOMEM, ENODEV, EINVAL] {
+        let obstacle = AgentLauncher.obstacle(pidfd: e)
+        #expect(obstacle.kind == .failed && !obstacle.cause.contains("Linux 5.3"), "\(e)")
+    }
+}

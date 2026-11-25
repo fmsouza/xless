@@ -14,8 +14,7 @@ protocol AgentHolding: Sendable {
     func get(_ name: String, using: Bool, accept: (SecretBytes) -> Bool) -> SecretBytes?
     func get(_ name: String, using: Bool, witness: () -> AgentWitness?) -> SecretBytes?
     func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws
-    func drop(prefix: String, label: String) -> Int
-    var unreached: AgentError? { get }
+    func drop(prefix: String, label: String) -> AgentDropped
     func statuses() -> [AgentStatus]
 }
 
@@ -70,6 +69,14 @@ private final class SayOnce: @unchecked Sendable {
     func problem(of agents: any AgentHolding) {
         if let problem = agents.problem { self("note: \(problem)") }
     }
+}
+
+private final class FirstFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: AgentError?
+
+    var first: AgentError? { lock.withLock { failure } }
+    func note(_ error: AgentError?) { lock.withLock { failure = failure ?? error } }
 }
 
 /// The secret store's unlock.
@@ -148,18 +155,16 @@ struct HeldKeyCache: VaultKeyCache {
     }
 
     func forget(id: String) throws -> Bool {
-        let agent = agents.drop(prefix: HeldSecrets.name(ofVault: id), label: "") > 0
-        let unreached = agents.unreached
-        let any = try keyring.forget(id: id) || agent
-        if let unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
+        let dropped = agents.drop(prefix: HeldSecrets.name(ofVault: id), label: "")
+        let any = try keyring.forget(id: id) || dropped.count > 0
+        if let unreached = dropped.unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
         return any
     }
 
     func forget(place: String) throws {
-        _ = agents.drop(prefix: HeldSecrets.vaultPrefix, label: place)
-        let unreached = agents.unreached
+        let dropped = agents.drop(prefix: HeldSecrets.vaultPrefix, label: place)
         try keyring.forget(place: place)
-        if let unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
+        if let unreached = dropped.unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
     }
 
     func held(id: String) -> HeldUnlock? {
@@ -182,6 +187,7 @@ struct HeldSessionStore: SessionKeyStore {
     /// What shows an agent of another terminal that this one has the store unlocked (never asked for).
     let witness: @Sendable () -> AgentWitness?
     private let say: SayOnce
+    private let failures = FirstFailure()
 
     init(agents: any AgentHolding = HeldSecrets.agents, keyring: any SessionKeyStore = KernelKeyringSessionStore(), isOff: Bool = HeldSecrets.isOff,
          witness: @escaping @Sendable () -> AgentWitness?, say: @escaping @Sendable (String) -> Void = HeldSecrets.say) {
@@ -233,7 +239,11 @@ struct HeldSessionStore: SessionKeyStore {
     }
 
     func revoke(_ name: String) throws -> Bool {
-        let agent = agents.drop(prefix: name, label: "") > 0
-        return try keyring.revoke(name) || agent
+        let dropped = agents.drop(prefix: name, label: "")
+        failures.note(dropped.unreached)
+        return try keyring.revoke(name) || dropped.count > 0
     }
+
+    /// Why not every agent was reached by what was revoked: the first failure.
+    var unreached: AgentError? { failures.first }
 }

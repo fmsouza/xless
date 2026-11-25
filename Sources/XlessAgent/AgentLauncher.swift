@@ -69,13 +69,25 @@ public enum AgentLauncher {
         }
         #if os(Linux)
         let pidfd = xless_pidfd_open(getpid())
-        guard pidfd >= 0 else {
-            return AgentError(.unavailable, "the xless agent needs Linux 5.3 or newer (pidfd_open: \(String(cString: strerror(-pidfd))))",
-                              fix: "use a newer kernel")
-        }
+        guard pidfd >= 0 else { return obstacle(pidfd: -pidfd) }
         close(pidfd)
         #endif
         return nil
+    }
+
+    /// What a failed pidfd_open means. Without pidfds an agent could not tell a process from a later one with its pid, so
+    /// none is run. A kernel without them and a seccomp profile that refuses them (EPERM: the call itself gives no other)
+    /// stay so: nothing is held in an agent there, and what holds less, or asks each time, is used instead. Anything else
+    /// (no descriptors, no memory) is of the moment: an error, and nothing else is used in an agent's place.
+    static func obstacle(pidfd error: Int32) -> AgentError {
+        switch error {
+        case ENOSYS:
+            return AgentError(.unavailable, "the xless agent needs Linux 5.3 or newer (pidfd_open: \(String(cString: strerror(error))))", fix: "use a newer kernel")
+        case EPERM:
+            return AgentError(.unavailable, "the xless agent may not use pidfd_open here (\(String(cString: strerror(error))))", fix: "allow pidfd_open in the container's seccomp profile")
+        default:
+            return AgentError(.failed, "the xless agent cannot be used just now (pidfd_open: \(String(cString: strerror(error))))", fix: "try again")
+        }
     }
 
     /// Starts an agent that holds `seeds` for this session. Returns once it listens.

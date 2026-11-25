@@ -49,7 +49,13 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
             }
         }
     }
-    func drop(prefix: String, label: String) -> Int {
+    func drop(prefix: String, label: String) -> AgentDropped {
+        let failure = failures.isEmpty ? unreached : failures.removeFirst()
+        return AgentDropped(count: remove(prefix, label), unreached: failure)
+    }
+    /// Of the next drops.
+    var failures: [AgentError?] = []
+    private func remove(_ prefix: String, _ label: String) -> Int {
         lock.withLock {
             dropped.append((prefix, label))
             let gone = items.filter { $0.key.hasPrefix(prefix) && (label.isEmpty || $0.value.seed.label == label) }.keys
@@ -241,6 +247,25 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         #expect(error?.cause == "an agent does not answer")
         #expect(throws: VaultError.self) { try c.forget(place: "/store") }
         #expect(keyring.names.isEmpty)
+    }
+
+    @Test func aDropThatWasNotAskedForDoesNotMakeALaterOneFail() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        let c = cache(agents, keyring)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
+        agents.failures = [AgentError(.malformed, "once", fix: "-")] // of the stale key, on the way
+        #expect(try c.load(id: "ID", using: true) { _ in false } == nil)
+        #expect(try !c.forget(id: "ID"))
+    }
+
+    @Test func forgettingASessionFailsWhenAnyOfItsDropsDidNotReachEverything() throws {
+        let agents = FakeAgents()
+        let store = HeldSessionStore(agents: agents, keyring: FakeKeyring(), isOff: false, witness: { nil }, say: { _ in })
+        #expect(store.unreached == nil)
+        agents.failures = [AgentError(.silent, "first", fix: "-"), nil]
+        _ = try store.revoke("xless-apple-session")
+        _ = try store.revoke("xless-apple-session-key")
+        #expect(store.unreached?.cause == "first")
     }
 
     @Test func anAgentThatCannotBeUsedIsReportedOnceAndCountsAsLocked() throws {

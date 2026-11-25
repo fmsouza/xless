@@ -89,9 +89,9 @@ struct AuthLogoutCommand: ParsableCommand {
 
     func run() throws {
         let any = AppleWebCLI.cache.forget()
-        KeepOffer.shared.withdraw()
+        let withdrawn = KeepOffer.shared.withdraw()
         if any { print("forgot the kept Apple ID session") }
-        if let unreached = AppleWebCLI.held.agents.unreached { throw XlessError(.account, unreached.cause, fix: unreached.fix) }
+        if let unreached = AppleWebCLI.held.unreached ?? withdrawn { throw XlessError(.account, unreached.cause, fix: unreached.fix) }
         if !any { print("no Apple ID session was kept") }
     }
 }
