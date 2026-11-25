@@ -33,7 +33,8 @@ xless clean --all           # remove all of them
 | `--native` | the native install: `~/.local/share/xless-native` (or `$XLESS_NATIVE_HOME`), the installed SDK and its `toolchain-meta.json`; needs no Docker |
 | `--all` | `--images`, `--volumes`, `--cache` and `--native` |
 
-It leaves alone the xless install itself, the [secret store](secrets.md) and Docker's build cache, which other
+It leaves alone the xless install itself, SwiftPM's caches of the packages that your projects depend on (on a Mac
+`~/Library/Caches/org.swift.swiftpm`, which Xcode uses too), the [secret store](secrets.md) and Docker's build cache, which other
 projects share. A volume or image that a
 container still uses is not removed: `docker ps -a` shows the container, `docker rm <container>` removes it. Tauri
 work copies are built as root inside the container, so if `--cache` reports files it could not remove, run the

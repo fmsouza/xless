@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# On a Mac, the built xless with the Xcode that is installed: samples/HelloShip for a device, for the simulator and for macOS, with a
-# home directory of its own and nothing downloaded; then its iOS app signed by xless's signer with a throw-away certificate that the
-# signer itself makes, and packaged. No Apple account, no keychain, and nothing is sent anywhere.
+# On a Mac, the built xless with the Xcode that is installed: samples/HelloShip for a device, for the simulator and for macOS, with
+# HOME elsewhere (SwiftPM goes by the user on a Mac, and uses the user's own caches all the same) and nothing downloaded; then its
+# iOS app signed by xless's signer with a throw-away certificate that the signer itself makes, and packaged. No Apple account, no
+# keychain, and nothing is sent anywhere.
 #   Tests/shell/xcode-native.test.sh            (builds xless with `swift build`; XLESS_BIN=<path> uses that binary)
 #   XLESS_TEST_XCODE=1: nothing may be skipped, and the signer is fetched (pinned in versions.env). Without it the test ends early
 #   where there is no Xcode, and before the signing.

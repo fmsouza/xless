@@ -496,8 +496,9 @@ An app's build runs code you did not write. What that code can reach depends on 
   (`xless run` itself is not one: it is non-dumpable too, and a macOS release hides its environment) that exported a
   secret variable (`/proc/<pid>/environ`; `ps -E` on macOS): keep keys in the store rather than in exported variables.
 - **A project directory on a Mac, natively**, is two `xless ship`: the first builds, without a secret variable and unable to open
-  the store, and the second signs, packages and uploads what it left, in `/`, with the secrets. Between them `xless run` looks at
-  xless.yml: when it is another one than when the run began, or no regular file, nothing is signed. More is in
+  the store, and the second signs, packages and uploads what it left, in `/`, with the secrets. Each takes
+  only the xless.yml that the run read when it began, by its SHA-256, and the run looks at it between them too: when it is another
+  one, nothing is signed. (What it says is compared; it may be a link, if it was one.) More is in
   [With an installed Xcode](#with-an-installed-xcode).
 
 **Which image a container runs in.** An image with toolchains of other languages never holds a secret. The table is
@@ -542,7 +543,7 @@ whether the account may be changed, and the app that the upload goes to come fro
   fetch what a partial clone lacks before the run (`git ls-files` in it does): without it the listing fails, or an older git leaves
   those files out. This holds natively too.
 - Natively the build runs as you, and can write what you can: the overlay and xless.yml as well. What is above is of the
-  containers (but on a Mac a run stops where xless.yml changed under it).
+  containers (but on a Mac a run signs with the xless.yml that it read first, or not at all).
 
 When you do not fully trust the code of an `xless.yml` project, name an image of your own for its build (the last line of the
 table), or keep the signing in a second run, so no build code runs while a key is in use:
@@ -564,27 +565,40 @@ On a Mac, xless builds an `xless.yml` project with the Xcode that is installed
 `install_name_tool`, `codesign`…) where they are, as programs. It links no framework of Xcode's, calls no private interface, and
 copies nothing of Xcode's into an image, a cache or a release; an app's own build products stay in the project's `.xless/`.
 
-- **Which Xcode is used.** Only one whose signature is Apple's (the app's, as the App Store or developer.apple.com ship it, and
-  those of its `swift`, `clang` and `ld`), and where the directories from `/` to its programs belong to root or to you and can
-  be written by nobody else but the administrators of the Mac (the groups `wheel` and `admin`). `DEVELOPER_DIR` may choose an
-  Xcode, not go around the checks. They are made by every command that builds. Not checked: the signature of every other file in
-  Xcode (a person who can write there is you, or an administrator), and access control lists.
+- **Which Xcode is used.** Only one with a signature of Apple's: the app's, as the App Store or developer.apple.com ship it, and
+  that of each program in it that xless starts (`swift`, `actool`, `ibtool`, `xcodebuild`, `install_name_tool`) or that those are
+  known to start (`swift-build`, `clang`, `ld`, `swift-plugin-server`, the build service…). Each has to be a program signed by
+  Apple, not a script, and under its own name where xless knows it. Those programs and the directories of their libraries, with
+  every directory from `/` to them, have to belong to root or to you and to be writable by nobody else but the administrators of
+  the Mac (the groups `wheel` and `admin`), by their mode and their access control list, on a volume that keeps owners. (A disk
+  that ignores them shows every file as yours.) `DEVELOPER_DIR` may choose an Xcode, not go around the checks. Every command that
+  builds makes them, before it starts anything of that Xcode, so macOS asks you nothing about a program that is refused.
+- **What that does not cover.** The other files of Xcode: the SDKs and platforms, the headers, modules and libraries in them, and
+  the libraries that the programs load, are not compared with a signature (that takes minutes), and of the SDKs and platforms
+  nobody looks at who can write them. So a genuine Xcode to which somebody *added* something there passes, as XcodeGhost
+  was spread: install Xcode from the App Store or from developer.apple.com yourself. In an Xcode that you unpacked from a `.xip`
+  some of these directories can be written by the group `staff`, which is every user of the Mac; `chmod -R go-w <Xcode.app>` ends
+  that. And what belongs to you, every program of yours can change, also between the check and the build; xless itself is no
+  different there.
 - **The build runs as you**, as natively on Linux: its code can read your files. SwiftPM's own sandbox stays on
   (`sandbox-exec`): a package's manifest, and the plugins and tools that a build runs, write only to the directories of the build and
-  the temporary ones (not into the project, nor into your home directory) and reach no network. It does not keep them from
+  the temporary ones (not into the project, nor into your home directory) and reach no network. A project that is itself in a
+  temporary directory (`/tmp`, `$TMPDIR`) they can write. It does not keep them from
   *reading* your files, and the compilers and the linker are not in it, nor what flags make them do (`unsafeFlags`, in a package that
   may have them).
 - **xless adds no sandbox of its own.** `sandbox-exec` is deprecated and its profile language is not documented. A profile that
   lets a compiler, Xcode's services and an unknown package work would have to allow reading almost everything, and a sandbox
   cannot be put into SwiftPM's (it would have to be turned off). What keeps the secrets from a build is that they come after it:
-  the process that builds never has them, and the store stays sealed. Code that runs as you and stays after the build can do
-  later what any program of yours can. When you do not trust a project's code, build it with `--docker`, which shows it
+  the process that builds never has them, and the store stays sealed. What such code starts can outlive the
+  build, in that sandbox or out of it, and do what any program of yours can: read the signer's key file while it is there, for one. When you do not trust a project's code, build it with `--docker`, which shows it
   nothing of yours but the project.
 - **The signing key never enters a keychain.** `codesign` takes a key from a keychain only: in yours, or in a temporary one, any
   program of yours can ask to sign with it while it is unlocked. So xless signs with rcodesign on a Mac too, whose key file is
-  readable by you only, is written after the build and is gone seconds later. rcodesign's release is pinned by SHA-256 in
-  `versions.env`; it is fetched by the first command that signs, before that reads a secret, or before the build of a run that
-  will sign. An rcodesign on your `PATH` is not used. The app store's `.pkg`, disk images, notarization and uploads are xless's own
+  readable by you only, is written after the build and is removed when the signature is made. rcodesign's release is pinned by
+  SHA-256 in `versions.env`; it is fetched by the first command that signs, before that reads a secret, or before the build of a run
+  that will sign. It is kept, with the archive that was fetched, in a directory that only you can enter. Each command that signs
+  compares the archive with the pin and the program with the archive, stops where somebody else could write to the place, and starts
+  that file: an rcodesign on your `PATH` is not used. The app store's `.pkg`, disk images, notarization and uploads are xless's own
   as on Linux.
 - A simulator build is signed ad hoc with `/usr/bin/codesign --sign -`: no identity, no key, no keychain.
 

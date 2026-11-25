@@ -72,7 +72,7 @@ into an app what it always puts there.)
 | Program | For |
 |---|---|
 | `xcode-select -p`, `sw_vers -buildVersion` (macOS) | Which Xcode is selected; the stamp of the machine's system in Info.plist |
-| `codesign --verify` (macOS) | That the Xcode, its `swift`, `clang` and `ld` are signed by Apple |
+| No program: macOS's Security framework (`SecStaticCodeCheckValidity`) | That the Xcode, and the programs in it that a build starts, are signed by Apple |
 | Xcode's `swift` (which runs its compilers, linker, `dsymutil` and SwiftPM) and SDKs | Compiling ([native-install.md](native-install.md#on-a-mac)) |
 | Xcode's `actool`, `ibtool` | Asset catalogs and launch storyboards; `XLESS_TOOLS=xless` uses xless's own |
 | Xcode's `install_name_tool` | Taking this machine's library search paths out of the app's executable |

@@ -74,8 +74,8 @@ pin, the build stops. One line at the start says which Xcode is used and from wh
 xless: Xcode 27.2 (27B52) at /Applications/Xcode.app (xcode-select); actool and ibtool: Xcode's
 ```
 
-An Xcode that Apple did not sign, or that other users of the Mac can write to, is refused
-([security.md](security.md#with-an-installed-xcode)). The Command Line Tools alone have no iOS SDK, so they are not enough.
+An Xcode is refused when its app, or a program in it that the build starts, is not signed by Apple, or when other users of the Mac
+can write to those programs ([security.md](security.md#with-an-installed-xcode) says what that covers and what not). The Command Line Tools alone have no iOS SDK, so they are not enough.
 
 **Which tools.** The compiler, linker and SDKs are that Xcode's. Each other tool is Xcode's when xless knows how to use it,
 else xless's own, which is the same as on Linux:
@@ -87,7 +87,7 @@ else xless's own, which is the same as on Linux:
 | Signing, notarizing, `.ipa`, `.pkg`, disk images, uploading | rcodesign and xless's own | always ([why](security.md#with-an-installed-xcode)) |
 
 rcodesign (about 9 MB, pinned by SHA-256) is fetched once, by the first command that signs, into
-`~/.local/share/xless-native/tools` (or under `XLESS_NATIVE_HOME`). `xless clean --native` removes it.
+`~/.local/share/xless-native/tools` (or under `XLESS_NATIVE_HOME`, an absolute path). `xless clean --native` removes it.
 
 **What it builds.** Swift packages (`xless.yml`), for iOS devices, the iOS simulator and macOS. React Native, Tauri and Cargo
 apps build in the images, on a Mac too (`--docker`), except for the React Native simulator builds that
@@ -96,8 +96,12 @@ dynamic library (`lib….dylib`) too; on iOS, where the App Store takes no loose
 product static there. Where an app's lowest system needs Swift libraries that Apple ships with Xcode for older systems, the build stops and says to
 raise `minimumOS`. A simulator build has no entitlements.
 
+Package versions are those of the project's `Package.resolved`. Without one, the newest that the manifest allows are taken, and the
+build says so: commit that file.
+
 Build products are in the project's `.xless/` (`xcode-pkg-*`, `xcode-build-*`, and `build/` as on Linux). They are deleted with
-it.
+it. SwiftPM keeps its own caches and settings as it does without xless: `~/Library/Caches/org.swift.swiftpm` and `~/.swiftpm`
+(`~/Library/org.swift.swiftpm`), which it finds by the user, not by `HOME`.
 
 ## One Xcode at a time
 
