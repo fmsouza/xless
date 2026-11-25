@@ -142,6 +142,83 @@ let draftSubmission = #"{"type":"reviewSubmissions","id":"S1","attributes":{"pla
     #expect(item["data"]?["relationships"]?["appStoreVersion"]?["data"]?["id"]?.string == "V2")
 }
 
+// MARK: The build uploaded last (no --build, none attached)
+
+private func uploaded(_ id: String = "B1", bundleID: String? = "com.example.app", version: String? = "1.1", platform: Platform? = .ios) -> UploadRecord.Found {
+    .found(UploadRecord(buildUploadID: "U1", buildID: id, state: "COMPLETE", processingState: "VALID", messages: [],
+                        bundleID: bundleID, version: version, build: "42", platform: platform))
+}
+
+private func submitUploaded(_ t: RoutedTransport, _ record: UploadRecord.Found, build: BuildReference? = nil, dryRun: Bool = false,
+                            notes: Notes = Notes()) async throws -> ReleaseSubmission.Outcome {
+    try await ReleaseSubmission(resources: resources(t), say: { notes.say($0) }).run(.init(
+        app: fakeASCApp, platform: "IOS", version: releaseVersion, build: build, uploaded: record, dryRun: dryRun, today: today))
+}
+
+@Test func theBuildUploadedLastIsSubmittedWhenNoneIsAttached() async throws {
+    let line = "note: build 1.1+42 (B1) is taken: the last one uploaded from here, and the newest valid build of 1.1 (--build names another)"
+    let notes = Notes()
+    let dry = RoutedTransport(releaseApp())
+    let planned = try await submitUploaded(dry, uploaded(), dryRun: true, notes: notes)
+    #expect(planned.outcome == .dryRun && planned.buildID == "B1" && planned.buildSource == .lastUpload && planned.steps.first == "attach build 1.1+42 (B1)")
+    #expect(notes.lines == [line] && writes(dry).isEmpty)
+    // Asked of App Store Connect, not of the record: the newest valid build of this app, platform and version.
+    let query = try #require(dry.queries("/v1/builds").first)
+    for part in ["filter[app]=123", "filter[preReleaseVersion.version]=1.1", "filter[preReleaseVersion.platform]=IOS", "filter[processingState]=VALID",
+                 "filter[expired]=false", "sort=-uploadedDate"] { #expect(query.contains(part), "\(query)") }
+
+    // The build is named before anything is sent.
+    let t = RoutedTransport(releaseApp())
+    let said = Notes()
+    t.onRequest = { request, _ in if request.httpMethod != "GET", said.lines.isEmpty { Issue.record("sent before the build was named") } }
+    let out = try await submitUploaded(t, uploaded(), notes: said)
+    #expect(out.outcome == .submitted && said.lines == [line])
+    #expect(writes(t).first == "PATCH /v1/appStoreVersions/V2/relationships/build")
+    let json = String(decoding: try JSONEncoder().encode(out), as: UTF8.self)
+    #expect(json.contains(#""buildSource":"lastUpload""#) && json.contains(#""buildID":"B1""#))
+}
+
+@Test func theAttachedBuildAndTheNamedOneComeFirst() async throws {
+    var routes = releaseApp()
+    routes["/v1/appStoreVersions/V2/relationships/build"] = (200, #"{"data":{"type":"builds","id":"B1"}}"#)
+    let notes = Notes()
+    let attached = try await submitUploaded(RoutedTransport(routes), uploaded("B9"), dryRun: true, notes: notes)
+    #expect(attached.buildID == "B1" && attached.buildSource == .attached)
+    let named = try await submitUploaded(RoutedTransport(releaseApp()), uploaded("B9"), build: .id("B1"), dryRun: true, notes: notes)
+    #expect(named.buildID == "B1" && named.buildSource == .named)
+    #expect(notes.lines.isEmpty && attached.notes.isEmpty && named.notes.isEmpty)
+}
+
+@Test func anUploadThatIsNotThisVersionsNewestValidBuildIsNotTaken() async throws {
+    func refused(_ record: UploadRecord.Found, _ routes: [String: (Int, String)] = releaseApp()) async throws -> [String] {
+        let t = RoutedTransport(routes)
+        let out = try await submitUploaded(t, record)
+        #expect(out.outcome == .preflightFailed && out.buildID == nil && out.buildSource == nil, "as without a record")
+        #expect(out.preflight?.failures.map(\.name).contains("build") == true)
+        #expect(writes(t).isEmpty)
+        return out.notes
+    }
+    let other = "the last upload from here is not of com.example.app 1.1 (ios): its build is not taken"
+    #expect(try await refused(uploaded(bundleID: "com.example.other")) == [other])
+    #expect(try await refused(uploaded(version: "1.0")) == [other])
+    #expect(try await refused(uploaded(platform: .macos)) == [other])
+    #expect(try await refused(uploaded(bundleID: nil, version: nil, platform: nil)) == [other])
+    #expect(try await refused(uploaded("not/an id")) == ["the last upload from here has no build: none is taken"])
+    #expect(try await refused(.ignored("the record is a link: ignored")) == ["the record is a link: ignored"])
+    #expect(try await refused(.none) == [])
+    #expect(try await refused(uploaded("B0")) == ["the last build uploaded from here is not the newest valid build of 1.1, which is 1.1+42 (B1): none is taken; name one with --build"])
+    var none = releaseApp()
+    none["/v1/builds"] = (200, list([]))
+    #expect(try await refused(uploaded(), none) == ["App Store Connect has no valid build of 1.1 (ios) yet: none is taken"])
+    // What App Store Connect says of the build itself decides, whatever the listing and the record say.
+    for (state, expired, appID, version, platform) in [("PROCESSING", false, "123", "1.1", "IOS"), ("VALID", true, "123", "1.1", "IOS"),
+                                                       ("VALID", false, "999", "1.1", "IOS"), ("VALID", false, "123", "1.0", "IOS"), ("VALID", false, "123", "1.1", "MAC_OS")] {
+        var routes = releaseApp()
+        routes["/v1/builds/B1"] = (200, #"{"data":{"type":"builds","id":"B1","attributes":{"version":"42","processingState":"\#(state)","expired":\#(expired)},"relationships":{"preReleaseVersion":{"data":{"type":"preReleaseVersions","id":"PRV1"}},"app":{"data":{"type":"apps","id":"\#(appID)"}}}},"included":[{"type":"preReleaseVersions","id":"PRV1","attributes":{"version":"\#(version)","platform":"\#(platform)"}}]}"#)
+        #expect(try await refused(uploaded(), routes) == ["the last build uploaded from here, B1, is no valid build of com.example.app 1.1 (ios): none is taken"])
+    }
+}
+
 @Test func aDraftSubmissionIsResumedWhereItStopped() async throws {
     // The draft exists, without the version: add it, then submit; never a second submission.
     var routes = releaseApp()

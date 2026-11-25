@@ -4,14 +4,6 @@ import FoundationNetworking
 #endif
 import XlessCore
 
-public struct UploadRecord: Codable, Sendable, Equatable {
-    public var buildUploadID: String
-    public var buildID: String?
-    public var state: String
-    public var processingState: String?
-    public var messages: [String]
-}
-
 struct UploadOperation: Codable, Sendable {
     struct Header: Codable, Sendable { var name: String; var value: String }
     var method: String; var url: String; var offset: Int; var length: Int; var requestHeaders: [Header]?
@@ -89,7 +81,8 @@ public struct BuildUploader: Sendable {
                                 attributes: Commit(uploaded: true, sourceFileChecksums: .init(file: .init(hash: md5, algorithm: "MD5")))))
         }
 
-        var record = UploadRecord(buildUploadID: upload.data.id, buildID: nil, state: "AWAITING_UPLOAD", processingState: nil, messages: [])
+        var record = UploadRecord(buildUploadID: upload.data.id, buildID: nil, state: "AWAITING_UPLOAD", processingState: nil, messages: [],
+                                  bundleID: bundleID, version: version, build: build, platform: platform)
         var reported: UploadRecord?
         func report() throws { if record != reported { try onRecord(record); reported = record } }
         try report()

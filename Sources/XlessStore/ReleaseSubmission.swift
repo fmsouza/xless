@@ -11,8 +11,11 @@ public struct ReleaseSubmission: Sendable {
         public var app: ASCApp
         public var platform: String
         public var version: ASCAppStoreVersion
-        /// `--build`; nil: the build the version carries.
+        /// `--build`; nil: the build the version carries, else the one uploaded last (`uploaded`).
         public var build: BuildReference?
+        /// What the last upload from here left behind: its build is taken when none is named and none attached, and App
+        /// Store Connect says it is the version's newest valid build.
+        public var uploaded: UploadRecord.Found
         /// `--release`; nil: the version's release type is left as it is.
         public var release: ReleaseChoice?
         /// `--phased` (true) / `--no-phased` (false); nil: left as it is.
@@ -25,10 +28,10 @@ public struct ReleaseSubmission: Sendable {
         /// Send the manifest's in-app purchases and subscriptions with the version (`--no-products`: false).
         public var products: Bool
 
-        public init(app: ASCApp, platform: String, version: ASCAppStoreVersion, build: BuildReference? = nil, release: ReleaseChoice? = nil,
-                    phased: Bool? = nil, manifestDir: URL? = nil, inheritedBundleID: String? = nil, dryRun: Bool = false, today: Date = Date(),
+        public init(app: ASCApp, platform: String, version: ASCAppStoreVersion, build: BuildReference? = nil, uploaded: UploadRecord.Found = .none,
+                    release: ReleaseChoice? = nil, phased: Bool? = nil, manifestDir: URL? = nil, inheritedBundleID: String? = nil, dryRun: Bool = false, today: Date = Date(),
                     products: Bool = true) {
-            self.app = app; self.platform = platform; self.version = version; self.build = build; self.release = release; self.phased = phased
+            self.app = app; self.platform = platform; self.version = version; self.build = build; self.uploaded = uploaded; self.release = release; self.phased = phased
             self.manifestDir = manifestDir; self.inheritedBundleID = inheritedBundleID; self.dryRun = dryRun; self.today = today
             self.products = products
         }
@@ -37,6 +40,11 @@ public struct ReleaseSubmission: Sendable {
     /// How `submit` ended; the CLI's exit code follows it (0, 22, 21, 0).
     public enum Kind: String, Encodable, Sendable {
         case submitted, alreadyInReview, preflightFailed, dryRun
+    }
+
+    /// `--build`, the build the version carries, or the one uploaded last.
+    public enum BuildSource: String, Encodable, Sendable {
+        case named, attached, lastUpload
     }
 
     /// What `submit` prints (`--json`: this document).
@@ -50,6 +58,8 @@ public struct ReleaseSubmission: Sendable {
         public var versionState: String
         public var build: String?
         public var buildID: String?
+        /// How the build was chosen; absent without one.
+        public var buildSource: BuildSource?
         public var submissionID: String?
         public var submissionState: String?
         /// What was sent (a dry run: what would be).
@@ -116,7 +126,7 @@ public struct ReleaseSubmission: Sendable {
             throw Self.notSubmittable(v)
         }
 
-        // The build: the one named, else the one attached.
+        // The build: the one named, else the one attached, else the one uploaded last.
         let attachedID = try await release.buildID(of: v.id)
         let platform = BuildPlatform(rawValue: r.platform)
         let build: ASCBuildDetail? = if let ref = r.build {
@@ -124,10 +134,11 @@ public struct ReleaseSubmission: Sendable {
         } else if let attachedID {
             try await builds.get(id: attachedID)
         } else {
-            nil
+            try await uploadedBuild(r, notes: &out.notes)
         }
         out.build = build?.name
         out.buildID = build?.id
+        if build != nil { out.buildSource = r.build != nil ? .named : attachedID != nil ? .attached : .lastUpload }
 
         let report = try await preflight.run(ReleasePreflight.Input(
             app: r.app, platform: r.platform, version: v, build: build, manifestDir: r.manifestDir, inheritedBundleID: r.inheritedBundleID,
@@ -228,6 +239,43 @@ public struct ReleaseSubmission: Sendable {
         out.submissionID = submissionID
         out.submissionState = submittedState.flatMap { $0.isEmpty ? nil : $0 }
         return out
+    }
+
+    /// The build the last upload from here made, when App Store Connect says that it is the newest valid build of the
+    /// version; it is named on standard error then, before anything is sent. Otherwise nil, and a note says why.
+    private func uploadedBuild(_ r: Request, notes: inout [String]) async throws -> ASCBuildDetail? {
+        let record: UploadRecord
+        switch r.uploaded {
+        case .none: return nil
+        case .ignored(let why): notes.append(why); return nil
+        case .found(let found): record = found
+        }
+        let version = r.version.versionString
+        let name = "\(r.app.bundleID) \(version) (\(BuildPlatform.display(r.platform)))"
+        guard record.bundleID == r.app.bundleID, record.version == version, record.platform?.ascPlatform == r.platform else {
+            notes.append("the last upload from here is not of \(name): its build is not taken")
+            return nil
+        }
+        guard let id = record.buildID, BuildReference.isBuildID(id) else {
+            notes.append("the last upload from here has no build: none is taken")
+            return nil
+        }
+        let filter = BuildFilter(appID: r.app.id, appVersion: version, platform: BuildPlatform(rawValue: r.platform), states: [.valid], expired: false)
+        guard let newest = try await builds.list(filter, limit: 1).builds.first else {
+            notes.append("App Store Connect has no valid build of \(version) (\(BuildPlatform.display(r.platform))) yet: none is taken")
+            return nil
+        }
+        guard newest.id == id else {
+            notes.append("the last build uploaded from here is not the newest valid build of \(version), which is \(newest.name) (\(newest.id)): none is taken; name one with --build")
+            return nil
+        }
+        let build = try await builds.get(id: id)
+        guard build.appID == r.app.id, build.appVersion == version, build.platform == r.platform, build.build.processingState == "VALID", !build.build.isExpired else {
+            notes.append("the last build uploaded from here, \(id), is no valid build of \(name): none is taken")
+            return nil
+        }
+        say("note: build \(build.name) (\(id)) is taken: the last one uploaded from here, and the newest valid build of \(version) (--build names another)")
+        return build
     }
 
     /// Why a version in `state` cannot be submitted.

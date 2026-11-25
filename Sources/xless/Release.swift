@@ -142,6 +142,8 @@ struct ReleaseCLI {
 
     struct SubmitOptions {
         var build: BuildReference?
+        /// What the last upload left behind for a platform (App Store Connect's name): read when `build` is nil.
+        var uploaded: (String) -> UploadRecord.Found = { _ in .none }
         var release: ReleaseChoice?
         var phased: Bool?
         var manifestDir: URL?
@@ -156,7 +158,7 @@ struct ReleaseCLI {
     func submit(_ wanted: ReleaseWanted, options o: SubmitOptions, privacy: (any PrivacyRemote)? = nil) async throws -> (text: String, exit: Int32) {
         let t = try await target(wanted, prefer: { VersionState.editable.contains($0.state) || $0.state == VersionState.readyForReview })
         let outcome = try await ReleaseSubmission(resources: resources, privacy: privacy, say: say).run(.init(
-            app: t.app, platform: t.platform, version: t.version, build: o.build, release: o.release, phased: o.phased,
+            app: t.app, platform: t.platform, version: t.version, build: o.build, uploaded: o.build == nil ? o.uploaded(t.platform) : .none, release: o.release, phased: o.phased,
             manifestDir: o.manifestDir, inheritedBundleID: o.inheritedBundleID, dryRun: o.dryRun, today: o.today, products: o.products))
         for note in outcome.notes { say("note: \(note)") }
         let exit: Int32 = switch outcome.outcome {

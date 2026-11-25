@@ -161,6 +161,47 @@ private let build42 = #"{"data":{"type":"builds","id":"B1","attributes":{"versio
     #expect(json.exit == 21 && json.text.contains("\"outcome\" : \"preflightFailed\"") && json.text.contains("\"passed\" : false"))
 }
 
+/// Where `release submit` looks for the last upload: the project next to the manifest, else the overlay's work copy.
+@Test func theRecordOfTheLastUploadIsTheProjectsOrTheWorkCopys() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-uploaded-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    func put(_ base: URL, _ platform: Platform, id: String) throws {
+        let file = StagePaths(project: base, platform: platform).uploadRecord
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(UploadRecord(buildUploadID: "U", buildID: id, state: "COMPLETE", processingState: "VALID", messages: [],
+                                              bundleID: "com.example.app", version: "1.1", build: "1", platform: platform)).write(to: file)
+    }
+    func id(_ found: UploadRecord.Found) -> String? { if case .found(let r) = found { r.buildID } else { nil } }
+    let project = root.appendingPathComponent("project"), work = root.appendingPathComponent("work")
+    try put(project, .ios, id: "P-IOS")
+    try put(project, .macos, id: "P-MAC")
+    try put(work.appendingPathComponent("app"), .ios, id: "W-IOS")
+    let manifest = project.appendingPathComponent("appstore").path
+    let own = try StoreDirOption.parse(["--dir", manifest])
+    #expect(id(own.uploadRecord(platform: "IOS", env: [:])) == "P-IOS" && id(own.uploadRecord(platform: "MAC_OS", env: [:])) == "P-MAC")
+    #expect(id(own.uploadRecord(platform: "TV_OS", env: [:])) == nil)
+    let overlay = try StoreDirOption.parse(["--dir", manifest, "--config", root.appendingPathComponent("app.yml").path])
+    #expect(id(overlay.uploadRecord(platform: "IOS", env: ["XLESS_WORK_ROOT": work.path])) == "W-IOS")
+    #expect(id(overlay.uploadRecord(platform: "MAC_OS", env: ["XLESS_WORK_ROOT": work.path])) == nil)
+}
+
+@Test func submitReadsTheRecordOfTheVersionsPlatformOnly() async throws {
+    let t = routes([version("V2", "1.1", "PREPARE_FOR_SUBMISSION")], ["/v1/appStoreVersions/V2/relationships/build": (200, #"{"data":null}"#),
+                                                                       "/v1/apps/123/appInfos": (200, data([])),
+                                                                       "/v1/appStoreVersions/V2/appStoreVersionLocalizations": (200, data([]))])
+    let said = Said(), asked = Said()
+    let missing = FileManager.default.temporaryDirectory.appendingPathComponent("xless-none-\(UUID().uuidString)")
+    var options = ReleaseCLI.SubmitOptions(manifestDir: missing)
+    options.uploaded = { asked.lines.append($0); return .ignored("the record of the last upload is a link: ignored") }
+    let failed = try await cli(t, said: said).submit(wanted, options: options)
+    #expect(failed.exit == 21 && asked.lines == ["IOS"])
+    #expect(said.lines.contains("note: the record of the last upload is a link: ignored"))
+    asked.lines = []
+    options.build = .id("B1")
+    _ = try? await cli(t).submit(wanted, options: options)
+    #expect(asked.lines.isEmpty, "--build names the build: nothing is read")
+}
+
 // MARK: status, cancel, publish, phased
 
 @Test func statusShowsTheSubmissionAndSaysWhereRejectionReasonsAre() async throws {

@@ -7,6 +7,7 @@ import XlessAppleID
 import XlessASC
 import XlessCore
 import XlessStore
+import XlessTauri
 
 struct StoreCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -51,6 +52,15 @@ struct StoreDirOption: ParsableArguments {
     func project() throws -> StoreProject? {
         if let configURL { return try StoreProject.overlay(configURL) }
         return StoreProject.nextTo(manifestDir: url)
+    }
+
+    /// What the last upload of the project left behind (`upload.json`): in the overlay's work copy, else in the project
+    /// next to the manifest directory. (A Docker build of a React Native app keeps its work copy in a volume: none here.)
+    /// - Parameter platform: App Store Connect's name.
+    func uploadRecord(platform: String, env: [String: String] = ProcessInfo.processInfo.environment) -> UploadRecord.Found {
+        guard let platform = Platform.allCases.first(where: { $0.ascPlatform == platform }) else { return .none }
+        let project = configURL.map { OverlayPaths(overlay: $0, env: env).workRoot } ?? url.deletingLastPathComponent()
+        return UploadRecord.read(StagePaths(project: project, platform: platform).uploadRecord)
     }
 
     /// What to say when no app is known.
