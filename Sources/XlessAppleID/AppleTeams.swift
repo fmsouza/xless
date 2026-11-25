@@ -29,14 +29,20 @@ public enum AppleTeams {
 
     /// The team `teamID` among `teams`; with no ID, the only team, else the first of `known` that is one of them. An ID the
     /// Apple ID does not have, or several teams and nothing that says which, is an `[account]` error.
-    /// - Parameter known: the teams that are known otherwise (the project's, the API key's).
-    public static func select(_ teamID: String?, preferring known: [String] = [], from teams: [PortalTeam]) throws -> PortalTeam {
+    /// - Parameters:
+    ///   - project: the team the xless.yml here names: with no ID, one the Apple ID does not have is an error.
+    ///   - known: the teams that are known otherwise (the project's, the API key's).
+    public static func select(_ teamID: String?, project: String? = nil, preferring known: [String] = [], from teams: [PortalTeam]) throws -> PortalTeam {
         if let teamID {
             guard let team = teams.first(where: { $0.teamId == teamID }) else {
                 throw XlessError(.account, "this Apple ID is not a member of team \(teamID) (its teams: \(list(teams)))",
                                  fix: "pass one of its team IDs (see `xless team list`), or save one with `xless team use <TEAM_ID>`")
             }
             return team
+        }
+        if let project, !teams.isEmpty, !teams.contains(where: { $0.teamId == project }) {
+            throw XlessError(.account, "xless.yml here names team \(project), and this Apple ID is not a member of it (its teams: \(list(teams)))",
+                             fix: "sign in as a member of it (`xless auth logout`, then re-run), or pass --team <TEAM_ID> for another team")
         }
         guard teams.count == 1 else {
             if let team = known.lazy.compactMap({ id in teams.first { $0.teamId == id } }).first { return team }
@@ -56,7 +62,7 @@ public enum AppleTeams {
     ///   - choose: asks a person to pick among them when nothing tells; nil when there is no terminal.
     public static func useProvider(for team: PortalTeam, asc: ASCWebClient, issuers: [String] = [],
                                    choose: (([OlympusProvider]) async throws -> OlympusProvider)?) async throws -> OlympusProvider {
-        var session = try await asc.session()
+        let session = try await asc.session()
         let provider: OlympusProvider
         switch match(team, in: session.providers) {
         case .one(let p):
@@ -67,7 +73,6 @@ public enum AppleTeams {
         case .several(let ps):
             if !issuers.isEmpty {
                 if let known = try await issued(ps, by: issuers, asc: asc, current: session) { return known }
-                session = try await asc.session()
             }
             guard let choose else {
                 throw XlessError(.account, "App Store Connect has \(ps.count) teams named \"\(team.name)\" (providers \(ps.map { String($0.providerId) }.joined(separator: ", ")))",
@@ -82,16 +87,22 @@ public enum AppleTeams {
     }
 
     /// The provider among `candidates` whose API keys `issuers` names, made the current one: App Store Connect says a
-    /// provider's public ID, which is that issuer ID, of the current one only.
+    /// provider's public ID, which is that issuer ID, of the current one only. When none is (nil), or a switch fails, the one
+    /// that was current is so again: it is the person's, wherever they use App Store Connect.
     private static func issued(_ candidates: [OlympusProvider], by issuers: [String], asc: ASCWebClient, current: OlympusSession) async throws -> OlympusProvider? {
         let wanted = Set(issuers.map { $0.lowercased() })
         func isOne(_ session: OlympusSession, _ p: OlympusProvider) -> Bool {
             session.provider?.providerId == p.providerId && session.provider?.publicProviderId.map { wanted.contains($0.lowercased()) } == true
         }
         if let here = candidates.first(where: { isOne(current, $0) }) { return here }
-        for p in candidates where p.providerId != current.provider?.providerId {
-            if isOne(try await asc.switchProvider(to: p.providerId), p) { return p }
+        let others = candidates.filter { $0.providerId != current.provider?.providerId }
+        do {
+            for p in others where isOne(try await asc.switchProvider(to: p.providerId), p) { return p }
+        } catch {
+            if let before = current.provider { _ = try? await asc.switchProvider(to: before.providerId) }
+            throw error
         }
+        if let before = current.provider, !others.isEmpty { _ = try await asc.switchProvider(to: before.providerId) }
         return nil
     }
 

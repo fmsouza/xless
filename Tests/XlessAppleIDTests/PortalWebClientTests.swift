@@ -134,6 +134,22 @@ final class AppleTeamsTests: XCTestCase {
         XCTAssertThrowsError(try AppleTeams.select(nil, preferring: ["QQQQQ11111"], from: teams))
     }
 
+    func testATeamTheProjectNamesIsTheOneOrAnError() throws {
+        let teams = [PortalTeam(teamId: "ABCDE12345", name: "A"), PortalTeam(teamId: "ZZZZZ99999", name: "B")]
+        XCTAssertEqual(try AppleTeams.select(nil, project: "ZZZZZ99999", preferring: ["ZZZZZ99999", "ABCDE12345"], from: teams).name, "B")
+        for mine in [teams, [teams[0]]] { // never another one, the API key's or the only one
+            XCTAssertThrowsError(try AppleTeams.select(nil, project: "QQQQQ11111", preferring: ["QQQQQ11111", "ABCDE12345"], from: mine)) {
+                let e = $0 as? XlessError
+                XCTAssertEqual(e?.stage, .account)
+                XCTAssertTrue(e?.cause.contains("xless.yml") == true && e?.cause.contains("QQQQQ11111") == true && e?.cause.contains("ABCDE12345 A") == true, e?.cause ?? "")
+                XCTAssertTrue(e?.fix.contains("--team") == true, e?.fix ?? "")
+            }
+        }
+        XCTAssertEqual(try AppleTeams.select("ABCDE12345", project: "QQQQQ11111", from: teams).name, "A", "--team says which")
+        XCTAssertThrowsError(try AppleTeams.select(nil, project: "ZZZZZ99999", from: teams), "a command that must be told") { XCTAssertTrue(($0 as? XlessError)?.cause.contains("none was chosen") == true) }
+        XCTAssertThrowsError(try AppleTeams.select(nil, project: "ZZZZZ99999", from: [])) { XCTAssertTrue(($0 as? XlessError)?.cause.contains("no developer team") == true) }
+    }
+
     func testAmongProvidersOfOneNameTheAPIKeysIssuerTellsWithoutAsking() async throws {
         let ps = [OlympusProvider(providerId: 1, name: "Other"), OlympusProvider(providerId: 7, name: "Example Ltd", publicProviderId: "ISSUER-7"),
                   OlympusProvider(providerId: 8, name: "Example Ltd", publicProviderId: "ISSUER-8")]
@@ -150,12 +166,39 @@ final class AppleTeamsTests: XCTestCase {
         XCTAssertEqual(chosen.providerId, 7, "no key tells: a person chooses")
     }
 
+    /// The current provider is the person's, in their browser too: looking for the right one leaves it as it was.
+    func testLookingForTheKeysProviderLeavesTheCurrentOneWhenItIsNotFound() async throws {
+        let ps = [OlympusProvider(providerId: 1, name: "Other", publicProviderId: "ISSUER-1"), OlympusProvider(providerId: 7, name: "Example Ltd", publicProviderId: "ISSUER-7"),
+                  OlympusProvider(providerId: 8, name: "Example Ltd", publicProviderId: "ISSUER-8")]
+        func current(_ asc: ASCWebClient) async throws -> Int? { try await asc.session().provider?.providerId }
+        for start in [1, 7] {
+            let (asc, _) = asc(ps, current: start)
+            do { _ = try await AppleTeams.useProvider(for: team, asc: asc, issuers: ["ISSUER-9"], choose: nil); XCTFail("expected an error") } catch let e as XlessError {
+                XCTAssertTrue(e.cause.contains("2 teams named"), e.cause)
+            }
+            let now = try await current(asc)
+            XCTAssertEqual(now, start)
+            do { _ = try await AppleTeams.useProvider(for: team, asc: asc, issuers: ["ISSUER-9"]) { _ in throw XlessError(.account, "nobody chose", fix: "-") } } catch let e as XlessError {
+                XCTAssertEqual(e.cause, "nobody chose")
+            }
+            let after = try await current(asc)
+            XCTAssertEqual(after, start)
+        }
+        // A switch that fails on the way.
+        let (broken, m) = self.asc(ps, current: 1, refusing: [8])
+        do { _ = try await AppleTeams.useProvider(for: team, asc: broken, issuers: ["ISSUER-8"]) { $0[0] }; XCTFail("expected an error") } catch {}
+        let now = try await current(broken)
+        XCTAssertEqual(now, 1)
+        XCTAssertEqual(m.requests.filter { $0.httpMethod == "POST" }.compactMap(\.bodyString).last, #"{"provider":{"providerId":1}}"#)
+    }
+
     /// App Store Connect with `providers`, currently on `current`; records the switches.
-    func asc(_ providers: [OlympusProvider], current: Int) -> (ASCWebClient, MockTransport) {
+    func asc(_ providers: [OlympusProvider], current: Int, refusing: Set<Int> = []) -> (ASCWebClient, MockTransport) {
         let now = Box(current)
         let mock = MockTransport { r in
             if r.httpMethod == "POST" {
                 let body = try JSONSerialization.jsonObject(with: r.httpBody!) as! [String: [String: Int]]
+                guard !refusing.contains(body["provider"]!["providerId"]!) else { return .init(status: 500) }
                 now.value = body["provider"]!["providerId"]!
                 return .init(status: 200)
             }

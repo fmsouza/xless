@@ -79,13 +79,15 @@ enum AppleWebCLI {
     }
 
     /// Selects the team: `team` (the option's, the project's or the saved one), else the Apple ID's only one, else that of
-    /// the xless.yml here or of the store's API keys.
+    /// the xless.yml here or of the store's API keys. One the xless.yml here names and the Apple ID does not have is an error.
     /// - Parameter known: false for a command that must be told among several.
-    static func selectTeam(_ team: String?, in session: AppleWebSession, known: Bool = true) async throws -> PortalTeam {
-        guard team == nil, known else { return try await session.selectTeam(team) }
-        let here = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("appstore")
-        let project = StoreProject.nextTo(manifestDir: here)?.team, key = AccountSession.keyTeam(of: AccountSession.storeEntries())
-        let selected = try await session.selectTeam(nil, preferring: [project, key].compactMap { $0 })
+    static func selectTeam(_ team: String?, in session: AppleWebSession, known: Bool = true, directory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+                           keyTeam: @autoclosure () -> String? = AccountSession.keyTeam(of: AccountSession.storeEntries())) async throws -> PortalTeam {
+        guard team == nil else { return try await session.selectTeam(team) }
+        let project = StoreProject.nextTo(manifestDir: directory.appendingPathComponent("appstore"))?.team
+        guard known else { return try await session.selectTeam(nil, project: project) }
+        let key = keyTeam()
+        let selected = try await session.selectTeam(nil, project: project, preferring: [project, key].compactMap { $0 })
         if selected.teamId == project { say("Team \(selected.teamId), as in xless.yml here (--team chooses another).") }
         else if selected.teamId == key { say("Team \(selected.teamId), the App Store Connect API key's (--team chooses another).") }
         return selected

@@ -76,8 +76,8 @@ public final class AppleWebSession: Sendable {
 
     /// Selects `teamID` (or the only team) on the developer portal; returns it.
     @discardableResult
-    public func selectTeam(_ teamID: String?, preferring known: [String] = []) async throws -> PortalTeam {
-        let team = try AppleTeams.select(teamID, preferring: known, from: try await portal.teams())
+    public func selectTeam(_ teamID: String?, project: String? = nil, preferring known: [String] = []) async throws -> PortalTeam {
+        let team = try AppleTeams.select(teamID, project: project, preferring: known, from: try await portal.teams())
         await portal.use(team: team.teamId)
         return team
     }
