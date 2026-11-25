@@ -46,6 +46,18 @@ private let today = ISO8601DateFormatter().date(from: "2026-11-25T00:00:00Z")!
     #expect(try await certificates(both).find(for: key, kind: .distribution, now: today).certificate.id == "2")
 }
 
+/// Two certificates for one key: the one that lasts longest, wherever it is listed, and one that does not say when it
+/// expires only when there is no other. The profiles made with it then last, too.
+@Test func ofTwoValidCertificatesTheLatestExpiryIsTaken() async throws {
+    let key = try SigningKey.generate(), der = try selfSigned(key)
+    let older = certJSON(id: "1", der: der, expires: "2027-01-01T00:00:00.000+0000"), newer = certJSON(id: "2", der: der, expires: "2028-01-01T00:00:00.000+0000")
+    let unknown = certJSON(id: "3", der: der, expires: "soon")
+    for list in [[older, newer], [newer, older], [unknown, older, newer], [newer, unknown]] {
+        let t = MockTransport([(200, #"{"data":[\#(list.joined(separator: ","))]}"#)])
+        #expect(try await certificates(t).find(for: key, kind: .distribution, now: today).id == "2")
+    }
+}
+
 @Test func aCertificateWithoutContentMatchesNothing() async throws {
     let t = MockTransport([(200, #"{"data":[{"type":"certificates","id":"1","attributes":{"certificateType":"DISTRIBUTION"}}]}"#)])
     await #expect(throws: XlessError.self) { _ = try await certificates(t).find(for: try SigningKey.generate(), kind: .distribution, now: today) }

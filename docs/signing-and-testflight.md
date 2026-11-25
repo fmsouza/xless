@@ -212,6 +212,7 @@ xless: sign: 3 changes on the account:
   profiles. The only thing it ever deletes is a profile of that name, which xless made, when the profile cannot be
   used: expired or about to (within 7 days), invalid, for another certificate or bundle ID, made before a capability
   the app uses, or one App Store Connect gives no expiry date or bundle ID for. The plan gives the reason.
+- It signs with the certificate of your key that expires last, when the team has several for it.
 - It never makes or revokes a certificate (`xless sign bootstrap`), and never touches any other profile, app group,
   iCloud container, device or the app record. `xless provision` plans and makes those
   ([apple-account.md](apple-account.md#xless-provision)), from the same checks.

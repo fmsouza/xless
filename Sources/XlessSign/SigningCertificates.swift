@@ -34,15 +34,17 @@ public struct SigningCertificate: Sendable {
 }
 
 extension SigningKey {
-    /// The certificate of `list` for this key, the first one still valid at `now`; `expired` is one that no longer is.
+    /// The certificate of `list` for this key that expires last, of those still valid at `now` (one that does not say when
+    /// it expires comes after those that do); `expired` is one that no longer is.
     public func certificate(in list: [ASCCertificate], now: Date = Date()) -> (valid: SigningCertificate?, expired: ASCCertificate?) {
-        var expired: ASCCertificate?
+        var valid: SigningCertificate?, expired: ASCCertificate?
         for c in list {
             guard let der = c.der, (try? matches(certificateDER: Array(der))) == true else { continue }
-            if (c.expires ?? .distantFuture) > now { return (SigningCertificate(certificate: c, der: der), expired) }
-            expired = expired ?? c
+            if let e = c.expires, e <= now { if (expired?.expires ?? .distantPast) < e { expired = c }; continue }
+            if let best = valid, (best.certificate.expires ?? .distantPast) >= (c.expires ?? .distantPast) { continue }
+            valid = SigningCertificate(certificate: c, der: der)
         }
-        return (nil, expired)
+        return (valid, expired)
     }
 }
 
