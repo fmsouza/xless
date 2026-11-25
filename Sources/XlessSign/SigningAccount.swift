@@ -115,6 +115,7 @@ public struct APISigningAccount: SigningAccount {
     }
 
     func read(_ id: String) async throws -> SigningProfile {
+        try checkProfileID(id)
         let (p, _) = try await profiles.get(id: id, withContent: true)
         var bundle = p.bundleIDResourceID
         if bundle == nil { bundle = try await profiles.bundleIDResourceID(of: p.id) }
@@ -149,5 +150,16 @@ public struct APISigningAccount: SigningAccount {
         }
     }
 
-    public func deleteProfile(id: String) async throws { try await profiles.delete(id: id) }
+    public func deleteProfile(id: String) async throws {
+        try checkProfileID(id)
+        try await profiles.delete(id: id)
+    }
+
+    /// The ID came from App Store Connect, so one that is none is this stage's error (`ASCProfiles` refuses it, as the
+    /// `account` stage's, for an ID someone typed).
+    private func checkProfileID(_ id: String) throws {
+        guard isASCResourceID(id) else {
+            throw XlessError(stage, "App Store Connect gave a profile ID that is not one (\(id))", fix: "re-run; if it persists, delete the profile in the portal")
+        }
+    }
 }

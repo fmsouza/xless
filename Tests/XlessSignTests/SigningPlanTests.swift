@@ -108,6 +108,17 @@ func newIdentifiersAreUniversalWithANameAppleTakes(platform: Platform) async thr
     try await check("App Store Connect gives no content for it") { $0.content = Data() }
 }
 
+/// An ID Apple never gives fails as the stage that reads it, not as an `xless profiles` command.
+@Test func aMalformedProfileIDFailsAsSign() async throws {
+    let s = Signing()
+    try s.registered { $0.id = "P0/../x" }
+    do { _ = try await s.plan(); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.stage == .sign && e.exitCode == 15 && e.cause.contains("P0/../x"), "\(e)") }
+    do { try await s.account.deleteProfile(id: "P0/../x"); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.stage == .sign && e.exitCode == 15) }
+    #expect(s.writes.isEmpty && s.asc.log.allSatisfy { !$0.contains("..") })
+}
+
 /// What App Store Connect does not say is not taken for good: neither the day it expires nor whose profile it is.
 @Test func aProfileThatDoesNotSayWhenItExpiresOrWhoseItIsIsNotUsable() throws {
     let target = SigningTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: [:])
