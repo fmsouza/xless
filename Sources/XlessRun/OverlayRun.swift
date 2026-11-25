@@ -258,10 +258,10 @@ extension ProjectRun {
         if result.code != 0 { return finished(result.code) }
         guard simulator else { return nil }
         if span.to == .build, !dryRun {
-            var app = last(of: result.output, ".app")
+            var app = TerminalText.escaped(last(of: result.output, ".app")) // what the build called it
             if docker { app = "volume:\(steps.workVolume):\(app)" }
             host.say("==> Simulator app: \(app)")
-            if host.isMac { host.say("==> launch it on this Mac: scripts/sim-launch.sh \(app)") }
+            if host.isMac { host.say("==> launch it on this Mac: scripts/sim-launch.sh \(RunText.quoted(app))") }
         }
         host.say("==> Simulator build finished (nothing signed for distribution or uploaded)")
         return 0
