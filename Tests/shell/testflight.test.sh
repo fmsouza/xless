@@ -5,7 +5,7 @@ t=$(mktemp -d)
 . "$(dirname "$0")/run-entry.sh"
 trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
-mkdir -p "$t/proj" "$t/bin"
+mkdir -p "$t/proj" "$t/bin" "$t/home"
 touch "$t/proj/xless.yml"
 printf 'x' > "$t/key.p8"; printf 'x' > "$t/dist.pem"; printf 'ISSUER-SECRET-VALUE' > "$t/issuer"
 case "$(uname -m)" in arm64|aarch64) A=arm64 ;; *) A=amd64 ;; esac
@@ -642,6 +642,8 @@ s1=$(sed -n 1p <<<"$out"); s2=$(sed -n 2p <<<"$out")
 [[ $(wc -l <<<"$out") -eq 2 && "$s1" == *" mine:1 xless ship --platform ios --from build --to finalize --no-provisioning-updates " ]] || fail "project image, build: $out"
 [[ "$s1" != *"/secrets/"* && "$s1" != *"ASC_"* && "$s1" != *"XLESS_DIST_KEY"* ]] || fail "secrets reach the project's own image: $s1"
 [[ "$s2" == *"dst=/secrets/dist-key.pem,readonly"*" -w / "*" $P xless ship --project /work --platform ios --from sign --to upload --no-provisioning-updates " ]] || fail "project image, signing: $out"
+# ... which is told where the project is, as it uploads, and the build's container is not
+[[ "$s2" == *"-e XLESS_PROJECT_ORIGIN=$t/pinproj "* && "$s1" != *XLESS_PROJECT_ORIGIN* ]] || fail "project image, the project's place on the host: $out"
 # ... and neither with a configuration that the build's code can have written
 for s in "$s1" "$s2"; do [[ "$s" == *"/.cache/xless/run/<run>/xless.yml,dst=/work/xless.yml,readonly' "* ]] || fail "project image, xless.yml: $s"; done
 printf 'xcode: "26.2"\n' > "$t/pinproj/xless.yml"

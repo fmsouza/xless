@@ -359,8 +359,12 @@ extension ProjectRun {
         do {
             try cleanup.change { state in
                 state.trees.append(directory)
-                try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 let file = "\(directory)/xless.yml"
+                host.removeOnFault(directory, isDirectory: true)
+                host.removeOnFault(file, isDirectory: false)
+                try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                // Not Foundation's, which makes the directory open and then sets its mode.
+                guard mkdir(directory, 0o700) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
                 try pinned.write(to: URL(fileURLWithPath: file))
                 // (a docker whose root is another user reads it)
                 try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file)

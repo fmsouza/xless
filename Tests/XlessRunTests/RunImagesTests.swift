@@ -176,6 +176,8 @@ import XlessImages
         #expect(!steps[0].words.contains { $0.contains("secrets") || $0.contains(".p8") || $0.contains(".pem") || $0.contains("ASC_") })
         #expect(Set(steps[0].environment.keys).isDisjoint(with: SecretEnvironment.names))
         #expect(steps[1].words.contains { $0.contains("dist.pem") })
+        // where the project is on this machine: for the container that uploads, and no other
+        #expect(steps.map { $0.words.contains("XLESS_PROJECT_ORIGIN=\(home.project)") } == [false, true])
         for step in steps { #expect(step.words.contains("type=bind,src=\(home.project),dst=/work") && step.environment["XLESS_BUILD_NUMBER"] == steps[1].environment["XLESS_BUILD_NUMBER"]) }
         let (early, earlyCode) = try run([home.project, "--to", "finalize"])
         #expect(earlyCode == 0 && names(early) == ["mine:1"])
@@ -199,6 +201,96 @@ import XlessImages
         // xless's own image is what runs without one, too
         try home.write("proj/xless.yml", "name: App\nimage: \(Self.base)\n")
         #expect(try names(run([home.project]).host) == [Self.base])
+    }
+
+    /// What docker itself is started with: no secret and no session, whatever it is asked, the questions about images and the build of a
+    /// kit included; the two IDs for the containers with the secrets alone, and not in a run that stops before it signs.
+    @Test(arguments: [[], ["--to", "finalize"], ["--from", "sign"]])
+    func noDockerIsGivenASecret(_ span: [String]) throws {
+        mine()
+        try home.write("proj/xless.yml", "name: App\nimage: mine:1\n")
+        home.images.remove("\(Self.base)-tauri")
+        for target in [["--config", home.overlay], [home.project]] {
+            let host = FakeRunHost(answer: home.answer())
+            let secrets = try home.files().merging(["ASC_KEY_P8": "P8-VALUE"]) { $1 }
+            #expect(try home.run(target + span + ["--build-number", "1"], docker: true, host: host, environment: secrets, session: "/agent") == 0)
+            if target[0] == "--config", span.first != "--from" { #expect(builds(host).count == 1) }
+            let docker = host.allSteps.filter { $0.words[0] == "docker" }
+            #expect(docker.contains { $0.words.contains("inspect") } && docker.contains { $0.isCleanUp("ps") })
+            let ids = ["ASC_KEY_ID", "ASC_ISSUER_ID"]
+            for step in docker {
+                let signs = step.isContainer && step.words.contains { $0.contains("dist.pem") }
+                #expect(!signs || span.first != "--to", "\(step.line)")
+                #expect(Set(step.environment.keys).isDisjoint(with: Set(SecretEnvironment.names + ["XLESS_SESSION"]).subtracting(signs ? ids : [])), "\(step.line)")
+                #expect(!step.environment.values.contains { $0.hasSuffix("-VALUE") && $0 != "OWN-VALUE" } && !step.line.contains("-VALUE"), "\(step.line)")
+                // (what a password of the user's own is named is known to a run that uploads)
+                #expect(span.first == "--to" || step.environment["SOME_PASSWORD"] == nil, "\(step.line)")
+            }
+        }
+    }
+
+    /// A run that is stopped while docker builds a kit, or in the build container of a project with an image of its own.
+    @Test(arguments: [true, false])
+    func aStopLeavesNothingOfABuild(ofAKit: Bool) async throws {
+        mine()
+        try home.write("proj/xless.yml", "name: App\nimage: mine:1\n")
+        home.images.remove("\(Self.base)-tauri")
+        let home = home, left = Notes(), well = home.answer()
+        let inBuild = DispatchSemaphore(value: 0), go = DispatchSemaphore(value: 0)
+        let host = FakeRunHost { host, step in
+            if step.isCleanUp("ps") {
+                if home.exists(home.secrets) { left.add("the secrets") }
+                return (0, "c0ffee\n")
+            }
+            guard ofAKit ? step.words.contains("--pull=false") : step.line.contains("--to finalize") else { return well(host, step) }
+            if !ofAKit { left.add(home.exists(home.secrets) ? "had secrets" : "had none") }
+            inBuild.signal()
+            go.wait()
+            return (143, "")
+        }
+        let thread = Thread { _ = try? home.run(ofAKit ? ["--config", home.overlay] : [home.project], docker: true, host: host) }
+        thread.start()
+        let code = await withCheckedContinuation { done in
+            DispatchQueue.global().async {
+                inBuild.wait()
+                done.resume(returning: host.askToStop(143))
+                go.signal()
+            }
+        }
+        #expect(code == 143 && host.killed.count == 1, "the docker that builds")
+        #expect(left.lines == (ofAKit ? [] : ["had secrets"]), "the secrets go before anything that may hang")
+        #expect(!home.exists(home.secrets) && host.allSteps.last?.line == "docker rm -f c0ffee")
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: "\(home.home)/.cache/xless/locks")) ?? []).isEmpty)
+        #expect(((try? FileManager.default.contentsOfDirectory(atPath: "\(home.home)/.cache/xless/run")) ?? []).isEmpty, "the run's xless.yml")
+        #expect(!host.allSteps.contains { $0.line.contains("--from sign") }, "and no step after it")
+        if !ofAKit {
+            let copy = host.removedOnFault.filter { $0.hasPrefix("\(home.home)/.cache/xless/run/") }
+            #expect(copy.count == 2 && copy[1] == "\(copy[0])/xless.yml", "also for a fault that leaves no time for a clean-up: \(copy)")
+        }
+    }
+
+    /// What the two containers of a project mount is told apart by its bytes: a name may start with a mark that combines with the "/"
+    /// before it. A place that cannot be told is refused.
+    @Test(arguments: ["\u{301}", "\u{200D}", "\u{FE0F}"])
+    func aNameHidesNoSecretFromTheCheckOfTheProject(mark: String) throws {
+        mine()
+        let project = "\(home.root)/\(mark)proj"
+        for directory in [project, "\(project)/\(mark)keys", "\(project)/\(mark)run", "\(project)/\(mark)home"] {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        }
+        try home.write("\(mark)proj/xless.yml", "name: App\nimage: mine:1\n")
+        let (host, code) = try run([project])
+        #expect(code == 0 && names(host) == ["mine:1", Self.base])
+        for step in containers(host) { #expect(step.words.contains("type=bind,src=\(project),dst=/work")) }
+        #expect(containers(host)[1].words.contains("XLESS_PROJECT_ORIGIN=\(project)"))
+        let key = try home.write("\(mark)proj/\(mark)keys/key.pem", "k")
+        #expect(try refused([project], ["XLESS_DIST_KEY_FILE": key]).contains("is inside the project \(project), which is mounted into the build container"))
+        let store = FakeRunHost(answer: home.answer())
+        #expect(try home.run([project], docker: true, host: store, environment: ["XDG_RUNTIME_DIR": "\(project)/\(mark)run"]) == 2)
+        #expect(containers(store).isEmpty && store.lines.last?.contains("which is mounted into the build container") == true)
+        #expect(try refused([project], ["HOME": "\(project)/\(mark)home"]).contains("or holds your home directory"))
+        #expect(try refused([project], ["HOME": "\(home.root)/none"]).contains("cannot tell where "))
+        #expect(!home.exists("\(home.root)/none"), "nothing is made there")
     }
 
     /// What the build writes does not decide in the step with the secrets: both have the xless.yml that was read when the run began.
