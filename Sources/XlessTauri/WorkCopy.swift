@@ -77,9 +77,10 @@ public enum WorkCopy {
     }
 
     /// Read-only git arguments for `source`. `safe.directory=*`: in docker the source belongs to the host user, not to
-    /// root, and git would otherwise refuse it ("detected dubious ownership"). Nothing is written to the repository.
+    /// root, and git would otherwise refuse it ("detected dubious ownership"). `core.fsmonitor=false`: no
+    /// program that the repository's configuration names is run. Nothing is written to the repository.
     public static func git(_ source: URL, _ args: [String]) -> [String] {
-        ["-c", "safe.directory=*", "-C", source.path] + args
+        ["-c", "safe.directory=*", "-c", "core.fsmonitor=false", "-C", source.path] + args
     }
 
     /// Refuses a `source` outside any git work tree; any other git failure is reported with git's own message.

@@ -24,6 +24,17 @@ private func repo(_ tracked: [String: String], untracked: [String: String] = [:]
     return dir
 }
 
+/// The steps with the secrets list the manifests too: no program that the repository's configuration names runs then.
+@Test func listingTheManifestsRunsNoProgramOfTheRepository() throws {
+    let source = try repo(["Cargo.toml": "[package]\nname = \"a\"\nversion = \"1.2.3\"\n"])
+    defer { try? fm.removeItem(at: source) }
+    let hook = source.appendingPathComponent(".git/hook"), ran = source.appendingPathComponent("ran")
+    try ExecutableFile.write(Data("#!/bin/sh\n: > '\(ran.path)'\n".utf8), to: hook, stage: .prepare)
+    try git(source, "config", "core.fsmonitor", hook.path)
+    let manifests = try CargoManifest.load(source: source)
+    #expect(manifests.keys.sorted() == ["Cargo.toml"] && !fm.fileExists(atPath: ran.path))
+}
+
 private func overlay(version: String? = nil, build: String = "dated", macos: Bool = false, extra: String = "") throws -> CargoOverlay {
     try CargoOverlay.parse(yaml: """
     type: cargo
