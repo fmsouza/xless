@@ -213,7 +213,8 @@ knows who it is. An agent of another xless version is never misunderstood: the c
 - An agent that **does not answer** (a stopped process, say) is never taken for nothing held, also when its queue is full
   and the system refuses a connection as if nobody listened (macOS): its socket's name says which process made it. `xless
   lock` ends that process where it can ask who listens and the kernel says that it is the one, and this very xless
-  (macOS); else it names the agent and fails, as `xless secrets lock`, `xless auth logout` and `passwd` do. A command that looks for something held says so, waits for it once (1.5 s) and goes on.
+  (macOS); else it names the agent and fails, as `xless secrets lock`, `xless auth logout` and `passwd` do. A command
+  that looks for something held says so, waits for it once (1.5 s) and goes on.
 - **The terminals are closed**: when no granted session's leader is left (you closed the window, logged out of SSH, quit
   the shell), the agent ends within 2 seconds. Logging out ends every session.
 - **The machine sleeps**: the agent compares a clock that stops during sleep with one that does not, and drops everything
