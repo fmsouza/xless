@@ -63,3 +63,14 @@ import Foundation
     #expect(lines.contains("tail-err"))
     #expect(lines.count == 351)
 }
+
+@Test func theCommandInAToolsErrorIsOneLine() throws {
+    do { try Shell.run("sh", ["-c", "echo one >&2; echo two >&2; exit 3", "a\nerror: b\u{1B}"], stage: .sign); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.cause == #"`sh -c echo one >&2; echo two >&2; exit 3 a\u{A}error: b\u{1B}` exited with 3:"# + "\none\ntwo") }
+}
+
+@Test func aShellMakesTheWordItWasMadeFromOfAQuotedOne() throws {
+    for word in ["a b", "it's", "$(id)", "`id`", "a\nb", "\\", "\"", "*", "!x", "é", "{a,b}", "a;b", "#", "-n"] {
+        #expect(try Shell.run("sh", ["-c", "printf %s \(ShellWord.quoted(word))x"], stage: .build).stdout == (word == "-n" ? "-nx" : word + "x"))
+    }
+}

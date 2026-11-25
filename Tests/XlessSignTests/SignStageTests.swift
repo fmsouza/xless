@@ -53,7 +53,6 @@ struct SignFixture {
 }
 
 /// Portal-only capabilities: the App Store Connect API has no capability type for them (ruling R13).
-let appAttest = "com.apple.developer.devicecheck.appattest-environment"
 let ageRange = "com.apple.developer.declared-age-range"
 
 func teamProfile() -> [String: Any] { ["application-identifier": "ABCDE12345.a.b", "com.apple.developer.team-identifier": "ABCDE12345",

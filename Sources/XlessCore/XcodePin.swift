@@ -37,38 +37,3 @@ public enum XcodePin {
         }
     }
 }
-
-/// What the build stage records next to its output (`<stage dir>/sdk.json`): the pin and the toolchain metadata of the
-/// SDK the app was built with. Finalize stamps the app from the image's metadata and refuses one that differs from this
-/// record (an image change between build and finalize).
-public struct BuildSDKRecord: Codable, Sendable, Equatable {
-    public var pin: String?
-    public var toolchain: ToolchainMeta
-    /// The Swift toolchain that compiled the app (Ruling R10); nil on a host without an image toolchain record.
-    public var swift: BuildSwiftRecord?
-
-    public init(pin: String?, toolchain: ToolchainMeta, swift: BuildSwiftRecord? = nil) {
-        self.pin = pin; self.toolchain = toolchain; self.swift = swift
-    }
-
-    public static func url(in stageRoot: URL) -> URL { stageRoot.appendingPathComponent("sdk.json") }
-
-    /// One line for the log: `Xcode 27.0 (27A266a), iphoneos27.0 SDK (24A430)`.
-    public func summary(platform: Platform) -> String {
-        let sdk = (try? toolchain.sdk(for: platform)).map { ", \($0.sdkName) SDK (\($0.sdkBuild))" } ?? ""
-        return "Xcode \(XcodePin.xcodeVersion(toolchain)) (\(toolchain.xcodeBuild))\(sdk)" + (pin.map { ", pinned by xcode: \"\($0)\"" } ?? "")
-    }
-
-    public func write(in stageRoot: URL) throws {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try FileManager.default.createDirectory(at: stageRoot, withIntermediateDirectories: true)
-        try enc.encode(self).write(to: Self.url(in: stageRoot), options: .atomic)
-    }
-
-    /// nil when the build wrote no record (an older build, or one without toolchain metadata).
-    public static func load(in stageRoot: URL) -> BuildSDKRecord? {
-        guard let data = try? Data(contentsOf: url(in: stageRoot)) else { return nil }
-        return try? JSONDecoder().decode(BuildSDKRecord.self, from: data)
-    }
-}
