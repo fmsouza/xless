@@ -32,7 +32,7 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
         .target(name: "XlessSign", dependencies: [
-            "XlessCore", "XlessASC", "XlessMachO",
+            "XlessCore", "XlessASC", "XlessMachO", "CXlessProcess",
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "SwiftASN1", package: "swift-asn1"),
             .product(name: "Crypto", package: "swift-crypto"),

@@ -81,6 +81,13 @@ int xless_spawn_session(const char *path, char *const argv[], char *const envp[]
 /// waitpid(2) for `pid`: 1 when it ended (`*status`: its exit status, or the signal that killed it), -1 on error.
 int xless_wait(int pid, int *status);
 
+/// SIGINT, SIGTERM or SIGHUP that ends this process removes the file at `path` first (a directory: once it is empty), from a
+/// signal handler; those that are ignored stay ignored. Call it before the file is made. Returns what to give
+/// `xless_keep_when_ended`, or -1: no room (64 at a time).
+int xless_remove_when_ended(const char *path, int is_directory);
+/// Forgets it: it is gone, or not private any more.
+void xless_keep_when_ended(int slot);
+
 /// Whether `pid` is a tool that signals are passed on to.
 int xless_tool_runs(int pid);
 

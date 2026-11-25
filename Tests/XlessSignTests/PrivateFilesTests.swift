@@ -127,3 +127,39 @@ private final class Looking: @unchecked Sendable {
         #expect(e.fix == "check free space and permissions of \(file.path)")
     }
 }
+
+/// A key file is gone also when a signal ends xless meanwhile (Ctrl-C, a CI runner's cancel), whether a tool ever ran or not.
+@Suite struct PrivateFilesOnSignalTests {
+    @Test(arguments: [SIGINT, SIGTERM, SIGHUP]) func aSignalRemovesTheFiles(signal: Int32) async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(signal)) { [signal = signal as Int32, parent = parent as String] in
+            Foundation.signal(signal, SIG_DFL)
+            try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { files in
+                _ = try files.write(Data("secret".utf8), as: "key.pem")
+                _ = try PrivateFiles.with(stage: .sign, in: files.directory) { inner in
+                    _ = try inner.write(Data("another".utf8), as: "cert.pem")
+                    kill(getpid(), signal)
+                    sleep(20)
+                }
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
+    }
+
+    /// What is done with is forgotten: a file of the same name that is not xless's own stays.
+    @Test func onlyWhatIsThereAtTheTimeIsRemoved() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(SIGTERM)) { [parent = parent as String] in
+            Foundation.signal(SIGTERM, SIG_DFL)
+            let file = try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { try $0.write(Data("secret".utf8), as: "key.pem") }
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("other".utf8).write(to: file)
+            kill(getpid(), SIGTERM)
+            sleep(20)
+        }
+        let directory = try #require(FileManager.default.contentsOfDirectory(atPath: parent).first)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: "\(parent)/\(directory)") == ["key.pem"])
+    }
+}

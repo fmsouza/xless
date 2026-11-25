@@ -314,6 +314,22 @@ static void tell_tools(int sig) {
     }
 }
 
+// What must not outlive this process: files, and directories of them. A slot's string is never freed: a handler may read it.
+struct private_path { int is_directory; char path[]; };
+static _Atomic(struct private_path *) private_paths[64];
+#define PRIVATE_PATHS (sizeof private_paths / sizeof *private_paths)
+
+// Async-signal-safe. The files, then the directories they leave empty, the last ones made first.
+static void remove_private(void) {
+    for (int directories = 0; directories < 2; directories++) {
+        for (size_t i = PRIVATE_PATHS; i-- > 0;) {
+            struct private_path *it = atomic_load(&private_paths[i]);
+            if (it == NULL || it->is_directory != directories) continue;
+            if (directories) rmdir(it->path); else unlink(it->path);
+        }
+    }
+}
+
 static void take_default(int sig) {
     signal(sig, SIG_DFL);
     sigset_t only;
@@ -336,6 +352,7 @@ static void forward(int sig) {
             errno = e;
             return;
         }
+        remove_private();
     }
     take_default(sig);
 }
@@ -350,17 +367,41 @@ static void forward_on(int sig) {
     sigaction(sig, &action, NULL);
 }
 
-// Counted first, then the handlers: a signal from here on waits until the tool is known (also when its start hangs), and
-// one that came before it is in `deferred`.
-static void tool_starts(void) {
-    atomic_store(&owner, getpid());
-    atomic_fetch_add(&starting, 1);
+static void handlers_on(void) {
     for (size_t i = 0; i < FORWARDED; i++) {
         struct sigaction now;
         if (sigaction(forwarded[i], NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
         atomic_store(&is_forwarded[i], 1);
         if (now.sa_handler == SIG_DFL) forward_on(forwarded[i]);
     }
+}
+
+// Counted first, then the handlers: a signal from here on waits until the tool is known (also when its start hangs), and
+// one that came before it is in `deferred`.
+static void tool_starts(void) {
+    atomic_store(&owner, getpid());
+    atomic_fetch_add(&starting, 1);
+    handlers_on();
+}
+
+int xless_remove_when_ended(const char *path, int is_directory) {
+    struct private_path *it = malloc(sizeof *it + strlen(path) + 1);
+    if (it == NULL) return -1;
+    it->is_directory = is_directory;
+    strcpy(it->path, path);
+    for (size_t i = 0; i < PRIVATE_PATHS; i++) {
+        struct private_path *none = NULL;
+        if (!atomic_compare_exchange_strong(&private_paths[i], &none, it)) continue;
+        atomic_store(&owner, getpid());
+        handlers_on();
+        return (int)i;
+    }
+    free(it);
+    return -1;
+}
+
+void xless_keep_when_ended(int slot) {
+    if (slot >= 0 && (size_t)slot < PRIVATE_PATHS) atomic_store(&private_paths[slot], NULL);
 }
 
 static void tool_started(int tool) { // 0: it was not
@@ -371,6 +412,7 @@ static void tool_started(int tool) { // 0: it was not
     int sig;
     if (atomic_fetch_sub(&starting, 1) == 1 && (sig = atomic_load(&deferred)) != 0) {
         tell_tools(sig);
+        remove_private();
         take_default(sig);
     }
 }
