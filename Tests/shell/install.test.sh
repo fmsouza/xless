@@ -8,13 +8,13 @@ trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 sh_bin=$(command -v dash || command -v sh)
 echo "install.sh runs under $sh_bin"
-export XLESS_CHECKOUTS="$t/checkouts" XLESS_STRIP=true
+export XLESS_CHECKOUTS="$t/checkouts" XLESS_STRIP=true XLESS_CODESIGN=true XLESS_CHECK_BINARY=true
 mkdir -p "$t/checkouts"
 for id in $(sed -n 's/.*"identity" : "\(.*\)",/\1/p' "$repo/Package.resolved"); do
   mkdir -p "$t/checkouts/$id"; echo "licence of $id" > "$t/checkouts/$id/LICENSE"
 done
 
-# release <version>: a release directory with both arches at <rel>/download/v<version>/ (and /latest/download/ when asked).
+# release <version>: a release directory with both arches of both systems at <rel>/download/v<version>/ (and /latest/download/ when asked).
 rel="$t/rel"
 release() {  # version [latest]
   local v=$1 d="$rel/download/v$1" a
@@ -22,6 +22,8 @@ release() {  # version [latest]
   for a in x86_64 arm64; do
     printf '#!/bin/sh\necho "xless %s %s"\n' "$v" "$a" > "$t/stub-$a"; chmod +x "$t/stub-$a"
     bash "$repo/scripts/package-release.sh" "$v" "$a" "$t/stub-$a" "$d" >/dev/null
+    printf '#!/bin/sh\necho "xless %s macos %s"\n' "$v" "$a" > "$t/stub-$a"
+    bash "$repo/scripts/package-release.sh" --os macos "$v" "$a" "$t/stub-$a" "$d" >/dev/null
   done
   if [[ "${2:-}" == latest ]]; then rm -rf "$rel/latest"; mkdir -p "$rel/latest"; cp -R "$d" "$rel/latest/download"; fi
 }
@@ -67,7 +69,7 @@ mkdir -m 700 "$p/share/xless/vault"; (umask 077; echo sealed > "$p/share/xless/v
 rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.2.3 PATH="$p/bin:$t/tools" "$sh_bin" "$repo/scripts/install.sh" --prefix "$p" 2>&1) || rc=$?
 [[ $rc == 0 && "$(cat "$p/share/xless/VERSION")" == 1.2.3 ]] || fail "downgrade with a store exited $rc: $out"
 [[ "$(cat "$p/share/xless/vault/secrets.vault" 2>/dev/null)" == sealed && -e "$p/share/xless/vault/lock" ]] || fail "the upgrade lost the secret store"
-[[ "$(stat -c %a "$p/share/xless/vault")" == 700 && "$(stat -c %a "$p/share/xless/vault/secrets.vault")" == 600 ]] || fail "the store's permissions changed"
+[[ "$(ls -ld "$p/share/xless/vault" | cut -c1-10)" == drwx------ && "$(ls -l "$p/share/xless/vault/secrets.vault" | cut -c1-10)" == -rw------- ]] || fail "the store's permissions changed"
 rc=0; out=$(env "${base[@]}" XLESS_VERSION=v1.3.0 PATH="$p/bin:$t/tools" "$sh_bin" "$repo/scripts/install.sh" --prefix "$p" 2>&1) || rc=$?
 [[ $rc == 0 && "$(cat "$p/share/xless/vault/secrets.vault" 2>/dev/null)" == sealed ]] || fail "the second upgrade lost the secret store: $out"
 
@@ -133,6 +135,51 @@ run "${base[@]}" XLESS_UNAME_M=riscv64 XLESS_PREFIX="$t/pr" PATH="$t/pr/bin:$t/t
 [[ $rc == 1 ]] || fail "riscv64 exited $rc"
 echo "$out" | grep -qi "unsupported" || fail "riscv64: no 'unsupported': $out"
 [[ ! -e "$t/pr/bin/xless" ]] || fail "riscv64 installed something"
+
+# macOS: the macOS tarballs, from 14 on; a shell that Rosetta translates gets the Mac's own architecture.
+mkdir -p "$t/tools-mac"; cp -P "$t/tools"/* "$t/tools-mac/"
+fake() { printf '#!/bin/sh\n%s\n' "$2" > "$t/tools-mac/$1"; chmod +x "$t/tools-mac/$1"; }   # tool, what it does
+mac=("${base[@]}" XLESS_UNAME_S=Darwin)
+fake sw_vers '[ "$*" = -productVersion ] && echo 15.6.1'
+fake sysctl '[ "$*" = "-n hw.optional.arm64" ] || exit 1; echo 1'
+run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_PREFIX="$t/m1" PATH="$t/m1/bin:$t/tools-mac"
+[[ $rc == 0 && "$("$t/m1/bin/xless")" == "xless 1.2.3 macos arm64" && "$(cat "$t/m1/share/xless/VERSION")" == 1.2.3 ]] || fail "an Apple silicon Mac: rc=$rc $out"
+[[ "$out" == *"next: the account commands work now"*"xless setup --docker --xcode ~/Downloads/Xcode_27.xip"* ]] || fail "no next lines on macOS: $out"
+run "${mac[@]}" XLESS_UNAME_M=x86_64 XLESS_VERSION=1.3.0 XLESS_PREFIX="$t/m1" PATH="$t/m1/bin:$t/tools-mac"
+[[ $rc == 0 && "$("$t/m1/bin/xless")" == "xless 1.3.0 macos arm64" ]] || fail "a Rosetta shell: rc=$rc $out"
+fake sysctl 'exit 1'
+run "${mac[@]}" XLESS_UNAME_M=x86_64 XLESS_PREFIX="$t/m2" PATH="$t/m2/bin:$t/tools-mac"
+[[ $rc == 0 && "$("$t/m2/bin/xless")" == "xless 1.2.3 macos x86_64" ]] || fail "an Intel Mac: rc=$rc $out"
+for v in 13.7.8 12 10.15.7; do
+  fake sw_vers "echo $v"
+  run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_PREFIX="$t/m3" PATH="$t/m3/bin:$t/tools-mac"
+  [[ $rc == 1 && "$out" == *"xless needs macOS 14 or later (this is macOS $v)"* && ! -e "$t/m3" ]] || fail "macOS $v: rc=$rc $out"
+done
+for v in 14.0 26.1 27.2.1; do
+  fake sw_vers "echo $v"
+  run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_PREFIX="$t/m4" PATH="$t/m4/bin:$t/tools-mac"
+  [[ $rc == 0 ]] || fail "macOS $v: rc=$rc $out"
+done
+rm "$t/tools-mac/sw_vers" # not told: left to the program
+run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_PREFIX="$t/m5" PATH="$t/m5/bin:$t/tools-mac"
+[[ $rc == 0 ]] || fail "a macOS that tells no version: rc=$rc $out"
+# A tampered macOS tarball installs nothing, nor does a release without one.
+printf x >> "$rel/download/v1.3.0/xless-1.3.0-macos-arm64.tar.gz"
+run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_VERSION=1.3.0 XLESS_PREFIX="$t/m5" PATH="$t/m5/bin:$t/tools-mac"
+[[ $rc == 1 && "$out" == *"sha256 mismatch"* && "$("$t/m5/bin/xless")" == "xless 1.2.3 macos arm64" ]] || fail "a tampered macOS tarball: rc=$rc $out"
+release 1.3.0
+cp "$rel/latest/download/SHA256SUMS" "$t/sums"; grep -v macos "$t/sums" > "$rel/latest/download/SHA256SUMS"
+run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_PREFIX="$t/m6" PATH="$t/m6/bin:$t/tools-mac"
+[[ $rc == 1 && "$out" == *"the latest release lists no macos arm64 tarball"* && ! -e "$t/m6" ]] || fail "a release without macOS: rc=$rc $out"
+cp "$t/sums" "$rel/latest/download/SHA256SUMS"
+# Off PATH on macOS: nothing puts ~/.local/bin on PATH there, and the startup file is the one a login shell reads.
+for s in /bin/zsh:.zshrc /bin/bash:.bash_profile /opt/fish:.profile; do
+  run "${mac[@]}" XLESS_UNAME_M=arm64 SHELL="${s%%:*}" PATH="$t/tools-mac"
+  [[ $rc == 0 && "$out" == *"$t/home/.local/bin is not on PATH in this shell. Run:"*"add that line to $t/home/${s##*:}."* && "$out" != *"new terminal"* ]] || fail "the PATH hint on macOS ($s): $out"
+done
+rm -rf "$t/home/.local"
+run "${base[@]}" XLESS_UNAME_S=FreeBSD XLESS_PREFIX="$t/m7" PATH="$t/m7/bin:$t/tools"
+[[ $rc == 1 && "$out" == *"unsupported OS FreeBSD: xless releases are for Linux and macOS 14 or later (x86_64 and arm64)"* ]] || fail "FreeBSD: rc=$rc $out"
 
 # A prefix that is not on PATH gets the export line.
 run "${base[@]}" XLESS_PREFIX="$t/pn" PATH="$t/tools"

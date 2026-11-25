@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Writes the third-party licence notices a release ships in share/xless/licenses/: one file per package in
 # Package.resolved (the LICENSE, and the NOTICE when there is one, from the SwiftPM checkout), plus the Swift runtime
-# and the C/C++ libraries the static binary links in (licenses/vendored/, see its README).
-#   scripts/third-party-licenses.sh <out-dir>
+# and the C/C++ libraries the binary has in it (licenses/vendored/, see its README).
+#   scripts/third-party-licenses.sh [--os linux|macos] <out-dir>   (--os linux by default)
 # XLESS_CHECKOUTS overrides the checkouts directory (default .build/checkouts, filled by `swift build`).
 set -euo pipefail
-out="${1:?usage: third-party-licenses.sh <out-dir>}"
+os=linux
+if [[ "${1:-}" == --os ]]; then os="${2:-}"; shift 2 || true; fi
+out="${1:?usage: third-party-licenses.sh [--os linux|macos] <out-dir>}"
+case "$os" in linux|macos) ;; *) echo "third-party-licenses: unsupported system '$os'" >&2; exit 2 ;; esac
 root="$(cd "$(dirname "$0")/.." && pwd)"
 checkouts="${XLESS_CHECKOUTS:-$root/.build/checkouts}"
 mkdir -p "$out"
@@ -32,11 +35,14 @@ cp "$root/ThirdParty/AssetKit/LICENSE" "$out/assetkit.txt"
 cp "$root/ThirdParty/AssetKit/Sources/CLZFSE/LICENSE" "$out/lzfse.txt"
 
 # Everything the static Swift SDK links in (musl, the Swift runtime and Foundation, libcurl, libxml2, ICU, zlib, the TLS
-# library, ...): verbatim upstream notices vendored in licenses/vendored/, each checked against the sha256 recorded in
+# library, ...) and, on macOS, where those are the system's, the few parts that are not: verbatim upstream notices vendored in licenses/vendored/, each checked against the sha256 recorded in
 # SOURCES.tsv (name, component, version, source URL, sha256) before it is copied.
 vendored="$root/licenses/vendored"
-while IFS=$'\t' read -r name _component _version _url want; do
+while IFS=$'\t' read -r name component _version _url want; do
   [[ -z "$name" || "$name" == \#* ]] && continue
+  # macOS: the code of the Swift runtime and of compiler-rt that the compiler puts into a program, swift-crypto's BoringSSL and
+  # Yams' libyaml.
+  if [[ "$os" == macos ]]; then case "$component" in swift|compiler-rt|boringssl|libyaml) ;; *) continue ;; esac; fi
   [[ -f "$vendored/$name" ]] || { echo "third-party-licenses: $vendored/$name is missing" >&2; exit 1; }
   if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$vendored/$name" | cut -d' ' -f1); else got=$(shasum -a 256 "$vendored/$name" | cut -d' ' -f1); fi
   [[ "$got" == "$want" ]] || { echo "third-party-licenses: $name does not match SOURCES.tsv (got $got, want $want)" >&2; exit 1; }
