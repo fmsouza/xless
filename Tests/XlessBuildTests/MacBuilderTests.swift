@@ -155,6 +155,27 @@ func anAppHasEveryBundleOfItsPackagesAndNoOther(blind: Bool) throws {
     #expect(try swift.app() == [] && swift.builds == 1 && swift.notes.isEmpty)
 }
 
+@Test func theRecordOfABuildsBundlesIsReadOnlyWhereItIsOne() throws {
+    let fm = FileManager.default, swift = Products(["A_A.bundle"], blind: false)
+    defer { try? fm.removeItem(at: swift.scratch) }
+    let record = swift.scratch.appendingPathComponent("xless-bundles"), other = swift.scratch.appendingPathComponent("other")
+    _ = try swift.app()
+    // what is no bundle's name
+    try Data("secret\nup/Gone.bundle\n\u{1B}[2J.bundle\n\u{9B}2J.bundle\r\n".utf8).write(to: record)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
+    // a link, also to a good one; a directory is told by the write that does not work
+    try Data("Gone.bundle\n".utf8).write(to: other)
+    try fm.removeItem(at: record)
+    try fm.createSymbolicLink(at: record, withDestinationURL: other)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
+    #expect(try String(contentsOf: other, encoding: .utf8) == "Gone.bundle\n")
+    // one that is larger than any
+    try Data(String(repeating: "Gone.bundle\n", count: 1 << 17).utf8).write(to: record)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
+    try Data("Gone.bundle\n".utf8).write(to: record)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 2 && swift.notes.count == 1)
+}
+
 extension FileManager {
     fileprivate func removeItem(at url: URL, ifThere: Bool) throws { if fileExists(atPath: url.path) { try removeItem(at: url) } }
 }

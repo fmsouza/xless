@@ -9,6 +9,15 @@ enum ResourceBundles {
             .filter { $0.pathExtension == "bundle" }.sorted { $0.path < $1.path }
     }
 
+    /// What the last build had, of a small file that is one: the project's directory may hold anything by that name.
+    private static func recorded(_ record: URL) -> [String] {
+        guard let about = try? FileManager.default.attributesOfItem(atPath: record.path), about[.type] as? FileAttributeType == .typeRegular,
+              (about[.size] as? NSNumber)?.intValue ?? .max <= 1 << 20, let text = try? String(contentsOf: record, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").map(String.init).filter { name in
+            name.hasSuffix(".bundle") && !name.contains("/") && TerminalText.escaped(name) == name
+        }
+    }
+
     /// Runs `build` without the bundles of earlier builds, which makes those again that the app has. When one of them is not there
     /// afterwards, its package is gone, or Swift Build took what it had for done: then everything is built again from nothing, which
     /// leaves the app's and no others. Until a build ended well, what the last one had is kept in mind (in `scratch`).
@@ -16,8 +25,7 @@ enum ResourceBundles {
     static func fresh(scratch: URL, products: () -> [URL], note: (String) -> Void, build: () throws -> Void) throws {
         let fm = FileManager.default, record = scratch.appendingPathComponent("xless-bundles")
         func names() -> Set<String> { Set(products().flatMap(of).map(\.lastPathComponent)) }
-        let recorded = (try? String(contentsOf: record, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
-        let before = names().union(recorded)
+        let before = names().union(recorded(record))
         func write(_ names: Set<String>) throws {
             try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
             try Data(names.sorted().map { "\($0)\n" }.joined().utf8).write(to: record, options: .atomic)
