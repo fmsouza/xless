@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 /// An Xcode of this Mac, whose tools build natively. Its public command-line tools are started as programs, by their path in it;
 /// nothing of it is linked, copied or changed.

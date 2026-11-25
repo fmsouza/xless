@@ -36,6 +36,10 @@ env = {**keep, "PATH": os.environ["PATH"], "HOME": t + "/home", "XDG_DATA_HOME":
        "https_proxy": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9"}
 for d in ("home", "data", "config", "run", "cache", "work", "tmp", "app", "appstore"):
     os.mkdir(f"{t}/{d}", 0o700)
+if sys.platform == "darwin":   # what signs is there already (nothing is fetched here)
+    version = next(l.split("=")[1].strip() for l in open(repo + "/versions.env") if l.startswith("RCODESIGN_VERSION="))
+    os.makedirs(f"{t}/data/xless-native/tools/rcodesign-{version}")
+    os.symlink("/usr/bin/false", f"{t}/data/xless-native/tools/rcodesign-{version}/rcodesign")
 
 failures = 0
 def check(ok, what, detail=""):

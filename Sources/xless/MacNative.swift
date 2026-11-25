@@ -102,11 +102,25 @@ struct MacNative: Sendable {
         let signer = try signer(env: env, layout: layout)
         let program = signer.final.appendingPathComponent("rcodesign")
         if !FileManager.default.isExecutableFile(atPath: program.path) {
-            say("fetching rcodesign (\(signer.url.lastPathComponent)), which signs, once, into \(signer.final.path)")
-            try SetupCommand.install(signer, layout: layout)
+            try withLock(layout.tools.appendingPathComponent("rcodesign.lock")) { // another run's fetch, waited for
+                guard !FileManager.default.isExecutableFile(atPath: program.path) else { return }
+                say("fetching rcodesign (\(signer.url.lastPathComponent)), which signs, once, into \(signer.final.path)")
+                try SetupCommand.install(signer, layout: layout, again: "run it again")
+            }
         }
         let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         if path != signer.final.path, !path.hasPrefix(signer.final.path + ":") { setenv("PATH", "\(signer.final.path):\(path)", 1) }
+    }
+
+    private static func withLock(_ file: URL, _ body: () throws -> Void) throws {
+        #if os(macOS)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fd = open(file.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { throw XlessError(.sdk, "cannot open \(file.path): \(String(cString: strerror(errno)))", fix: "check the directory's permissions") }
+        defer { close(fd) } // which unlocks it
+        while flock(fd, LOCK_EX) != 0 && errno == EINTR {}
+        #endif
+        try body()
     }
 
     static func signer(env: [String: String], layout: NativeLayout) throws -> NativeDownload {
