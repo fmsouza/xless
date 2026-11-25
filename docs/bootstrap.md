@@ -95,20 +95,20 @@ Connect needs it registered before the app record ([`xless bundle-ids`](apple-ac
 <a id="2-apple-distribution-key-ios"></a>
 
 ```sh
-xless sign bootstrap --type distribution
+xless certs create --type distribution
 ```
 
 The key is generated here, sealed into the store as `XLESS_DIST_KEY@<TEAM_ID>` (the team saved by `xless team use`)
 before the certificate is requested, and the certificate's ID, type and expiry are recorded with it; `sign` finds it
-there. `xless sign bootstrap` is the `xless certs create` of the three certificates `sign` uses
-([`xless certs`](apple-account.md#xless-certs) covers every other type). To get a file instead of a store entry, pass
-`--out dist-key.pem`.
+there ([`xless certs`](apple-account.md#xless-certs) covers every other type). `xless secrets export` writes it to a file
+when CI needs one. `xless sign bootstrap`, the older name for the three certificates `sign` uses, still works
+([below](#how-sign-bootstrap-behaves)).
 
 ### 5c. Developer ID Application key (a notarized Mac app)
 <a id="3-developer-id-application-key-macos-only"></a>
 
 ```sh
-xless sign bootstrap --type developer-id
+xless certs create --type developer-id
 ```
 
 Stored as `XLESS_DEVID_KEY@<TEAM_ID>`. Creating Developer ID certificates needs the Account Holder: with another
@@ -132,11 +132,11 @@ App Store Connect accepts a Mac App Store package only when it is signed with a 
 (App Store Connect refuses it with ITMS-90237).
 
 ```sh
-xless sign bootstrap --type installer
+xless certs create --type installer
 ```
 
 Stored as `XLESS_INSTALLER_KEY@<TEAM_ID>`. If App Store Connect answers 403, make the key and CSR with
-`--out … --csr-only` as in 5c, and create the certificate from the CSR with a role that may
+`xless sign bootstrap --type installer --out … --csr-only` as in 5c, and create the certificate from the CSR with a role that may
 (`xless certs create --type installer --csr …`).
 
 ### 5e. App record
@@ -157,6 +157,9 @@ Provisioning profiles need no step: `sign` creates and replaces its own (`xless 
 `MAC_APP_STORE`, `MAC_APP_DIRECT`). Other types: [`xless profiles`](apple-account.md#xless-profiles).
 
 ## How `sign bootstrap` behaves
+
+The older `xless certs create --type distribution|developer-id|installer`, kept for now: it says so on standard error (not with
+`--csr-only`, which only writes a key and its CSR to files and has no other name).
 
 App Store Connect creates a certificate from a CSR but never returns the private key, so xless generates an RSA-2048 key locally.
 

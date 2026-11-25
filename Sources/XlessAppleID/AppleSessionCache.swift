@@ -166,12 +166,14 @@ public struct AppleSessionCache: Sendable {
             defer { bytes.wipe() }
             try saved.save(bytes, expires: info.expires)
         }
+        var held = false
         do {
             let left = SecretHold(seconds: lifetime, idle: min(hold.idle, lifetime), maximum: hold.maximum - age)
             try store.put(Self.blobName, blob, hold: left)
+            held = true
             try store.put(Self.keyName, keyBytes, hold: left)
         } catch {
-            forgetHeld()
+            if held { forgetHeld() } // else what is held is another session's, which goes on
             _ = try? saved?.remove()
             throw XlessError(.account, "cannot keep the Apple ID session: \(error)", fix: "re-run without --keep")
         }

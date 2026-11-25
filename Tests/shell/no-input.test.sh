@@ -83,6 +83,7 @@ subprocess.run(["openssl", "pkcs8", "-topk8", "-nocrypt", "-in", t + "/ec.pem", 
 subprocess.run(["openssl", "genrsa", "-out", t + "/rsa.pem", "2048"], check=True, capture_output=True)
 os.link(t + "/AuthKey_ABCDE12345.p8", t + "/AuthKey_FGHIJ67890.p8")
 write(t + "/secret", "a password")
+write(t + "/testflight.env", f"XLESS_INSTALLER_KEY_FILE={t}/rsa.pem\n")
 write(t + "/devices.txt", "Device ID\tDevice Name\n00008030-001A2B3C4D5E6F70\tPhone\n")
 write(t + "/app/xless.yml", "bundleID: com.example.app\nteamID: ABCDE12345\nversion: 1.0.0\nbuild: 1\nplatforms:\n  ios: { minimumOS: '17.0', product: App }\n  macos: { minimumOS: '14.0', product: App, distribution: developer-id }\n")
 os.makedirs(t + "/app/.xless/build/ios/final/App.app")
@@ -129,7 +130,7 @@ ASKS = {
     "sign run": P, "upload": P, "ship": P + " --from sign", "next-build": "--config %T/cargo.yml", "tauri next-build": "--config %T/tauri.yml",
     "inspect": "--config %T/tauri.yml", "tauri inspect": "--config %T/tauri.yml", "package": "--project %T/app --platform macos",
     "sign bootstrap": "--type developer-id",
-    "secrets init": "", "secrets import": "OTHER --file %T/secret", "secrets export": "NOTE --out %T/new", "secrets rm": "NOTE", "secrets passwd": "",
+    "secrets init": "", "secrets import": "OTHER --file %T/secret", "secrets import-env": "%T/testflight.env", "secrets export": "NOTE --out %T/new", "secrets rm": "NOTE", "secrets passwd": "",
     "secrets unlock": "--remember 1h", "unlock": "", "session": "-- true", "secrets materialize": "sign=XLESS_DIST_KEY --allow-disk",
     "live-check": "",
     # … or for the App Store Connect key

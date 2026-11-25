@@ -127,3 +127,71 @@ private final class Looking: @unchecked Sendable {
         #expect(e.fix == "check free space and permissions of \(file.path)")
     }
 }
+
+/// A key file is gone also when a signal ends xless meanwhile (Ctrl-C, Ctrl-\, a CI runner's cancel, output nobody reads, a
+/// fault of xless's own), whether a tool ever ran or not.
+@Suite struct PrivateFilesOnSignalTests {
+    @Test(arguments: [SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGUSR1, SIGUSR2, SIGALRM, SIGPIPE, SIGXCPU, SIGSYS, SIGABRT, SIGTRAP, SIGSEGV, SIGBUS, SIGFPE, SIGILL]) func aSignalRemovesTheFiles(signal: Int32) async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(signal)) { [signal = signal as Int32, parent = parent as String] in
+            Foundation.signal(signal, SIG_DFL)
+            try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { files in
+                _ = try files.write(Data("secret".utf8), as: "key.pem")
+                _ = try PrivateFiles.with(stage: .sign, in: files.directory) { inner in
+                    _ = try inner.write(Data("another".utf8), as: "cert.pem")
+                    kill(getpid(), signal)
+                    sleep(20)
+                }
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
+    }
+
+    /// Also where a handler of another's is, which comes back (Swift's backtrace, on Linux): xless ends after it all the same.
+    @Test(arguments: [SIGQUIT, SIGABRT, SIGSEGV]) func aHandlerThatGoesOnDoesNotKeepTheFiles(signal: Int32) async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(signal)) { [signal = signal as Int32, parent = parent as String] in
+            Foundation.signal(signal) { _ in }
+            try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { files in
+                _ = try files.write(Data("secret".utf8), as: "key.pem")
+                kill(getpid(), signal)
+                sleep(20)
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
+    }
+
+    /// However many there are (an app with many extensions has an entitlements file for each).
+    @Test func aSignalRemovesAllOfManyFiles() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(SIGTERM)) { [parent = parent as String] in
+            Foundation.signal(SIGTERM, SIG_DFL)
+            try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { files in
+                for i in 0..<200 { _ = try files.write(plist: [:], as: "ent-\(i).plist") }
+                _ = try files.make("key.json")
+                kill(getpid(), SIGTERM)
+                sleep(20)
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
+    }
+
+    /// What is done with is forgotten: a file of the same name that is not xless's own stays.
+    @Test func onlyWhatIsThereAtTheTimeIsRemoved() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(SIGTERM)) { [parent = parent as String] in
+            Foundation.signal(SIGTERM, SIG_DFL)
+            let file = try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { try $0.write(Data("secret".utf8), as: "key.pem") }
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("other".utf8).write(to: file)
+            kill(getpid(), SIGTERM)
+            sleep(20)
+        }
+        let directory = try #require(FileManager.default.contentsOfDirectory(atPath: parent).first)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: "\(parent)/\(directory)") == ["key.pem"])
+    }
+}

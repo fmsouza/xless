@@ -54,7 +54,10 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
    any request that could make them unrecoverable (a certificate's key before the certificate is requested; an API or
    auth key's `.p8`, which Apple serves once, in the same process that created it). Writing one to a file is explicit
    (`xless secrets export --out`, `xless sign bootstrap --out`): a new file, opened with `O_EXCL`, mode 0600, never an
-   overwrite. Imports offer to delete the file they read.
+   overwrite. Imports offer to delete the file they read. Two things need a file for a moment: rcodesign its key, and a
+   container its secrets. Each is mode 0600 in a fresh directory of mode 0700 (the containers' on a tmpfs, unless you allow a
+   disk), and is removed when the tool or the container ends, on an error, and when a signal ends xless (Ctrl-C, Ctrl-\\,
+   SIGTERM, a fault of its own: any that can be caught). A `kill -9` leaves them; the next run on the same work copy removes the containers' and their secrets.
 3. **Nothing kept longer than the command,** unless you opt in: the store's unlock (`xless unlock`, `--remember`) and
    the Apple ID session (`xless auth login --keep`) can be held in memory, for 8 hours and 2 without use unless you say
    otherwise, and never more than 7 days. `xless auth status` shows what is held, where and until when, also for a script that runs; `xless lock`
@@ -62,7 +65,9 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
 4. **No secret on a command line, in a log, in an error, in a core dump or in a child's environment.** Secrets come
    from the terminal, the store, `NAME` or `NAME_FILE`; no option takes one (a test walks every command and fails on an
    option named like a secret). A secret under a name of your own (a demo account's `passwordSecret`) is removed from
-   the tools' environment too.
+   the tools' environment too. `xless run` gives no secret variable to an overlay's build step, to a run that stops before it signs, or to
+   the programs it starts for itself (the docker client gets the API key's two IDs at most), and starts every program with its
+   arguments as they are, never through a shell.
 5. **Least privilege, and a question before anything destructive.** `xless auth api-key create` makes an `APP_MANAGER`
    key unless you ask for more; the commands that revoke, delete, remove or cancel something at Apple ask first, and
    without a terminal they are refused unless `--yes` is given. `xless provision apply` never deletes or revokes
@@ -198,13 +203,13 @@ an existing one: so nothing that a build starts, however it forks, daemonizes or
 binary itself run by it, is in a granted session. It also starts with `XLESS_NO_SECRET_STORE=1`, with which
 xless looks for nothing held; that one the code could unset, the session it could not. `Tests/shell/agent.test.sh` runs
 such code against a real agent, every way of getting away included. What stays in the terminal's session runs no code of
-the project: the script behind `xless run` (its build step is an `xless ship`, whose tools are not), with `--docker` the
-docker client which that script runs (the build is in the container), and a
+the project: `xless run` (its build step is an `xless ship`, whose tools are not), with `--docker` the docker client which
+it runs (the build is in the container), and a
 [credential helper](#with-a-credential-helper), which may ask something on the terminal and already sees every secret.
 
 A session of its own has no terminal, so Ctrl-C and a closed window do not reach a tool by themselves: xless passes SIGINT,
-SIGTERM and SIGHUP on to the process group of each tool that runs, and ends as it would. (A `kill -9` of xless it cannot
-pass on.)
+SIGTERM and SIGHUP on to the process group of each tool that runs (SIGTERM for any other signal that ends it), and ends as it
+would. (A `kill -9` of xless it cannot pass on.)
 
 Containers: xless never mounts the agent's socket. One mounted by hand gives nothing: on Linux a container's process is in
 no granted session; on macOS a socket does not cross into the VM.
@@ -438,7 +443,7 @@ An app's build runs code you did not write. What that code can reach depends on 
   makes itself non-dumpable: the tool cannot attach to it or read its memory or its environment. Natively the build
   still runs as you: its SwiftPM plugins and macros can read your files, including the key files a `_FILE` variable
   names (the store keeps keys sealed on disk), and the environment of your shell, or of any other process of yours
-  that exported a secret variable (`/proc/<pid>/environ`): keep keys in the store rather than in exported variables.
+  (`xless run` itself is not one: it is non-dumpable too) that exported a secret variable (`/proc/<pid>/environ`): keep keys in the store rather than in exported variables.
 
 If that matters for a project you do not fully trust, keep the signing in a second run, so no build code runs while a
 key is in use:

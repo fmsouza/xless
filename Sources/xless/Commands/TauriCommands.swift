@@ -98,7 +98,7 @@ struct TauriNextBuildCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "next-build",
         abstract: "Print the build number the next run of an overlay would use (read-only App Store Connect query; persists nothing).",
-        discussion: "For `build: dated` it asks App Store Connect for the builds of the version (credentials needed); a fixed build is printed as is. scripts/testflight.sh runs it with credentials, then builds without them using XLESS_BUILD_NUMBER.")
+        discussion: "For `build: dated` it asks App Store Connect for the builds of the version (credentials needed); a fixed build is printed as is. xless run starts it with credentials, then builds without them using XLESS_BUILD_NUMBER.")
     @Option(name: .long, help: "Tauri overlay file (type: tauri).") var config: String
     @Option(name: .long, help: "Use this directory as the app source instead of the overlay's `source:`.") var source: String?
     func run() async throws {

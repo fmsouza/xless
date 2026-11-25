@@ -46,7 +46,7 @@ while. The app stays in a Docker volume; [Getting the build out](#shipping-three
 
 ## Requirements
 
-- To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate), and the secrets file described under [One command: TestFlight](signing-and-testflight.md#one-command-testflight).
+- To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate), and its keys in the secret store (or, in CI, the variables under [One command: TestFlight](signing-and-testflight.md#one-command-testflight)).
 - The `xless-rn` image. It adds Ruby, Bundler, Swift Build, `hermesc` and the Xcode tool shims to `xless-tauri`. Steps 1 and 3 of `xless run --docker --config` use `xless-base`. `xless setup --docker` builds them all ([README](../README.md#build-in-docker-instead)); to build with another Xcode's SDK, run it with that Xcode ([Pinning the Xcode](#pinning-the-xcode-sdk)).
 - A Linux host of either architecture. The `xless-rn` image exists for `linux/arm64` and `linux/amd64` (`xless setup --docker --arch arm64 --arch amd64` builds both; `--arch` replaces the default, this machine's architecture), and the app it builds is the same arm64 iOS app on both; `scripts/arch-compare.sh <app built on arm64> <app built on amd64>` checks that. On an Apple-silicon Mac the amd64 image runs under Rosetta; the Docker VM must have it enabled (`/mnt/lima-rosetta` exists in the VM and `/proc/sys/fs/binfmt_misc/rosetta` is registered). QEMU user-mode emulation is not enough: it crashes gcc and the Swift Build compile at random.
 - The app repository is a git checkout. xless copies the **tracked** files of `source:` (and only those) into a work copy; the source is never written to. Commit the lockfiles (`package.json` with its lockfile, `Gemfile` and `Gemfile.lock`) and the files the overlay refers to. Uncommitted edits to tracked files are copied; untracked and ignored files are not.
@@ -124,7 +124,7 @@ Before the first `prepare` it says what is still unknown.
 | sign (15, [24](signing-and-testflight.md#what-sign-changes-on-the-account)) | Every bundle with its own profile and entitlements ([below](#signing-app-extensions)). |
 | package, upload (16, 17) | As for every app; `package` also zips the dSYMs into `out/<Product>.app.dSYM.zip`. |
 
-Without the script each stage is a command: `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios`. `build` runs `prepare` first, and so does `xless ship`, which takes `--from`/`--to`. `xless next-build --config <overlay>` prints the build number the next run would use (read-only).
+Without `xless run` each stage is a command: `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios`. `build` runs `prepare` first, and so does `xless ship`, which takes `--from`/`--to`. `xless next-build --config <overlay>` prints the build number the next run would use (read-only).
 
 ## Shipping: three containers
 
@@ -132,7 +132,7 @@ Without the script each stage is a command: `xless prepare|build|assets|finalize
 xless run --docker --config ~/ci/my-app.overlay.yml [extra args, e.g. --from upload]
 ```
 
-The build runs third-party code: npm scripts, `prepare.run`, Expo's config plugins, CocoaPods hooks and every Xcode build phase. So it never runs next to a secret. The script reads the overlay's `type:` and runs three containers:
+The build runs third-party code: npm scripts, `prepare.run`, Expo's config plugins, CocoaPods hooks and every Xcode build phase. So it never runs next to a secret. The run reads the overlay's `type:` and runs three containers:
 
 1. **`xless next-build`**, in `xless-base` (xless and rcodesign, no build tools), with the App Store Connect key only. It prints the next `dated` build number (a read-only query); the version and app bundle ID come from the overlay and the source, so no work copy is needed. Skipped when `XLESS_BUILD_NUMBER` or `--build-number` is given, or when resuming after `build`.
 2. **`xless ship --to finalize`**, in `xless-rn`, with that number in `XLESS_BUILD_NUMBER` and **no** secret file or variable: prepare, build, assets, finalize.
@@ -150,9 +150,9 @@ xless run --docker --config ~/ci/my-app.overlay.yml --from sign
 `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the docker commands without running them.
 
 **Mounts.**
-- **The source** is read-only at `/source`. A source inside a git checkout but not at its top mounts the checkout's top and passes `--source /source/<path>`, because xless lists tracked files with git. The script stops (exit 2) when that directory holds a secret file.
-- **The overlay's folder** is read-only at `/config`. Keep the overlay in its own directory: the script stops when the folder holds the secrets file or a secret file, symlinks resolved.
-- **The work copy** is in a docker volume at `/cache/work`, in steps 2 and 3: one per overlay file, `xless-rn-work-<overlay name>-<8 hex digits of a hash of its path>` (the script prints it), or `XLESS_RN_WORK_VOLUME`. It holds the work copy, its derived data and the pnpm store. It is a volume, not a host folder: the build needs a case-sensitive file system, and a macOS folder shared into the Docker VM is case-insensitive (the build's lowercase framework links would collide with the frameworks).
+- **The source** is read-only at `/source`. A source inside a git checkout but not at its top mounts the checkout's top and passes `--source /source/<path>`, because xless lists tracked files with git. The run stops (exit 2) when that directory holds a secret file.
+- **The overlay's folder** is read-only at `/config`. Keep the overlay in its own directory: the run stops when the folder holds `testflight.env` or a secret file, symlinks resolved.
+- **The work copy** is in a docker volume at `/cache/work`, in steps 2 and 3: one per overlay file, `xless-rn-work-<overlay name>-<8 hex digits of a hash of its path>` (the run prints it), or `XLESS_RN_WORK_VOLUME`. It holds the work copy, its derived data and the pnpm store. It is a volume, not a host folder: the build needs a case-sensitive file system, and a macOS folder shared into the Docker VM is case-insensitive (the build's lowercase framework links would collide with the frameworks).
 - **The caches** of step 2 are the volumes `xless-corepack` (package managers), `xless-bundle` (the app's gems), `xless-cocoapods-home` (the specs repository) and `xless-cocoapods-cache` (pod downloads).
 
 Docker creates every volume on first use.
@@ -162,15 +162,13 @@ Docker creates every volume on first use.
 | Variable | Meaning |
 |---|---|
 | `XLESS_IMAGE` | Step 2's image. Default `xless-rn:local-<arch>`. |
-| `XLESS_SIGN_IMAGE` | Steps 1 and 3. Default `xless-base:local-<arch>`. It must hold the same xless build as step 2's image: the script compares the two binaries before it starts and stops (exit 2) when they differ. |
+| `XLESS_SIGN_IMAGE` | Steps 1 and 3. Default `xless-base:local-<arch>`. It must hold the same xless build as step 2's image: the run compares the two binaries before it starts and stops (exit 2) when they differ. |
 | `XLESS_RN_WORK_VOLUME` | The work volume. Default: one per overlay file (above). |
 | `XLESS_RN_CLEAN=1` | Passed to step 2: `prepare` reinstalls the JS dependencies and regenerates `ios/` and the pods. |
 | `XLESS_SOURCE` | Replaces the overlay's `source:`. |
 | `XLESS_BUILD_NUMBER` | Replaces the `dated` lookup (step 1 is skipped). With `build: dated` it must be `<version>.<YYYYMMDDNN>`. |
 
-The script reads `type:` and `source:` from plain top-level `key: value` lines (quotes and a trailing comment are fine); set `XLESS_SOURCE` when `source:` is written another way.
-
-**Getting the build out.** The `.ipa` stays in the volume, at `/cache/work/<overlay name>/.xless/build/ios/out/`. Copy it out with `docker run --rm -v <work volume>:/w -v "$PWD":/out alpine cp /w/<overlay name>/.xless/build/ios/out/<Product>.ipa /out/` (with `--context` as the script chose it: `DOCKER_CONTEXT`, else `colima-xless` when it exists). A build stopped at `finalize` is in `/w/<overlay name>/.xless/build/ios/final/` instead; copy it with `cp -r`.
+**Getting the build out.** The `.ipa` stays in the volume, at `/cache/work/<overlay name>/.xless/build/ios/out/`. Copy it out with `docker run --rm -v <work volume>:/w -v "$PWD":/out alpine cp /w/<overlay name>/.xless/build/ios/out/<Product>.ipa /out/` (with `--context` as the run chose it: `DOCKER_CONTEXT`, else `colima-xless` when it exists). A build stopped at `finalize` is in `/w/<overlay name>/.xless/build/ios/final/` instead; copy it with `cp -r`.
 
 **Native.** `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the three steps without docker. Step 2 needs everything the `xless-rn` image adds (Ruby, Bundler, Swift Build, `hermesc`, the shims in `docker/shims/rn`, `/bin/sh` as bash). Native React Native builds are untested.
 
@@ -188,7 +186,7 @@ xless run --docker --config ~/ci/my-app.overlay.yml --destination simulator   # 
 make sim-launch APP=volume:xless-rn-work-my-app-1a2b3c4d:/cache/work/my-app/.xless/build/ios-simulator/app/MyApp.app   # on a Mac, from a source checkout
 ```
 
-`xless run --docker --config <overlay> --destination simulator` (`make simulator CONFIG=…` from a source checkout) runs only step 2 (`xless ship --destination simulator`: prepare and build) with no secret and no App Store Connect query. A `dated` build number comes from the clock (`<version>.<YYYYMMDD>01`). Without the script: `xless build --config <overlay> --platform ios --destination simulator`.
+`xless run --docker --config <overlay> --destination simulator` (`make simulator CONFIG=…` from a source checkout) runs only step 2 (`xless ship --destination simulator`: prepare and build) with no secret and no App Store Connect query. A `dated` build number comes from the clock (`<version>.<YYYYMMDD>01`). Without the run: `xless build --config <overlay> --platform ios --destination simulator`.
 
 What differs from a device build, matched to an Xcode 27.0 simulator build of the same workspace:
 - **Destination.** Swift Build builds for `iphonesimulator`, arm64 only (`SDKROOT = iphonesimulator`, `ARCHS = arm64`), for an Apple-silicon Mac's simulator. Xcode's generic simulator destination also builds x86_64. CocoaPods' `[CP] Embed Pods Frameworks` phase then strips x86_64 from the vendored fat frameworks with `lipo -remove`, which the `lipo` shim maps to `llvm-lipo -extract` of the remaining slices. Expo's ExpoModulesJSI phase builds its simulator slice through the `xcodebuild` shim (`-sdk iphonesimulator -destination "generic/platform=iOS Simulator"`), also arm64 only. The actool shim takes `--platform iphonesimulator` and writes the same files as for the device, as Xcode's actool does for the asset catalog.
@@ -282,7 +280,7 @@ xcode: "26.2"      # the Xcode of the app's release pipeline
 ```
 
 - **Images per Xcode.** Each image chain bakes one SDK. `xless setup --docker --xcode <Xcode .xip | Xcode.app> [--arch …]` (on the Mac, from a source checkout: `make images XCODE=…`, [maintainers.md](maintainers.md#building-the-images-on-the-mac)) builds `xless-base`, `xless`, `xless-tauri` and `xless-rn` from that Xcode and tags them `:local-<arch>-xcode<version>-<build>` (e.g. `xless-rn:local-arm64-xcode26.2-17C52`, never moved by another Xcode build) and `:local-<arch>-xcode<version>` (e.g. `xless-rn:local-arm64-xcode26.2`, what a pin selects). The version is written as major.minor, plus the patch when it is not 0. Two builds of one version (a beta and the release) share the version tag: when it names another build, `xless setup` stops before building, and `XLESS_XCODE_RETAG=1` moves it to this build (the other build keeps its `-xcode<version>-<build>` tags, usable through `XLESS_IMAGE`). The exported SDK stays in `~/.cache/xless/sdk/xcode<version>-<build>/` (`dist/sdk-xcode<version>/` for `make images`) and in the images. When the Xcode is the default one (`XCODE_VERSION`/`XCODE_BUILD` in `versions.env`), the plain `:local-<arch>` tags are set too; they never move to another Xcode.
-- **`xless run --docker`** reads the `xcode:` line and runs every step in that Xcode's images. A missing image stops the script with the command that builds it:
+- **`xless run --docker`** reads the `xcode:` line and runs every step in that Xcode's images. A missing image stops the run with the command that builds it:
 
   ```
   testflight: …/my-app.yml pins xcode: "26.2", but these images are missing: xless-rn:local-arm64-xcode26.2 xless-base:local-arm64-xcode26.2; build them from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64

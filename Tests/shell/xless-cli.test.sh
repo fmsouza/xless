@@ -45,63 +45,81 @@ expect 64 "Error: --to build comes before --from sign" ship "${rn[@]}" --destina
 printf 'type: tauri\nsource: .\n' > "$t/tauri.yml"
 expect 10 "error: [config] --destination simulator builds React Native overlays only" build --config "$t/tauri.yml" --platform ios --destination simulator
 expect 10 "error: [config] --destination simulator builds React Native overlays only" ship --project "$repo/samples/HelloShip" --platform ios --destination simulator
-# xless docker: execs <share>/scripts/testflight.sh with the arguments unchanged, XLESS_USE_DOCKER=1 unless set, XLESS_SHARE set
-"${base[@]}" "$x" docker --help >/dev/null 2>"$t/err" || fail "xless docker --help failed: $(cat "$t/err")"
-mkdir -p "$t/share/scripts"
-cat > "$t/share/scripts/testflight.sh" <<'S'
-#!/usr/bin/env bash
-printf '%s\n' "$@"
-echo "docker=$XLESS_USE_DOCKER share=$XLESS_SHARE"
-exit "${STUB_EXIT:-0}"
+# xless run and xless docker: the run's steps. Printed (--dry-run), or run by a fake docker that logs what it is asked.
+mkdir -p "$t/p" "$t/bin" "$t/home" "$t/share"
+cp "$repo/samples/HelloShip/xless.yml" "$t/p/xless.yml"
+cat > "$t/bin/docker" <<'S'
+#!/bin/sh
+printf '%s\n' "$*" >> "$DLOG"
+case "$*" in *" run "*|"run "*) exit "${STUB_EXIT:-0}" ;; esac
 S
+chmod +x "$t/bin/docker"
+cp "$repo/versions.env" "$t/share/versions.env"
 v="$("${base[@]}" "$x" --version)"
 echo "$v" > "$t/share/VERSION"   # a share is from one release: this xless's
-out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" docker samples/HelloShip --build-number 1 --to finalize -- --verbose 2>"$t/err") || fail "xless docker failed: $(cat "$t/err")"
-[[ "$out" == $'samples/HelloShip\n--build-number\n1\n--to\nfinalize\n--\n--verbose\ndocker=1 share='"$t/share" ]] || fail "xless docker passes: $out"
-out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=0 "$x" docker p 2>/dev/null) || fail "xless docker with XLESS_USE_DOCKER=0 failed"
-[[ "$out" == *"docker=0 "* ]] || fail "XLESS_USE_DOCKER=0 overridden: $out"
-code=0; "${base[@]}" XLESS_SHARE="$t/share" STUB_EXIT=23 "$x" docker p >/dev/null 2>&1 || code=$?
-[[ $code -eq 23 ]] || fail "xless docker exits $code, want testflight.sh's 23"
-# A share from another release is refused before the script runs, naming both releases and the share;
+runs=("${base[@]}" HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" DLOG="$t/dlog" DOCKER_CONTEXT=stub XLESS_SHARE="$t/share")
+ship="ship --platform ios --build-number 1 --to finalize"
+xr="$(cd "$(dirname "$x")" && pwd -P)/$(basename "$x")"
+# xless docker: in the images unless XLESS_USE_DOCKER says otherwise; ship's arguments, with or without the `--` that may
+# introduce them; docker's exit code
+"${base[@]}" "$x" docker --help >/dev/null 2>"$t/err" || fail "xless docker --help failed: $(cat "$t/err")"
+"${runs[@]}" "$x" docker "$t/p" --build-number 1 --to finalize -- --verbose >/dev/null 2>"$t/err" || fail "xless docker failed: $(cat "$t/err")"
+[[ "$(grep -c " run .* xless $ship --verbose$" "$t/dlog")" -eq 1 ]] || fail "xless docker runs: $(cat "$t/dlog")"
+[[ $(grep -c "^note: xless docker is xless run --docker now" "$t/err") -eq 1 ]] || fail "xless docker's notice: $(cat "$t/err")"
+"${runs[@]}" XLESS_RUN_UNLOCKED=1 "$x" docker "$t/p" --to finalize >/dev/null 2>"$t/err" || fail "xless docker, started again: $(cat "$t/err")"
+! grep -q "^note: " "$t/err" || fail "the notice again: $(cat "$t/err")"
+out=$("${runs[@]}" XLESS_USE_DOCKER=0 "$x" docker "$t/p" --dry-run --to finalize 2>/dev/null) || fail "xless docker with XLESS_USE_DOCKER=0 failed"
+[[ "$out" == "$xr ship --platform ios --to finalize " ]] || fail "XLESS_USE_DOCKER=0 overridden: $out"
+code=0; "${runs[@]}" STUB_EXIT=23 "$x" docker "$t/p" --to finalize >/dev/null 2>&1 || code=$?
+[[ $code -eq 23 ]] || fail "xless docker exits $code, want the container's 23"
+# A share from another release is refused before anything runs, naming both releases and the share;
 # XLESS_ALLOW_SHARE_MISMATCH=1 runs it anyway, with a warning.
-echo 9.9.9 > "$t/share/VERSION"
-code=0; "${base[@]}" XLESS_SHARE="$t/share" "$x" docker p >"$t/out" 2>"$t/err" || code=$?
+echo 9.9.9 > "$t/share/VERSION"; : > "$t/dlog"
+code=0; "${runs[@]}" "$x" docker "$t/p" --to finalize >"$t/out" 2>"$t/err" || code=$?
 [[ $code -eq 11 ]] || fail "a share of another release: exit $code, want 11: $(cat "$t/err")"
 grep -qF "this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "mismatch message: $(cat "$t/err")"
 grep -qF "XLESS_ALLOW_SHARE_MISMATCH=1" "$t/err" || fail "the refusal does not name the escape hatch: $(cat "$t/err")"
-[[ ! -s "$t/out" ]] || fail "the script ran with a share of another release: $(cat "$t/out")"
-out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_ALLOW_SHARE_MISMATCH=1 "$x" docker p 2>"$t/err") || fail "XLESS_ALLOW_SHARE_MISMATCH=1 still refused: $(cat "$t/err")"
-[[ "$out" == $'p\ndocker=1 share='"$t/share" ]] || fail "XLESS_ALLOW_SHARE_MISMATCH=1 run passes: $out"
+[[ ! -s "$t/out" && ! -s "$t/dlog" ]] || fail "something ran with a share of another release: $(cat "$t/out" "$t/dlog")"
+"${runs[@]}" XLESS_ALLOW_SHARE_MISMATCH=1 "$x" docker "$t/p" --to finalize >/dev/null 2>"$t/err" || fail "XLESS_ALLOW_SHARE_MISMATCH=1 still refused: $(cat "$t/err")"
+grep -q " run .* xless ship --platform ios --to finalize$" "$t/dlog" || fail "XLESS_ALLOW_SHARE_MISMATCH=1 runs: $(cat "$t/dlog")"
 grep -qF "warning: this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "no warning: $(cat "$t/err")"
 echo "$v" > "$t/share/VERSION"
-# xless run: natively by default (XLESS_USE_DOCKER=0), in the images with --docker (taken out of the arguments, but not
-# after `--`), an XLESS_USE_DOCKER already set wins over the default only, XLESS_SELF is this xless.
+# xless run: natively by default, in the images with --docker (taken out of the arguments, but not after `--`), an
+# XLESS_USE_DOCKER already set wins over the default only; the steps run this xless, whatever XLESS_SELF says.
 "${base[@]}" "$x" run --help >/dev/null 2>"$t/err" || fail "xless run --help failed: $(cat "$t/err")"
-cat > "$t/share/scripts/testflight.sh" <<'S'
-#!/usr/bin/env bash
-printf '%s\n' "$@"
-echo "docker=$XLESS_USE_DOCKER self=${XLESS_SELF:+set}"
-exit "${STUB_EXIT:-0}"
-S
-out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run samples/HelloShip --build-number 1 --to finalize 2>"$t/err") || fail "xless run failed: $(cat "$t/err")"
-[[ "$out" == $'samples/HelloShip\n--build-number\n1\n--to\nfinalize\ndocker=0 self=set' ]] || fail "xless run passes: $out"
-out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run --docker samples/HelloShip -- --docker 2>"$t/err") || fail "xless run --docker failed: $(cat "$t/err")"
-[[ "$out" == $'samples/HelloShip\n--\n--docker\ndocker=1 self=set' ]] || fail "xless run --docker passes: $out"
-out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run p --docker 2>/dev/null) || fail "xless run p --docker failed"
-[[ "$out" == $'p\ndocker=1 self=set' ]] || fail "--docker after the project: $out"
-out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=1 "$x" run p 2>/dev/null) || fail "xless run with XLESS_USE_DOCKER=1 failed"
-[[ "$out" == *"docker=1 "* ]] || fail "XLESS_USE_DOCKER=1 overridden by run's default: $out"
-out=$("${base[@]}" XLESS_SHARE="$t/share" XLESS_USE_DOCKER=0 "$x" run --docker p 2>/dev/null) || fail "xless run --docker with XLESS_USE_DOCKER=0 failed"
-[[ "$out" == *"docker=1 "* ]] || fail "--docker lost to XLESS_USE_DOCKER=0: $out"
-code=0; "${base[@]}" XLESS_SHARE="$t/share" STUB_EXIT=23 "$x" run p >/dev/null 2>&1 || code=$?
-[[ $code -eq 23 ]] || fail "xless run exits $code, want testflight.sh's 23"
-# On Linux, an overlay builds in the images only: refused natively, naming --docker, before the script runs.
+out=$("${runs[@]}" XLESS_SELF=/bin/false "$x" run "$t/p" --dry-run --build-number 1 --to finalize 2>"$t/err") || fail "xless run failed: $(cat "$t/err")"
+[[ "$out" == "$xr $ship " ]] || fail "xless run runs: $out"
+! grep -q "^note: " "$t/err" || fail "xless run has a notice: $(cat "$t/err")"
+out=$("${runs[@]}" "$x" run --docker "$t/p" --dry-run --to finalize -- --docker 2>"$t/err") || fail "xless run --docker failed: $(cat "$t/err")"
+[[ "$out" == "docker --context stub run "*" xless ship --platform ios --to finalize --docker " ]] || fail "xless run --docker runs: $out"
+out=$("${runs[@]}" "$x" run "$t/p" --dry-run --to finalize --docker 2>/dev/null) || fail "xless run p --docker failed"
+[[ "$out" == docker*" xless ship --platform ios --to finalize " ]] || fail "--docker after the project: $out"
+out=$("${runs[@]}" XLESS_USE_DOCKER=1 "$x" run "$t/p" --dry-run --to finalize 2>/dev/null) || fail "xless run with XLESS_USE_DOCKER=1 failed"
+[[ "$out" == docker* ]] || fail "XLESS_USE_DOCKER=1 overridden by run's default: $out"
+out=$("${runs[@]}" XLESS_USE_DOCKER=0 "$x" run --docker "$t/p" --dry-run --to finalize 2>/dev/null) || fail "xless run --docker with XLESS_USE_DOCKER=0 failed"
+[[ "$out" == docker* ]] || fail "--docker lost to XLESS_USE_DOCKER=0: $out"
+code=0; "${runs[@]}" STUB_EXIT=23 "$x" run --docker "$t/p" --to finalize >/dev/null 2>&1 || code=$?
+[[ $code -eq 23 ]] || fail "xless run exits $code, want the container's 23"
+# natively: the exit code of this xless's ship, which refuses an option that the run passes on to it
+code=0; "${runs[@]}" "$x" run "$t/p" --to finalize --no-such-option >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 64 ]] && grep -q "Usage: xless ship " "$t/err" || fail "xless run exits $code, want its ship's 64: $(cat "$t/err")"
+# an xless.yml that is not YAML: the run itself says so, before ship does
+code=0; echo 'nonsense: [' > "$t/p/xless.yml"; "${runs[@]}" "$x" run "$t/p" --to finalize >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 10 ]] || fail "xless run of an unreadable xless.yml exits $code, want 10: $(cat "$t/err")"
+# On Linux, an overlay builds in the images only: refused natively, naming --docker, before anything runs.
 if [[ "$(uname)" == Linux ]]; then
-  code=0; "${base[@]}" XLESS_SHARE="$t/share" "$x" run --config "$t/tauri.yml" >"$t/out" 2>"$t/err" || code=$?
+  : > "$t/dlog"
+  code=0; "${runs[@]}" "$x" run --config "$t/tauri.yml" >"$t/out" 2>"$t/err" || code=$?
   [[ $code -eq 10 ]] || fail "native overlay exits $code, want 10: $(cat "$t/err")"
   grep -q -- '--docker' "$t/err" || fail "the overlay refusal does not name --docker: $(cat "$t/err")"
-  [[ ! -s "$t/out" ]] || fail "the script ran for a refused overlay: $(cat "$t/out")"
-  out=$("${base[@]}" XLESS_SHARE="$t/share" "$x" run --docker --config "$t/tauri.yml" 2>/dev/null) || fail "xless run --docker --config failed"
-  [[ "$out" == *"docker=1 "* ]] || fail "run --docker --config: $out"
+  [[ ! -s "$t/out" && ! -s "$t/dlog" ]] || fail "something ran for a refused overlay: $(cat "$t/out" "$t/dlog")"
 fi
+mkdir "$t/ov"; cp "$t/tauri.yml" "$t/ov/tauri.yml"
+out=$("${runs[@]}" "$x" run --docker --config "$t/ov/tauri.yml" --dry-run --build-number 1 --to finalize 2>"$t/err") || fail "xless run --docker --config failed: $(cat "$t/err")"
+[[ "$out" == docker* ]] || fail "run --docker --config: $out"
+# sign bootstrap: what it is called now, on standard error, and the same outcome as before
+code=0; "${runs[@]}" "$x" sign bootstrap --type distribution >"$t/out" 2>"$t/err" </dev/null || code=$?
+[[ $code -eq 15 && $(grep -c "^note: xless sign bootstrap is xless certs create now" "$t/err") -eq 1 && ! -s "$t/out" ]] || fail "sign bootstrap's notice ($code): $(cat "$t/err")"
+"${runs[@]}" "$x" sign bootstrap --type distribution --out "$t/key.pem" --csr-only >/dev/null 2>"$t/err" || fail "sign bootstrap --csr-only: $(cat "$t/err")"
+[[ ! -s "$t/err" && -s "$t/key.pem.csr" ]] || fail "sign bootstrap --csr-only: $(cat "$t/err")"
 echo PASS

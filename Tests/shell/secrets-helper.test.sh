@@ -16,7 +16,7 @@ if [[ -z "$x" ]]; then
 fi
 
 mkdir -p "$t/bin" "$t/tools" "$t/home/.config/xless" "$t/run"
-chmod 700 "$t/run"
+chmod 700 "$t/run"; chmod 755 "$t/bin" "$t/tools"   # whatever the umask: a helper others could change is refused
 install -m 755 "$repo/scripts/credential-helpers/xless-credential-pass" "$t/bin/xless-credential-pass"
 cat > "$t/tools/pass" <<'P'
 #!/bin/sh
@@ -71,6 +71,37 @@ run materialize --check sign=XLESS_INSTALLER_KEY; refused "materialize --check o
 run unlock --remember 5m; ok unlock; says unlock "nothing to do"
 run lock; ok lock; says lock "nothing to do"
 run passwd; refused passwd "is for the encrypted vault"
+
+# a testflight.env: data, whose secrets go into the store (one that is there already stays), and which is not changed
+openssl ecparam -name prime256v1 -genkey -noout -out "$t/ec.pem" 2>/dev/null
+openssl pkcs8 -topk8 -nocrypt -in "$t/ec.pem" -out "$t/asc.p8" 2>/dev/null
+openssl genrsa -out "$t/devid.pem" 2048 2>/dev/null
+printf '# keys\nASC_KEY_ID=KEY1234567\nASC_ISSUER_ID=69a6de7e-1234-47e3-e053-5b8c7c11a4d1\nASC_KEY_P8_FILE=%s/asc.p8  # the key\nexport XLESS_DEVID_KEY_FILE="$HOME/../devid.pem"\nXLESS_DEMO_PASSWORD_FILE=%s/password\nXLESS_IMAGE=img\n' "$t" "$t" > "$t/testflight.env"
+cp "$t/testflight.env" "$t/testflight.env.before"
+run import-env "$t/testflight.env"; ok import-env
+says import-env "imported ASC_KEY_P8 (asc-api-key)"; says import-env "imported XLESS_DEVID_KEY (signing-key)"
+says import-env "the store has XLESS_DEMO_PASSWORD already"; says import-env "not moved: XLESS_IMAGE "
+says import-env "is as it was: remove the lines of ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_FILE, XLESS_DEVID_KEY_FILE$"
+# (the store's own may be another one, which the runs then use)
+says import-env "the store's XLESS_DEMO_PASSWORD may be another one .* before you remove the lines of XLESS_DEMO_PASSWORD_FILE, "
+says import-env "asc.p8 still holds the secret" err
+cmp -s "$t/asc.p8" "$t/pw/xless/ASC_KEY_P8/secret.gpg" && cmp -s "$t/devid.pem" "$t/pw/xless/XLESS_DEVID_KEY/secret.gpg" || fail "import-env kept something else"
+cmp -s "$t/testflight.env" "$t/testflight.env.before" || fail "import-env changed the file"
+run materialize --check sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DEVID_KEY; ok "the store gives what the file did"
+run import-env "$t/testflight.env" --team-id ABCDE12345; ok "import-env of a team"; says "import-env of a team" "imported XLESS_DEVID_KEY@ABCDE12345"
+printf 'XLESS_DIST_KEY_FILE=%s/x\nA=$(touch %s/ran)\n' "$t" "$t" > "$t/testflight.env"
+run import-env "$t/testflight.env"; refused "import-env of commands" "line 2 would run a command"
+[[ ! -e "$t/ran" ]] || fail "import-env ran the file"
+# an error names the variable, and no part of its value
+printf 'XLESS_DEMO_PASSWORD="hunter$SecretTail9"\n' > "$t/testflight.env"
+run import-env "$t/testflight.env"; refused "import-env of a password" "line 1 has .* in the value of XLESS_DEMO_PASSWORD"
+grep -q "SecretTail\|hunter" "$t/out" "$t/err" && fail "import-env printed a part of a value: $(cat "$t/out" "$t/err")"
+printf 'XLESS_INSTALLER_KEY_FILE=SecretTail9\n' > "$t/testflight.env"
+run import-env "$t/testflight.env"; refused "import-env of a secret for a path" "the file that XLESS_INSTALLER_KEY_FILE names cannot be read"
+grep -q "SecretTail" "$t/out" "$t/err" && fail "import-env printed a value: $(cat "$t/out" "$t/err")"
+printf 'XLESS_INSTALLER_KEY_FILE=%s/password\n' "$t" > "$t/testflight.env"
+run import-env "$t/testflight.env"; refused "import-env of something else" "XLESS_INSTALLER_KEY_FILE: the file is not an RSA private key"
+for n in ASC_KEY_P8 XLESS_DEVID_KEY ASC_KEY_P8@ABCDE12345 XLESS_DEVID_KEY@ABCDE12345 XLESS_DEMO_PASSWORD@ABCDE12345; do run rm "$n" --yes; ok "rm $n"; done
 
 run rm XLESS_DEMO_PASSWORD --yes; ok rm
 [[ ! -e "$t/pw/xless/XLESS_DEMO_PASSWORD" ]] || fail "rm left the entry in pass"

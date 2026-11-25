@@ -5,7 +5,7 @@ import XlessReactNative
 import XlessTauri
 
 /// The secrets a run's upload reads under names its configuration gives (`xless secrets named-by`, for
-/// scripts/testflight.sh): the TestFlight demo account's password, when the configuration's
+/// `xless run`): the TestFlight demo account's password, when the configuration's
 /// `testflight.external.review.demoAccount` may need it sent (`TestFlightConfig.demoPasswordSecret`). The script gives
 /// it, from its `_FILE` variable or the secret store, to the container that uploads, and to no other.
 /// The configuration is only parsed: its source is not read, no tool runs and the secret store is not opened.

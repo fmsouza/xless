@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# scripts/testflight.sh with the secret store (fmsouza/xless#102): a secret whose *_FILE variable is not set comes from
+# xless run with the secret store (fmsouza/xless#102): a secret whose *_FILE variable is not set comes from
 # the store. In docker, the host's xless writes them once (`xless secrets materialize`) into a fresh run directory, one
 # set per container, each mounted read-only into its container only and removed when it ends; the rest goes when the
-# run ends, fails, or is stopped by INT, TERM or HUP. Natively, xless reads the store itself (checked up front), and the
+# run ends, fails, or is stopped by a signal. Natively, xless reads the store itself (checked up front), and the
 # build step cannot open it. A fake xless stands in for the store, a fake docker logs what each container gets.
 set -euo pipefail
-S="$(cd "$(dirname "$0")/../.." && pwd)/scripts/testflight.sh"
 t=$(mktemp -d)
+. "$(dirname "$0")/run-entry.sh"
 bg=()
 finally() { local p; for p in ${bg[@]+"${bg[@]}"}; do kill "$p" 2>/dev/null || true; done; rm -rf "$t"; }
 trap finally EXIT
 fail() { echo "FAIL: $*"; exit 1; }
+# a zombie counts as stopped: under a PID 1 that reaps nothing (CI's job container runs tail -f /dev/null), a process whose
+# parent ended stays one
+alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
 waitfor() { local _; for _ in $(seq 100); do grep -q "$1" "$2" 2>/dev/null && return 0; sleep 0.1; done; return 1; }   # RE FILE
 mkdir -p "$t/proj" "$t/bin" "$t/home" "$t/run" "$t/ov/app" "$t/keys"
 chmod 700 "$t/run"
@@ -52,9 +55,11 @@ for a in "$@"; do
 done
 X
 # The fake docker: each `run` logs its command and, for each /secrets/store mount, which files it can see, and what the
-# run directory holds at that moment. DSLEEP: a run whose command has that word sleeps (to be stopped).
+# run directory holds at that moment. DSLEEP: a run whose command has that word sleeps (to be stopped). DHANG: asked
+# for the run's containers, it never answers.
 cat > "$t/bin/docker" <<'D'
 #!/usr/bin/env bash
+[[ -z "${DHANG:-}" || "$*" != "ps "*label=xless.run=* ]] || { echo $$ > "$DHANG"; exec sleep 60; }
 case "$1" in context|image|ps|rm) exit 0 ;; esac
 [[ "$1" == run ]] || exit 0
 { echo "run $*"
@@ -137,12 +142,13 @@ reset; code=0
 env -i HOME="$t/home" PATH="/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q "is not on PATH" "$t/err" || fail "no host xless: exit $code $(cat "$t/err")"
 
-# stopped (INT, TERM, HUP): while a container runs, and while xless writes them (or waits for the passphrase), the run
-# directory goes at once. INT: the script is started with INT at its default (a background job of this test starts with
-# INT ignored, which bash cannot trap).
-dfl() { exec python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
-for sig in INT TERM HUP; do
-  case $sig in INT) want=130 ;; TERM) want=143 ;; HUP) want=129 ;; esac
+# stopped by a signal, whichever ends a process (Ctrl-C, Ctrl-\\, a runner's cancel, a timer, a fault of xless's own): while a
+# container runs, and while xless writes them (or waits for the passphrase), the run directory, the step and the lock of the
+# work copy go at once. INT, QUIT: the run is started with them at their default (a background job of this test starts with
+# them ignored, and so would the run); XFSZ: python ignores it.
+dfl() { exec python3 -c 'import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGQUIT, signal.SIGXFSZ)]; os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
+for sig in INT TERM HUP QUIT USR1 USR2 ALRM VTALRM PROF XCPU XFSZ SYS ABRT TRAP SEGV BUS FPE ILL; do
+  want=$((128 + $(kill -l $sig)))
   for where in container materialise; do
     reset
     if [[ $where == container ]]; then extra=(DSLEEP="--from sign"); pidf="$t/dpid"; else extra=(MAT_SLEEP=1); pidf="$t/mpid"; fi
@@ -152,9 +158,25 @@ for sig in INT TERM HUP; do
     start=$SECONDS; kill -"$sig" "$pid"; code=0; wait "$pid" || code=$?
     [[ $code -eq $want && $((SECONDS - start)) -lt 10 ]] || fail "$sig/$where: exit $code after $((SECONDS - start)) s, want $want at once"
     [[ ! -e "$RUN" ]] || fail "$sig/$where: the run directory outlived the stopped run: $(ls -R "$RUN")"
-    kill "$(cat "$pidf")" 2>/dev/null || true
+    kill "$(cat "$pidf")" 2>/dev/null && fail "$sig/$where: the step outlived the stopped run"
+    [[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "$sig/$where: the lock outlived the stopped run"
   done
 done
+
+# a docker that does not answer the clean-up any more: the secrets are gone at once, and asking once more ends the run
+reset; rm -f "$t/hung"
+dfl "${docker[@]}" DSLEEP="--from sign" DHANG="$t/hung" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" & pid=$!; bg+=("$pid")
+for _ in $(seq 100); do [[ -s "$t/dpid" ]] && break; sleep 0.1; done
+[[ -s "$t/dpid" && -d "$RUN" ]] || fail "hanging docker: never reached the point to stop: $(cat "$t/dlog" "$t/xlog")"
+kill -INT "$pid"
+for _ in $(seq 100); do [[ -s "$t/hung" ]] && break; sleep 0.1; done
+[[ -s "$t/hung" && ! -e "$RUN" ]] || fail "hanging docker: the secrets wait for it: $(ls -R "$RUN" 2>&1)"
+start=$SECONDS; kill -INT "$pid"; code=0; wait "$pid" || code=$?
+[[ $code -eq 130 && $((SECONDS - start)) -lt 6 ]] || fail "hanging docker: exit $code after $((SECONDS - start)) s, want 130 at once"
+grep -qF "docker does not answer; remove what may be left of this run's containers with: docker rm -f \$(docker ps -aq --filter label=xless.run=$pid." "$t/err" || fail "hanging docker: no word on what may be left: $(cat "$t/err")"
+for _ in $(seq 50); do alive "$(cat "$t/hung")" || break; sleep 0.1; done
+! alive "$(cat "$t/hung")" || fail "hanging docker: it outlived the run"
+[[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "hanging docker: the lock outlived the stopped run"
 
 # a SIGKILL leaves no chance to clean up: the next run on the work copy, which takes its lock over, removes them
 reset; K="$t/run/xless/ffffffffffffffffffffffffffffffff"
@@ -179,9 +201,9 @@ grep -q -- "-e XLESS_DIST_KEY " "$t/dlog" && fail "a secret value reached a cont
 
 # natively nothing is written: xless reads the store itself; the script checks it holds them first (no passphrase),
 # and the build step (2) cannot open it
-# a program the script itself runs (dirname, mktemp): it logs whether it is told of the session
+# a program the run itself starts (ps): it logs whether it is told of the session
 mkdir -p "$t/own"
-for c in dirname mktemp; do printf '#!/bin/sh\necho "%s${XLESS_SESSION+ HELD}" >> "%s/own.log"\nexec /usr/bin/%s "$@"\n' "$c" "$t" "$c" > "$t/own/$c"; chmod +x "$t/own/$c"; done
+printf '#!/bin/sh\necho "ps${XLESS_SESSION+ HELD}" >> "%s/own.log"\nexec %s "$@"\n' "$t" "$(command -v ps)" > "$t/own/ps"; chmod +x "$t/own/ps"
 native=(env -i HOME="$t/home" PATH="$t/bin:$t/own:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 XDG_RUNTIME_DIR="$t/run" XLOG="$t/xlog")
 reset
 "${native[@]}" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native overlay from the store: $(cat "$t/err")"
@@ -192,14 +214,14 @@ grep -q -- "--from sign --to upload | NOSTORE=unset HELD$" "$t/xlog" || fail "na
 [[ ! -e "$t/run/xless" ]] || fail "a native run wrote secrets"
 # and it asks for the passphrase once, before the first step, for all of them (`xless session`): the steps run inside it,
 # the build without it
-[[ "$(sed -n 2p "$t/xlog")" == "session --if-possible --purpose xless run --reason reading ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID, XLESS_DIST_KEY -- bash $S --config $t/ov/app.yml | NOSTORE=unset" ]] \
+[[ "$(sed -n 2p "$t/xlog")" == "session --if-possible --purpose xless run --reason reading ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID, XLESS_DIST_KEY -- $XLESS_RUN run --config $t/ov/app.yml | NOSTORE=unset" ]] \
   || fail "native session: $(cat "$t/xlog")"
 [[ $(grep -c "^session" "$t/xlog") -eq 1 ]] || fail "one session: $(cat "$t/xlog")"
-grep -q "^mktemp" "$t/own.log" && ! grep -q HELD "$t/own.log" || fail "the script's own programs are told of the session: $(cat "$t/own.log")"
+grep -q "^ps$" "$t/own.log" && ! grep -q HELD "$t/own.log" || fail "the programs of the run's own are told of the session: $(cat "$t/own.log")"
 grep -q "next-build.* HELD$" "$t/xlog" || fail "step 1 is not in the session: $(cat "$t/xlog")"
 reset
 "${native[@]}" "$S" "$t/proj" --verbose >/dev/null 2>"$t/err" || fail "native project from the store: $(cat "$t/err")"
-[[ "$(sed -n 2p "$t/xlog")" == "session "*" -- bash $S $t/proj --verbose | "* && "$(grep -c "^session" "$t/xlog")" -eq 1 ]] && grep -q "^ship .* HELD$" "$t/xlog" \
+[[ "$(sed -n 2p "$t/xlog")" == "session "*" -- $XLESS_RUN run $t/proj --verbose | "* && "$(grep -c "^session" "$t/xlog")" -eq 1 ]] && grep -q "^ship .* HELD$" "$t/xlog" \
   || fail "a project directory's run asks up front too: $(cat "$t/xlog")"
 reset
 "${native[@]}" NO_HOLD=1 "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native, with nothing held: $(cat "$t/err")"

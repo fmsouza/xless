@@ -38,6 +38,7 @@ struct SignBootstrapCommand: AsyncParsableCommand {
     }
 
     func run() async throws {
+        if !csrOnly { OldName.say("xless sign bootstrap", now: "xless certs create") } // which takes a CSR, and makes none
         SecretScope.enter() // generates a private key and reads the App Store Connect key
         guard let out else { return try await runIntoStore() }
         try await withStage(.sign) {

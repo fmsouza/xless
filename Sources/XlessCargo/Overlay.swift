@@ -243,7 +243,7 @@ extension CargoOverlay {
             case (let path?, nil):
                 if input.rev != nil { throw invalid("input '\(input.name)' has rev without git", "rev pins a git input; remove it or use git:") }
                 if path.isEmpty { throw invalid("input '\(input.name)' has an empty path", "name the directory") }
-                // `xless cargo inputs` prints `name<TAB>path` lines for scripts/testflight.sh to read.
+                // `xless cargo inputs` prints `name<TAB>path` lines for `xless run` to read.
                 // Unicode scalars, not Characters: "\r\n" is one Character, equal to neither "\n" nor "\r".
                 if path.unicodeScalars.contains(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" }) {
                     throw invalid("input '\(input.name)' has a tab or line break in its path", "rename the directory, or point path: at a link without one")

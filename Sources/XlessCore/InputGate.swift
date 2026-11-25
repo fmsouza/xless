@@ -6,7 +6,7 @@ import Foundation
 /// The one gate. Whatever asks calls `require` first: the terminal (`TerminalPrompter`, the only opener of /dev/tty that
 /// asks anything), the store's unlock (`VaultUnlocker`), a confirmation (`AccountConfirm`). A credential helper, which asks by
 /// itself, is started with nothing to ask on (`CredentialHelper`). The variable is inherited, so a run's other
-/// processes (scripts/testflight.sh and its xless commands) do not ask either.
+/// processes (a run's xless commands) do not ask either.
 public enum InputGate {
     public static let variable = "XLESS_NO_INPUT"
     public static let option = "--no-input"

@@ -28,6 +28,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <bsm/libbsm.h>
+#include <crt_externs.h>
 #include <dlfcn.h>
 #include <libproc.h>
 #include <mach/mach_time.h>
@@ -299,18 +300,53 @@ static void close_from_3(int keep) {
 
 // The tools that run are told the signals that end this process: in sessions of their own, they get none from a terminal.
 
-static const int forwarded[] = { SIGINT, SIGTERM, SIGHUP };
-#define FORWARDED (sizeof forwarded / sizeof *forwarded)
-static atomic_int is_forwarded[FORWARDED];
+enum { STAYS, ENDS, FAULT };
+
+/// What `sig` does to a process by default: nothing that ends it, ends it, or ends it as a fault of its own does.
+static int what_is(int sig) {
+    switch (sig) {
+    case SIGKILL: case SIGSTOP: // which nobody can catch
+    case SIGTSTP: case SIGTTIN: case SIGTTOU: case SIGCONT: case SIGCHLD: case SIGURG: case SIGWINCH:
+#ifdef __APPLE__
+    case SIGIO: case SIGINFO:
+#endif
+        return STAYS;
+    case SIGSEGV: case SIGBUS: case SIGILL: case SIGFPE: case SIGABRT: case SIGTRAP: case SIGSYS:
+#ifdef SIGEMT
+    case SIGEMT:
+#endif
+        return FAULT;
+    default: return ENDS; // on Linux the real-time ones too
+    }
+}
+
+static atomic_int is_forwarded[NSIG];
 static atomic_int tools[256]; // their pids, which are their process groups; 0: none
 static atomic_int owner;      // the process they are tools of (a forked child has their numbers too)
 static atomic_int starting;   // how many are being started
 static atomic_int deferred;   // the signal that came meanwhile
 
+/// SIGINT, SIGTERM and SIGHUP as they are; any other says the same as SIGTERM to them.
 static void tell_tools(int sig) {
+    if (sig != SIGINT && sig != SIGHUP) sig = SIGTERM;
     for (size_t i = 0; i < sizeof tools / sizeof *tools; i++) {
         int tool = atomic_load(&tools[i]);
         if (tool > 0) kill(-tool, sig);
+    }
+}
+
+// What must not outlive this process: files, and directories of them, the last one first. An entry is never freed: a handler
+// may read it.
+struct private_path { struct private_path *next; atomic_int kept; int is_directory; char path[]; };
+static _Atomic(struct private_path *) private_paths;
+
+// Async-signal-safe. The files, then the directories they leave empty, the last ones made first.
+static void remove_private(void) {
+    for (int directories = 0; directories < 2; directories++) {
+        for (struct private_path *it = atomic_load(&private_paths); it != NULL; it = it->next) {
+            if (atomic_load(&it->kept) || it->is_directory != directories) continue;
+            if (directories) rmdir(it->path); else unlink(it->path);
+        }
     }
 }
 
@@ -336,6 +372,7 @@ static void forward(int sig) {
             errno = e;
             return;
         }
+        remove_private();
     }
     take_default(sig);
 }
@@ -346,8 +383,80 @@ static void forward_on(int sig) {
     action.sa_handler = forward;
     action.sa_flags = SA_RESTART;
     sigemptyset(&action.sa_mask);
-    for (size_t i = 0; i < FORWARDED; i++) sigaddset(&action.sa_mask, forwarded[i]);
+    for (int i = 1; i < NSIG; i++) if (what_is(i) == ENDS) sigaddset(&action.sa_mask, i);
     sigaction(sig, &action, NULL);
+}
+
+static struct sigaction before_fault[NSIG];
+static atomic_int has_cleaner;
+static void let_stop_clean_up(int sig);
+static void note_stop(int sig);
+static void pass_on(int sig, siginfo_t *info, void *context);
+
+static int from_another(const siginfo_t *info) {
+#ifdef __linux__
+    return info->si_code <= 0 && info->si_pid != getpid(); // si_pid is there for these alone
+#else
+    return info->si_pid > 0 && info->si_pid != getpid();
+#endif
+}
+
+// Async-signal-safe. Something in this process is broken (or somebody says so): the tools are told, what is private goes, and
+// then comes what would have come first (Swift's backtrace) and the end: that handler comes back when nothing is broken after
+// all, and leaves every one of these signals to the default. Nothing that needs a lock: it may be held. Sent by another process
+// nothing is broken: in a run that is a stop as any other is.
+static void fault(int sig, siginfo_t *info, void *context) {
+    if (getpid() == atomic_load(&owner)) {
+        if (atomic_load(&has_cleaner) && from_another(info)) {
+            note_stop(sig);
+            return;
+        }
+        tell_tools(SIGTERM);
+        remove_private();
+        let_stop_clean_up(sig);
+    }
+    const struct sigaction *before = &before_fault[sig];
+    if (before->sa_flags & SA_SIGINFO) before->sa_sigaction(sig, info, context);
+    else if (before->sa_handler != SIG_DFL) before->sa_handler(sig);
+    take_default(sig);
+}
+
+static void fault_on(int sig, const struct sigaction *now) {
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_sigaction = fault;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    before_fault[sig] = *now;
+    sigaction(sig, &action, NULL);
+}
+
+/// Where nothing is said of the signal, or something is done at it (Swift's backtrace): that comes after.
+static void faults_on(void) {
+    static atomic_flag begun = ATOMIC_FLAG_INIT;
+    static char stack[65536]; // for the one that says the stack is full (of the thread that comes here first)
+    stack_t now_on;
+    if (!atomic_flag_test_and_set(&begun) && sigaltstack(NULL, &now_on) == 0 && (now_on.ss_flags & SS_DISABLE)) {
+        stack_t own = { .ss_sp = stack, .ss_size = sizeof stack };
+        sigaltstack(&own, NULL);
+    }
+    for (int sig = 1; sig < NSIG; sig++) {
+        struct sigaction now;
+        if (what_is(sig) != FAULT || sigaction(sig, NULL, &now) != 0 || now.sa_handler == SIG_IGN || now.sa_sigaction == fault) continue;
+        fault_on(sig, &now);
+    }
+}
+
+static void handlers_on(void) {
+    for (int sig = 1; sig < NSIG; sig++) {
+        struct sigaction now;
+        if (what_is(sig) != ENDS || sigaction(sig, NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
+        atomic_store(&is_forwarded[sig], 1);
+        if (now.sa_handler == SIG_DFL) forward_on(sig);
+        // Swift's backtrace is at this one too, and would go on after it, with the end as it is by default from then on.
+        else if (sig == SIGQUIT && now.sa_handler != forward && now.sa_handler != note_stop && now.sa_sigaction != pass_on && now.sa_sigaction != fault) fault_on(sig, &now);
+    }
+    faults_on();
 }
 
 // Counted first, then the handlers: a signal from here on waits until the tool is known (also when its start hangs), and
@@ -355,12 +464,24 @@ static void forward_on(int sig) {
 static void tool_starts(void) {
     atomic_store(&owner, getpid());
     atomic_fetch_add(&starting, 1);
-    for (size_t i = 0; i < FORWARDED; i++) {
-        struct sigaction now;
-        if (sigaction(forwarded[i], NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
-        atomic_store(&is_forwarded[i], 1);
-        if (now.sa_handler == SIG_DFL) forward_on(forwarded[i]);
-    }
+    handlers_on();
+}
+
+void *xless_remove_when_ended(const char *path, int is_directory) {
+    struct private_path *it = malloc(sizeof *it + strlen(path) + 1);
+    if (it == NULL) return NULL;
+    it->is_directory = is_directory;
+    atomic_init(&it->kept, 0);
+    strcpy(it->path, path);
+    it->next = atomic_load(&private_paths);
+    while (!atomic_compare_exchange_weak(&private_paths, &it->next, it)) {}
+    atomic_store(&owner, getpid());
+    handlers_on();
+    return it;
+}
+
+void xless_keep_when_ended(void *entry) {
+    if (entry != NULL) atomic_store(&((struct private_path *)entry)->kept, 1);
 }
 
 static void tool_started(int tool) { // 0: it was not
@@ -371,6 +492,7 @@ static void tool_started(int tool) { // 0: it was not
     int sig;
     if (atomic_fetch_sub(&starting, 1) == 1 && (sig = atomic_load(&deferred)) != 0) {
         tell_tools(sig);
+        remove_private();
         take_default(sig);
     }
 }
@@ -382,6 +504,15 @@ static void tool_ended(int tool) {
     }
 }
 
+char *const *xless_environment(void) {
+#ifdef __APPLE__
+    return *_NSGetEnviron();
+#else
+    extern char **environ;
+    return environ;
+#endif
+}
+
 int xless_tool_runs(int pid) {
     for (size_t i = 0; pid > 0 && i < sizeof tools / sizeof *tools; i++) {
         if (atomic_load(&tools[i]) == pid) return 1;
@@ -390,13 +521,8 @@ int xless_tool_runs(int pid) {
 }
 
 void xless_signal_default(int sig) {
-    for (size_t i = 0; i < FORWARDED; i++) {
-        if (forwarded[i] == sig && atomic_load(&is_forwarded[i])) {
-            forward_on(sig);
-            return;
-        }
-    }
-    signal(sig, SIG_DFL);
+    if (sig > 0 && sig < NSIG && atomic_load(&is_forwarded[sig])) forward_on(sig);
+    else signal(sig, SIG_DFL);
 }
 
 static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
@@ -588,6 +714,124 @@ int xless_run_foreground(const char *path, char *const argv[], char *const envp[
 
 void xless_end_by_signal(int sig) { take_default(sig); }
 
+// --- The steps of `xless run` ---
+
+static int stop_pipe[2] = { -1, -1 };
+static atomic_int stop_noted;
+static atomic_int stops;
+static atomic_int faulted, cleaned_up;
+static pthread_t cleaner;
+
+// Async-signal-safe.
+static void note_stop(int sig) {
+    int e = errno, none = 0;
+    unsigned char byte = (unsigned char)sig;
+    atomic_compare_exchange_strong(&stop_noted, &none, sig);
+    atomic_fetch_add(&stops, 1);
+    ssize_t n = write(stop_pipe[1], &byte, 1);
+    (void)n; // full: it has said so already
+    errno = e;
+}
+
+int xless_stop_signal(void) { return atomic_load(&stop_noted); }
+int xless_stops(void) { return atomic_load(&stops); }
+
+// Async-signal-safe. A thread of its own cleans up (xless_cleans_up), while this one, which is at fault, waits: not for ever,
+// as it may hold what that one needs.
+static void let_stop_clean_up(int sig) {
+    if (!atomic_load(&has_cleaner) || pthread_equal(pthread_self(), cleaner)) return;
+    atomic_store(&faulted, 1);
+    note_stop(sig);
+    struct timespec tenth = { 0, 100000000 };
+    for (int i = 0; i < 600 && !atomic_load(&cleaned_up); i++) nanosleep(&tenth, NULL);
+}
+
+void xless_cleans_up(void) {
+    cleaner = pthread_self();
+    atomic_store(&has_cleaner, 1);
+}
+
+void xless_end_run(int code) {
+    atomic_store(&cleaned_up, 1);
+    while (atomic_load(&faulted)) pause(); // it ends as the fault does
+    _exit(code);
+}
+
+int xless_take_stop_signals(void) {
+    int e;
+    if (stop_pipe[0] < 0) {
+        if ((e = cloexec_pipe(stop_pipe)) != 0) return -e;
+        fcntl(stop_pipe[1], F_SETFL, fcntl(stop_pipe[1], F_GETFL) | O_NONBLOCK);
+    }
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = note_stop;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    atomic_store(&owner, getpid());
+    for (int sig = 1; sig < NSIG; sig++) {
+        struct sigaction now;
+        if (what_is(sig) == ENDS && sigaction(sig, NULL, &now) == 0 && now.sa_handler != SIG_IGN) sigaction(sig, &action, NULL);
+    }
+    faults_on();
+    return stop_pipe[0];
+}
+
+int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+    int status[2], e;
+    if ((e = cloexec_pipe(status)) != 0) return e;
+    // Blocked until the child has its own dispositions: a signal must not run this process's handlers in it.
+    sigset_t all, before;
+    sigfillset(&all);
+    pthread_sigmask(SIG_SETMASK, &all, &before);
+    pid_t child = fork();
+    if (child < 0) {
+        e = errno;
+        pthread_sigmask(SIG_SETMASK, &before, NULL);
+        close(status[0]); close(status[1]);
+        return e;
+    }
+    if (child == 0) {
+        // Only async-signal-safe calls from here to execve.
+        int report = status[1];
+        for (int sig = 1; sig < NSIG; sig++) {
+            if (sig == SIGKILL || sig == SIGSTOP) continue;
+            struct sigaction now;
+            if (sig == SIGHUP && sigaction(sig, NULL, &now) == 0 && now.sa_handler == SIG_IGN) continue; // nohup: for the steps too
+            signal(sig, sig == SIGINT || sig == SIGQUIT ? SIG_IGN : SIG_DFL);
+        }
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        if (report < 3 && (report = fcntl(report, F_DUPFD_CLOEXEC, 3)) < 0) _exit(127); // xless started with stdio closed
+        int out = out_fd < 0 ? -1 : fcntl(out_fd, F_DUPFD_CLOEXEC, 3);
+        int err = err_fd < 0 ? -1 : fcntl(err_fd, F_DUPFD_CLOEXEC, 3);
+        if ((out_fd >= 0 && (out < 0 || dup2(out, 1) < 0)) || (err_fd >= 0 && (err < 0 || dup2(err, 2) < 0))) { e = errno; goto failed; }
+        int null = open("/dev/null", O_RDONLY);
+        if (null < 0 || (null != 0 && dup2(null, 0) < 0)) { e = errno; goto failed; }
+        if (cwd != NULL && chdir(cwd) != 0) { e = errno; goto failed; }
+        close_from_3(report);
+        execve(path, argv, envp);
+        e = errno;
+    failed:
+        while (write(report, &e, sizeof e) < 0 && errno == EINTR) {}
+        _exit(127);
+    }
+    pthread_sigmask(SIG_SETMASK, &before, NULL);
+    close(status[1]);
+    int child_errno = 0;
+    ssize_t n;
+    do { n = read(status[0], &child_errno, sizeof child_errno); } while (n < 0 && errno == EINTR);
+    close(status[0]);
+    if (n > 0) {
+        int ignored;
+        xless_wait(child, &ignored);
+        return child_errno ? child_errno : EIO;
+    }
+    *pid = child;
+    return 0;
+}
+
 // --- The xless agent ---
 
 #if defined(__APPLE__)
@@ -727,6 +971,13 @@ uint64_t xless_process_start(int pid) {
     }
     return field == 22 ? (uint64_t)start + 1 : 0;
 }
+
+long xless_process_program(int pid, char *buffer, size_t length) {
+    char path[64];
+    if (pid <= 0) return -1;
+    snprintf(path, sizeof path, "/proc/%d/exe", pid);
+    return readlink(path, buffer, length);
+}
 #elif defined(__APPLE__)
 int xless_peer_of(int fd, struct xless_peer *out) {
     memset(out, 0, sizeof *out);
@@ -823,6 +1074,12 @@ uint64_t xless_process_start(int pid) {
     if (pid <= 0 || sysctl(name, 4, &info, &length, NULL, 0) != 0 || length < sizeof info) return 0;
     if (info.kp_proc.p_stat == SZOMB) return 0;
     return (uint64_t)info.kp_proc.p_starttime.tv_sec * 1000000u + (uint64_t)info.kp_proc.p_starttime.tv_usec + 1;
+}
+
+long xless_process_program(int pid, char *buffer, size_t length) {
+    if (pid <= 0 || length > PROC_PIDPATHINFO_MAXSIZE) return -1;
+    int n = proc_pidpath(pid, buffer, (uint32_t)length);
+    return n > 0 ? n : -1;
 }
 #endif
 

@@ -34,7 +34,7 @@ struct SecretsCommand: AsyncParsableCommand {
         helper (xless-credential-<name> on PATH: your desktop keyring through secret-tool, pass, …) holds the secrets \
         instead, and these commands work on it the same way (docs/secrets.md).
         """,
-        subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self,
+        subcommands: [SecretsInitCommand.self, SecretsStatusCommand.self, SecretsListCommand.self, SecretsImportCommand.self, SecretsImportEnvCommand.self,
                       SecretsExportCommand.self, SecretsRmCommand.self, SecretsUnlockCommand.self, SecretsLockCommand.self,
                       SecretsPasswdCommand.self, SecretsMaterializeCommand.self, SecretsNamedByCommand.self, SecretsRedactCommand.self])
 }
@@ -458,7 +458,7 @@ struct SecretsPasswdCommand: ParsableCommand {
     }
 }
 
-/// `xless secrets materialize`: plumbing for scripts/testflight.sh (`xless run`), not shown in the help. Writes the
+/// `xless secrets materialize`: plumbing for `xless run`, not shown in the help. Writes the
 /// store's secrets a run's containers need, once (one passphrase), into a fresh run directory on a tmpfs, one
 /// sub-directory per container; the script mounts each into its container only and removes them.
 struct SecretsMaterializeCommand: ParsableCommand {
@@ -476,7 +476,7 @@ struct SecretsMaterializeCommand: ParsableCommand {
 
     @Argument(help: "SET=NAME[,NAME…] (?NAME: optional), e.g. sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,?XLESS_DEMO_PASSWORD.") var sets: [String]
     @Option(help: "Prefer this team's entries (default: the saved team, `xless team use`).") var team: String?
-    /// (testflight.sh's --allow-disk-secrets; named so argv's secret lint has nothing to object to)
+    /// (`xless run`'s --allow-disk-secrets; named so argv's secret lint has nothing to object to)
     @Flag(help: "Accept a directory on disk when there is no tmpfs (XDG_RUNTIME_DIR).") var allowDisk = false
     @Flag(help: "Only check that the store holds every secret; write nothing, ask no passphrase.") var check = false
 

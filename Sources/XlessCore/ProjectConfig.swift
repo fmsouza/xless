@@ -98,7 +98,7 @@ public struct TestFlightConfig: Sendable, Equatable, Decodable {
     /// The secret a run's TestFlight publishing may read: the external beta review's demo account password
     /// (`passwordSecret`, else `XLESS_DEMO_PASSWORD`). Apple never gives the password back, so it is sent only when the
     /// account is required (`required: true`, or unset and the account named, when Apple may still require it); nil
-    /// when it never is. scripts/testflight.sh gives it to the container that uploads (`xless secrets named-by`).
+    /// when it never is. `xless run` gives it to the container that uploads (`xless secrets named-by`).
     public var demoPasswordSecret: String? {
         guard let demo = external?.review?.demoAccount, demo.required == true || (demo.required == nil && demo.name != nil) else { return nil }
         return demo.passwordSecret ?? Self.defaultDemoPasswordSecret

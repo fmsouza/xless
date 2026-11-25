@@ -6,7 +6,7 @@ import Glibc
 import Musl
 #endif
 
-/// One container's secrets for `xless secrets materialize` (scripts/testflight.sh): `sign=ASC_KEY_P8,XLESS_DIST_KEY`
+/// One container's secrets for `xless secrets materialize` (`xless run`): `sign=ASC_KEY_P8,XLESS_DIST_KEY`
 /// becomes `<run dir>/sign/ASC_KEY_P8` and `<run dir>/sign/XLESS_DIST_KEY`, mounted into that container only.
 /// `?NAME` is optional: written when the store has it, left out (no error) when it has not. The TestFlight demo
 /// account's password is: it is sent only when the demo account changes, so a run may well not need it.
@@ -72,7 +72,7 @@ public enum SecretRunBase {
     public static func choose(env: [String: String] = ProcessInfo.processInfo.environment, allowDisk: Bool,
                               isMemory: (String) -> Bool = isMemoryFileSystem) throws -> URL {
         let allow = "or pass --allow-disk-secrets (xless run --allow-disk-secrets …) to accept them on disk for the run's length"
-        if let runtime = env["XDG_RUNTIME_DIR"], runtime.hasPrefix("/"), isDirectory(runtime) {
+        if let runtime = env["XDG_RUNTIME_DIR"], isAbsolute(runtime), isDirectory(runtime) {
             guard allowDisk || isMemory(runtime) else {
                 throw XlessError(.config, "XDG_RUNTIME_DIR (\(runtime)) is not a memory file system (tmpfs): the run's secrets would be written to disk",
                                  fix: "point XDG_RUNTIME_DIR at a tmpfs (systemd's /run/user/<uid>), \(allow)")
@@ -80,13 +80,13 @@ public enum SecretRunBase {
             return URL(fileURLWithPath: runtime, isDirectory: true).appendingPathComponent("xless", isDirectory: true)
         }
         guard allowDisk else {
-            let why = env["XDG_RUNTIME_DIR"].map { $0.isEmpty ? "is empty" : $0.hasPrefix("/") ? "(\($0)) is not a directory" : "(\($0)) is not an absolute path" } ?? "is not set"
+            let why = env["XDG_RUNTIME_DIR"].map { $0.isEmpty ? "is empty" : isAbsolute($0) ? "(\($0)) is not a directory" : "(\($0)) is not an absolute path" } ?? "is not set"
             throw XlessError(.config, "XDG_RUNTIME_DIR \(why): there is no memory file system (tmpfs) for the run's secrets",
                              fix: "run on a host that sets it (systemd: /run/user/<uid>), set *_FILE variables yourself, \(allow)")
         }
         // Under the home directory: the one place Colima and Docker Desktop share with their VM by default.
         let cache: URL
-        if let xdg = env["XDG_CACHE_HOME"], xdg.hasPrefix("/") {
+        if let xdg = env["XDG_CACHE_HOME"], isAbsolute(xdg) {
             cache = URL(fileURLWithPath: xdg, isDirectory: true)
         } else {
             let home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
@@ -100,13 +100,16 @@ public enum SecretRunBase {
         MemoryFileSystem.contains(path)
     }
 
+    /// By its first byte, as `xless run` takes it: to Swift a "/" and a mark that combines with it are one character.
+    private static func isAbsolute(_ path: String) -> Bool { path.utf8.first == UInt8(ascii: "/") }
+
     static func isDirectory(_ path: String) -> Bool {
         var st = stat()
         return stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR
     }
 }
 
-/// Writes a run's secrets from the store into files for scripts/testflight.sh's containers: all of them at once (one
+/// Writes a run's secrets from the store into files for the containers of `xless run`: all of them at once (one
 /// passphrase for the run), each set in its own 0700 directory of a fresh 0700 run directory, files 0600. Only the
 /// store is read (the script handles the environment and `_FILE` variables); ASC_KEY_ID and ASC_ISSUER_ID are the
 /// ASC_KEY_P8 entry's IDs. With a team, its entries are preferred (`VaultResolver.preferredCandidate`).
@@ -127,7 +130,7 @@ public struct VaultMaterializer {
     }
 
     /// Every secret of `sets` has an entry (and the API key its IDs), an optional one may have none. Reads names and IDs
-    /// only: no passphrase. Returns the optional secrets the store has (scripts/testflight.sh leaves the others out, and
+    /// only: no passphrase. Returns the optional secrets the store has (`xless run` leaves the others out, and
     /// opens the store for nothing when that leaves no secret to write).
     @discardableResult
     public func check(_ sets: [MaterializeSet]) throws -> [String] {

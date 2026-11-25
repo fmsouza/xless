@@ -78,19 +78,19 @@ another team's entry is never used for it. (Account commands given `--team`, suc
 only entries recorded for that team.)
 
 The commands that run the pipeline in this process read the store: `xless ship` and the stage commands (`sign`,
-`package`, `upload`, …), `sign bootstrap` and `next-build`, each asking the passphrase at most once.
+`package`, `upload`, …), `certs create` and `next-build`, each asking the passphrase at most once.
 
 ### `xless run` and Docker builds
 
-`xless run` ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)) needs no `testflight.env` once the
-keys are in the store. A secret whose `NAME_FILE` is set (in the environment or `testflight.env`, which still wins)
+`xless run` ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)) needs nothing else once the
+keys are in the store. A secret whose `NAME_FILE` is set (in the environment, or in a `testflight.env`, the older way)
 comes from that file; every other one the run needs comes from the store. The App Store Connect key and its two IDs
 come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_FILE` is refused).
 
-- **Natively**, xless reads the store itself. The script first checks, from the names alone (no passphrase), that
+- **Natively**, xless reads the store itself. The run first checks, from the names alone (no passphrase), that
   the store holds every secret the run needs, so a missing key stops the run before the build. Then it asks the
   passphrase, once, before the first step and saying for which secrets, and every step of the run has the store: the run
-  is a script in [a session of its own](#one-unlock-for-a-script), which ends with it. (A dry run, and a run whose
+  starts again in [a session of its own](#one-unlock-for-a-script), which ends with it. (A dry run, and a run whose
   secrets all come from files, ask nothing.) The build gets none of it: with `--config` its step runs with
   `XLESS_NO_SECRET_STORE=1` and is not told of the session, and it leaves the session keyring, so the build code it
   runs cannot reach a held unlock. What that means for the store while the build runs, and how to have nothing held then:
@@ -105,11 +105,11 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   project's one container, that key and the signing keys; the macOS App-Store ship its own two keys), directories 0700
   and files 0600. Each directory is mounted read-only into its container only (`/secrets/store`, with
   `NAME_FILE=/secrets/store/NAME`) and removed when that container ends; the rest goes when the run ends, on an error
-  and when it is stopped (Ctrl-C, SIGTERM, SIGHUP). The build container (step 2) never sees them, and the run refuses
+  and when it is stopped (by any signal but SIGKILL). The build container (step 2) never sees them, and the run refuses
   to start if they would be inside a folder mounted into it. Without a tmpfs (no `XDG_RUNTIME_DIR`, as on macOS, or
   one on a disk) the run refuses, unless you pass `--allow-disk-secrets`: then they go to
   `~/.cache/xless/secrets/<random>/` (under your home directory, which Colima and Docker Desktop share with their VM)
-  for the length of the run. The script runs this as `xless secrets materialize` (not listed in `--help`).
+  for the length of the run. The run does this with `xless secrets materialize` (not listed in `--help`).
 - **The TestFlight demo account's password** (a run that uploads with `testflight.external.review.demoAccount` in
   [xless.yml](xless-yml.md#testflight) or the overlay) goes to the container that uploads only: step 3, the project's
   one container, or the macOS App-Store ship; never to step 1 or the build. Its secret is `passwordSecret`
@@ -120,10 +120,32 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   Apple never gives the password back, so xless sends it only when the demo account is new, renamed or newly required:
   a store without it stops nothing up front (the run says so, and asks the passphrase only if the store holds it or
   something else the run needs), and only an upload that must send it fails. A demo account with `required: false` is
-  never sent a password, and nothing is given. Without xless on your machine (all secrets as files), only
-  `XLESS_DEMO_PASSWORD_FILE` is passed: the configuration's own `passwordSecret` cannot be read there.
+  never sent a password, and nothing is given.
 
 CI keeps using the environment and `_FILE` variables, and never opens the store.
+
+### Moving from `testflight.env`
+
+`~/.config/xless/testflight.env`, a file of variables that `xless run` reads, is the older way to name keys on your own
+machine. It goes on working (each run says so once, on standard error). To move:
+
+```sh
+xless secrets init                             # when there is no store yet
+xless secrets import-env --team-id ABCDE12345  # ~/.config/xless/testflight.env, or the file you name
+```
+
+`import-env` reads the file as data (nothing in it is run) and imports what its variables name, with one passphrase: the
+App Store Connect API key (`ASC_KEY_P8_FILE`, with `ASC_KEY_ID` and `ASC_ISSUER_ID` or its `_FILE`), the three signing
+keys and `XLESS_DEMO_PASSWORD`, as `NAME@<TEAM_ID>` with `--team-id`, else `NAME`. Each is checked first as
+`xless secrets import` checks it, and one the store has already is left as it is (the store's may be another one: it names
+those lines apart, to compare first). Then it offers to delete each key file, and says which lines of `testflight.env` have
+done their work and which it did not move (an image's name, a password under a name of your own): set those in the
+environment, or keep their lines. The file itself is not changed. The team goes into `teamID` of xless.yml or the overlay,
+the groups into its `testflight` block.
+
+A line that is not `NAME=value`, or whose value a shell would read in another way (a command, a `$` of something that is not
+set, `$'…'`, a `~` that is not `~/` at the start), is an error, for `xless run` too: with its number and the variable's name,
+and no part of the value. Put a value that is meant as it is, a password with a `$` say, in single quotes.
 
 The passphrase is read from the terminal (`/dev/tty`) only, never from a pipe, a file, an argument or the
 environment. A command that needs the store when it is locked and has no terminal (a script, `nohup`) stops with an

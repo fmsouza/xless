@@ -4,7 +4,7 @@ import Testing
 import XlessCore
 @testable import xless
 
-/// `xless secrets named-by`: what scripts/testflight.sh gives the container that uploads besides the keys.
+/// `xless secrets named-by`: what `xless run` gives the container that uploads besides the keys.
 private struct Files {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-named-by-\(UUID().uuidString)")
     init() throws { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }

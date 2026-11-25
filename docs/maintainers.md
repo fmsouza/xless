@@ -16,7 +16,7 @@ The scripts named here run from a source checkout. Those that run Apple's progra
   links (`Tests/shell/check-doc-links.test.sh` runs it too).
 
 All the Docker commands below use the active Docker context. To use a separate engine (for example a dedicated Colima
-VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that `scripts/testflight.sh` and
+VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that `xless run --docker` and
 `scripts/sim-launch.sh` prefer a context named `colima-xless` when one exists.
 
 ## Building the images on the Mac

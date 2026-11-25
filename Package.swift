@@ -32,7 +32,7 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
         .target(name: "XlessSign", dependencies: [
-            "XlessCore", "XlessASC", "XlessMachO",
+            "XlessCore", "XlessASC", "XlessMachO", "CXlessProcess",
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "SwiftASN1", package: "swift-asn1"),
             .product(name: "Crypto", package: "swift-crypto"),
@@ -96,9 +96,16 @@ let package = Package(
             .product(name: "Yams", package: "Yams"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
+        // `xless run`: a project's build, sign and upload as processes of their own (containers, or natively), so that the app's
+        // build code never runs next to a secret.
+        .target(name: "XlessRun", dependencies: [
+            "XlessCore", "CXlessProcess",
+            .product(name: "Yams", package: "Yams"),
+            .product(name: "Crypto", package: "swift-crypto"),
+        ]),
         .executableTarget(name: "xless", dependencies: [
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
-            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "CXlessProcess",
+            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "XlessRun", "CXlessProcess",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
@@ -155,7 +162,8 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
-        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessAgent", "XlessSign", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
+        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessAgent", "XlessSign", "XlessRun", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
+        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessCore"]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )

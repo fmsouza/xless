@@ -8,7 +8,7 @@ public enum CleanPlan {
     /// those, and only those.
     public static let imageLabel = "org.xless.image"
 
-    /// The Docker volumes scripts/testflight.sh (`xless docker`) creates: Rust toolchains for Tauri, and the React Native
+    /// The Docker volumes `xless run --docker` creates: Rust toolchains for Tauri, and the React Native
     /// caches. React Native work copies are one volume per overlay, `xless-rn-work-<overlay>-<hash>`.
     public static let volumes = ["xless-rustup", "xless-cargo", "xless-corepack", "xless-bundle",
                                  "xless-cocoapods-home", "xless-cocoapods-cache"]

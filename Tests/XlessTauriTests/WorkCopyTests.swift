@@ -249,7 +249,7 @@ private func realGit() throws -> String {
         #expect(e.cause.contains("was synced from") && e.fix.contains("rename"), "\(e.cause)")
         #expect(!e.fix.contains("docker"))
     }
-    // in a docker volume (scripts/testflight.sh): the fix says how to delete the work copy there
+    // in a docker volume (xless run --docker): the fix says how to delete the work copy there
     var env = ProcessInfo.processInfo.environment; env["XLESS_WORK_VOLUME"] = "xless-rn-work-o-12345678"
     do {
         _ = try WorkCopy.sync(source: other, to: work, baseEnvironment: env)

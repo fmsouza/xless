@@ -34,7 +34,7 @@ enum XlessSession {
     nonisolated(unsafe) private(set) static var agent: String?
 
     /// Takes it out of this process's environment, which whatever it starts is given (the shims' tools too): what is to
-    /// have it is given it (`SessionCommand`, `TestflightScript`).
+    /// have it is given it (`SessionCommand`, `ProjectRun`).
     static func take() {
         let path = ProcessInfo.processInfo.environment[variable] ?? ""
         agent = path.isEmpty ? nil : path

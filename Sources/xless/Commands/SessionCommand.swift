@@ -31,10 +31,10 @@ struct SessionCommand: AsyncParsableCommand {
 
     @Flag(help: "Also have an Apple ID session for the script: the kept one when Apple still takes it, else a sign-in now.")
     var signIn = false
-    /// scripts/testflight.sh: the command that asks; what is typed is offered to be kept, as that command's.
+    /// `xless run`: the command that asks; what is typed is offered to be kept, as that command's.
     @Option(help: .hidden) var purpose: String?
     @Option(help: .hidden) var reason = "unlocking"
-    /// scripts/testflight.sh: where no agent can run, the command runs without one.
+    /// `xless run`: where no agent can run, the command runs without one.
     @Flag(help: .hidden) var ifPossible = false
     @OptionGroup var trace: VerboseOption
     @Argument(parsing: .postTerminator, help: "The command, after --.") var command: [String] = []
@@ -89,7 +89,7 @@ struct SessionCommand: AsyncParsableCommand {
                 if let obstacle = client.leaseObstacle { throw obstacle }
                 lease = try client.lease([], command: purpose ?? "xless session (\(name))", seconds: hold.seconds)
             }
-            let session = lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path) } ?? client
+            let session = lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path, isOwn: true) } ?? client
             if let (vault, file) = store { try session.put([try SecretStoreCLI.run { try seed(vault, file, hold) }]) }
             if signIn { try await signInNow(hold, in: session) }
             return lease

@@ -14,15 +14,26 @@ placeholders.
 
 ## Secrets
 
-Secrets come from environment variables, from a `NAME_FILE` variable naming a file that holds the value, or, on your
-own machine, from the encrypted secret store ([secrets.md](secrets.md)), in that order. The keys `xless auth api-key
-create`, `xless certs create`, `xless sign bootstrap` and `xless provision apply` make are already in the store, under
-`NAME@<TEAM_ID>`, and a project's run takes its `teamID`'s entries: nothing to set on your own machine. They are never
-command-line flags and are never logged ([security.md](security.md)).
+There is one place for each thing a run has to know:
+
+| What | Where |
+|---|---|
+| The team, the bundle ID | `teamID` and `bundleID` in `xless.yml` (or the overlay) |
+| The TestFlight groups and testers | `testflight` in `xless.yml` (or the overlay) ([xless-yml.md](xless-yml.md#testflight)) |
+| The keys and passwords, on your machine | the encrypted secret store ([secrets.md](secrets.md)) |
+| The keys and passwords, in CI | environment variables: `NAME`, or `NAME_FILE` with the path of a file that holds the value |
+
+A variable wins over the store. The keys `xless auth api-key create`, `xless certs create` and `xless provision apply`
+make are already in the store, under `NAME@<TEAM_ID>`, and a project's run takes its `teamID`'s entries: nothing to set
+on your own machine. Secrets are never command-line flags and are never logged ([security.md](security.md)).
+
+These are older ways, which go on working for now and say on standard error what took their place: `testflight.env`
+([how to move it](secrets.md#moving-from-testflightenv)), `xless sign bootstrap` (`xless certs create`), `xless docker`
+(`xless run --docker`) and `scripts/testflight.sh` (`xless run`).
 
 | Variable | Purpose | Needed for |
 |---|---|---|
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | App Store Connect API key (Admin role) | sign, upload, macOS notarization, `sign bootstrap` |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | App Store Connect API key (Admin role) | sign, upload, macOS notarization, the account commands |
 | `XLESS_DIST_KEY` | Apple Distribution private key (PEM) | iOS sign; the macOS App-Store lane's app sign |
 | `XLESS_DEVID_KEY` | Developer ID Application private key (PEM) | macOS sign |
 | `XLESS_INSTALLER_KEY` | Mac Installer Distribution private key (PEM) | the macOS App-Store lane's pkg sign |
@@ -32,9 +43,9 @@ literal `\n` sequences.
 
 xless removes the secrets (and their `_FILE` forms) from the environment of every tool it runs, so package code
 executed during `build` (SwiftPM macros and plugins) cannot read them from its environment; rcodesign gets keys
-through mode-0600 temporary files. A file named by a `_FILE` variable is another matter: code that runs on the same
-machine or in the same container as the build, as the same user, can still read it. That is why overlay apps are
-built in [three steps](#the-three-step-split).
+through mode-0600 temporary files, removed when it ends and when a signal ends xless (any but SIGKILL). A file named by a
+`_FILE` variable is another matter: code that runs on the same machine or in the same container as the build, as the same
+user, can still read it. That is why overlay apps are built in [three steps](#the-three-step-split).
 
 Once xless reads a secret (`sign`, `package`, `upload`, `next-build`, `sign bootstrap`), core dumps are off for the
 rest of the command and for the tools it runs, so a crash cannot write a key to disk; on Linux the process is also
@@ -60,23 +71,22 @@ builds, signs, uploads and delivers an iOS `xless.yml` project to TestFlight (`x
 with what `xless setup` installed; with `--docker`, in the `xless` image). For an app described by an overlay use
 `xless run --docker --config <overlay.yml>`: a Tauri app ([tauri.md](tauri.md#shipping)) or a React Native / Expo app
 ([react-native.md](react-native.md#shipping-three-containers)); overlays build in the images only. Arguments after the
-project or overlay go to `xless ship`, for example `--from upload` to retry only the upload. `xless run` runs
-`share/xless/scripts/testflight.sh` (`xless docker` is the same as `xless run --docker`); from a source checkout, `make testflight PROJECT=<dir>` (or
-`CONFIG=<overlay.yml>`, with `ARGS="…"`) runs the same script.
+project or overlay go to `xless ship`, for example `--from upload` to retry only the upload (a `--` may come before
+them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<overlay.yml>`, with `ARGS="…"`) is the
+`xless run` of the `xless` on `PATH` (or `XLESS_SELF`), in the images unless `xless setup` installed an SDK natively
+(`XLESS_USE_DOCKER=1` or `0` decides).
 
 - **Secrets.** With the keys in the encrypted store ([secrets.md](secrets.md#xless-run-and-docker-builds)), a run
   needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run, before its
   first step, or none while the store is kept unlocked ([staying unlocked](secrets.md#staying-unlocked)) (with
   `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload;
-  `--allow-disk-secrets` where there is no tmpfs, as on macOS). Otherwise, or to override the store, the script reads
-  the paths of your secret files from the environment, or from a local file that it sources first:
-  `~/.config/xless/testflight.env` (override with `XLESS_TESTFLIGHT_ENV`; it never belongs in git), and a `NAME_FILE`
-  set there wins over the store. The files are mounted read-only into the container (natively, read where they are);
-  values are never printed or put on a command line. A run that stops before `sign` (`--to finalize`) needs none of
-  them, mounts none and never opens the store.
+  `--allow-disk-secrets` where there is no tmpfs, as on macOS). To override the store, as CI does, set the paths of your
+  secret files in the environment: a `NAME_FILE` set there wins over the store. The files are mounted read-only into the
+  container (natively, read where they are); values are never printed or put on a command line. A run that stops before
+  `sign` (`--to finalize`) needs none of them, mounts none and never opens the store. A run needs every variable of this
+  list that its steps use and the store has not:
 
   ```sh
-  # ~/.config/xless/testflight.env
   ASC_KEY_ID=ABC123DEFG                          # the API key's ID
   ASC_ISSUER_ID_FILE=$HOME/keys/asc-issuer-id    # file holding the issuer ID (or set ASC_ISSUER_ID)
   ASC_KEY_P8_FILE=$HOME/keys/AuthKey_ABC123DEFG.p8
@@ -85,6 +95,11 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   XLESS_INSTALLER_KEY_FILE=$HOME/keys/installer-key.pem  # Mac Installer Distribution private key (macOS App-Store lane only)
   XLESS_DEMO_PASSWORD_FILE=$HOME/keys/demo-password  # TestFlight demo account's password (testflight.external.review.demoAccount)
   ```
+
+  The same lines in `~/.config/xless/testflight.env` (or the file `XLESS_TESTFLIGHT_ENV` names; it never belongs in git)
+  still work: the older way. It is read as data: `NAME=value` lines, with a shell's comments, quotes, `\` and `$NAME`.
+  Nothing in it is run, and a run stops (exit 2, naming the line) at anything else. What it sets wins over the
+  environment. [`xless secrets import-env`](secrets.md#moving-from-testflightenv) moves it into the store.
 
   The TestFlight demo account's password (`<passwordSecret>_FILE` when xless.yml or the overlay names its own secret)
   is needed only by a run that uploads with `testflight.external.review.demoAccount`, and only the upload gets it
@@ -101,9 +116,13 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
 - **Paths.** Relative secret paths are resolved against the current directory. With `--docker`, the secret files and
   the project must be somewhere Docker can mount (on Linux, any local path).
 - **Dry run.** `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the commands without running them.
-- **Stopping.** Stopping `xless run` (Ctrl-C, or SIGTERM or SIGHUP, as a CI runner does when it cancels a job) takes
-  effect at once, whichever step is running: with `--docker` it removes its containers, natively it stops xless, and it
-  exits with code 130, 143 or 129. A SIGKILL cannot be caught: after one, remove what is left with
+- **Stopping.** Stopping `xless run` (Ctrl-C, Ctrl-\\, or SIGTERM or SIGHUP, as a CI runner does when it cancels a job) takes
+  effect at once, whichever step is running: with `--docker` it removes its containers and the secrets it wrote for them,
+  natively it stops xless (and what that runs), and it exits with code 130, 131, 143 or 129. The secrets go first; a docker
+  that does not answer is waited for 15 s, or until you stop xless once more, and xless then says how to remove what may be
+  left. Any other signal that ends a
+  process does the same (128 and its number), and so does a fault of xless's own; one that `nohup` or a script's `&` made it
+  ignore does nothing. A SIGKILL cannot be caught: after one, remove what is left with
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
   warning. The exit code is xless's (17 for a failed upload or delivery). Then it prints the `xless release submit` command
@@ -116,7 +135,9 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
   second run on the same work copy is refused (exit 2) while the first is running; runs on other work copies are not
   affected, and a dry run takes no lock. After a SIGKILL, which leaves no chance to clean up, the next run on that work
   copy sees that the run holding the lock is gone, and stops what it left before it starts: its containers (labelled
-  `xless.work=<hash>`) and, natively, the xless it was running.
+  `xless.work=<hash>`) and, natively, the xless it was running. Where it cannot tell (the lock was taken on a machine with
+  another name, say, or the process may be that run), it is refused too, with exit 2, and says which file to remove once no run
+  works there any more.
 - **Testers.** Internal testers must be App Store Connect users of the team: invite them with
   [`xless users invite`](apple-account.md#xless-users) (an Admin API key). List them in `testflight.testers` of
   [xless.yml](xless-yml.md#testflight) and every run adds the missing ones to the groups, or add them once with
@@ -147,8 +168,7 @@ An overlay app's build runs third-party code: npm scripts, `build.rs`, CocoaPods
 `--from` and `--to` choose which steps run, and each step needs only its own secrets: `--build-number <n> --to
 finalize` needs none. Secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are written
 once, before step 1, one directory per step, each mounted into its own step only. The overlay's folder and the app
-source are mounted into the build container, so the script refuses to start when either holds the secrets file or a
-secret file. Details: [tauri.md](tauri.md#shipping) and
+source are mounted into the build container, so a run refuses to start when either holds a secret file (or `testflight.env`). Details: [tauri.md](tauri.md#shipping) and
 [react-native.md](react-native.md#shipping-three-containers).
 
 ## Notarized DMG (Tauri macOS)

@@ -65,7 +65,7 @@ it does nothing (`--reexport` exports the SDK again). A project that pins anothe
 xless run <project-dir> --build-number 1 --to finalize
 ```
 
-`xless run` runs `share/xless/scripts/testflight.sh` natively; leave out `--to finalize` to sign and upload too
+Leave out `--to finalize` to sign and upload too
 ([signing-and-testflight.md](signing-and-testflight.md)). `xless ship --platform ios` in the project directory runs the
 stages directly.
 

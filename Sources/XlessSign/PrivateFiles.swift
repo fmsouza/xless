@@ -1,19 +1,23 @@
+import CXlessProcess
 import Foundation
 import XlessCore
 
 /// The files rcodesign reads a key from: mode 0600, in a fresh directory of mode 0700 that is removed with everything in
-/// it when the call ends, however it ends. The directory is made with that mode (mkdir(2)), never opened up first, and
-/// every file in it is created by this type (`O_CREAT|O_EXCL|O_NOFOLLOW`), the one a tool then writes into included.
-/// Signing, the DMG, the flat package and notarization all take theirs from here; nothing else writes key material for a
-/// tool.
+/// it when the call ends, however it ends, or a signal ends xless meanwhile (any that can be caught: SIGKILL cannot). The
+/// directory is made with that mode (mkdir(2)), never opened up first, and every file in it is created by this type
+/// (`O_CREAT|O_EXCL|O_NOFOLLOW`), the one a tool then writes into included. Signing, the DMG, the flat package and
+/// notarization all take theirs from here; nothing else writes key material for a tool.
 public struct PrivateFiles {
     public let directory: URL
     let stage: Stage
     let parent: URL
+    private let ended = RemovedWhenEnded()
 
     /// Runs `body` with a directory of its own under `parent` (the temporary directory).
     public static func with<T>(stage: Stage, in parent: URL = FileManager.default.temporaryDirectory, _ body: (PrivateFiles) throws -> T) throws -> T {
         let files = PrivateFiles(directory: parent.appendingPathComponent("xless-keys-\(UUID().uuidString)"), stage: stage, parent: parent)
+        defer { files.ended.forget() }
+        guard files.ended.add(files.directory, isDirectory: true) else { throw files.cannotWrite }
         do {
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         } catch { throw files.cannotWrite }
@@ -26,6 +30,7 @@ public struct PrivateFiles {
     /// Writes `contents` to a new file of mode 0600.
     public func write(_ contents: Data, as name: String) throws -> URL {
         let file = directory.appendingPathComponent(name)
+        guard ended.add(file) else { throw cannotWrite }
         do { try SigningKey.writeExclusively(contents, toPath: file.path, mode: 0o600) } catch { throw cannotWrite }
         return file
     }
@@ -47,5 +52,25 @@ public struct PrivateFiles {
 
     private var cannotWrite: XlessError {
         XlessError(stage, "cannot write temporary key files", fix: "check free space and permissions of \(parent.path)")
+    }
+}
+
+/// The paths that a signal which ends xless removes first (`xless_remove_when_ended`).
+private final class RemovedWhenEnded: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [UnsafeMutableRawPointer] = []
+
+    /// Before it is there. False: it would not be removed.
+    func add(_ url: URL, isDirectory: Bool = false) -> Bool {
+        guard let entry = xless_remove_when_ended(url.path, isDirectory ? 1 : 0) else { return false }
+        lock.withLock { entries.append(entry) }
+        return true
+    }
+
+    func forget() {
+        lock.withLock {
+            for entry in entries { xless_keep_when_ended(entry) }
+            entries = []
+        }
     }
 }

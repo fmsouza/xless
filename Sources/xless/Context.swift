@@ -39,7 +39,7 @@ struct Context {
     /// any directory. No `--team`: that takes only a key recorded for the team, and the project's configuration names the
     /// same team, whose key is preferred as it was for the upload.
     /// - Parameter env: in a container, `XLESS_PROJECT_ORIGIN` is the host's path of the overlay or of the project
-    ///   directory (scripts/testflight.sh), which the command is pasted beside; nothing else reads it.
+    ///   directory (`xless run`), which the command is pasted beside; nothing else reads it.
     func submitCommand(for record: UploadRecord, env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         let origin = env["XLESS_PROJECT_ORIGIN"].flatMap { $0.hasPrefix("/") ? $0 : nil }
         if let configFile { return record.submitCommand(["--config", origin ?? configFile.path]) }

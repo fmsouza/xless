@@ -7,7 +7,7 @@ struct CargoCommand: ParsableCommand {
                                                     subcommands: [CargoInputsCommand.self])
 }
 
-/// `xless cargo inputs --config <overlay>`: the host directories of the overlay's path inputs, which scripts/testflight.sh
+/// `xless cargo inputs --config <overlay>`: the host directories of the overlay's path inputs, which `xless run`
 /// mounts read-only at `/inputs/<name>` in the build container. Git inputs are cloned inside it and are not listed.
 struct CargoInputsCommand: ParsableCommand {
     static let configuration = CommandConfiguration(

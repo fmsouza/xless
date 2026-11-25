@@ -356,7 +356,7 @@ ARCH="$(uname -m)"; case "$ARCH" in arm64|aarch64) ARCH=arm64 ;; *) ARCH=amd64 ;
 
 # The names of secrets a process may not carry: xless's own, and anything named like a key, a password or a token.
 SECRET_NAME_RE='(^|_)(KEY|P8|PEM|PASSWORD|PASSPHRASE|TOKEN|SECRET)(_|$)'
-# Watches the environments and command lines of this script's descendants (xless, testflight.sh, docker, the build
+# Watches the environments and command lines of this script's descendants (xless, docker, the build
 # tools) until $DIR/watch.stop appears, or this script is gone, and writes what it finds to $1: variable names and
 # process names, never a value. Variables already in this shell before the run (yours) are listed once and not counted.
 # It prints nothing (start_watch): a person may be typing a passphrase meanwhile.
@@ -628,7 +628,7 @@ step4() {
   result 4 PASS "provisioned; a second apply had nothing to do (plan: 0 steps)"
 }
 
-# A build number never used by this run before: minutes since 1970 (as scripts/testflight.sh counts), at least one more
+# A build number never used by this run before: minutes since 1970 (as xless run counts), at least one more
 # than the last one taken.
 next_build() {
   local n last
@@ -774,7 +774,7 @@ step8() {
   done
   [[ -n "$(state_get build.8)" ]] || state_set build.8 "$(next_build)"
   local build; build="$(state_get build.8)"
-  # An xless.yml project runs in one container that gets the secrets when it signs (scripts/testflight.sh); split it,
+  # An xless.yml project runs in one container that gets the secrets when it signs (xless run --docker); split it,
   # so the container that runs the app's build has none: build to finalize, then sign, package and upload.
   for half in build sign; do
     [[ -z "$(state_get "shipped.8.$half")" ]] || continue

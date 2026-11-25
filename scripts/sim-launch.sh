@@ -7,7 +7,7 @@
 #   (or: make sim-launch APP=<App.app | volume:…> [ARGS="--seconds 20"])
 #
 # volume:…  copies the .app out of a docker volume first: a React Native work volume, with the path xless printed in
-#           its container, where the volume is /cache/work (scripts/testflight.sh --destination simulator prints the
+#           its container, where the volume is /cache/work (xless run --destination simulator prints the
 #           whole argument). Uses DOCKER_CONTEXT (default colima-xless if it exists) and versions.env's
 #           ALPINE_IMAGE (alpine, pinned by digest).
 # --device  the simulator to use, by name or UDID, on the runtime below (default "xless-sim"); a name with no device on
