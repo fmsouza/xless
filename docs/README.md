@@ -33,8 +33,11 @@ build. The pages below go further.
 
 ## Installing and images
 
-- [apple-requirements.md](apple-requirements.md): everything xless needs from Apple, how to get it on Linux, and the
-  audit behind that list.
+- [install.md](install.md): upgrades, versions, checking a download.
+- [build.md](build.md): build an app on a Mac, on Linux and in Docker.
+- [systems.md](systems.md): what works on Linux, macOS, Windows and WSL 2.
+- [xcode-versions.md](xcode-versions.md): the supported Xcode versions, and how to download one.
+- [apple-requirements.md](apple-requirements.md): everything xless needs from Apple, and the audit behind that list.
 - [xcode-download.md](xcode-download.md): `xless xcode download`, one terminal sign-in to Apple for any number of Xcode
   `.xip`s, and what happens to your Apple ID and password.
 - [images.md](images.md): the Docker image (`--docker`), the kits for Tauri, Cargo and React Native apps, an image of your own, and how to build it by hand.

@@ -1,42 +1,19 @@
 # What xless needs from Apple
 
 xless contains no Apple software. To build an app it needs one thing from Apple, the Xcode download, and only the SDK
-files inside it. To sign and upload an app it also needs an Apple developer account. Nothing from Apple runs on your
-Linux machine: Apple's programs are macOS programs, and xless uses open-source replacements for every one of them.
-On a Mac it uses the Xcode that is installed, and takes nothing out of it ([below](#on-a-mac)).
+files inside it. To sign and upload an app it also needs an Apple developer account. The account commands need nothing but that
+account. Nothing from Apple runs on Linux: Apple's programs are macOS programs, and xless uses open-source replacements for every
+one of them. On a Mac it uses the Xcode that is installed, and takes nothing out of it ([below](#on-a-mac)).
 
-## How to get Xcode on Linux
+<a id="how-to-get-xcode-on-linux"></a>
+## How to get Xcode
 
-1. Sign in at <https://developer.apple.com/download/all/> with an Apple ID. A free Apple ID is enough; you accept
-   Apple's Xcode licence when you download.
-2. Download the `.xip` of a supported Xcode. Where Apple offers both, take the "Universal" file rather than the
-   "Apple silicon" one: xless is checked against the Universal download.
+For a build on Linux, or in Docker: [xcode-versions.md](xcode-versions.md) has the supported versions, the file of each, and both
+ways to download one. Give the `.xip` to `xless setup` as it is.
 
-   | Xcode | Build | File |
-   |---|---|---|
-   | 27.2 | 27B52 | `Xcode_27.2.xip` |
-   | 27.1 | 27A9275 | `Xcode_27.1.xip` |
-   | 27.0 | 27A266a | `Xcode_27.xip` |
-   | 26.3 | 17C529 | `Xcode_26.3_Universal.xip` |
-   | 26.4 | 17E192 | `Xcode_26.4_Universal.xip` |
-   | 26.4.1 | 17E202 | `Xcode_26.4.1_Universal.xip` |
-   | 26.6 | 17F113 | `Xcode_26.6_Universal.xip` |
-   | 26.5 | 17F42 | `Xcode_26.5_Universal.xip` |
-   | 26.2 | 17C52 | `Xcode_26.2_Universal.xip` |
-   | 26.1.1 | 17B100 | `Xcode_26.1.1_Universal.xip` |
-   | 26.1 | 17B55 | `Xcode_26.1_Universal.xip` |
-   | 26.0.1 | 17A400 | `Xcode_26.0.1_Universal.xip` |
-
-3. Give it to xless as it is: `xless setup --xcode ~/Downloads/Xcode_27.xip`. Do not unpack it.
-
-`xless xcode download 27.0 26.2` does steps 1 and 2 from the terminal, for as many versions as you name, in one sign-in
-of which nothing is kept unless you say so ([xcode-download.md](xcode-download.md)).
-
-xless identifies the file by its SHA-256 (recorded in `versions.env` for each download it has been checked against),
-so renaming it changes nothing, and refuses any other file with the list of supported versions. An already unpacked
-`Xcode.app` is accepted too, identified by its `Contents/version.plist`. The `.xip` is unpacked by
-[xtool](https://github.com/xtool-org/xtool), which is open source, inside an image without any Apple file; Apple's `xip` tool
-is not used.
+xless identifies the file by its SHA-256 (recorded in `versions.env` for each download it has been checked against). The `.xip`
+is unpacked by [xtool](https://github.com/xtool-org/xtool), which is open source, in Docker inside an image without any Apple
+file; Apple's `xip` tool is not used.
 
 ## From `Xcode.xip`
 
