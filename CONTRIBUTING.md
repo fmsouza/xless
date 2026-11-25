@@ -47,7 +47,7 @@ the release run says so in a warning.
 
 | Check | What it runs |
 |---|---|
-| `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner. One (`xcode-native`) builds the sample with the runner's Xcode, for a device, the simulator and macOS, and signs it with a throw-away certificate; another (`overlay-native`) builds an overlay whose "cargo" tries the sandbox of the build |
+| `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner. One (`xcode-native`) builds the sample with the runner's Xcode, for a device, the simulator and macOS, and signs it with a throw-away certificate; another (`overlay-native`) builds an overlay whose "cargo" tries the sandbox of the build, and a small React Native workspace with xcodebuild |
 | `package (macos-arm64)`, `package (macos-x86_64)` | The macOS tarballs built as a release would build them (the x86_64 one cross-compiled) and checked: nothing of Apple's in them, only the system's libraries needed |
 | `install (macos-arm64)`, `install (macos-x86_64)` | Each one installed with `scripts/install.sh` and run on a Mac of its architecture, the agent and the prompts included |
 | `windows-tests (x86_64)` | The libraries of the account commands and their tests on GitHub's `windows-2022` runner, and that a crash of a process with a secret leaves no dump. xless itself does not build on Windows yet ([maintainers.md](docs/maintainers.md#windows)) |
