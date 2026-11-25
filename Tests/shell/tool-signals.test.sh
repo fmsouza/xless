@@ -126,8 +126,9 @@ for i in range(50):
     if ended(p) != -signal.SIGTERM or not until(lambda: not tools(), 3): left.append((i, tools()))
 check(not left, "at whatever moment it comes, nothing is left running", left)
 
-# While one thread ends the process, another looks at its handlers, as whatever starts a tool does: the end is by that signal
-# all the same. With the C that xless is made of, where the two can be made to meet.
+# The end is by that signal also when another thread looks at the handlers meanwhile, as whatever starts a tool does, and when it
+# is a thread of a dispatch queue that goes on to it (macOS: such a thread cannot send itself a signal). With the C that xless is
+# made of, where they can be made to meet.
 with open(t + "/meet.c", "w") as f:
     f.write(r"""
 #include <pthread.h>
@@ -136,10 +137,14 @@ with open(t + "/meet.c", "w") as f:
 #include <stdio.h>
 #include <unistd.h>
 #include "CXlessProcess.h"
-static atomic_int raising, back;
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#endif
+static atomic_int raising, back, queued, counted, noted;
 static void until(atomic_int *flag) { for (int i = 0; i < 500 && !atomic_load(flag); i++) usleep(10000); }
 int met_sigaction(int sig, const struct sigaction *new, struct sigaction *old) {
     int r = sigaction(sig, new, old);
+    if (atomic_load(&queued) && !atomic_exchange(&counted, 1)) until(&noted); // this start is counted, and what it starts not known
     if (sig == SIGTERM && new != NULL && atomic_load(&raising)) {
         atomic_store(&back, 1);
         usleep(1000000); // this start goes on no further yet
@@ -160,9 +165,25 @@ static void *starts(void *unused) {
     start();
     return unused;
 }
-int main(void) {
+#ifdef __APPLE__
+static void starts_on_a_queue(void *unused) {
+    atomic_store(&queued, 1);
+    start();
+}
+#endif
+int main(int argc, char **argv) {
     pthread_t thread;
     start();
+#ifdef __APPLE__
+    if (argc > 1) {
+        dispatch_async_f(dispatch_get_global_queue(0, 0), NULL, starts_on_a_queue);
+        until(&counted);
+        pthread_kill(pthread_self(), SIGTERM); // which waits for the start
+        atomic_store(&noted, 1);
+        sleep(10);
+        return 4;
+    }
+#endif
     if (pthread_create(&thread, NULL, starts, NULL) != 0) return 2;
     pthread_kill(pthread_self(), SIGTERM);
     pthread_join(thread, NULL);
@@ -173,9 +194,10 @@ c = repo + "/Sources/CXlessProcess"
 subprocess.run(["clang", "-I", c + "/include", "-Draise(s)=met_raise(s)", "-Dsigaction(a,b,c)=met_sigaction(a,b,c)", "-Wno-everything",
                 "-c", "-o", t + "/process.o", c + "/CXlessProcess.c"], check=True)
 subprocess.run(["clang", "-I", c + "/include", "-Wall", "-Werror", "-o", t + "/meet", t + "/meet.c", t + "/process.o", "-lpthread", *(["-lbsm"] if sys.platform == "darwin" else [])], check=True)
-p = subprocess.Popen([t + "/meet"], stdin=subprocess.DEVNULL, preexec_fn=lambda: dispositions(None))
-rc = ended(p)
-check(rc == -signal.SIGTERM, "a signal that ends xless as a tool is about to be started ends it by that signal", rc)
+for how, what in [([], "another thread ends xless")] + [(["queue"], "a thread of a dispatch queue ends xless then")] * (sys.platform == "darwin"):
+    p = subprocess.Popen([t + "/meet", *how], stdin=subprocess.DEVNULL, preexec_fn=lambda: dispositions(None))
+    rc = ended(p)
+    check(rc == -signal.SIGTERM, f"a signal that comes as a tool is about to be started: {what}, by that signal", rc)
 
 # At the two moments no test meets by chance (Linux, where a preloaded library can make them).
 if sys.platform == "linux":

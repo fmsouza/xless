@@ -360,6 +360,11 @@ static void take_default(int sig) {
     sigaddset(&only, sig);
     pthread_sigmask(SIG_UNBLOCK, &only, NULL);
     raise(sig);
+#ifdef __APPLE__
+    // A thread of a dispatch queue cannot send itself a signal (ENOTSUP). One to the process ends it, on whichever thread.
+    kill(getpid(), sig);
+    poll(NULL, 0, 1000);
+#endif
     _exit(128 + sig); // process 1 of a container: what a signal does by default is nothing
 }
 
