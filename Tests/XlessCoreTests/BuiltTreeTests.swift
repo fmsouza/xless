@@ -224,6 +224,9 @@ func whatComesBetweenLookingAndOpeningIsNotCopied(_ path: String, _ target: Stri
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: app.appendingPathComponent("l").path)) == nil)
     }
     #expect(try text(own) == "mine" && text(app.appendingPathComponent("A")) == "x" && !FileManager.default.fileExists(atPath: app.appendingPathComponent("gone").path))
+    try FileManager.default.setAttributes([.posixPermissions: 0o764], ofItemAtPath: app.appendingPathComponent("A").path)
+    try BuiltTree.write(data, at: "A", in: app, stage: .sign) // a file's mode is kept
+    #expect(try FileManager.default.attributesOfItem(atPath: app.appendingPathComponent("A").path)[.posixPermissions] as? Int == 0o764)
     try BuiltTree.write(data, at: "Contents/deep/file", in: app, stage: .sign)
     #expect(try text(app.appendingPathComponent("Contents/deep/file")) == "new")
     _ = try strange.link("A.app/dir", to: "Frameworks")

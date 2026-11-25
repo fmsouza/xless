@@ -88,9 +88,9 @@ public enum BuiltTree {
         try directory(fd, to: to.path, [])
     }
 
-    /// Writes a new file into a tree of the build's: what is at its place, a link say, goes, and nothing on the way there is a link. (When it
-    /// is looked at: the way is for a tree that only xless writes, sign's copy. In finalize on a Mac what the build left running can
-    /// change it meanwhile, but there the build writes with the same rights.)
+    /// Writes a new file into a tree of the build's: what is at its place, a link say, goes (a file's mode stays), and nothing on the way
+    /// there is a link. (When it is looked at: the way is for a tree that only xless writes, sign's copy. In finalize on a Mac what the
+    /// build left running can change it meanwhile, but there the build writes with the same rights.)
     public static func write(_ data: Data, at path: String, in root: URL, stage: Stage) throws {
         var at = root.path
         let parts = path.utf8.split(separator: UInt8(ascii: "/")).map { String(decoding: $0, as: UTF8.self) }
@@ -103,11 +103,16 @@ public enum BuiltTree {
         guard let name = parts.last else { throw refused(at) }
         at += "/\(name)"
         guard type(of: at) != S_IFDIR else { throw refused(at) }
+        var old = stat()
+        let mode = lstat(at, &old) == 0 && old.st_mode & S_IFMT == S_IFREG ? old.st_mode & 0o777 : nil
         guard unlink(at) == 0 || errno == ENOENT else { throw system(at) }
         let fd = open(at, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o666)
         guard fd >= 0 else { throw system(at) }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        do { try file.write(contentsOf: data) } catch { throw system(at) }
+        do {
+            if let mode, fchmod(fd, mode) != 0 { throw system(at) }
+            try file.write(contentsOf: data)
+        } catch { throw system(at) }
     }
 
     // MARK: -
