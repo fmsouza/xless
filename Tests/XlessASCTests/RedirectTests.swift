@@ -223,16 +223,22 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
 }
 
 @Test func aCancelledRequestEnds() async throws {
-    // It answers only at the end of the test, or long after a slow machine would have cancelled it.
+    // It answers only at the end of the test, or long after a slow machine would have cancelled it. No clock is compared:
+    // where every test waits for a processor, a moment of this one may be a minute of the clock.
     let end = DispatchSemaphore(value: 0)
-    let server = try RecordingServer { _ in _ = end.wait(timeout: .now() + 60); return (200, [:], Data()) }
+    let answered = Got()
+    let server = try RecordingServer { _ in
+        if end.wait(timeout: .now() + 600) == .timedOut { answered.add(Data(count: 1)) }
+        return (200, [:], Data())
+    }
     defer { end.signal(); server.stop() }
-    let started = Date()
-    let task = Task { try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/slow")) }
+    var slow = request("http://127.0.0.1:\(server.port)/slow")
+    slow.timeoutInterval = 600
+    let task = Task { [slow] in try await URLSessionTransport().send(slow) }
     try await Task.sleep(for: .milliseconds(300))
     task.cancel()
-    await #expect(throws: (any Error).self) { _ = try await task.value }
-    #expect(Date().timeIntervalSince(started) < 50)
+    await #expect { _ = try await task.value } throws: { $0 is CancellationError || ($0 as? URLError)?.code == .cancelled }
+    #expect(answered.count == 0, "it ended because the server answered")
 }
 
 private final class Got: @unchecked Sendable {
