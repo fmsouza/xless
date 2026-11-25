@@ -34,7 +34,7 @@ and send where, in [security.md](security.md).
 
 | Option | What it does |
 |---|---|
-| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
+| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). When the xless.yml here names a team that the Apple ID is not a member of, that is an error: another one is used only with `--team`. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
 | `--json` | Prints JSON instead of a table (see [JSON output](#json-output)). |
 | `--yes` | Answers yes to the confirmation that every destructive call asks. Without a terminal, such a call is refused unless `--yes` is given; it never goes ahead silently. |
 | `--verbose` | Shows every HTTP exchange with Apple on standard error. The trace never shows the key, the token, a cookie or a secret field: they read `<redacted>`. |
@@ -130,7 +130,7 @@ as somebody else).
 `xless auth status` reads no secret and sends nothing: for `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` it says whether
 each comes from the environment, a `_FILE` variable (and its path) or the secret store (and the entry), for which team,
 whether the secret store is unlocked and whether an Apple ID session is kept (where, until when, after how long without use
-it ends), and which commands need that session. App Store Connect does not tell a key its own role, so
+it ends), what is held for a command that runs (`xless session`, `xless run`), in this terminal or another, and which commands need that session. App Store Connect does not tell a key its own role, so
 the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#xless-auth-api-key)).
 
 `--json` prints the same as a document, so a script can check before it starts. Besides the API key's fields
@@ -146,6 +146,7 @@ the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#x
 | `session.appleID`, `.backend`, `.expires`, `.remainingSeconds`, `.idleSeconds`, `.idleRemainingSeconds` | as the store's, when kept; `backend` is `agent`, `keyring` or `store` (saved, and the store is unlocked) |
 | `session.savedUntil` | until when it is saved across reboots, when it is |
 | `keepUntil` | until when what is typed in this terminal is kept without a question, after a yes to [the offer](secrets.md#staying-unlocked) |
+| `sessions` | the `xless session` and `xless run` that run, of all your terminals: `command`, `holds` (`store`: its unlock; `session`: an Apple ID session), `expires` and `remainingSeconds` (at the latest: it ends with the command), `thisTerminal` |
 | `session.neededBy` | the commands that need the session; every other one works with the API key, also in CI |
 
 ```sh

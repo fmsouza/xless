@@ -93,7 +93,9 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   is a script in [a session of its own](#one-unlock-for-a-script), which ends with it. (A dry run, and a run whose
   secrets all come from files, ask nothing.) The build gets none of it: with `--config` its step runs with
   `XLESS_NO_SECRET_STORE=1` and is not told of the session, and it leaves the session keyring, so the build code it
-  runs cannot reach a held unlock. (Every tool any xless runs, in a project directory's single process too,
+  runs cannot reach a held unlock. What that means for the store while the build runs, and how to have nothing held then:
+  [security.md](security.md#while-xless-run-builds). Where nothing can be held, a note says why and each step asks by
+  itself. (Every tool any xless runs, in a project directory's single process too,
   starts in a POSIX session of its own and an empty session keyring, with `XLESS_NO_SECRET_STORE=1`:
   [security.md](security.md#the-build-and-your-secrets).) This keeps xless itself from handing out a secret there; it
   is no sandbox: code that runs on your machine as you can read your files, which is why the overlays build in Docker.
@@ -142,8 +144,10 @@ The next commands of this terminal need not ask again: the secret store can stay
 Keep both for this terminal? [y/N]
 ```
 
-A yes covers both: the next commands of this terminal ask neither the passphrase nor a sign-in, for that long at most.
-Enter, or anything else, keeps nothing. It is not asked in CI, with `--no-input`, inside `xless session` or without a
+A yes covers both: the next commands of this terminal ask neither the passphrase nor a sign-in, for that long at most. It
+is of this terminal: another one is asked by itself, also when it shares the unlock.
+Enter, or anything else, keeps nothing, and what was typed before the question was shown is no answer to it (nor to any
+other question of xless's). It is not asked in CI, with `--no-input`, inside `xless session` or without a
 terminal, nor where nothing can be held. To be asked no more, say it in `~/.config/xless/config.yml`:
 
 ```yaml
@@ -167,7 +171,7 @@ xless lock                  # forget everything held, now
   unlock: { duration: 8h, idle: 2h, maximum: 7d }
   ```
 - **Where:** in memory only, in the xless agent (Linux and macOS). Where none can run (xless says why: started without a
-  shell, as by `ssh host xless …`, or Linux before 5.3) the Linux kernel keyring keeps it, if it works, for an hour at most.
+  shell, as by `ssh host xless …`, Linux before 5.3, a container that blocks `pidfd_open`, or no place for its socket) the Linux kernel keyring keeps it, if it works, for an hour at most.
   There only that hour and `xless lock` in the same login end it: not a time without use (`--idle` is refused), a closed
   terminal, sleep or a locked screen.
   `--remember [<duration>]` on `unlock`, `init`, `import` and `export` does the same while it does its own work.
@@ -191,8 +195,11 @@ xless session --sign-in -- sh -c 'xless provision apply --yes && xless run . && 
 
 What was typed for it is held by an xless agent of its own, which ends with the script: when the command returns, when
 xless or the terminal goes away, on a signal (`SIGTERM` and `SIGHUP` are passed on to the script; Ctrl-C reaches it as
-without xless), even when xless is killed outright. `xless lock`, sleep and (macOS) a locked screen end it sooner, and it
-never outlives the maximum of config.yml. The exit code is the script's. Nothing is offered inside, and a session in a
+without xless), even when xless is killed outright. `xless lock`, sleep and (macOS) a locked screen end it sooner, and so
+does the time of `unlock.duration` in config.yml (8 hours unless you lower it; a time without use does not): the script
+runs on, and its next command that needs the store asks, or stops with `--no-input`. `xless auth status`, in any of your
+terminals, shows the sessions that run: which command, what is held for it, until when. Where nothing can be held, it
+stops before it asks for anything. The exit code is the script's. Nothing is offered inside, and a session in a
 session asks nothing again. A store that was unlocked before stays so, for as long as it was. With `--no-input`, a locked
 store stops it (exit 23) before the script starts; with a credential helper there is nothing to hold, and the script runs.
 

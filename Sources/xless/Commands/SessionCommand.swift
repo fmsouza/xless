@@ -15,7 +15,8 @@ struct SessionCommand: AsyncParsableCommand {
         xless commands it runs have the store unlocked; with --sign-in, an Apple ID session too (the kept one, else a \
         sign-in, before the command starts). When the command ends, or xless does, whatever ends them, what was typed for \
         it is dropped: it is in the memory of an xless agent that lives no longer than this command. `xless lock`, the \
-        system going to sleep and (macOS) a locked screen end it sooner.
+        system going to sleep, (macOS) a locked screen and the end of `unlock.duration` (8 h, config.yml) end it sooner. \
+        `xless auth status` shows it, in every terminal.
 
         The exit code is the command's. Ctrl-C reaches it as without xless; SIGTERM and SIGHUP are passed on to it.
 

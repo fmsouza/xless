@@ -57,7 +57,7 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
    overwrite. Imports offer to delete the file they read.
 3. **Nothing kept longer than the command,** unless you opt in: the store's unlock (`xless unlock`, `--remember`) and
    the Apple ID session (`xless auth login --keep`) can be held in memory, for 8 hours and 2 without use unless you say
-   otherwise, and never more than 7 days. `xless auth status` shows what is held, where and until when; `xless lock`
+   otherwise, and never more than 7 days. `xless auth status` shows what is held, where and until when, also for a script that runs; `xless lock`
    drops all of it at once. Only `--across-reboots` puts a session on disk, sealed in the store.
 4. **No secret on a command line, in a log, in an error, in a core dump or in a child's environment.** Secrets come
    from the terminal, the store, `NAME` or `NAME_FILE`; no option takes one (a test walks every command and fails on an
@@ -147,9 +147,14 @@ unlock:
 
 The offer is one question, whose Enter is no; it is never asked, and nothing is ever kept by it, in CI, with `--no-input`,
 inside `xless session`, in the environment of build code (`XLESS_NO_SECRET_STORE=1`) or without a terminal. A yes is for both
-the unlock and the session, for this terminal, and lasts no longer than it was given for; what is kept by it is said each
-time, and `xless lock` forgets the yes too (the agent holds it as an item with no secret in it; `auth status` shows it).
-With `keep: always` the same is done without the question, and said.
+the unlock and the session, for this terminal (the POSIX session it was given in: an agent that also serves another
+terminal does not take it there), and lasts no longer than it was given for; what is kept by it is said each
+time, once it is, and `xless lock` forgets the yes too (the agent holds it as an item with no secret in it; `auth status` shows it).
+With `keep: always` the same is done without the question, and said. Input typed before a question is shown is thrown away,
+before this one and every other question of xless's: nothing typed ahead agrees to anything.
+
+A kept Apple ID session replaces the one held where it goes: the agent of this terminal (or of the `xless session` it runs
+in). Those of other terminals, and of scripts that run, go on; `xless lock` and `xless auth logout` drop all of them.
 
 Nothing lives longer than the maximum counted from when the passphrase or the password was last **typed**: a renewal, or a
 move from the kernel keyring to the agent, takes that time along (and where it is not known, the passphrase is asked). The
@@ -223,8 +228,45 @@ POSIX session is refused (`Tests/shell/session.test.sh`: the tools xless runs, a
 session). It is granted the script's session, which is the terminal's: the script and every program it runs directly may
 run `xless`, as in a terminal with the store unlocked, and an `npm install` or a `make` in the script is such a program. So
 **run only what you would run in an unlocked terminal**; what xless runs for the script is refused as ever. No tool that
-xless runs is told of the lease (every xless takes the variable out of its own environment, and `xless run`'s script out of
-its own), and each is refused all the same.
+xless runs is told of the lease (every xless takes the variable out of its own environment, `xless run`'s script out of its
+own, and what xless starts never gets it), and each is refused all the same.
+
+A lease lasts `unlock.duration` at most (8 hours unless you lower it), whatever was put in it meanwhile and however long the
+script runs; its idle time does not end it, for a build may take long. `xless auth status` lists the leases that hold
+something, in every terminal of yours: the command, what kind of thing is held and until when. A process that a lease does
+not serve is told no more than that: not which store, nor where it is. (An `xless session` leaves no other trace: the
+variable points at nothing once it has ended. A shell that outlived it, in a tmux server started there, say, is told to
+`unset XLESS_SESSION`.)
+
+### While `xless run` builds
+<a id="while-xless-run-builds"></a>
+
+`xless run` asks the passphrase up front, so that nothing is asked once its first step has started. The price, natively:
+**the store's data key is in the lease's agent while the build's code runs**, on the same machine, as the same user. (With
+`--docker` it is not: the build is in a container, and what its steps need is on a tmpfs, mounted into the containers that
+sign and upload.) What keeps that code from it:
+
+- **Everywhere:** the agent answers only a process of the run's own POSIX session, by the kernel's word, and the build step's
+  tools are in other ones, which cannot enter it ([rule 2](#who-may-use-what-the-agent-holds)); they are not told of it, and
+  their `XLESS_NO_SECRET_STORE=1` has an xless they run look for nothing. The key is in memory locked against swap and left
+  out of core dumps, in a process with no file of yours open, and is zeroed when the run ends.
+- **Linux:** the agent is not dumpable: no process of yours can read its memory, attach a debugger to it or look into its
+  `/proc` entry. It and the tools are out of the login's session keyring.
+- **macOS:** `PT_DENY_ATTACH` on the agent, the peer's whole audit token looked at before every answer, and the same
+  executable as the agent's, by device and inode.
+
+What it does not keep out is what nothing of xless's does: root, the kernel, and a program that can make your terminal, or
+a program in it, run a command ([below](#what-an-attacker-who-runs-as-you-can-do)). To have nothing held while code of the
+project runs, run the steps apart, with the store locked:
+
+```sh
+xless lock
+xless ship --to finalize     # the build: needs no secret, and asks for none
+xless ship --from sign       # signing and the upload: asks the passphrase once, and runs no code of the project
+```
+
+A lease ends as every agent does when the machine sleeps or (macOS) the screen is locked, during a build too: then the step
+after it asks the passphrase, or stops with `--no-input`. `lockOnScreenLock: false` in config.yml leaves a locked screen out.
 
 Ctrl-C is the terminal's, to the script and xless alike. SIGTERM and SIGHUP sent to xless are passed on to the script. A
 SIGINT sent to xless alone is passed on on Linux; on macOS nothing tells it from the terminal's, so it is not while the
@@ -251,10 +293,13 @@ script is in the foreground (end the script, or send SIGTERM).
   against the store before use), the agent's socket or its directory removed, and the agent process killed.
 
 No agent can be used where xless itself leads its POSIX session (`ssh host xless …`, `docker exec … xless`, without a
-shell: nothing of it would be left to serve), on Linux before 5.3 (no pidfd), nor where its directory or socket cannot be
-made at all (a read-only file system, a path too long, no Unix sockets). There, and only there, `xless unlock` uses the
-kernel keyring if it works, for at most an hour, and says so and what that lacks; else it is refused with the reason. An
-agent that could run and did not start this time is an error.
+shell: nothing of it would be left to serve), where there is no pidfd (Linux before 5.3, or a container whose seccomp profile
+refuses `pidfd_open`: for good, so it counts as the same; any other failure of it is of the moment, and an error), nor where
+its directory or socket cannot be made at all (a read-only file system, a path too long, no Unix sockets). There, and only
+there, `xless unlock` uses the kernel keyring if it works, for at most an hour, and says so and what that lacks; else it is
+refused with the reason. All that can be told beforehand is found before anything is asked: `xless session` stops then, and
+`xless run` goes on with a note, each of its steps asking by itself. An agent that could run and did not start this time,
+or whose directory others can use, is an error: the keyring does not stand in for it.
 
 ### The kernel keyring
 
