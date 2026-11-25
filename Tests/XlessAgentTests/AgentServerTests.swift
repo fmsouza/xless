@@ -21,7 +21,7 @@ final class TestAgent: @unchecked Sendable {
 
     /// - Parameter grant: the sessions served (default: this process's own).
     init(grant: [AgentSession]? = nil, items: [(String, String)] = [("a", "one")], options: AgentServer.Options = .init(),
-         peer: AgentServer.PeerCheck? = nil, in shared: AgentDirectory? = nil) throws {
+         peer: AgentServer.PeerCheck? = nil, in shared: AgentDirectory? = nil, bound given: AgentDirectory.Bound? = nil) throws {
         // As the agent itself does, with no word of why: a session whose leader has ended is served nothing.
         try #require(Self.ownSession.isUsable, "these tests need a session whose leader still runs: not a script left behind by the shell that started it")
         directory = shared ?? AgentDirectory(path: scratch.path + "/xless-agent")
@@ -31,7 +31,7 @@ final class TestAgent: @unchecked Sendable {
         for (name, text) in items {
             try state.put(name, label: name, SecretBytes(utf8: text), hold: SecretHold(seconds: 3600, idle: 600, maximum: 7200), typedAgo: 0)
         }
-        let bound = try directory.bind()
+        let bound = try given ?? directory.bind()
         path = bound.path
         var options = options
         options.tickMilliseconds = min(options.tickMilliseconds, 20)

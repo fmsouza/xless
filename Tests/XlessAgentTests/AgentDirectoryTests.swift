@@ -1,3 +1,4 @@
+import CXlessProcess
 import Foundation
 import Testing
 import XlessCore
@@ -84,8 +85,8 @@ private func mode(_ path: String) -> mode_t {
     let scratch = ScratchDirectory()
     let d = AgentDirectory(path: scratch.path + "/xless-agent")
     try d.prepare()
-    FileManager.default.createFile(atPath: d.path + "/0123456789abcdef.sock", contents: Data()) // not a socket
-    symlink("/dev/null", d.path + "/0123456789abcde0.sock")
+    FileManager.default.createFile(atPath: d.path + "/0123456789abcdef01234567.sock", contents: Data()) // not a socket
+    symlink("/dev/null", d.path + "/0123456789abcdef01234568.sock")
     let socket = try d.bind()
     defer { close(socket.fd) }
     #expect(try d.sockets() == [socket.path])
@@ -107,4 +108,51 @@ private func mode(_ path: String) -> mode_t {
         #expect(e.description.contains("too long"))
         #expect(e.description.contains("XDG_RUNTIME_DIR"))
     }
+}
+
+@Test func aSocketsNameSaysWhichProcessListens() throws {
+    let scratch = ScratchDirectory()
+    let d = AgentDirectory(path: scratch.path + "/xless-agent")
+    let mine = try d.bind()
+    defer { close(mine.fd) }
+    let owner = try #require(AgentDirectory.Owner(of: mine.path))
+    #expect(owner == .current)
+    #expect(owner.pid == getpid())
+    #expect(owner.isRunning)
+    #expect(!AgentDirectory.Owner(pid: owner.pid, start: owner.start &+ 1).isRunning) // its pid is another process's by now
+    let other = AgentDirectory.Owner(pid: 4_194_303, start: .max)
+    #expect(AgentDirectory.Owner(of: "/d/" + AgentDirectory.name(other)) == other)
+    #expect(AgentDirectory.name(other) != AgentDirectory.name(other))
+    #expect(AgentDirectory.Owner(of: "/d/x.sock") == nil)
+}
+
+@Test func aProcessThatEndedIsNoOwner() throws {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    p.arguments = ["30"]
+    try p.run()
+    let owner = try #require(AgentDirectory.Owner(runningAs: p.processIdentifier))
+    #expect(owner.isRunning)
+    kill(p.processIdentifier, SIGKILL)
+    p.waitUntilExit()
+    #expect(!owner.isRunning)
+}
+
+@Test func onlyTheProcessThatMadeTheSocketAndRunsThisProgramIsEnded() {
+    let me = AgentExecutable(device: 1, inode: 2), owner = AgentDirectory.Owner(pid: 77, start: 7)
+    func peer(pid: Int32 = 77, uid: uid_t = geteuid(), inode: UInt64 = 2) -> xless_peer {
+        var p = xless_peer()
+        (p.pid, p.uid, p.exe_device, p.exe_inode) = (pid, uid, 1, inode)
+        return p
+    }
+    func ends(_ p: xless_peer, owner o: AgentDirectory.Owner? = owner, running: Bool = true) -> Bool {
+        AgentLink.maySafelyEnd(p, owner: o, program: me, isRunning: { _ in running })
+    }
+    #expect(ends(peer()))
+    #expect(!ends(peer(pid: 78))) // another xless has the socket, or the pid the kernel kept
+    #expect(!ends(peer(), running: false)) // the agent has ended: its pid is another one's
+    #expect(!ends(peer(), owner: nil))
+    #expect(!ends(peer(uid: geteuid() &+ 1)))
+    #expect(!ends(peer(inode: 3)))
+    #expect(!ends(peer(pid: getpid()), owner: AgentDirectory.Owner(pid: getpid(), start: 7))) // never itself
 }

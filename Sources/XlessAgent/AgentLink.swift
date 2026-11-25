@@ -32,8 +32,8 @@ public struct AgentHeld: Sendable {
 /// session taken from it, only when it is a process of this very session (`isSameSession`), or has shown that it holds
 /// the store's key (`prove`): build code that listens in the agents' directory is neither.
 final class AgentLink {
-    let path: String
-    let identity: AgentDirectory.Identity
+    let socket: AgentDirectory.Socket
+    var path: String { socket.path }
     private let channel: AgentChannel
     private let timeout: Int
     private let terms: AgentTerms
@@ -59,8 +59,8 @@ final class AgentLink {
         var links: [AgentLink] = []
         /// Their queue stays full: nobody takes the connections.
         var busy: [AgentUnanswered] = []
-        /// Nobody listens.
-        var dead: [AgentDirectory.Identity] = []
+        /// Nobody listens, and they are left there for now.
+        var dead: [AgentDirectory.Socket] = []
     }
 
     /// Connections to those of `paths` where somebody listens.
@@ -68,40 +68,53 @@ final class AgentLink {
                      readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws -> Opened {
         var out = Opened()
         guard try directory.verify() else { return out }
-        var left = paths.compactMap { path in directory.identity(of: path).map { (path: path, identity: $0) } }
+        var left = paths.compactMap { directory.socket(at: $0) }
         for round in 0..<10 where !left.isEmpty {
             // Refused: nobody listens, or (macOS) too many are waiting; EAGAIN (Linux): too many are waiting. A busy
             // agent takes them in no time.
             if round > 0 { usleep(20_000) }
-            left = left.filter { path, identity in
-                let fd = xless_unix_connect(path)
-                if fd == -EAGAIN, round == 9 { out.busy.append(AgentUnanswered(pid: 0, path: path)) }
+            left = left.filter { socket in
+                let fd = xless_unix_connect(socket.path)
                 if fd >= 0, let channel = try? AgentChannel(fd: fd, readPeer: readPeer) {
-                    out.links.append(AgentLink(channel: channel, path: path, identity: identity, terms: terms, timeout: timeout))
+                    out.links.append(AgentLink(channel: channel, socket: socket, terms: terms, timeout: timeout))
                 }
-                if fd == -ECONNREFUSED, round == 9 {
-                    out.dead.append(identity)
-                    removeStale(path, identity, directory)
+                let refused = fd == -ECONNREFUSED || fd == -EAGAIN
+                if refused, round == 9 {
+                    if fd == -EAGAIN || mayListen(socket.path) {
+                        out.busy.append(AgentUnanswered(pid: 0, path: socket.path))
+                    } else if !removeStale(socket, directory) {
+                        out.dead.append(socket)
+                    }
                 }
-                return fd == -ECONNREFUSED || fd == -EAGAIN
+                return refused
             }
         }
         return out
     }
 
-    private init(channel: AgentChannel, path: String, identity: AgentDirectory.Identity, terms: AgentTerms, timeout: Int) {
+    /// Whether there may be an agent at `path` although a connection to it was refused: macOS says the same when its queue
+    /// is full, so it is for the process that made the socket to have ended.
+    private static func mayListen(_ path: String) -> Bool {
+        #if os(macOS)
+        AgentDirectory.Owner(of: path)?.isRunning ?? true
+        #else
+        false
+        #endif
+    }
+
+    private init(channel: AgentChannel, socket: AgentDirectory.Socket, terms: AgentTerms, timeout: Int) {
         self.channel = channel
-        self.path = path
-        self.identity = identity
+        self.socket = socket
         self.terms = terms
         self.timeout = timeout
     }
 
     /// A socket nobody listens on is left by an agent that was killed. One made a moment ago may be about to be listened on.
-    private static func removeStale(_ path: String, _ identity: AgentDirectory.Identity, _ directory: AgentDirectory) {
+    /// Whether it was removed.
+    private static func removeStale(_ socket: AgentDirectory.Socket, _ directory: AgentDirectory) -> Bool {
         var st = stat()
-        guard lstat(path, &st) == 0, time(nil) - Int(modified(st)) > 10, directory.identity(of: path) == identity else { return }
-        unlink(path)
+        guard lstat(socket.path, &st) == 0, time(nil) - Int(modified(st)) > 10, directory.socket(at: socket.path) == socket else { return false }
+        return unlink(socket.path) == 0
     }
 
     private static func modified(_ st: stat) -> time_t {
@@ -290,12 +303,19 @@ final class AgentLink {
         return message.code == .ok
     }
 
-    /// Ends the process at the other end, which does not answer, when the kernel says that it is this very program run by
-    /// this user (macOS); whether it did.
+    /// Whether ending `peer` ends the agent that made the socket, and nothing else: the kernel's word on the peer is of
+    /// whoever has the pid it kept, so that must be the process `owner` that the socket's name says, still running.
+    static func maySafelyEnd(_ peer: xless_peer, owner: AgentDirectory.Owner?, program: AgentExecutable, isRunning: (AgentDirectory.Owner) -> Bool = \.isRunning) -> Bool {
+        guard let owner, owner.pid == peer.pid, isRunning(owner) else { return false }
+        return peer.uid == geteuid() && peer.pid != getpid() && AgentExecutable(device: peer.exe_device, inode: peer.exe_inode) == program
+    }
+
+    /// Ends the process at the other end, which does not answer, when it is the agent that made the socket and the kernel
+    /// says that it is this very program run by this user (macOS); whether it did.
     func kill() -> Bool {
         #if os(macOS)
-        guard var peer = AgentChannel.kernelPeer(channel.fd), peer.uid == geteuid(), peer.pid != getpid(), let me = AgentExecutable.current,
-              AgentExecutable(device: peer.exe_device, inode: peer.exe_inode) == me, xless_peer_kill(&peer) == 0 else { return false }
+        guard var peer = AgentChannel.kernelPeer(channel.fd), let me = AgentExecutable.current,
+              Self.maySafelyEnd(peer, owner: AgentDirectory.Owner(of: path), program: me), xless_peer_kill(&peer) == 0 else { return false }
         var p = pollfd(fd: channel.fd, events: Int16(POLLIN), revents: 0)
         return poll(&p, 1, 2000) > 0 // closed with the process
         #else

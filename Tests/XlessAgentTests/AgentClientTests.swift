@@ -150,7 +150,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
 
 @Test func aSocketLeftByAKilledAgentIsRemovedOnceItIsOld() throws {
     let (box, directory) = sharedDirectory()
-    let bound = try directory.bind()
+    let bound = try directory.bind(owner: ended)
     close(bound.fd)
     let c = client(directory)
     #expect(c.statuses().isEmpty)
@@ -226,6 +226,88 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(agent.state.status(of: "b")?.typedAgo == 4800)
 }
 
+/// A process that has ended: this one's pid has been given to another one (this one) since.
+private let ended = AgentDirectory.Owner(pid: getpid(), start: (AgentDirectory.Owner.current?.start ?? 0) &+ 1)
+
+// MARK: sockets that come and go
+
+/// A socket of the directory's that is bound, and not listened on yet.
+private func unheardSocket(in directory: AgentDirectory, owner: AgentDirectory.Owner) throws -> AgentDirectory.Bound {
+    try directory.prepare()
+    let path = directory.path + "/" + AgentDirectory.name(owner)
+    let fd = socket(AF_UNIX, testSocketStream, 0)
+    _ = fcntl(fd, F_SETFL, O_NONBLOCK) // as the agent's
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &address.sun_path) { to in path.utf8CString.withUnsafeBytes { to.copyMemory(from: $0) } }
+    let bound = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+    }
+    try #require(bound == 0)
+    return AgentDirectory.Bound(fd: fd, path: path, identity: try #require(directory.identity(of: path)))
+}
+
+#if os(Linux)
+private let testSocketStream = Int32(SOCK_STREAM.rawValue)
+#else
+private let testSocketStream = SOCK_STREAM
+#endif
+
+/// What a file system does that gives a new file the inode of a removed one.
+private func revived(_ bound: AgentDirectory.Bound, in directory: AgentDirectory) throws -> TestAgent {
+    let path = directory.path + "/" + AgentDirectory.name(try #require(.current))
+    try #require(link(bound.path, path) == 0 && unlink(bound.path) == 0 && listen(bound.fd, 128) == 0)
+    let identity = try #require(directory.identity(of: path))
+    #expect(identity == bound.identity)
+    return try TestAgent(in: directory, bound: AgentDirectory.Bound(fd: bound.fd, path: path, identity: identity))
+}
+
+@Test func anAgentWhoseSocketHasTheInodeOfADeadOneIsFound() throws {
+    let (box, directory) = sharedDirectory()
+    let dead = try unheardSocket(in: directory, owner: ended)
+    let c = AgentClient(directory: directory, timeout: 300)
+    #expect(c.get("a") { _ in true } == nil)
+    let agent = try revived(dead, in: directory)
+    #expect(c.get("a") { _ in true } != nil)
+    _ = (box, agent)
+}
+
+@Test func anAgentWhoseSocketHasTheInodeOfASilentOneIsFound() throws {
+    let (box, directory) = sharedDirectory()
+    let silent = try silentSocket(in: directory)
+    let c = AgentClient(directory: directory, timeout: 300)
+    #expect(c.get("a") { _ in true } == nil)
+    #expect(c.problem?.kind == .silent)
+    let agent = try revived(silent, in: directory)
+    #expect(c.get("a") { _ in true } != nil)
+    _ = (box, agent)
+}
+
+@Test func anAgentWhoseQueueIsFullIsThereWhateverTheSystemSays() throws {
+    let (box, directory) = sharedDirectory()
+    let full = try silentSocket(in: directory)
+    defer { close(full.fd) }
+    var queued: [Int32] = []
+    defer { queued.forEach { close($0) } }
+    while queued.count < 4096 {
+        let fd = xless_unix_connect(full.path)
+        guard fd >= 0 else { break }
+        queued.append(fd)
+    }
+    #expect(queued.count < 4096) // ECONNREFUSED on macOS, as when nobody listens; EAGAIN on Linux
+    var old = [timeval(tv_sec: time(nil) - 60, tv_usec: 0), timeval(tv_sec: time(nil) - 60, tv_usec: 0)]
+    utimes(full.path, &old)
+    let locked = try AgentClient(directory: directory, timeout: 300).lockAll()
+    #expect(locked == AgentLocked(ended: 0, unanswered: [AgentUnanswered(pid: 0, path: full.path)]))
+    let c = AgentClient(directory: directory, timeout: 300)
+    #expect(c.get("a") { _ in true } == nil)
+    #expect(c.problem?.kind == .silent)
+    c.drop(prefix: "a")
+    #expect(c.unreached?.kind == .silent)
+    #expect(directory.identity(of: full.path) == full.identity) // it can be reached once it goes on
+    _ = box
+}
+
 // MARK: agents that do not answer
 
 /// Listens in the agents' directory and never answers (a stopped agent).
@@ -234,7 +316,7 @@ private func silentSocket(in directory: AgentDirectory) throws -> AgentDirectory
 @Test func anAgentThatDoesNotAnswerIsReportedByLocking() throws {
     let (box, directory) = sharedDirectory()
     let agent = try TestAgent(in: directory)
-    let silent = try silentSocket(in: directory), stale = try directory.bind()
+    let silent = try silentSocket(in: directory), stale = try directory.bind(owner: ended)
     defer { close(silent.fd) }
     close(stale.fd) // nobody listens: not an agent
     let locked = try AgentClient(directory: directory, timeout: 300).lockAll()

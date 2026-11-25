@@ -3,7 +3,8 @@ import Foundation
 import XlessCore
 
 /// The directory of the agents' sockets: the user's alone (0700, owned by them, no symbolic link), checked before
-/// anything in it is bound or connected to. Each agent has a socket of its own, with a random name.
+/// anything in it is bound or connected to. Each agent has a socket of its own, with a name that no other one gets
+/// (`name`).
 public struct AgentDirectory: Sendable {
     public let path: String
     let user: uid_t
@@ -65,7 +66,7 @@ public struct AgentDirectory: Sendable {
     /// The agents' sockets: the user's, at most `limit` of them.
     func sockets(limit: Int = AgentLimits.sockets) throws -> [String] {
         guard try verify(), let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return [] }
-        return Array(names.filter { $0.wholeMatch(of: /[0-9a-f]{16}\.sock/) != nil }.sorted().map { "\(path)/\($0)" }
+        return Array(names.filter { $0.wholeMatch(of: /[0-9a-f]{24}\.sock/) != nil }.sorted().map { "\(path)/\($0)" }
             .filter { isSocket($0) }.prefix(limit))
     }
 
@@ -80,14 +81,56 @@ public struct AgentDirectory: Sendable {
         return Identity(device: UInt64(truncatingIfNeeded: st.st_dev), inode: UInt64(st.st_ino))
     }
 
+    /// A process, told from a later one that has its pid.
+    struct Owner: Equatable, Sendable {
+        let pid: Int32
+        /// The low bits of when it started (`xless_process_start`).
+        let start: UInt32
+
+        init(pid: Int32, start: UInt32) { self.pid = pid; self.start = start }
+
+        /// nil: no such process.
+        init?(runningAs pid: Int32) {
+            let start = xless_process_start(pid)
+            guard start != 0 else { return nil }
+            self.init(pid: pid, start: UInt32(truncatingIfNeeded: start))
+        }
+
+        /// The one a socket's name says listens on it.
+        init?(of path: String) {
+            guard let name = path.split(separator: "/").last, name.wholeMatch(of: /[0-9a-f]{24}\.sock/) != nil,
+                  let pid = Int32(name.prefix(8), radix: 16), let start = UInt32(name.dropFirst(8).prefix(8), radix: 16) else { return nil }
+            self.init(pid: pid, start: start)
+        }
+
+        static var current: Owner? { Owner(runningAs: getpid()) }
+
+        var isRunning: Bool { Owner(runningAs: pid) == self }
+    }
+
+    /// A socket's name: who listens, and chance.
+    static func name(_ owner: Owner) -> String {
+        [UInt32(bitPattern: owner.pid), owner.start, UInt32.random(in: 0...UInt32.max)].map {
+            let hex = String($0, radix: 16)
+            return String(repeating: "0", count: 8 - hex.count) + hex
+        }.joined() + ".sock"
+    }
+
+    /// One socket: not one made later, which may have the inode of a removed one.
+    struct Socket: Hashable { let path: String, identity: Identity }
+
+    func socket(at path: String) -> Socket? { identity(of: path).map { Socket(path: path, identity: $0) } }
+
     struct Bound { let fd: Int32, path: String, identity: Identity }
 
     /// A new listening socket in the directory.
-    func bind() throws -> Bound {
+    /// - Parameter owner: for tests; this process.
+    func bind(owner: Owner? = .current) throws -> Bound {
         try prepare()
-        var rng = SystemRandomNumberGenerator()
-        let name = String(UInt64.random(in: 0...UInt64.max, using: &rng), radix: 16)
-        let path = "\(path)/\(String(repeating: "0", count: 16 - name.count))\(name).sock"
+        guard let owner else {
+            throw AgentError(.unavailable, "the system does not say when a process started", fix: "mount /proc")
+        }
+        let path = "\(path)/\(Self.name(owner))"
         guard path.utf8.count <= xless_unix_path_max() else {
             throw AgentError(.unavailable, "the path of the xless agent's socket is too long (\(path), at most \(xless_unix_path_max()) bytes)",
                              fix: "set XDG_RUNTIME_DIR to a directory with a shorter path")

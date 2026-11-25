@@ -45,9 +45,9 @@ public final class AgentClient: @unchecked Sendable {
     private var lastProblem: AgentError?
     private var lastUnreached: AgentError?
     /// The sockets that did not answer this process, and who listens: they are not waited for again.
-    private var silent: [AgentDirectory.Identity: Int32] = [:]
+    private var silent: [AgentDirectory.Socket: Int32] = [:]
     /// Where nobody listened.
-    private var dead: Set<AgentDirectory.Identity> = []
+    private var dead: Set<AgentDirectory.Socket> = []
     private let timeout: Int
     /// For tests: no agent here is of this session.
     var seesEveryAgentAsAnotherSessions = false
@@ -98,7 +98,7 @@ public final class AgentClient: @unchecked Sendable {
                 } catch let e as AgentError {
                     switch e.kind {
                     case .version, .unsafePath: problem = e
-                    case .silent: lock.withLock { silent[link.identity] = link.listener }
+                    case .silent: lock.withLock { silent[link.socket] = link.listener }
                     default: break // gone, or not an agent
                     }
                 } catch {}
@@ -107,12 +107,12 @@ public final class AgentClient: @unchecked Sendable {
         }
         do {
             let skipped = lock.withLock { dead.union(silent.keys) }
-            let paths = try paths().filter { path in directory.identity(of: path).map { !skipped.contains($0) } ?? false }
+            let paths = try paths().filter { path in directory.socket(at: path).map { !skipped.contains($0) } ?? false }
             let opened = try AgentLink.open(paths, directory: directory, terms: terms, timeout: timeout)
             links = opened.links
             lock.withLock {
                 dead.formUnion(opened.dead)
-                for busy in opened.busy { if let identity = directory.identity(of: busy.path) { silent[identity] = busy.pid } }
+                for busy in opened.busy { if let socket = directory.socket(at: busy.path) { silent[socket] = busy.pid } }
             }
             each { try $0.greet() }
             let welcome = deadline
@@ -226,7 +226,7 @@ public final class AgentClient: @unchecked Sendable {
             return try link.locks(until: end) ? .ended : .unanswered
         } catch let e as AgentError where e.kind == .silent {
             guard link.kill() else { return .unanswered }
-            if directory.identity(of: link.path) == link.identity { unlink(link.path) }
+            if directory.socket(at: link.path) == link.socket { unlink(link.path) }
             return .ended
         } catch {
             // It closed: it has ended, unless somebody still listens there.
