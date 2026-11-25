@@ -21,6 +21,38 @@ All the Docker commands below use the active Docker context. To use a separate e
 VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that `xless run --docker` and
 `scripts/sim-launch.sh` prefer a context named `colima-xless` when one exists.
 
+## Windows
+
+Part of xless is built and tested on Windows, by `windows-tests (x86_64)`: the libraries of the account commands (XlessCore, XlessASC,
+XlessAppleID, XlessFIDO, XlessSign, XlessStore, XlessVault). There is no `xless` for Windows.
+
+- The end of `Package.swift` makes the Windows package of the same manifest: which targets, and which of their files are left out
+  (`notOnWindows`). `Tests/windows/sources.txt` says it of every file, and `WindowsSourcesTests` (on every system) fails for a file that
+  is in neither list: decide for a new file whether Windows can have it.
+- `swift build --build-tests -Xmanifest -DXLESS_WINDOWS_TARGETS --scratch-path .build/windows-targets` builds the same targets and files on
+  a Mac or on Linux: what it cannot compile, Windows cannot either. It says nothing about the `#if os(Windows)` code.
+- The toolchain is `versions.env`'s (`SWIFT_WINDOWS_*`), installed by `scripts/windows-toolchain.ps1` once its SHA-256 and its Authenticode
+  signer are the pinned ones. With a new `SWIFT_VERSION`, take the SHA-256 from winget's manifest of that version
+  (microsoft/winget-pkgs, `manifests/s/Swift/Toolchain/`), and the signer from the installer itself. Always `--build-system native`.
+- What asks Windows for something is C, in `Sources/CXlessWindows`, for Windows 10 1809 and later.
+
+What holds on Windows, and what does not:
+
+- The secret store is `%LOCALAPPDATA%\xless\vault` (the system's answer, not the variable's). Its directory and files are owned by the user
+  of the process's token and let nobody else in; whatever else is found there (another owner, an access entry of anybody but the user, the
+  system and the administrators, an inherited or missing access list, a link, a junction, a second name, a share, a removable drive, FAT) is
+  refused, never repaired. The same for a key that xless writes. The system and the administrators are accepted when something else let
+  them in, and never let in by xless: they are root's counterparts.
+- The store is replaced in one step and flushed before; Windows has no way to flush a directory, so after a power cut the old store may
+  be back. A backup, a shadow copy or a search index may have what is in a file that was written in clear, as on any system.
+- A process that read a secret shows no error dialog, has no heap in an error report, and ends at a fault before Windows' error reporting
+  sees it; a process for which the first two cannot be had reads none. Best effort beyond that: its own access list denies other processes of
+  the user to open its memory, and no DLL is loaded from a share, an extension point or a file of low integrity.
+- That is less than on Linux. An administrator can read any process. A program of the same user that opened the process before it read
+  a secret, or that started it under a debugger, keeps what it has. `__fastfail` (a corrupted stack or heap) goes to Windows' error reporting
+  past the process's own handler: an administrator's `LocalDumps` setting then writes a dump.
+- Nothing is kept unlocked, there are no credential helpers, no security keys and no `secrets materialize`.
+
 ## Building the images on the Mac
 
 `xless setup --docker` builds the image of a release ([images.md](images.md)). On the Mac, from a checkout:
