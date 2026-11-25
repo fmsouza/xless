@@ -42,6 +42,9 @@ final class TestAgent: @unchecked Sendable {
         }
     }
 
+    /// What `xless lock` does; whether the agent said it would.
+    func lock() throws -> Bool { try AgentClient(directory: directory).lockAll() == AgentLocked(ended: 1, unanswered: []) }
+
     /// Waits for the agent to end; why it did.
     func waitForExit(_ seconds: Double = 10) -> AgentServer.Exit? {
         done.wait(timeout: .now() + seconds) == .success ? exit : nil
@@ -161,7 +164,7 @@ private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck
 
 @Test func lockDropsEverythingAndEndsTheAgent() throws {
     let agent = try TestAgent()
-    #expect(try AgentLink.lock(path: agent.path, directory: agent.directory))
+    #expect(try agent.lock())
     #expect(agent.waitForExit() == .locked)
     #expect(agent.state.isEmpty)
     #expect(!FileManager.default.fileExists(atPath: agent.path))
@@ -183,7 +186,7 @@ private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck
     #expect(status.count == 1)
     #expect(agent.state.statuses().map(\.name) == ["a"])
     // It may lock: it could end the agent anyway.
-    #expect(try AgentLink.lock(path: agent.path, directory: agent.directory))
+    #expect(try agent.lock())
     #expect(agent.waitForExit() == .locked)
 }
 

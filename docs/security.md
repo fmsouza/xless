@@ -202,8 +202,12 @@ knows who it is. An agent of another xless version is never misunderstood: the c
 
 ### When it ends
 
-- The time given, the idle time, `xless lock` (every agent of yours, in every terminal, and the keyring). `xless auth
-  logout` drops the Apple ID session, `xless secrets lock` the store's unlock.
+- The time given, the idle time, `xless lock` (every agent of yours, in every terminal, the keyring and a saved session:
+  every step is taken, whatever the others came to). `xless auth logout` drops the Apple ID session, `xless secrets lock`
+  the store's unlock.
+- An agent that **does not answer** (a stopped process, say) is never taken for nothing held: `xless lock` ends it where
+  the kernel says that it is this very xless (macOS), else names its process and fails, as `xless secrets lock`, `xless
+  auth logout` and `passwd` do. A command that looks for something held says so, waits for it once (1.5 s) and goes on.
 - **The terminals are closed**: when no granted session's leader is left (you closed the window, logged out of SSH, quit
   the shell), the agent ends within 2 seconds. Logging out ends every session.
 - **The machine sleeps**: the agent compares a clock that stops during sleep with one that does not, and drops everything

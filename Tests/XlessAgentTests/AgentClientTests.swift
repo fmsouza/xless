@@ -33,7 +33,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(c.get("a") { _ in true } == nil)
     #expect(c.get("a", witness: { witness }) == nil)
     #expect(c.statuses().isEmpty)
-    #expect(try c.lockAll() == 0)
+    #expect(try c.lockAll() == AgentLocked(ended: 0, unanswered: []))
     #expect(c.drop(prefix: "a") == 0)
     #expect(!FileManager.default.fileExists(atPath: directory.path))
     _ = box
@@ -104,7 +104,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(c.statuses().count == 2)
     #expect(c.drop(prefix: "b") == 1)
     #expect(two.state.statuses().map(\.name) == ["a"])
-    #expect(try c.lockAll() == 2)
+    #expect(try c.lockAll() == AgentLocked(ended: 2, unanswered: []))
     #expect(one.waitForExit() == .locked)
     #expect(two.waitForExit() == .locked)
     _ = box
@@ -157,7 +157,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(FileManager.default.fileExists(atPath: bound.path)) // it may be an agent about to listen
     var old = [timeval(tv_sec: time(nil) - 60, tv_usec: 0), timeval(tv_sec: time(nil) - 60, tv_usec: 0)]
     utimes(bound.path, &old)
-    #expect(c.statuses().isEmpty)
+    #expect(client(directory).statuses().isEmpty) // the next command
     #expect(!FileManager.default.fileExists(atPath: bound.path))
     _ = box
 }
@@ -224,4 +224,86 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     try client(agent.directory).put([seed])
     #expect(agent.state.status(of: "b")?.remaining == 200) // of at most 5000
     #expect(agent.state.status(of: "b")?.typedAgo == 4800)
+}
+
+// MARK: agents that do not answer
+
+/// Listens in the agents' directory and never answers (a stopped agent).
+private func silentSocket(in directory: AgentDirectory) throws -> AgentDirectory.Bound { try directory.bind() }
+
+@Test func anAgentThatDoesNotAnswerIsReportedByLocking() throws {
+    let (box, directory) = sharedDirectory()
+    let agent = try TestAgent(in: directory)
+    let silent = try silentSocket(in: directory), stale = try directory.bind()
+    defer { close(silent.fd) }
+    close(stale.fd) // nobody listens: not an agent
+    let locked = try AgentClient(directory: directory, timeout: 300).lockAll()
+    #expect(locked.ended == 1)
+    #expect(locked.unanswered == [AgentUnanswered(pid: getpid(), path: silent.path)]) // and this process goes on
+    #expect(agent.waitForExit() == .locked)
+    _ = box
+}
+
+@Test func lockingAndDroppingReachEveryAgentHoweverManySocketsThereAre() throws {
+    let (box, directory) = sharedDirectory()
+    var others: [AgentDirectory.Bound] = []
+    defer { others.forEach { close($0.fd) } }
+    for _ in 0..<(AgentLimits.sockets + 3) { others.append(try silentSocket(in: directory)) }
+    let agent = try TestAgent(items: [("a", "x"), ("b", "y")], in: directory)
+    // Whatever its name, it is looked for.
+    let c = AgentClient(directory: directory, timeout: 300)
+    let start = Date()
+    #expect(c.drop(prefix: "b") == 1)
+    #expect(c.unreached != nil)
+    let locked = try c.lockAll()
+    #expect(locked.ended == 1)
+    #expect(locked.unanswered.count == others.count)
+    #expect(agent.waitForExit() == .locked)
+    #expect(Date().timeIntervalSince(start) < 10) // all at once, not one after the other
+    _ = box
+}
+
+@Test func anAgentThatDoesNotAnswerCostsACommandOneWait() throws {
+    let (box, directory) = sharedDirectory()
+    var silent: [AgentDirectory.Bound] = []
+    defer { silent.forEach { close($0.fd) } }
+    for _ in 0..<8 { silent.append(try silentSocket(in: directory)) }
+    let agent = try TestAgent(in: directory)
+    let c = AgentClient(directory: directory, timeout: 500)
+    let start = Date()
+    #expect(c.get("a") { _ in true } != nil)
+    #expect(Date().timeIntervalSince(start) < 3)
+    let again = Date()
+    for _ in 0..<20 { #expect(c.get("a") { _ in true } != nil) }
+    #expect(Date().timeIntervalSince(again) < 3)
+    #expect(c.problem?.kind == .silent)
+    #expect(c.problem?.cause.contains("\(getpid())") == true)
+    #expect(try agent.link().isGranted)
+    _ = box
+}
+
+@Test func anAgentOfAnotherVersionIsNotReachedByADrop() throws {
+    let (box, directory) = sharedDirectory()
+    let agent = try TestAgent(in: directory)
+    let c = client(directory)
+    #expect(c.drop(prefix: "nothing") == 0)
+    #expect(c.unreached == nil)
+    let bound = try directory.bind()
+    let stop = Flag()
+    Thread.detachNewThread {
+        while !stop.isSet {
+            let fd = xless_unix_accept(bound.fd)
+            guard fd >= 0 else { usleep(5000); continue }
+            var w = WireWriter()
+            w.put(UInt8(AgentRefusal.version.rawValue)); w.put("7.7.7")
+            w.frame(code: .refused, version: 42).withUnsafeBytes { _ = xless_unix_send(fd, $0.baseAddress, $0.count) }
+            usleep(50_000)
+            close(fd)
+        }
+        close(bound.fd)
+    }
+    defer { stop.set() }
+    #expect(c.drop(prefix: "nothing") == 0)
+    #expect(c.unreached?.kind == .version)
+    _ = (box, agent)
 }

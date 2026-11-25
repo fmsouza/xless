@@ -32,6 +32,8 @@ public struct AgentHeld: Sendable {
 /// session taken from it, only when it is a process of this very session (`isSameSession`), or has shown that it holds
 /// the store's key (`prove`): build code that listens in the agents' directory is neither.
 final class AgentLink {
+    let path: String
+    let identity: AgentDirectory.Identity
     private let channel: AgentChannel
     private let timeout: Int
     private let terms: AgentTerms
@@ -46,24 +48,53 @@ final class AgentLink {
     /// - Parameter timeout: milliseconds for each answer.
     static func connect(path: String, directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int = 1500,
                         readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws -> AgentLink {
-        let link = try AgentLink(path: path, directory: directory, terms: terms, timeout: timeout, readPeer: readPeer)
-        try link.handshake()
+        guard let link = try open([path], directory: directory, terms: terms, timeout: timeout, readPeer: readPeer).links.first else { throw AgentError.gone }
+        try link.greet()
+        try link.meet(until: link.deadline)
+        try link.settle(until: link.deadline)
         return link
     }
 
-    private init(path: String, directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int, readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws {
-        guard try directory.verify(), let identity = directory.identity(of: path) else { throw AgentError.gone }
-        // Refused: nobody listens, or (macOS) too many are waiting. A busy agent takes them in no time.
-        var fd = xless_unix_connect(path)
-        for _ in 0..<10 where fd == -ECONNREFUSED || fd == -EAGAIN {
-            usleep(20_000)
-            fd = xless_unix_connect(path)
+    struct Opened {
+        var links: [AgentLink] = []
+        /// Their queue stays full: nobody takes the connections.
+        var busy: [AgentUnanswered] = []
+        /// Nobody listens.
+        var dead: [AgentDirectory.Identity] = []
+    }
+
+    /// Connections to those of `paths` where somebody listens.
+    static func open(_ paths: [String], directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int = 1500,
+                     readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws -> Opened {
+        var out = Opened()
+        guard try directory.verify() else { return out }
+        var left = paths.compactMap { path in directory.identity(of: path).map { (path: path, identity: $0) } }
+        for round in 0..<10 where !left.isEmpty {
+            // Refused: nobody listens, or (macOS) too many are waiting; EAGAIN (Linux): too many are waiting. A busy
+            // agent takes them in no time.
+            if round > 0 { usleep(20_000) }
+            left = left.filter { path, identity in
+                let fd = xless_unix_connect(path)
+                if fd == -EAGAIN, round == 9 { out.busy.append(AgentUnanswered(pid: 0, path: path)) }
+                if fd >= 0, let channel = try? AgentChannel(fd: fd, readPeer: readPeer) {
+                    out.links.append(AgentLink(channel: channel, path: path, identity: identity, terms: terms, timeout: timeout))
+                }
+                if fd == -ECONNREFUSED, round == 9 {
+                    out.dead.append(identity)
+                    removeStale(path, identity, directory)
+                }
+                return fd == -ECONNREFUSED || fd == -EAGAIN
+            }
         }
-        if fd == -ECONNREFUSED { Self.removeStale(path, identity, directory) }
-        guard fd >= 0 else { throw AgentError.gone }
-        channel = try AgentChannel(fd: fd, readPeer: readPeer)
-        self.timeout = timeout
+        return out
+    }
+
+    private init(channel: AgentChannel, path: String, identity: AgentDirectory.Identity, terms: AgentTerms, timeout: Int) {
+        self.channel = channel
+        self.path = path
+        self.identity = identity
         self.terms = terms
+        self.timeout = timeout
     }
 
     /// A socket nobody listens on is left by an agent that was killed. One made a moment ago may be about to be listened on.
@@ -83,8 +114,13 @@ final class AgentLink {
 
     // MARK: messages
 
-    private func receive() throws -> AgentMessage {
-        guard let message = try channel.wait(limit: AgentLimits.message, milliseconds: timeout) else { throw AgentError.gone }
+    private var deadline: Int64 { xless_clock_awake_ms() + Int64(timeout) }
+
+    /// The process that listens at the other end, as far as it is known before it said anything.
+    var listener: Int32 { channel.listener }
+
+    private func receive(until deadline: Int64) throws -> AgentMessage {
+        guard let message = try channel.wait(limit: AgentLimits.message, until: deadline) else { throw AgentError.silent(listener) }
         if message.header.code == AgentCode.refused.rawValue { throw try Self.refusal(message) }
         guard message.header.version == AgentProtocol.version else { throw AgentError.versionMismatch(theirs: "protocol \(message.header.version)") }
         return message
@@ -106,34 +142,56 @@ final class AgentLink {
         String(text.unicodeScalars.prefix(200).map { $0.value < 0x20 || $0.value == 0x7F || (0x80...0x9F).contains($0.value) ? "?" : Character($0) })
     }
 
-    private func request(_ code: AgentCode, _ expected: AgentCode = .ok, _ body: (inout WireWriter) -> Void = { _ in }) throws -> AgentMessage {
+    private func send(_ code: AgentCode, _ body: (inout WireWriter) -> Void = { _ in }) {
         var w = WireWriter()
         body(&w)
         channel.send(w.frame(code: code))
-        let message = try receive()
+    }
+
+    private func answer(_ expected: AgentCode, until deadline: Int64) throws -> AgentMessage {
+        let message = try receive(until: deadline)
         guard message.code == expected else { throw AgentError.malformed("answer \(message.header.code)") }
         return message
     }
 
-    /// Each end sends the other something to send back, so each knows that the process the kernel named is there now.
-    private func handshake() throws {
-        let first = AgentProof.nonce(), second = AgentProof.nonce()
-        let welcome = try request(.hello, .welcome) {
+    private func request(_ code: AgentCode, _ expected: AgentCode = .ok, _ body: (inout WireWriter) -> Void = { _ in }) throws -> AgentMessage {
+        send(code, body)
+        return try answer(expected, until: deadline)
+    }
+
+    // Each end sends the other something to send back, so each knows that the process the kernel named is there now. In
+    // three steps, so that several agents are asked at once.
+
+    private let first = AgentProof.nonce(), second = AgentProof.nonce()
+    private var version = ""
+
+    /// Says hello, and waits for nothing.
+    func greet() throws {
+        send(.hello) {
             $0.put(bytes: first)
             $0.put(XlessVersion.current)
         }
+        try channel.flush()
+    }
+
+    /// Takes the answer, and sends back what it asks for.
+    func meet(until deadline: Int64) throws {
         let echo: [UInt8]
-        let version: String
-        (echo, nonce, id, version) = try welcome.body { (try $0.bytes(max: 16), try $0.bytes(max: 16), try $0.bytes(max: 16), try $0.string(max: 64)) }
+        (echo, nonce, id, version) = try answer(.welcome, until: deadline).body { (try $0.bytes(max: 16), try $0.bytes(max: 16), try $0.bytes(max: 16), try $0.string(max: 64)) }
         guard AgentProof.equal(echo, first) else { throw AgentError.malformed("not the nonce it was given") }
-        let verdict = try request(.prove, .verdict) {
+        send(.prove) {
             $0.put(bytes: nonce)
             $0.put(bytes: second)
             terms.write(&$0)
         }
-        let answer: [UInt8]
-        (answer, isGranted) = try verdict.body { (try $0.bytes(max: 16), try $0.bool()) }
-        guard AgentProof.equal(answer, second) else { throw AgentError.malformed("not the nonce it was given") }
+        try channel.flush()
+    }
+
+    /// Takes the verdict, and looks at who gave it.
+    func settle(until deadline: Int64) throws {
+        let echo: [UInt8]
+        (echo, isGranted) = try answer(.verdict, until: deadline).body { (try $0.bytes(max: 16), try $0.bool()) }
+        guard AgentProof.equal(echo, second) else { throw AgentError.malformed("not the nonce it was given") }
         let peer = try channel.peer()
         let mine = AgentSession.current
         isSameSession = mine.isUsable && peer.session == mine && peer.uid == geteuid()
@@ -220,10 +278,29 @@ final class AgentLink {
         }
     }
 
-    /// Tells the agent at `path`, of whatever version, to drop everything and end; whether one answered.
-    static func lock(path: String, directory: AgentDirectory, timeout: Int = 1500) throws -> Bool {
-        let link = try AgentLink(path: path, directory: directory, timeout: timeout)
-        link.channel.send(WireWriter().frame(code: .lock))
-        return try link.channel.wait(limit: AgentLimits.message, milliseconds: timeout)?.code == .ok
+    /// Asks the agent, of whatever version, to drop everything and end; waits for nothing.
+    func askToLock() throws {
+        send(.lock)
+        try channel.flush()
+    }
+
+    /// Whether the agent says it does.
+    func locks(until deadline: Int64) throws -> Bool {
+        guard let message = try channel.wait(limit: AgentLimits.message, until: deadline) else { throw AgentError.silent(listener) }
+        return message.code == .ok
+    }
+
+    /// Ends the process at the other end, which does not answer, when the kernel says that it is this very program run by
+    /// this user (macOS); whether it did.
+    func kill() -> Bool {
+        #if os(macOS)
+        guard var peer = AgentChannel.kernelPeer(channel.fd), peer.uid == geteuid(), peer.pid != getpid(), let me = AgentExecutable.current,
+              AgentExecutable(device: peer.exe_device, inode: peer.exe_inode) == me, xless_peer_kill(&peer) == 0 else { return false }
+        var p = pollfd(fd: channel.fd, events: Int16(POLLIN), revents: 0)
+        return poll(&p, 1, 2000) > 0 // closed with the process
+        #else
+        // A process that holds secrets keeps its program from its own user's eyes (it is not dumpable).
+        return false
+        #endif
     }
 }

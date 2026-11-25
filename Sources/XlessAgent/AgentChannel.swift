@@ -96,6 +96,9 @@ final class AgentChannel {
 
     deinit { end() }
 
+    /// The process that listens at the other end, or that used it last; 0 when it is not known. For people to read.
+    var listener: Int32 { Int32(clamping: max(0, xless_unix_peer_pid(fd))) }
+
     /// Closes it.
     func end() {
         if fd >= 0 { close(fd) }
@@ -138,6 +141,10 @@ final class AgentChannel {
         if sender == pid { return }
         guard pid == 0 else { throw AgentError.malformed("another process speaks") }
         let held = xless_pidfd_open(sender)
+        if held == -ESRCH { // it spoke and ended: heard, but nobody to look at (`peer`)
+            pid = sender
+            return
+        }
         guard held >= 0 else {
             throw AgentError(.unavailable, "the system cannot say who is at the other end of a socket: \(String(cString: strerror(-held)))",
                              fix: "the xless agent needs Linux 5.3 or newer")
@@ -175,7 +182,11 @@ final class AgentChannel {
 
     /// Sends what is to be sent and waits for the next message; nil when it has not come in time.
     func wait(limit: Int, milliseconds: Int) throws -> AgentMessage? {
-        let deadline = xless_clock_awake_ms() + Int64(milliseconds)
+        try wait(limit: limit, until: xless_clock_awake_ms() + Int64(milliseconds))
+    }
+
+    /// - Parameter deadline: by `xless_clock_awake_ms`; what has come by then is taken also when it has passed.
+    func wait(limit: Int, until deadline: Int64) throws -> AgentMessage? {
         while true {
             try flush()
             if let message = try next(limit: limit) { return message }

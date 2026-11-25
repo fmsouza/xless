@@ -26,6 +26,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <bsm/libbsm.h>
+#include <dlfcn.h>
 #include <libproc.h>
 #include <mach/mach_time.h>
 #include <spawn.h>
@@ -482,6 +483,14 @@ long xless_unix_peer_uid(int fd) {
     return getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) == 0 ? (long)cred.uid : -errno;
 }
 
+long xless_unix_peer_pid(int fd) {
+    struct ucred cred;
+    socklen_t length = sizeof cred;
+    return getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &length) == 0 ? (long)cred.pid : -errno;
+}
+
+int xless_peer_kill(const struct xless_peer *peer) { (void)peer; return ENOTSUP; }
+
 int xless_pidfd_open(int pid) {
     long fd = syscall(434, pid, 0u); // pidfd_open, the same number on every architecture; close-on-exec by itself
     return fd < 0 ? -errno : (int)fd;
@@ -562,6 +571,21 @@ long xless_unix_peer_uid(int fd) {
     uid_t euid;
     gid_t egid;
     return getpeereid(fd, &euid, &egid) == 0 ? (long)euid : -errno;
+}
+
+long xless_unix_peer_pid(int fd) {
+    pid_t pid = 0;
+    socklen_t length = sizeof pid;
+    return getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &length) == 0 ? (long)pid : -errno;
+}
+
+int xless_peer_kill(const struct xless_peer *peer) {
+    // Not in every release this runs on.
+    int (*signal_with_token)(audit_token_t *, int) = (int (*)(audit_token_t *, int))dlsym(RTLD_DEFAULT, "proc_signal_with_audittoken");
+    if (signal_with_token == NULL) return ENOTSUP;
+    audit_token_t token;
+    memcpy(&token, peer->token, sizeof token);
+    return signal_with_token(&token, SIGKILL);
 }
 
 int xless_pidfd_open(int pid) { (void)pid; return -ENOSYS; }

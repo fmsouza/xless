@@ -62,16 +62,16 @@ public struct AgentDirectory: Sendable {
         try verify()
     }
 
-    /// The agents' sockets: the user's, at most `AgentLimits.sockets`, newest name order aside.
-    func sockets() throws -> [String] {
+    /// The agents' sockets: the user's, at most `limit` of them.
+    func sockets(limit: Int = AgentLimits.sockets) throws -> [String] {
         guard try verify(), let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return [] }
         return Array(names.filter { $0.wholeMatch(of: /[0-9a-f]{16}\.sock/) != nil }.sorted().map { "\(path)/\($0)" }
-            .filter { isSocket($0) }.prefix(AgentLimits.sockets))
+            .filter { isSocket($0) }.prefix(limit))
     }
 
     func isSocket(_ path: String) -> Bool { identity(of: path) != nil }
 
-    struct Identity: Equatable { let device: UInt64, inode: UInt64 }
+    struct Identity: Hashable { let device: UInt64, inode: UInt64 }
 
     /// A socket of the user's at `path`: which file it is.
     func identity(of path: String) -> Identity? {

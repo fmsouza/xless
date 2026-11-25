@@ -12,7 +12,6 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     private var items: [String: (seed: AgentSeed, bytes: SecretBytes)] = [:]
     private(set) var typed: [Int] = []
     private(set) var witnessed = 0
-    private(set) var locked = 0
     private(set) var dropped: [(String, String)] = []
     var obstacle: AgentError?
     var problem: AgentError?
@@ -51,13 +50,7 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
             return gone.count
         }
     }
-    func lockAll() throws -> Int {
-        lock.withLock {
-            locked += 1
-            defer { items = [:] }
-            return items.isEmpty ? 0 : 1
-        }
-    }
+    var unreached: AgentError?
     func statuses() -> [AgentStatus] {
         lock.withLock {
             guard !items.isEmpty else { return [] }
@@ -215,6 +208,17 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         try c.store(key(), id: "C", place: "/other", hold: day, typedAgo: 0)
         try c.forget(place: "/store")
         #expect(agents.names == ["xless-vault:C"])
+    }
+
+    @Test func whatCouldNotBeForgottenIsSaidOnceEverythingElseIs() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        let c = cache(agents, keyring)
+        try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+        agents.unreached = AgentError(.silent, "an agent does not answer", fix: "end it")
+        let error = #expect(throws: VaultError.self) { try c.forget(id: "ID") }
+        #expect(error?.cause == "an agent does not answer")
+        #expect(throws: VaultError.self) { try c.forget(place: "/store") }
+        #expect(keyring.names.isEmpty)
     }
 
     @Test func anAgentThatCannotBeUsedIsReportedOnceAndCountsAsLocked() throws {

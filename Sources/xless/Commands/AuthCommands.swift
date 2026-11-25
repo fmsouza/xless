@@ -81,7 +81,10 @@ struct AuthLogoutCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "logout", abstract: "Forget the Apple ID session kept by `xless auth login --keep`.")
 
     func run() throws {
-        print(AppleWebCLI.cache.forget() ? "forgot the kept Apple ID session" : "no Apple ID session was kept")
+        let any = AppleWebCLI.cache.forget()
+        if any { print("forgot the kept Apple ID session") }
+        if let unreached = AppleWebCLI.held.agents.unreached { throw XlessError(.account, unreached.cause, fix: unreached.fix) }
+        if !any { print("no Apple ID session was kept") }
     }
 }
 

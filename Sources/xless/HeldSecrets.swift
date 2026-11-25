@@ -15,7 +15,7 @@ protocol AgentHolding: Sendable {
     func get(_ name: String, using: Bool, witness: () -> AgentWitness?) -> SecretBytes?
     func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws
     func drop(prefix: String, label: String) -> Int
-    func lockAll() throws -> Int
+    var unreached: AgentError? { get }
     func statuses() -> [AgentStatus]
 }
 
@@ -146,12 +146,17 @@ struct HeldKeyCache: VaultKeyCache {
 
     func forget(id: String) throws -> Bool {
         let agent = agents.drop(prefix: HeldSecrets.name(ofVault: id), label: "") > 0
-        return try keyring.forget(id: id) || agent
+        let unreached = agents.unreached
+        let any = try keyring.forget(id: id) || agent
+        if let unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
+        return any
     }
 
     func forget(place: String) throws {
         _ = agents.drop(prefix: HeldSecrets.vaultPrefix, label: place)
+        let unreached = agents.unreached
         try keyring.forget(place: place)
+        if let unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
     }
 
     func held(id: String) -> HeldUnlock? {

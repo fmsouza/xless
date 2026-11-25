@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import XlessAgent
 import XlessAppleID
 import XlessCore
 import XlessVault
@@ -50,11 +51,37 @@ struct LockCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
-            let agents = Result { try HeldSecrets.agents.lockAll() }
-            let keys = try KernelKeyringCache().forgetAll() + KernelKeyring.revokeAll(prefix: AppleSessionCache.prefix)
-            let saved = AppleWebCLI.saved.expires == nil ? 0 : try AppleWebCLI.saved.remove() ? 1 : 0
-            let ended = try agents.get()
-            print(ended + keys + saved > 0 ? "locked: everything held was dropped" : "nothing was held")
+            let (dropped, failures) = Self.lock(
+                agents: { try HeldSecrets.agents.lockAll() },
+                keys: { try KernelKeyringCache().forgetAll() + KernelKeyring.revokeAll(prefix: AppleSessionCache.prefix) },
+                saved: { try AppleWebCLI.saved.expires != nil && AppleWebCLI.saved.remove() })
+            if dropped > 0 { print(failures.isEmpty ? "locked: everything held was dropped" : "dropped what could be dropped") }
+            if let error = Self.error(failures) { throw error }
+            if dropped == 0 { print("nothing was held") }
         }
+    }
+
+    /// Every step, whatever the ones before came to: how much was dropped, and what was not.
+    static func lock(agents: () throws -> AgentLocked, keys: () throws -> Int, saved: () throws -> Bool) -> (dropped: Int, failures: [XlessError]) {
+        var dropped = 0
+        var failures: [XlessError] = []
+        func step(_ body: () throws -> Int) {
+            do { dropped += try body() } catch { failures.append(XlessError.wrapping(error, stage: .config)) }
+        }
+        step {
+            let locked = try agents()
+            failures += locked.unanswered.map { XlessError(.config, $0.cause, fix: $0.fix) }
+            return locked.ended
+        }
+        step(keys)
+        step { try saved() ? 1 : 0 }
+        return (dropped, failures)
+    }
+
+    static func error(_ failures: [XlessError]) -> XlessError? {
+        guard let first = failures.first else { return nil }
+        var fixes: [String] = []
+        for f in failures where !fixes.contains(f.fix) { fixes.append(f.fix) }
+        return XlessError(first.stage, failures.map(\.cause).joined(separator: "; "), fix: fixes.joined(separator: "; "))
     }
 }

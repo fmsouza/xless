@@ -118,6 +118,12 @@ int xless_unix_passcred(int fd);
 long xless_unix_recv(int fd, void *bytes, size_t length, int *pid, unsigned int *uid);
 /// The effective uid of the process that connected the other end, or listened for it; -errno on failure.
 long xless_unix_peer_uid(int fd);
+/// The pid of the process that listened for the other end (Linux) or used it last (macOS), which may have ended since;
+/// -errno on failure.
+long xless_unix_peer_pid(int fd);
+/// macOS: kills (SIGKILL) the process of the peer's audit token, and no other one that has its pid by now. 0, or an errno
+/// value (ENOTSUP where the system cannot do that).
+int xless_peer_kill(const struct xless_peer *peer);
 /// Linux: a close-on-exec descriptor that stands for the process `pid`; -errno on failure (ENOSYS before Linux 5.3, and
 /// elsewhere).
 int xless_pidfd_open(int pid);

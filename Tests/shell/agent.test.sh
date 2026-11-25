@@ -253,6 +253,41 @@ rc, shown, n = b.run("$X unlock --for 1h --idle 3s")
 check(rc == 0 and n == 0, "again: renewed without asking", shown)
 check(gone(12), "ends by itself", agents())
 
+# ---- an agent that does not answer ----------------------------------------------------------------------------------------
+mac = os.uname().sysname == "Darwin"
+def stopped():
+    b.run("$X unlock --for 2h", PASS)
+    pid = next(p[0] for p in agent_pids() if os.getsid(p[0]) == b.pid)
+    os.kill(pid, signal.SIGSTOP)
+    return pid
+def alive(pid):
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return out != "" and not out.startswith("Z")
+pid = stopped()
+begin = time.time()
+rc, shown, n = b.run("$X secrets export NOTE --out $T/out6", PASS)
+check(rc == 0 and n == 1 and str(pid) in shown and time.time() - begin < 12, "a stopped agent: a command says so, asks, and waits for it once", (shown, time.time() - begin))
+for command in ("secrets lock", "auth logout"):
+    rc, shown, n = b.run("$X " + command)
+    check(rc != 0 and f"process {pid}" in shown and "nothing" not in shown, f"xless {command} says what it could not drop", (rc, shown))
+check(alive(pid), "and leaves it to xless lock")
+rc, shown, n = b.run("$X lock")
+if mac:
+    check(rc == 0 and "locked" in shown and not alive(pid) and not agents(), "xless lock ends it (the kernel says it is this very program)", (rc, shown))
+else:
+    check(rc != 0 and f"kill -9 {pid}" in shown and "nothing was held" not in shown, "xless lock says that it did not answer, and fails", (rc, shown))
+    os.kill(pid, signal.SIGKILL)
+    for name in agents(): os.unlink(t + "/run/xless-agent/" + name) # what it left
+    rc, shown, n = b.run("$X lock")
+    check(rc == 0, "and once it is ended, it does not", (rc, shown))
+pid = stopped()
+b.run("$X unlock --for 2h", PASS)
+check(len(agents()) == 2, "with one stopped, another agent is started", agents())
+rc, shown, n = b.run("$X lock")
+check((rc == 0) == mac and ("locked" in shown if mac else "dropped what could be dropped" in shown and str(pid) in shown), "xless lock ends the one that answers whatever the other does", (rc, shown))
+if alive(pid): os.kill(pid, signal.SIGCONT)
+check(gone(), "a stopped agent that goes on finds what it was told, and ends", agents())
+
 # ---- a changed passphrase, a replaced store --------------------------------------------------------------------------------
 b.run("$X unlock --for 2h", PASS)
 rc, shown, n = b.run("$X secrets passwd", PASS, NEXT, NEXT)

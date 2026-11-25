@@ -13,8 +13,10 @@ public struct AgentError: Error, Equatable, Sendable, StageReportableError, Cust
         case unsafePath
         /// No agent can run here.
         case unavailable
-        /// The other end closed, or did not answer in time.
+        /// The other end closed.
         case gone
+        /// The other end is there and did not answer in time.
+        case silent
         /// What was asked is outside the agent's limits.
         case limit
     }
@@ -46,7 +48,12 @@ public struct AgentError: Error, Equatable, Sendable, StageReportableError, Cust
         AgentError(.limit, "the xless agent does not take \(what)", fix: "run `xless lock`, then `xless unlock`")
     }
 
-    static let gone = AgentError(.gone, "the xless agent closed the connection or did not answer", fix: "run `xless lock`, then `xless unlock`")
+    /// - Parameter pid: 0: not known.
+    static func silent(_ pid: Int32) -> AgentError {
+        AgentError(.silent, "an xless agent\(pid > 0 ? " (process \(pid))" : "") does not answer, so what it holds is neither used nor dropped", fix: AgentUnanswered(pid: pid, path: "").fix)
+    }
+
+    static let gone = AgentError(.gone, "the xless agent closed the connection", fix: "run `xless lock`, then `xless unlock`")
 }
 
 /// The bounds of what an agent holds and reads, whoever asks.
@@ -58,7 +65,7 @@ public enum AgentLimits {
     static let nameBytes = 200
     static let labelBytes = 1024
     static let sessions = 64
-    /// The sockets a client looks at.
+    /// The sockets a client looks at for something held (all of them, to drop something).
     static let sockets = 32
     static let connections = 32
     /// A message from a peer the agent does not serve (a greeting, a lock), and from one it does (an item).

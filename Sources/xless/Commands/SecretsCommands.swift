@@ -167,7 +167,7 @@ struct SecretsInitCommand: ParsableCommand {
             let (file, key) = try VaultCrypto.newVault(passphrase: passphrase)
             try vault.vault.create(file)
             // An unlock of a store that was here before opens nothing any more.
-            try? SecretStoreCLI.cache.forget(place: location.file.path)
+            do { try SecretStoreCLI.cache.forget(place: location.file.path) } catch { SecretStoreCLI.say("warning: \(error)") }
             if let remember { try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: remember, typedAgo: 0) }
             print("created the secret store at \(location.file.path)")
         }
@@ -415,8 +415,9 @@ struct SecretsPasswdCommand: ParsableCommand {
                 return try VaultCrypto.rewrap(try VaultCrypto.upgrade(current, dataKey: key), dataKey: key, passphrase: passphrase)
             }
             // An unlock the old passphrase gave does not outlive it.
-            _ = try SecretStoreCLI.cache.forget(id: file.id)
+            let forgotten = Result { try SecretStoreCLI.cache.forget(id: file.id) }
             print("changed the secret store's passphrase")
+            _ = try forgotten.get()
         }
     }
 }

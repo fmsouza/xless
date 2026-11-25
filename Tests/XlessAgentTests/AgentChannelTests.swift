@@ -4,6 +4,59 @@ import Testing
 import XlessCore
 @testable import XlessAgent
 
+private let hello: SecretPages = {
+    var w = WireWriter()
+    w.put(bytes: [UInt8](repeating: 1, count: 16)); w.put("test")
+    return w.frame(code: .hello)
+}()
+
+/// What `message` is sent by: a child of this very session, which ends then; the connection stays open here.
+private func sentAndEnded(_ message: SecretPages, over far: FileHandle) throws {
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("agent-hello-\(UUID().uuidString)")
+    try message.withUnsafeBytes { Data($0) }.write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/bin/cat")
+    child.arguments = [file.path]
+    child.standardOutput = far
+    try child.run()
+    child.waitUntilExit()
+    #expect(child.terminationStatus == 0)
+}
+
+@Test func aProcessThatSpokeAndEndedIsNobodyToServe() throws {
+    var fds: [Int32] = [-1, -1]
+    #expect(xless_unix_pair(&fds) == 0)
+    let channel = try AgentChannel(fd: fds[0])
+    let far = FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
+    try sentAndEnded(hello, over: far)
+    #expect(try channel.next(limit: 4096) != nil) // what it said is heard (`lock` is for everybody)
+    #expect(throws: AgentError.self) { try channel.peer() }
+    withExtendedLifetime(far) {}
+}
+
+/// As an agent that was stopped meanwhile finds it.
+@Test func aLockThatItsSenderDidNotWaitForIsKept() throws {
+    let scratch = ScratchBox()
+    let directory = AgentDirectory(path: scratch.path + "/xless-agent")
+    let clock = TestClock()
+    let state = AgentState(clock: clock.clock)
+    state.grant(.current)
+    try state.put("a", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 3600, idle: 600, maximum: 7200), typedAgo: 0)
+    let bound = try directory.bind()
+    var options = AgentServer.Options()
+    options.isAlive = { _ in true }
+    let server = AgentServer(bound: bound, directory: directory, state: state, clock: clock.clock, options: options)
+    let fd = xless_unix_connect(bound.path)
+    #expect(fd >= 0)
+    let far = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    try sentAndEnded(WireWriter().frame(code: .lock), over: far)
+    DispatchQueue.global().asyncAfter(deadline: .now() + 5) { server.stop() }
+    #expect(server.run() == .locked)
+    #expect(state.isEmpty)
+    withExtendedLifetime(far) {}
+}
+
 #if os(macOS)
 /// What the kernel says of the other end, as the test wants it (`LOCAL_PEERTOKEN` is the token of whatever process has
 /// the peer's pid when it is asked).
@@ -28,12 +81,6 @@ private final class Kernel: @unchecked Sendable {
         }
     }
 }
-
-private let hello: SecretPages = {
-    var w = WireWriter()
-    w.put(bytes: [UInt8](repeating: 1, count: 16)); w.put("test")
-    return w.frame(code: .hello)
-}()
 
 /// Two connected ends, the far one written to by this process.
 private func pair(_ kernel: Kernel) throws -> (AgentChannel, far: Int32) {
@@ -122,27 +169,6 @@ private func pair(_ kernel: Kernel) throws -> (AgentChannel, far: Int32) {
         try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typedAgo: 0)
     }
     #expect(agent.state.status(of: "b") == nil)
-}
-
-@Test func aProcessThatSpokeAndEndedIsNobodyToServe() throws {
-    // For real: a child of this very session writes and ends, while its end of the connection stays open here.
-    var fds: [Int32] = [-1, -1]
-    #expect(xless_unix_pair(&fds) == 0)
-    let channel = try AgentChannel(fd: fds[0])
-    let file = FileManager.default.temporaryDirectory.appendingPathComponent("agent-hello-\(UUID().uuidString)")
-    try hello.withUnsafeBytes { Data($0) }.write(to: file)
-    defer { try? FileManager.default.removeItem(at: file) }
-    let child = Process()
-    child.executableURL = URL(fileURLWithPath: "/bin/cat")
-    child.arguments = [file.path]
-    let far = FileHandle(fileDescriptor: fds[1], closeOnDealloc: true)
-    child.standardOutput = far
-    try child.run()
-    child.waitUntilExit()
-    #expect(child.terminationStatus == 0)
-    #expect(try channel.next(limit: 4096) != nil)
-    #expect(throws: AgentError.self) { try channel.peer() }
-    withExtendedLifetime(far) {}
 }
 
 @Test func aSecondProcessOnTheConnectionIsRefused() throws {
