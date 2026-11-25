@@ -1,10 +1,7 @@
 import Foundation
 import XlessASC
-import XlessCargo
 import XlessCore
-import XlessReactNative
 import XlessSign
-import XlessTauri
 
 // What `xless provision` reads before it asks Apple anything: the bundles the project signs (and their entitlements),
 // the distribution lanes, the TestFlight groups and the `appstore/` manifest (docs/apple-account.md#xless-provision).
@@ -86,7 +83,7 @@ extension ProvisionInputs {
     static func targets(_ config: ProjectConfig, platform: Platform, root: URL, rewrites: EntitlementRewrites = .none) throws -> [SigningTarget] {
         let pc = try config.platform(platform)
         func entitlements(_ path: String?) throws -> [String: Any] {
-            let raw = try path.map { try Plist.read($0.hasPrefix("/") ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0), stage: .account) } ?? [:]
+            let raw = try path.map { try Plist.read(isAbsolute($0) ? URL(fileURLWithPath: $0) : root.appendingPathComponent($0), stage: .account) } ?? [:]
             return prepared(raw, team: config.teamID, rewrites: rewrites)
         }
         let distribution = config.distribution(for: platform)
@@ -96,54 +93,16 @@ extension ProvisionInputs {
         })
     }
 
-    static func prepared(_ raw: [String: Any], team: String, rewrites: EntitlementRewrites) -> [String: Any] {
-        Entitlements.rewrite(Entitlements.expandSigningPrefixes(raw, teamID: team), with: rewrites)
+    private static func isAbsolute(_ path: String) -> Bool {
+        #if os(Windows)
+        return UserPaths.isOnDrive(path)
+        #else
+        return path.hasPrefix("/")
+        #endif
     }
 
-    /// An overlay: Tauri (iOS, and macOS with a `macos:` block), cargo (each platform block) or React Native (iOS; every
-    /// bundle's entitlements from the last build's record when there is one). Relative entitlement paths resolve against
-    /// the source tree (the work copy mirrors it).
-    static func overlay(_ url: URL, source: String?, env: [String: String]) throws -> ProvisionInputs {
-        switch try OverlayKind.of(url) {
-        case .reactNative:
-            let (overlay, sourceRoot, workRoot) = try ReactNativeOverlay.load(from: url, sourceOverride: source, env: env)
-            let config = try ReactNativeProject.resolve(overlay: overlay, source: sourceRoot, work: workRoot).config
-            var inputs = ProvisionInputs(team: config.teamID, targets: [], version: config.version, testflight: config.testflight)
-            let record = StagePaths(project: workRoot, platform: .ios).root.appendingPathComponent("entitlements.json")
-            guard FileManager.default.fileExists(atPath: record.path) else {
-                inputs.targets = [SigningTarget(platform: .ios, distribution: .appStore, bundleID: config.bundleID(for: .ios), entitlements: [:], entitlementsKnown: false)]
-                inputs.notes.append("the React Native app's entitlements are read from its last build (\(record.path)), and there is none yet: capabilities, app groups, iCloud containers and app extensions are not planned (run `xless build --config \(url.path) --platform ios` first, then plan again)")
-                return inputs
-            }
-            for entry in try SignTargets.recorded(record) {
-                let target = SigningTarget(platform: .ios, distribution: .appStore, bundleID: entry.bundleID,
-                                             entitlements: prepared(entry.entitlements, team: config.teamID, rewrites: overlay.entitlements),
-                                             extensionPath: entry.path.isEmpty ? nil : entry.path)
-                if entry.path.isEmpty { inputs.targets.insert(target, at: 0) } else { inputs.targets.append(target) }
-            }
-            return inputs
-        case .cargo:
-            let (overlay, sourceRoot, _) = try CargoOverlay.load(from: url, sourceOverride: source, env: env)
-            var inputs: ProvisionInputs?
-            for p in Platform.allCasesOrdered where (p == .ios ? overlay.ios : overlay.macos) != nil {
-                let config = try CargoProject.resolve(overlay: overlay, platform: p, source: sourceRoot).config
-                if inputs == nil { inputs = ProvisionInputs(team: config.teamID, targets: [], version: config.version, testflight: config.testflight) }
-                inputs?.targets += try targets(config, platform: p, root: sourceRoot)
-            }
-            guard let inputs else {
-                throw XlessError(.config, "overlay \(overlay.name) has neither an ios: nor a macos: block", fix: "add the platform the app is built for")
-            }
-            return inputs
-        case .tauri:
-            let loc = try OverlayLocation.load(from: url, sourceOverride: source, env: env)
-            var configs: [(Platform, ProjectConfig)] = []
-            if loc.overlay.ios != nil || loc.overlay.macos == nil { configs.append((.ios, try TauriProject.resolve(overlay: loc.overlay, source: loc.sourceRoot).config)) }
-            if loc.overlay.macos != nil { configs.append((.macos, try TauriProject.resolveMac(overlay: loc.overlay, source: loc.sourceRoot).config)) }
-            let first = configs[0].1
-            var inputs = ProvisionInputs(team: first.teamID, targets: [], version: first.version, testflight: first.testflight)
-            for (p, config) in configs { inputs.targets += try targets(config, platform: p, root: loc.sourceRoot) }
-            return inputs
-        }
+    static func prepared(_ raw: [String: Any], team: String, rewrites: EntitlementRewrites) -> [String: Any] {
+        Entitlements.rewrite(Entitlements.expandSigningPrefixes(raw, teamID: team), with: rewrites)
     }
 }
 

@@ -229,8 +229,8 @@ struct AuthStatusReport: Encodable, Equatable {
         var keyTeam: String?
         var keyRole: String?
         let credentials = names.map { name -> Credential in
-            if let v = env[name], !v.isEmpty { return Credential(name: name, source: "environment", detail: "$\(name)") }
-            if let path = env["\(name)_FILE"], !path.isEmpty { return Credential(name: name, source: "file", detail: "$\(name)_FILE: \(path)") }
+            if let v = env.variable(name), !v.isEmpty { return Credential(name: name, source: "environment", detail: "$\(name)") }
+            if let path = env.variable("\(name)_FILE"), !path.isEmpty { return Credential(name: name, source: "file", detail: "$\(name)_FILE: \(path)") }
             switch storeKey {
             case .failure(let error):
                 return Credential(name: name, source: "error", detail: XlessError.wrapping(error, stage: .config).cause)

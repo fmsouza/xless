@@ -32,6 +32,14 @@ func otherPathsAreRefused(path: String) {
     #expect(throws: ValidationError.self) { try APIRequest(method: "GET", path: path) }
 }
 
+#if os(Windows) || XLESS_WINDOWS_TARGETS
+@Test(arguments: ["C:/Program Files/Git/v1/apps", "C:\\msys64\\v1\\apps", "D:/a/v2/inAppPurchases/123"])
+func aPathThatGitBashMadeOfTheAPIsIsNamedAsThat(path: String) throws {
+    let e = #expect(throws: ValidationError.self) { try APIRequest(method: "GET", path: path) }
+    #expect(e?.message.contains("MSYS_NO_PATHCONV=1") == true && e?.message.contains("v1/apps") == true)
+}
+#endif
+
 @Test func methodsFieldsIncludeAndBodiesAreChecked() throws {
     #expect(throws: ValidationError.self) { try APIRequest(method: "PUT", path: "/v1/apps") }
     #expect(throws: ValidationError.self) { try APIRequest(method: "GET", path: "/v1/apps", fields: ["novalue"]) }

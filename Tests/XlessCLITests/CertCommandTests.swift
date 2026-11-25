@@ -24,7 +24,7 @@ private struct CertVault {
 
     init(entries: [(String, VaultEntry.Metadata)] = [], secrets: [String: String] = [:]) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-certs-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try makePrivateDirectory(root)
         store = VaultStore(location: VaultLocation(directory: root.appendingPathComponent("xless/vault")))
         var (file, key) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "correct horse battery"),
                                                    kdf: .fresh(rounds: 1 << 10, blockSize: 8, parallelism: 1))
@@ -278,7 +278,7 @@ private final class Made: @unchecked Sendable {
 /// `sign bootstrap --out`: the same creation with its key in a new file instead of the store.
 private func keyFile() throws -> (dir: URL, path: String) {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-certs-out-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    try makePrivateDirectory(dir)
     return (dir, dir.appendingPathComponent("dist.pem").path)
 }
 
@@ -291,8 +291,7 @@ private func keyFile() throws -> (dir: URL, path: String) {
     let created = try await CertificateCreation(api: api, stage: .sign, refuseIfAny: true).run(type: .distribution, file: path)
     #expect(journal.events == ["list DISTRIBUTION", "POST DISTRIBUTION", "written=true"])
     #expect(created.certificate.id == "C1" && created.entry == nil && created.team == team)
-    let mode = try #require(try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int)
-    #expect(mode & 0o777 == 0o600)
+    #expect(try isPrivateFile(path))
     #expect(try SigningKey(pem: String(contentsOfFile: path, encoding: .utf8)).matches(certificateDER: Array(try #require(created.certificate.der))))
 }
 
@@ -426,12 +425,14 @@ private func listing(_ items: [String]) -> String { #"{"data":[\#(items.joined(s
     #expect(throws: (any Error).self) { try CertsListCommand.parse(["--expiring", "-1"]) }
     #expect(throws: (any Error).self) { try CertsRevokeCommand.parse(["../v1/apps"]) }
     #expect(throws: (any Error).self) { try CertsDownloadCommand.parse(["C1"]) }
-    #expect(throws: (any Error).self) { try SignBootstrapCommand.parse(["--type", "distribution", "--csr-only"]) }
     _ = try CertsCreateCommand.parse(["--type", "Apple Pay Merchant Identity", "--merchant-id", "merchant.com.example", "--team", team])
     _ = try CertsCreateCommand.parse(["--type", "pass-type-id-with-nfc", "--pass-type-id", "pass.com.example.ticket", "--csr", "p.csr"])
     _ = try CertsListCommand.parse(["--type", "distribution", "--type", "developer-id", "--expiring", "30", "--json"])
+    #if !os(Windows) && !XLESS_WINDOWS_TARGETS // a command of the builds
+    #expect(throws: (any Error).self) { try SignBootstrapCommand.parse(["--type", "distribution", "--csr-only"]) }
     _ = try SignBootstrapCommand.parse(["--type", "distribution"])
     _ = try SignBootstrapCommand.parse(["--type", "installer", "--out", "k.pem", "--csr-only"])
+    #endif
 }
 
 @Test func listShowsTheKeysInTheStoreAndFiltersByExpiry() async throws {
@@ -468,7 +469,9 @@ private func listing(_ items: [String]) -> String { #"{"data":[\#(items.joined(s
     let out = try await cli(t).download("C1", to: path)
     #expect(out.hasPrefix("wrote certificate C1 (DISTRIBUTION, expires 2027-02-01) to "))
     #expect(FileManager.default.contents(atPath: path) == Data([0x30, 0x00]))
+    #if !os(Windows)
     #expect((try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)?.intValue == 0o644)
+    #endif
     try Data("mine".utf8).write(to: URL(fileURLWithPath: path))
     let e = await accountError { _ = try await cli(t).download("C1", to: path) }
     #expect(e?.stage == .account && e?.cause.contains("already exists") == true)

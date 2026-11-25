@@ -180,9 +180,11 @@ private let build42 = #"{"data":{"type":"builds","id":"B1","attributes":{"versio
     let own = try StoreDirOption.parse(["--dir", manifest])
     #expect(id(own.uploadRecord(platform: "IOS", env: [:])) == "P-IOS" && id(own.uploadRecord(platform: "MAC_OS", env: [:])) == "P-MAC")
     #expect(id(own.uploadRecord(platform: "TV_OS", env: [:])) == nil)
+    #if !os(Windows) && !XLESS_WINDOWS_TARGETS // overlays are not read there
     let overlay = try StoreDirOption.parse(["--dir", manifest, "--config", root.appendingPathComponent("app.yml").path])
     #expect(id(overlay.uploadRecord(platform: "IOS", env: ["XLESS_WORK_ROOT": work.path])) == "W-IOS")
     #expect(id(overlay.uploadRecord(platform: "MAC_OS", env: ["XLESS_WORK_ROOT": work.path])) == nil)
+    #endif
 }
 
 @Test func submitReadsTheRecordOfTheVersionsPlatformOnly() async throws {

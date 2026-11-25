@@ -12,7 +12,7 @@ public enum UserPaths {
     }
 
     /// `C:\…` or `C:/…`; not `C:x`, `\x`, `\\server\share` or a device.
-    static func isOnDrive(_ path: String) -> Bool { path.wholeMatch(of: /[A-Za-z]:[\\\/].*/) != nil }
+    public static func isOnDrive(_ path: String) -> Bool { path.wholeMatch(of: /[A-Za-z]:[\\\/].*/) != nil }
 
     private static var localAppData: URL {
         var path = [UInt16](repeating: 0, count: 32768)

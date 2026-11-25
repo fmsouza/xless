@@ -59,7 +59,7 @@ private struct WindowsSources {
 @Test func everySourceFileOfAWindowsTargetIsListed() throws {
     let sources = try WindowsSources()
     let targets = try WindowsSources.targets()
-    #expect(targets.count == 14)
+    #expect(targets.count == 17)
     let there = Set(try targets.flatMap(WindowsSources.files))
     let listed = sources.built.union(sources.left)
     #expect(there.subtracting(listed).sorted() == [], "say in Tests/windows/sources.txt whether Windows builds these (`+`) or not (`-`, and in Package.swift's notOnWindows)")
@@ -72,4 +72,6 @@ private struct WindowsSources {
     for (target, files) in try WindowsSources.excluded() { excluded.formUnion(files.map { "\(WindowsSources.directory(target))/\($0)" }) }
     #expect(excluded.subtracting(sources.left).sorted() == [])
     #expect(sources.left.subtracting(excluded).sorted() == [])
+    // and nothing else of the manifest leaves a file out
+    #expect(try WindowsSources.manifest().matches(of: /exclude|sources:/).count == 1)
 }

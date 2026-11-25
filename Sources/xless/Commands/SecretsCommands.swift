@@ -143,15 +143,25 @@ enum SecretStoreCLI {
     static func offerToDelete(_ file: String) throws {
         if !InputGate.isOff, let terminal = try? TerminalPrompter.forSecretStore(),
            try terminal.confirm("The secret is in the store. Delete \(file) now?") {
-            if unlink(file) == 0 { print("deleted \(file)") } else {
-                say("warning: could not delete \(file): \(String(cString: strerror(errno)))")
-            }
+            #if os(Windows)
+            let failure = InputFile.remove(file)
+            #else
+            let failure = unlink(file) == 0 ? nil : String(cString: strerror(errno))
+            #endif
+            if let failure { say("warning: could not delete \(file): \(failure)") } else { print("deleted \(file)") }
         } else {
             say("\(file) still holds the secret in clear; delete it once you no longer need it")
         }
     }
 
     static func say(_ line: String) { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
+
+    /// What a file in clear is, of the user.
+    #if os(Windows)
+    static let yours = "yours alone to read"
+    #else
+    static let yours = "mode 0600"
+    #endif
 }
 
 struct RememberOption: ParsableArguments {
@@ -313,6 +323,16 @@ struct SecretsImportCommand: ParsableCommand {
 
     /// The file's bytes straight into a `SecretBytes` (a regular file of at most 1 MiB).
     static func readFile(_ path: String) throws -> SecretBytes {
+        #if os(Windows)
+        do {
+            var data = try InputFile.read(path, limit: 1 << 20)
+            defer { data.withUnsafeMutableBytes { SecretBytes.zero($0) } }
+            return SecretBytes(copying: Secrets.withoutMark(data))
+        } catch let refusal as PrivateFile.Refusal {
+            if refusal.kind == .tooLarge { throw VaultError(.invalidSecret, "\(path) is larger than 1 MiB", fix: "import a key or a password, not a bundle") }
+            throw VaultError(.io, refusal.cause, fix: "check the path given to --file")
+        }
+        #else
         let fd = open(path, O_RDONLY | O_CLOEXEC)
         guard fd >= 0 else { throw VaultError(.io, "cannot open \(path): \(String(cString: strerror(errno)))", fix: "check the path given to --file") }
         defer { close(fd) }
@@ -331,6 +351,7 @@ struct SecretsImportCommand: ParsableCommand {
             off += n
         }
         return bytes
+        #endif
     }
 }
 
@@ -359,7 +380,7 @@ struct SecretsExportCommand: ParsableCommand {
                 throw XlessError(.config, e.cause, fix: e.fix)
             }
             print("wrote \(name) to \(out)")
-            SecretStoreCLI.say("warning: \(out) holds the secret in clear (mode 0600); delete it as soon as it has served")
+            SecretStoreCLI.say("warning: \(out) holds the secret in clear (\(SecretStoreCLI.yours)); delete it as soon as it has served")
         }
     }
 
@@ -454,45 +475,6 @@ struct SecretsPasswdCommand: ParsableCommand {
             let forgotten = Result { try SecretStoreCLI.cache.forget(id: file.id) }
             print("changed the secret store's passphrase")
             _ = try forgotten.get()
-        }
-    }
-}
-
-/// `xless secrets materialize`: plumbing for `xless run`, not shown in the help. Writes the
-/// store's secrets a run's containers need, once (one passphrase), into a fresh run directory on a tmpfs, one
-/// sub-directory per container; the script mounts each into its container only and removes them.
-struct SecretsMaterializeCommand: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "materialize",
-        abstract: "Write the secrets a run's containers need from the store to a fresh tmpfs directory (used by xless run).",
-        discussion: """
-        Each SET=NAME[,NAME…] becomes <run dir>/SET/NAME (directories 0700, files 0600) under $XDG_RUNTIME_DIR/xless/; \
-        ASC_KEY_ID and ASC_ISSUER_ID are the ASC_KEY_P8 entry's IDs. The run directory is printed on stdout as soon as \
-        it exists. With no XDG_RUNTIME_DIR, or one that is not a tmpfs, it refuses unless --allow-disk \
-        (then ~/.cache/xless/secrets/). --check only checks that the store holds every secret (no passphrase, nothing written), \
-        and prints the optional ones (?NAME: written when the store has them) it holds.
-        """,
-        shouldDisplay: false)
-
-    @Argument(help: "SET=NAME[,NAME…] (?NAME: optional), e.g. sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY,?XLESS_DEMO_PASSWORD.") var sets: [String]
-    @Option(help: "Prefer this team's entries (default: the saved team, `xless team use`).") var team: String?
-    /// (`xless run`'s --allow-disk-secrets; named so argv's secret lint has nothing to object to)
-    @Flag(help: "Accept a directory on disk when there is no tmpfs (XDG_RUNTIME_DIR).") var allowDisk = false
-    @Flag(help: "Only check that the store holds every secret; write nothing, ask no passphrase.") var check = false
-
-    func run() throws {
-        try SecretStoreCLI.run {
-            let parsed = try sets.map(MaterializeSet.parse)
-            let team = team ?? AccountSession.savedTeam()
-            if let team, team.wholeMatch(of: /[A-Z0-9]{10}/) == nil {
-                throw XlessError(.config, "--team \(team) is not a 10-character Apple team ID", fix: "copy it from `xless team list`")
-            }
-            let materializer = VaultMaterializer(secrets: try SecretStoreCLI.store(), team: team)
-            // --check prints the optional (?NAME) secrets the store has, one per line
-            if check { return try materializer.check(parsed).forEach { print($0) } }
-            let base = try SecretRunBase.choose(allowDisk: allowDisk)
-            // Unbuffered: the script reads this line even when the command is stopped half-way.
-            _ = try materializer.write(parsed, base: base) { FileHandle.standardOutput.write(Data("\($0.path)\n".utf8)) }
         }
     }
 }

@@ -36,6 +36,18 @@ import Testing
     #expect(!SecretEnvironment.isSecret("xless_dist_key_", ignoreCase: true))
 }
 
+@Test func aRegisteredNameIsScrubbedInTheCaseThatCountsHere() {
+    let name = "My_Review_Pw_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+    SecretEnvironment.scrub(name)
+    #if os(Windows)
+    #expect(SecretEnvironment.scrubbed.contains(name.uppercased()) && SecretEnvironment.scrubbed.contains("\(name.uppercased())_FILE"))
+    #expect(!SecretEnvironment.scrubbed.contains(name), "one variable, one entry")
+    #else
+    #expect(SecretEnvironment.scrubbed.contains(name) && SecretEnvironment.scrubbed.contains("\(name)_FILE"))
+    #expect(!SecretEnvironment.scrubbed.contains(name.uppercased()))
+    #endif
+}
+
 @Test(arguments: ["SystemRoot", "COMSPEC", "PATHEXT", "APPDATA", "LocalAppData", "USERPROFILE", "PSModulePath", "windir"])
 func windowsOwnVariablesNameNoPasswordThere(_ name: String) {
     #expect(SecretEnvironment.passwordNameProblem(name, onWindows: true) != nil)

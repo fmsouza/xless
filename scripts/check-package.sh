@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # A release tarball holds what it must, and nothing else: no file of Apple's, of the Xcode or of the build among them.
-#   scripts/check-package.sh <linux|macos> <version> <x86_64|arm64> <tarball>
+#   scripts/check-package.sh <linux|macos|windows> <version> <x86_64|arm64> <tarball or zip>
 # Every entry is a regular file or a directory of root's below xless-<version>-<os>-<arch>/, with the mode it must have and no
 # extended attributes. The files are those of this checkout, byte for byte (docker/ and samples/HelloShip: the tracked ones;
 # versions.env but for XLESS_VERSION, which a release build stamps), the licences by name (third-party-licenses.sh --list), the
 # vendored ones by their sha256 and a package's own as text, share/xless/VERSION, and bin/xless, the only executable code: a
 # program for that system and architecture. What is in that program is for check-link-map.sh and check-macos-binary.sh. Prints the list.
+# A Windows package is a zip with another layout: scripts/windows-package.py says which, and what its programs may need.
 # XLESS_STUB=true: bin/xless may be anything (tests, which put a script there).
 set -euo pipefail
 os="${1:-}" version="${2:-}" arch="${3:-}" tarball="${4:-}"
 die() { echo "check-package: $*" >&2; exit 1; }
-[[ -n "$os" && -n "$version" && -n "$arch" && -n "$tarball" ]] || { echo "usage: check-package.sh <linux|macos> <version> <x86_64|arm64> <tarball>" >&2; exit 2; }
+[[ -n "$os" && -n "$version" && -n "$arch" && -n "$tarball" ]] || { echo "usage: check-package.sh <linux|macos|windows> <version> <x86_64|arm64> <tarball or zip>" >&2; exit 2; }
 [[ -f "$tarball" ]] || die "no $tarball"
 root="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "$os" == windows ]]; then
+  python=python3; command -v python3 >/dev/null 2>&1 || python=python
+  "$root/scripts/third-party-licenses.sh" --os windows --list | "$python" -I "$root/scripts/windows-package.py" check "$version" "$arch" "$tarball" "$root" \
+    || die "$tarball is not what is released"
+  exit 0
+fi
 top="xless-$version-$os-$arch"
 t="$(mktemp -d)"
 trap 'rm -rf "$t"' EXIT

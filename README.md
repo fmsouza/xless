@@ -24,7 +24,8 @@ on a Mac too. The rest of this page is about Linux.
 
 ## What you need
 
-- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on.
+- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on. (On Windows xless installs for its
+  [account commands](docs/native-install.md#windows); to build, install it inside WSL2.)
 - A few system packages: `curl`, `tar`, `zip`, `unzip`, `git`, `python3` and the libraries of Swift's Linux toolchain.
   `xless setup` checks for the commands and prints the `apt-get install` line that adds whatever is missing. It never
   runs `sudo` itself.
@@ -92,6 +93,13 @@ once it exists) or run the `export` line it prints. If a new terminal still cann
 xless --version
 ```
 
+On Windows 10 (1809 or later) or 11, in a PowerShell that is not "as administrator", for the
+[account commands](docs/native-install.md#windows) (builds run inside WSL2, with the line above, or on a Mac or Linux):
+
+```powershell
+irm https://github.com/fmsouza/xless/releases/latest/download/install.ps1 | iex
+```
+
 Each release asset also carries a signed build provenance attestation: proof that the release workflow of
 `fmsouza/xless` built it, from which commit. To check a download yourself with the [GitHub CLI](https://cli.github.com/)
 (signed in with `gh auth login`):
@@ -100,7 +108,8 @@ Each release asset also carries a signed build provenance attestation: proof tha
 gh attestation verify xless-<version>-<linux|macos>-<arch>.tar.gz -R fmsouza/xless
 ```
 
-`SHA256SUMS` and `install.sh` are attested too. The installer itself checks the checksum only; it does not need `gh`.
+The Windows zip, `SHA256SUMS`, `install.sh` and `install.ps1` are attested too. The installers themselves check the checksum only; they
+do not need `gh`.
 The macOS program is signed ad hoc, not by an Apple developer: [what that means](docs/security.md#linux-and-macos).
 
 ## Set up

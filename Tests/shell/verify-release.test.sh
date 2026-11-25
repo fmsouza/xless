@@ -12,7 +12,7 @@ for id in $(sed -n 's/.*"identity" : "\(.*\)",/\1/p' "$repo/Package.resolved"); 
   mkdir -p "$t/checkouts/$id"; echo "licence of $id" > "$t/checkouts/$id/LICENSE"
 done
 
-# dist <dir> <version> <what the stub prints>: the four tarballs of <version>, their binaries printing <what>.
+# dist <dir> <version> <what the stub prints>: the four tarballs and the zip of <version>, their binaries printing <what>.
 dist() {
   local a o
   mkdir -p "$1"
@@ -20,15 +20,17 @@ dist() {
     printf '#!/bin/sh\necho "%s"\n' "$3" > "$t/xless"; chmod +x "$t/xless"
     bash "$repo/scripts/package-release.sh" --os "$o" "$2" "$a" "$t/xless" "$1" >/dev/null
   done; done
+  bash "$repo/scripts/package-release.sh" --os windows "$2" x86_64 "$t/xless" "$1" >/dev/null
   rm -f "$1/SHA256SUMS"   # package-release.sh's per-leg file; release-assets.sh writes the release's
 }
 
 # A good release: assets made, installed pinned and as the latest, both report the version.
 dist "$t/good" 1.4.0 1.4.0
 bash "$repo/scripts/release-assets.sh" 1.4.0 "$t/good" >/dev/null || fail "release-assets refused a good dist"
-[[ "$(wc -l < "$t/good/SHA256SUMS" | tr -d ' ')" == 4 ]] || fail "SHA256SUMS: $(cat "$t/good/SHA256SUMS")"
+[[ "$(wc -l < "$t/good/SHA256SUMS" | tr -d ' ')" == 5 ]] || fail "SHA256SUMS: $(cat "$t/good/SHA256SUMS")"
 head -n1 "$t/good/SHA256SUMS" | grep -q ' xless-1.4.0-linux-arm64.tar.gz$' || fail "SHA256SUMS not sorted by name"
-cmp -s "$repo/scripts/install.sh" "$t/good/install.sh" || fail "install.sh not copied"
+tail -n1 "$t/good/SHA256SUMS" | grep -q ' xless-1.4.0-windows-x86_64.zip$' || fail "SHA256SUMS without the zip"
+for i in install.sh install.ps1; do cmp -s "$repo/scripts/$i" "$t/good/$i" || fail "$i not copied"; done
 out=$(bash "$repo/scripts/verify-release.sh" 1.4.0 "$t/good" 2>&1) || fail "verify refused a good release: $out"
 grep -q 'v1.4.0: xless 1.4.0 installed' <<<"$out" || fail "pinned install not checked: $out"
 grep -q 'latest: xless 1.4.0 installed' <<<"$out" || fail "latest install not checked: $out"
@@ -68,13 +70,18 @@ grep -q "share/xless/VERSION is '0.0.0-dev'" <<<"$out" || fail "wrong message: $
 # Tarballs named for another version (or one missing) are refused before any checksum is written.
 dist "$t/misnamed" 1.3.9 1.4.0
 out=$(bash "$repo/scripts/release-assets.sh" 1.4.0 "$t/misnamed" 2>&1) && fail "release-assets took 1.3.9 tarballs for 1.4.0"
-grep -q 'expected \[xless-1.4.0-linux-arm64.tar.gz xless-1.4.0-linux-x86_64.tar.gz xless-1.4.0-macos-arm64.tar.gz xless-1.4.0-macos-x86_64.tar.gz\]' <<<"$out" || fail "wrong message: $out"
+grep -q 'expected \[xless-1.4.0-linux-arm64.tar.gz xless-1.4.0-linux-x86_64.tar.gz xless-1.4.0-macos-arm64.tar.gz xless-1.4.0-macos-x86_64.tar.gz xless-1.4.0-windows-x86_64.zip\]' <<<"$out" || fail "wrong message: $out"
 [[ ! -e "$t/misnamed/SHA256SUMS" ]] || fail "SHA256SUMS written for a refused dist"
-for a in linux-arm64 linux-x86_64 macos-arm64 macos-x86_64; do
-  mv "$t/good/xless-1.4.0-$a.tar.gz" "$t/away.tar.gz"
+for a in linux-arm64.tar.gz linux-x86_64.tar.gz macos-arm64.tar.gz macos-x86_64.tar.gz windows-x86_64.zip; do
+  mv "$t/good/xless-1.4.0-$a" "$t/away"
   bash "$repo/scripts/release-assets.sh" 1.4.0 "$t/good" >/dev/null 2>&1 && fail "release-assets took a dist without $a"
-  mv "$t/away.tar.gz" "$t/good/xless-1.4.0-$a.tar.gz"
+  mv "$t/away" "$t/good/xless-1.4.0-$a"
 done
+z="$t/good/xless-1.4.0-windows-x86_64.zip"; cp "$z" "$t/zip"
+python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1], "a").writestr("xless-1.4.0-windows-x86_64/bin/vcruntime140.dll", "x")' "$z"
+out=$(bash "$repo/scripts/release-assets.sh" 1.4.0 "$t/good" 2>&1) && fail "release-assets took a zip with more in it"
+grep -q "the windows x86_64 package is not as it must be" <<<"$out" || fail "wrong message: $out"
+cp "$t/zip" "$z"
 # ... and one that holds what a package does not.
 n=xless-1.4.0-macos-arm64; mkdir -p "$t/x"; tar -xzf "$t/good/$n.tar.gz" -C "$t/x"; echo x > "$t/x/$n/bin/libswift.dylib"
 COPYFILE_DISABLE=1 tar -czf "$t/good/$n.tar.gz" -C "$t/x" "$n"
@@ -85,16 +92,19 @@ grep -q "libswift.dylib" <<<"$out" || fail "wrong message: $out"
 # what release.yml does: the same action, with the same inputs but the version, on the same runners.
 wf="$repo/.github/workflows"
 job() { awk -v j="  $2:" '$0 == j { on = 1; next } on && /^  [a-z]/ { exit } on { print }' "$wf/$1"; }
-grep -qx '    needs: \[plan, build, build-macos, verify\]' <<<"$(job release.yml publish)" || fail "publish does not need every job"
-grep -qx '    needs: \[plan, build, build-macos\]' <<<"$(job release.yml verify)" || fail "verify does not need every build"
-for j in build build-macos verify publish; do
+grep -qx '    needs: \[plan, built, verify, verify-windows\]' <<<"$(job release.yml publish)" || fail "publish does not need every job"
+grep -qx '    needs: \[plan, build, build-macos, build-windows\]' <<<"$(job release.yml built)" || fail "built does not need every build"
+for j in verify verify-windows; do grep -qx '    needs: \[plan, built\]' <<<"$(job release.yml $j)" || fail "$j does not need every build"; done
+for j in build build-macos build-windows built verify verify-windows publish; do
   [[ "$(job release.yml $j | grep -c "^    if: needs.plan.outputs.version != ''$")" == 1 ]] || fail "$j runs without a version, or after a failure"
   grep -qE 'continue-on-error|always\(\)|!cancelled|failure\(\)' <<<"$(job release.yml $j)" && fail "$j goes on after a failure"
 done
 runner() { job "$1" "$2" | sed -n 's/^    runs-on: \([^ ]*\).*/\1/p'; }
 [[ -n "$(runner pr.yml package-macos)" && "$(runner pr.yml package-macos)" == "$(runner release.yml build-macos)" ]] || fail "macOS is built on other runners in pr.yml"
+[[ -n "$(runner pr.yml package-windows)" && "$(runner pr.yml package-windows)" == "$(runner release.yml build-windows)" && "$(runner pr.yml package-windows)" == "$(runner pr.yml windows-tests)" ]] || fail "Windows is built on other runners in pr.yml"
+[[ "$(job pr.yml install-windows | grep -oE 'windows-[0-9]+' | sort -u)" == "$(job release.yml verify-windows | grep -oE 'windows-[0-9]+' | sort -u)" ]] || fail "other Windows installs in pr.yml"
 inputs() { job "$1" "$2" | awk '/uses: .\/.github\/actions\/build-package/ { on = 1 } on && /^ +(os|arch|triple): / { print } on && /^      - / { exit }'; }
-diff <(inputs pr.yml package-macos) <(inputs release.yml build-macos) && diff <(inputs pr.yml package) <(inputs release.yml build) || fail "other inputs in pr.yml"
+diff <(inputs pr.yml package-macos) <(inputs release.yml build-macos) && diff <(inputs pr.yml package) <(inputs release.yml build) && diff <(inputs pr.yml package-windows) <(inputs release.yml build-windows) || fail "other inputs in pr.yml"
 for r in macos-15 macos-15-intel; do
   grep -q "runner: $r }" <<<"$(job pr.yml install-macos)" && grep -q "runner: $r }" <<<"$(job release.yml verify)" || fail "$r installs not in both"
 done

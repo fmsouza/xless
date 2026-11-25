@@ -185,9 +185,12 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
     @Test func itIsNotAskedInCINoInputASessionOrBuildCode() {
         #expect(!KeepOffer.isOff(env: [:], inSession: false))
         #expect(KeepOffer.isOff(env: [:], inSession: true))
-        for env in [["CI": "true"], ["CI": "1"], ["XLESS_NO_INPUT": "1"], ["XLESS_NO_SECRET_STORE": "1"], ["XLESS_RUN_KEEPS_NOTHING": "1"]] {
+        for env in [["CI": "true"], ["CI": "1"], ["XLESS_NO_INPUT": "1"], ["XLESS_NO_SECRET_STORE": "1"]] {
             #expect(KeepOffer.isOff(env: env, inSession: false), "\(env)")
         }
+        #if !os(Windows) && !XLESS_WINDOWS_TARGETS // `xless run` says it, which is not on Windows
+        #expect(KeepOffer.isOff(env: ["XLESS_RUN_KEEPS_NOTHING": "1"], inSession: false))
+        #endif
         for env in [["CI": ""], ["CI": "false"], ["CI": "0"], ["XLESS_NO_INPUT": "0"]] { #expect(!KeepOffer.isOff(env: env, inSession: false), "\(env)") }
     }
 

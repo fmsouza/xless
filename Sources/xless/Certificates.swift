@@ -314,7 +314,13 @@ struct CertificateCreation {
         let key = try generate()
         try key.writeExclusively(toPath: path)
         /// Whether the file is gone.
-        func remove() -> Bool { unlink(path) == 0 || errno == ENOENT }
+        func remove() -> Bool {
+            #if os(Windows)
+            return InputFile.remove(path) == nil || !PrivateFile.exists(path)
+            #else
+            return unlink(path) == 0 || errno == ENOENT
+            #endif
+        }
         let csr: String
         do {
             try await precheck(type)

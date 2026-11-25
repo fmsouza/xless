@@ -127,6 +127,13 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: The PowerShell scripts' analysis
+        timeout-minutes: 5
+        run: |
+          Import-Module PSScriptAnalyzer
+          $found = Get-ChildItem scripts/*.ps1, Tests/windows/*.ps1 | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error, Warning -ExcludeRule PSAvoidUsingWriteHost, PSAvoidUsingInvokeExpression, PSReviewUnusedParameter, PSUseShouldProcessForStateChangingFunctions, PSUseSingularNouns }
+          $found | Format-Table -AutoSize -Wrap ScriptName, Line, RuleName, Message | Out-String -Width 200 | Write-Host
+          if ($found) { exit 1 }
       - name: The toolchain script's test
         timeout-minutes: 5
         run: Tests/windows/toolchain.test.ps1
@@ -152,6 +159,17 @@ jobs:
         run: |
           $bin = swift build --build-system native --show-bin-path
           Tests/windows/no-dump.test.ps1 (Join-Path $bin XlessWindowsProbe.exe)
+      - name: Locks, DLLs, hardening of a process
+        timeout-minutes: 10
+        run: |
+          $bin = swift build --build-system native --show-bin-path
+          Tests/windows/process.test.ps1 (Join-Path $bin XlessWindowsProbe.exe)
+      # Makes this machine trust an authority of the test's: only on a machine that is thrown away.
+      - name: What is a secure connection
+        timeout-minutes: 10
+        run: |
+          $bin = swift build --build-system native --show-bin-path
+          Tests/windows/https.test.ps1 (Join-Path $bin XlessWindowsProbe.exe)
 
   # The release tarball, built the way the release build will build it (a static musl binary), installed with the
   # one-line installer from a file:// release, and run, through the tests of the xless agent too.
@@ -299,6 +317,71 @@ jobs:
           export XLESS_BIN="$HOME/.local/bin/xless"
           for t in agent session no-input prompts; do scripts/ci-session.sh /bin/bash "Tests/shell/$t.test.sh"; done
 
+  # The Windows zip, built the way the release build will build it.
+  package-windows:
+    name: package (windows-x86_64)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        timeout-minutes: 40
+        shell: pwsh
+        run: scripts/windows-toolchain.ps1
+      - name: Build and package
+        uses: ./.github/actions/build-package
+        with:
+          os: windows
+          arch: x86_64
+          version: 0.0.0-dev
+          out-dir: dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tarball-windows-x86_64
+          path: dist/xless-*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # ... installed on machines without a toolchain, with Windows PowerShell and PowerShell 7, and run in a console. These are machines that
+  # are thrown away: the installation and the secret store are the user's real ones.
+  install-windows:
+    name: install (${{ matrix.runner }})
+    needs: package-windows
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    env:
+      XLESS_ALLOW_ELEVATED: '1'   # the runners' only user is an administrator
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tarball-windows-x86_64
+          path: dist
+      - name: The installer's test (Windows PowerShell)
+        timeout-minutes: 10
+        shell: powershell
+        run: Tests/windows/install.test.ps1
+      - name: The installer's test (PowerShell 7)
+        timeout-minutes: 10
+        shell: pwsh
+        run: Tests/windows/install.test.ps1
+      - name: Install from the file:// release
+        timeout-minutes: 10
+        shell: pwsh
+        run: scripts/verify-release.ps1 0.0.0-dev dist -Keep
+      - name: The installed xless in a console
+        timeout-minutes: 10
+        shell: pwsh
+        run: Tests/windows/installed.test.ps1 (Join-Path $env:LOCALAPPDATA 'Programs\xless\bin\xless.exe')
+
   shellcheck:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -309,7 +392,7 @@ jobs:
       - name: Shipped scripts
         run: |
           shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh scripts/ci-swift.sh scripts/ci-session.sh scripts/check-package.sh scripts/check-macos-binary.sh scripts/check-link-map.sh
-          shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
+          shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/package-sums.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/xcode-swift.sh
       - name: Mac bench scripts
         run: shellcheck scripts/tauri-ios-reference.sh scripts/sim-launch.sh scripts/xcode-pin.sh

@@ -57,3 +57,4 @@ try {
 }
 if ($failures -gt 0) { exit 1 }
 Write-Host 'ok'
+exit 0

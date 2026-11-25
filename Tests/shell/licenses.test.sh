@@ -28,7 +28,7 @@ for f in "$v"/*; do
 done
 
 # Every statically linked component has a notice (the list is the one recorded in README.md, from the link map).
-for c in swift swift-corelibs-foundation swift-foundation swift-foundation-icu swift-corelibs-libdispatch icu musl musl-fts curl boringssl libxml2 zlib libcxx libcxxabi libunwind compiler-rt libyaml; do
+for c in swift swift-corelibs-foundation swift-foundation swift-foundation-icu swift-corelibs-libdispatch icu musl musl-fts curl curl-windows brotli boringssl libxml2 zlib libcxx libcxxabi libunwind compiler-rt libyaml; do
   awk -F'\t' -v c="$c" '$2 == c { f = 1 } END { exit !f }' "$tsv" || fail "no notice for $c"
 done
 
@@ -38,7 +38,23 @@ for id in $(sed -n 's/.*"identity" : "\(.*\)",/\1/p' "$repo/Package.resolved"); 
   mkdir -p "$t/checkouts/$id"; echo "licence of $id" > "$t/checkouts/$id/LICENSE"
 done
 XLESS_CHECKOUTS="$t/checkouts" bash "$repo/scripts/third-party-licenses.sh" "$t/out" >/dev/null
-for n in $listed; do cmp -s "$v/$n" "$t/out/$n" || fail "$n was not shipped verbatim"; done
+for n in $listed; do
+  [[ "$n" == brotli-* || "$n" == curl-8.9.1-* ]] || cmp -s "$v/$n" "$t/out/$n" || fail "$n was not shipped verbatim"
+done
+[[ ! -e "$t/out/brotli-LICENSE.txt" && ! -e "$t/out/curl-8.9.1-COPYING.txt" ]] || fail "brotli's notice is for Windows alone"
+
+# Windows: the runtime's DLLs and what is in them, and what is in xless.exe.
+XLESS_CHECKOUTS="$t/checkouts" bash "$repo/scripts/third-party-licenses.sh" --os windows "$t/windows" >/dev/null
+for n in swift-LICENSE.txt swift-corelibs-foundation-LICENSE.txt swift-foundation-LICENSE.txt swift-foundation-icu-LICENSE.txt icu-LICENSE.txt \
+         swift-corelibs-libdispatch-LICENSE.txt curl-8.9.1-COPYING.txt zlib-LICENSE.txt brotli-LICENSE.txt llvm-compiler-rt-LICENSE.txt \
+         boringssl-LICENSE.txt libyaml-LICENSE.txt; do
+  cmp -s "$v/$n" "$t/windows/$n" || fail "$n is not in the Windows package"
+done
+cmp -s "$repo/licenses/windows-swift-runtime-CHANGES.txt" "$t/windows/swift-runtime-CHANGES.txt" || fail "what is changed in the runtime is not said in the Windows package"
+[[ ! -e "$t/out/swift-runtime-CHANGES.txt" ]] || fail "nothing is changed in the runtime of the other systems"
+for n in curl-COPYING.txt musl-COPYRIGHT.txt musl-fts-COPYING.txt libxml2-Copyright.txt llvm-libcxx-LICENSE.txt assetkit.txt lzfse.txt; do
+  [[ ! -e "$t/windows/$n" ]] || fail "$n is not for the Windows package"
+done
 
 mkdir -p "$t/fake/scripts" "$t/fake/licenses" "$t/fake/ThirdParty/AssetKit/Sources/CLZFSE"
 cp "$repo/scripts/third-party-licenses.sh" "$t/fake/scripts/"; cp "$repo/Package.resolved" "$t/fake/"; cp -R "$v" "$t/fake/licenses/vendored"

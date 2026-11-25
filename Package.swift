@@ -176,8 +176,8 @@ let package = Package(
 // `swift build -Xmanifest -DXLESS_WINDOWS_TARGETS` builds the same targets and files on another system.
 #if os(Windows) || XLESS_WINDOWS_TARGETS
 let windowsTargets: Set<String> = [
-    "CXlessProcess", "XlessCore", "XlessASC", "XlessSign", "XlessFIDO", "XlessAppleID", "XlessVault", "XlessStore",
-    "XlessCoreTests", "XlessASCTests", "XlessSignTests", "XlessFIDOTests", "XlessAppleIDTests", "XlessVaultTests", "XlessStoreTests",
+    "CXlessProcess", "XlessCore", "XlessASC", "XlessSign", "XlessFIDO", "XlessAppleID", "XlessVault", "XlessStore", "XlessAgent", "xless",
+    "XlessCoreTests", "XlessASCTests", "XlessSignTests", "XlessFIDOTests", "XlessAppleIDTests", "XlessVaultTests", "XlessStoreTests", "XlessCLITests",
 ]
 let notOnWindows: [String: [String]] = [
     "XlessCore": [
@@ -188,16 +188,31 @@ let notOnWindows: [String: [String]] = [
     ],
     "XlessSign": ["PrivateFiles.swift", "RCodesign.swift", "SignStage.swift"],
     "XlessVault": ["CredentialHelper.swift", "VaultMaterialize.swift"],
+    "XlessAgent": [
+        "AgentChannel.swift", "AgentClient.swift", "AgentClock.swift", "AgentDirectory.swift", "AgentHost.swift", "AgentLauncher.swift", "AgentLink.swift",
+        "AgentProgram.swift", "AgentServer.swift", "AgentState.swift", "AgentWire.swift", "SecretPages.swift",
+    ],
+    "xless": [
+        "Context.swift", "LiveCheck.swift", "MacNative.swift", "Overlays.swift", "Stages.swift",
+        "Commands/CargoCommands.swift", "Commands/CleanCommand.swift", "Commands/DockerCommand.swift", "Commands/InspectCommand.swift",
+        "Commands/LiveCheckCommand.swift", "Commands/NextBuildCommand.swift", "Commands/SDKCommands.swift", "Commands/SecretsImportEnvCommand.swift", "Commands/SecretsMaterializeCommand.swift",
+        "Commands/SessionCommand.swift", "Commands/SetupCommand.swift", "Commands/ShimCommands.swift", "Commands/ShipCommand.swift",
+        "Commands/SignBootstrapCommand.swift", "Commands/StageCommands.swift", "Commands/StoryboardCommands.swift", "Commands/TauriCommands.swift",
+        "Commands/XcodeCommands.swift", "Commands/XcodeDownloadCommand.swift",
+    ],
     "XlessCoreTests": [
         "BuildSDKCheckTests.swift", "BuildPlacesTests.swift", "BuildSandboxTests.swift", "BuiltTreeTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlainFileTests.swift", "PlistBuddyShimTests.swift",
         "SecretScrubTests.swift", "ShellTests.swift", "SwiftToolchainTests.swift", "XcrunShimTests.swift", "XlessShareTests.swift",
         "AppleSignatureTests.swift", "InstalledXcodeTests.swift", "NativeToolsTests.swift", "TrustedPathTests.swift",
         "PackageResolvedTests.swift", "WindowsFilterTests.swift",
     ],
-    "XlessASCTests": ["PathOwnersTests.swift", "StreamingTransportTests.swift"],
-    "XlessAppleIDTests": ["URLSessionAppleTransportTests.swift"],
+    "XlessASCTests": ["PathOwnersTests.swift"],
     "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],
     "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
+    "XlessCLITests": [
+        "BuildIsolationTests.swift", "LiveCheckTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
+        "SecretsNamedByTests.swift",
+    ],
 ]
 package.products = []
 package.targets.removeAll { !windowsTargets.contains($0.name) }
@@ -212,14 +227,14 @@ for target in package.targets {
 }
 #if os(Windows)
 package.targets.removeAll { $0.name == "CXlessProcess" }
-for target in package.targets where ["XlessCoreTests", "XlessVaultTests", "XlessSignTests"].contains(target.name) {
+for target in package.targets where ["XlessCoreTests", "XlessVaultTests", "XlessSignTests", "XlessASCTests", "XlessAppleIDTests", "XlessCLITests"].contains(target.name) {
     target.dependencies += ["CXlessWindowsTestSupport"]
 }
 package.targets += [
-    .target(name: "CXlessWindows", linkerSettings: ["Advapi32", "Ole32", "Shell32"].map { .linkedLibrary($0) }),
-    .target(name: "CXlessWindowsTestSupport", path: "Tests/CXlessWindowsTestSupport", linkerSettings: [.linkedLibrary("Advapi32")]),
-    // What Tests/windows/no-dump.test.ps1 lets crash.
-    .executableTarget(name: "XlessWindowsProbe", dependencies: ["XlessCore", "CXlessWindowsTestSupport"], path: "Tests/XlessWindowsProbe"),
+    .target(name: "CXlessWindows", linkerSettings: ["Advapi32", "Crypt32", "Ole32", "Shell32", "Winhttp"].map { .linkedLibrary($0) }),
+    .target(name: "CXlessWindowsTestSupport", path: "Tests/CXlessWindowsTestSupport", linkerSettings: ["Advapi32", "Ws2_32"].map { .linkedLibrary($0) }),
+    // What the tests on Windows start as a program of its own.
+    .executableTarget(name: "XlessWindowsProbe", dependencies: ["XlessCore", "XlessVault", "CXlessWindowsTestSupport"], path: "Tests/XlessWindowsProbe"),
 ]
 #endif
 #endif

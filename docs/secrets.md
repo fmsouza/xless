@@ -354,6 +354,10 @@ to open, with an error, and nothing of it is used. Writes go to a temporary file
 in one step, under a lock, so concurrent commands do not lose each other's changes and a crash never leaves half a
 file.
 
+On Windows the store is `%LOCALAPPDATA%\xless\vault\secrets.vault`, owned by you, with an access list that names only you
+([security.md](security.md#windows)). There every command asks the passphrase: `unlock`, `--remember` and the credential helpers are not
+there yet.
+
 ### Store format and older xless releases
 
 The file says which format it has (`"version"`) and the oldest format an xless must know to change it

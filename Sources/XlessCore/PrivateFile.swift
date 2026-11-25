@@ -140,14 +140,7 @@ public enum PrivateFile {
     }
 
     fileprivate static func failure(_ what: String, _ code: UInt32) -> Refusal {
-        Refusal(kind: .failed, cause: "\(what): \(windowsError(code))", fix: "check the disk and the directory's permissions")
-    }
-
-    private static func windowsError(_ code: UInt32) -> String {
-        var text = [UInt16](repeating: 0, count: 512)
-        _ = xless_error_text(code, &text, text.count)
-        let words = String(wide: text)
-        return words.isEmpty ? "Windows error \(code)" : "\(words) (Windows error \(code))"
+        Refusal(kind: .failed, cause: "\(what): \(WindowsError.text(code))", fix: "check the disk and the directory's permissions")
     }
 
     fileprivate static func refusal(_ path: String, _ why: xless_private, sid: String, making: Bool, directory: Bool) -> Refusal {
@@ -176,13 +169,13 @@ public enum PrivateFile {
         case Int32(XLESS_PRIVATE_SHARED.rawValue):
             return unsafe("is accessible to other users (\(sid))", "\(reset) /remove:g *\(sid), and consider whether its content was exposed")
         case Int32(XLESS_PRIVATE_UNKNOWN_ACE.rawValue):
-            return unsafe("has an access list that xless cannot judge", "icacls \"\(path)\" /reset, then \(reset)")
+            return unsafe("has an access list that xless cannot judge", "\(reset), then look at what is left with icacls \"\(path)\" and remove it; move the \(kind) aside when that does not do")
         case Int32(XLESS_PRIVATE_NOT_LOCAL.rawValue):
             return unsafe("is not on a drive built into this computer", "keep it on one (a share or a removable drive answers to other rules than Windows')")
         case Int32(XLESS_PRIVATE_NO_ACLS.rawValue):
             return unsafe("is on a file system that keeps no access lists (FAT, exFAT): everybody could read it", "use a drive formatted with NTFS")
         default:
-            return Refusal(kind: .failed, cause: "cannot \(making ? "create" : "open") \(path): \(windowsError(why.code))", fix: "check the path's permissions")
+            return Refusal(kind: .failed, cause: "cannot \(making ? "create" : "open") \(path): \(WindowsError.text(why.code))", fix: "check the path's permissions")
         }
     }
 
@@ -208,6 +201,12 @@ public enum InputFile {
             throw PrivateFile.Refusal(kind: .tooLarge, cause: "\(path) is larger than \(limit) bytes", fix: "check that it is the right file")
         }
         return data
+    }
+
+    /// Removes the file; what Windows says when it would not.
+    public static func remove(_ path: String) -> String? {
+        let code = path.withWide { xless_delete($0) }
+        return code == 0 ? nil : WindowsError.text(code)
     }
 }
 

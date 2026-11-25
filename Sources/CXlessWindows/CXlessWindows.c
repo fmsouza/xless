@@ -79,7 +79,8 @@ static PSECURITY_DESCRIPTOR private_descriptor(int directory) {
 #define ERROR_MODE (SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX)
 
 static LONG WINAPI end_at_fault(EXCEPTION_POINTERS *fault) {
-    TerminateProcess(GetCurrentProcess(), fault && fault->ExceptionRecord ? fault->ExceptionRecord->ExceptionCode : 3);
+    DWORD code = fault && fault->ExceptionRecord ? fault->ExceptionRecord->ExceptionCode : 0;
+    TerminateProcess(GetCurrentProcess(), code ? code : 3); // never as if it had gone well
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -288,7 +289,9 @@ static int problem_of(HANDLE file, int directory, int local, DWORD *code, wchar_
             case ACCESS_ALLOWED_ACE_TYPE: {
                 ACCESS_ALLOWED_ACE *allowed = entry;
                 PSID who = &allowed->SidStart;
-                if (!IsValidSid(who)) problem = XLESS_PRIVATE_UNKNOWN_ACE;
+                // The SID ends where the entry does: a share's server may say what it likes.
+                DWORD room = allowed->Header.AceSize, before = offsetof(ACCESS_ALLOWED_ACE, SidStart);
+                if (room < before + 8 || room < before + GetSidLengthRequired(*GetSidSubAuthorityCount(who)) || !IsValidSid(who)) problem = XLESS_PRIVATE_UNKNOWN_ACE;
                 else if (allowed->Mask && !EqualSid(who, user) && !IsWellKnownSid(who, WinLocalSystemSid) && !IsWellKnownSid(who, WinBuiltinAdministratorsSid)) {
                     problem = XLESS_PRIVATE_SHARED;
                     sid_text(who, sid);
@@ -521,6 +524,21 @@ unsigned long xless_move(const wchar_t *from, const wchar_t *to, int replace) {
     free(source);
     free(target);
     return code;
+}
+
+unsigned long xless_delete(const wchar_t *path) {
+    struct xless_private why;
+    refused(&why, XLESS_PRIVATE_NONE, 0);
+    wchar_t *whole = drive_path(path, 0, &why);
+    if (!whole) return why.code ? why.code : ERROR_BAD_PATHNAME;
+    DWORD code = DeleteFileW(whole) ? ERROR_SUCCESS : GetLastError();
+    free(whole);
+    return code;
+}
+
+int xless_same_name(const wchar_t *one, size_t one_length, const wchar_t *other, size_t other_length) {
+    if (one_length > 0x7fffffff || other_length > 0x7fffffff) return 0;
+    return CompareStringOrdinal(one, (int)one_length, other, (int)other_length, TRUE) == CSTR_EQUAL;
 }
 
 size_t xless_final_path(const wchar_t *path, wchar_t *out, size_t length) {

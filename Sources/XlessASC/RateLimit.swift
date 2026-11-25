@@ -1,4 +1,7 @@
 import Foundation
+#if os(Windows)
+import XlessCore
+#endif
 
 /// App Store Connect's hourly request budget for the API key's user, from a response's `X-Rate-Limit` header
 /// (`user-hour-lim:3600;user-hour-rem:3599;`).
@@ -35,8 +38,10 @@ public final class ASCRateLimitMonitor: @unchecked Sendable {
     private var warned = false
     private let warn: @Sendable (String) -> Void
 
+    public static let standardError: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
+
     /// `warn` receives the one warning line (default: standard error).
-    public init(warn: @escaping @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }) {
+    public init(warn: @escaping @Sendable (String) -> Void = ASCRateLimitMonitor.standardError) {
         self.warn = warn
     }
 
@@ -54,3 +59,9 @@ public final class ASCRateLimitMonitor: @unchecked Sendable {
         }
     }
 }
+
+#if os(Windows)
+extension FileHandle {
+    func write(_ data: Data) { WindowsOutput.write(data, to: self) }
+}
+#endif

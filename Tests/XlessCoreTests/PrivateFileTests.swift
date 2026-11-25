@@ -134,6 +134,15 @@ func theSystemAndTheAdministratorsAndRefusalsAreAccepted(_ sddl: String) throws 
     set(place.dir, "D:P(A;OICI;FA;;;%)")
 }
 
+@Test func accessThatOnlyWhatIsMadeInADirectoryWouldGetIsRefusedToo() throws {
+    let place = try Place()
+    defer { place.cleanup() }
+    set(place.dir, "D:P(A;OICI;FA;;;%)(A;OICIIO;FR;;;WD)")
+    let refused = refusal { try PrivateFile.inDirectory(place.dir, .builtInDrive) {} }
+    #expect(refused?.kind == .unsafe && refused?.cause.contains("S-1-1-0") == true, "\(refused?.cause ?? "")")
+    set(place.dir, "D:P(A;OICI;FA;;;%)")
+}
+
 @Test func noAccessListIsRefused() throws {
     let place = try Place()
     defer { place.cleanup() }
@@ -337,6 +346,37 @@ func anotherOwnersIsRefused(_ owner: String, _ sid: String) throws {
     try FileManager.default.createSymbolicLink(atPath: place.file("link"), withDestinationPath: place.file())
     #expect(try InputFile.read(place.file("link"), limit: 9) == Data("abc".utf8))
     #expect(refusal { try InputFile.read(place.file("link"), limit: 9, throughLinks: false) }?.kind == .link)
+}
+
+/// What PlainFileTests say of the other systems; and what is read so there.
+@Test func whatABuildMayHavePutThereIsReadAsAPlainFileOnly() throws {
+    let place = try Place()
+    defer { place.cleanup() }
+    func url(_ name: String) -> URL { URL(fileURLWithPath: place.file(name)) }
+    func unread(_ url: URL, maxSize: Int = 9, followsLinks: Bool = false) -> PlainFile.Unread? {
+        do { _ = try PlainFile.read(url, maxSize: maxSize, followsLinks: followsLinks); return nil } catch { return error }
+    }
+    try Data("abc".utf8).write(to: url("a"))
+    #expect(try PlainFile.read(url("a")) == Data("abc".utf8))
+    #expect(unread(url("a"), maxSize: 3) == nil && unread(url("a"), maxSize: 2) == .tooLarge)
+    #expect(unread(url("none")) == .absent && unread(url("none").appendingPathComponent("x")) == .absent && unread(URL(fileURLWithPath: place.dir)) == .notFile)
+    try FileManager.default.createSymbolicLink(atPath: place.file("link"), withDestinationPath: place.file("a"))
+    #expect(unread(url("link")) == .link && unread(url("link"), followsLinks: true) == nil)
+    #expect(unread(URL(fileURLWithPath: "\\\\.\\NUL")) != nil)
+
+    let list = url("Info.plist")
+    try Plist.write(["A": "b"], to: list, stage: .sign)
+    try FileManager.default.createSymbolicLink(atPath: place.file("Link.plist"), withDestinationPath: list.path)
+    for url in [list, url("Link.plist")] { #expect(try Plist.read(url, stage: .sign)["A"] as? String == "b") }
+    for (url, reason) in [(url("none"), "does not exist"), (URL(fileURLWithPath: place.dir), "is not a file")] {
+        #expect { try Plist.read(url, stage: .sign) } throws: { "\($0)".contains("cannot read \(url.path): it \(reason)") }
+    }
+
+    let dir = URL(fileURLWithPath: place.dir)
+    #expect(try IdentifierReplacement.recorded(in: dir) == .none)
+    try Data(#"{"replace":{"com.a":"com.b"}}"#.utf8).write(to: url("elsewhere"))
+    try FileManager.default.createSymbolicLink(atPath: place.file(IdentifierReplacement.recordName), withDestinationPath: place.file("elsewhere"))
+    #expect(throws: XlessError.self) { try IdentifierReplacement.recorded(in: dir) }
 }
 
 @Test func anOutputIsANewFile() throws {

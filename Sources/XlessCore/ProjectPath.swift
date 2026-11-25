@@ -59,7 +59,7 @@ public enum ProjectPath {
             parent = above
         }
         guard let held = finalPath(parent.path) else { return false }
-        return held.compare(base, options: [.caseInsensitive, .literal]) == .orderedSame || isInsideOnWindows(held, base)
+        return sameParts(partsOnWindows(held), partsOnWindows(base)) || isInsideOnWindows(held, base)
         #else
         let base = root.resolvingSymlinksInPath().standardizedFileURL.path
         // A missing file's own path cannot be resolved: resolve its directory's.
@@ -69,11 +69,26 @@ public enum ProjectPath {
         #endif
     }
 
-    /// Of two whole paths with `\`, as Windows has them: whether the first is inside the second, without case, part by part.
+    /// Of two whole paths with `\`, as Windows has them: whether the first is inside the second, part by part, by its own rule of when
+    /// two names are one (not Swift's nor a language's: `é` written in two ways is two names, and so are `K` and the Kelvin sign).
     static func isInsideOnWindows(_ path: String, _ root: String) -> Bool {
-        func parts(_ path: String) -> [String] { path.split(separator: "\\").map { $0.lowercased() } }
-        let inner = parts(path), outer = parts(root)
-        return inner.count > outer.count && inner.starts(with: outer)
+        let inner = partsOnWindows(path), outer = partsOnWindows(root)
+        return inner.count > outer.count && sameParts(inner.prefix(outer.count), outer)
+    }
+
+    private static func partsOnWindows(_ path: String) -> [[UInt16]] { path.utf16.split(separator: 0x5C).map(Array.init) }
+
+    private static func sameParts(_ some: some Collection<[UInt16]>, _ others: [[UInt16]]) -> Bool {
+        some.count == others.count && zip(some, others).allSatisfy(sameName)
+    }
+
+    private static func sameName(_ one: [UInt16], _ other: [UInt16]) -> Bool {
+        #if os(Windows)
+        return xless_same_name(one, one.count, other, other.count) != 0
+        #else
+        func folded(_ name: [UInt16]) -> [UInt16] { name.map { (0x61...0x7A).contains($0) ? $0 - 32 : $0 } }
+        return folded(one) == folded(other)
+        #endif
     }
 
     #if os(Windows)
