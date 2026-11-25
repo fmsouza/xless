@@ -240,6 +240,7 @@ extension NativeOverlay {
     static func build(_ ctx: Context, options: ProjectOptions, distribution: Distribution? = nil, stages: [Stage], output: FileHandle) async throws {
         guard let first = stages.first, let last = stages.last else { return }
         let native = try await withStage(first) {
+            if first > .build { try ctx.requireDevice(first) }
             let native = try NativeOverlay(ctx, stage: first)
             if stages.contains(.prepare) { try native.prepareRust(ctx) }
             return native

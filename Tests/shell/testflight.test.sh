@@ -464,10 +464,18 @@ code=0; "${base[@]}" "$S" --config "$t/rn/home.yml" >/dev/null 2>"$t/err" || cod
 printf 'type: react-native\nsource: %s\n' "$t" > "$t/rn/up.yml"
 code=0; "${base[@]}" "$S" --config "$t/rn/up.yml" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q "holds your home directory" "$t/err" || fail "a parent of the home directory as source: exit $code"
-# natively nothing is mounted: neither the home directory as source nor a secret beside the overlay is refused
-out=$("${base[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/rn/home.yml" 2>"$t/err") || fail "native: home directory as source refused: $(cat "$t/err")"
-[[ "$(sed -n 1p <<<"$out")" == "xless next-build --config $t/rn/home.yml " ]] || fail "native home source: '$out'"
-out=$("${base[@]}" XLESS_USE_DOCKER=0 ASC_KEY_P8_FILE="$t/cs/key.p8" "$S" --config "$t/cs/o.yml" 2>"$t/err") || fail "native: secret beside the overlay refused: $(cat "$t/err")"
+# natively on Linux nothing is mounted: neither the home directory as source nor a secret beside the overlay is refused; on a Mac the
+# build's sandbox opens both, as a mount does
+if [[ "$(uname -s)" == Darwin ]]; then
+  code=0; "${base[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/rn/home.yml" >/dev/null 2>"$t/err" || code=$?
+  [[ $code -eq 2 ]] && grep -q "holds your home directory" "$t/err" || fail "native on a Mac: home directory as source: exit $code"
+  code=0; "${base[@]}" XLESS_USE_DOCKER=0 ASC_KEY_P8_FILE="$t/cs/key.p8" "$S" --config "$t/cs/o.yml" >/dev/null 2>"$t/err" || code=$?
+  [[ $code -eq 2 ]] && grep -q "readable to the app's build code" "$t/err" || fail "native on a Mac: secret beside the overlay: exit $code"
+else
+  out=$("${base[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/rn/home.yml" 2>"$t/err") || fail "native: home directory as source refused: $(cat "$t/err")"
+  [[ "$(sed -n 1p <<<"$out")" == "xless next-build --config $t/rn/home.yml " ]] || fail "native home source: '$out'"
+  out=$("${base[@]}" XLESS_USE_DOCKER=0 ASC_KEY_P8_FILE="$t/cs/key.p8" "$S" --config "$t/cs/o.yml" 2>"$t/err") || fail "native: secret beside the overlay refused: $(cat "$t/err")"
+fi
 code=0; "${base[@]}" ASC_KEY_P8_FILE="$t/cs/key.p8" "$S" --config "$t/cs/o.yml" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -q "is inside the overlay's directory" "$t/err" || fail "docker: secret beside the overlay: exit $code $(cat "$t/err")"
 # native: step 1 is `xless next-build`
@@ -538,7 +546,9 @@ code=0; "${base[@]}" FONTS_DIR="$t/nowhere" "$S" --config "$t/cg/o.yml" >/dev/nu
 [[ $(wc -l <<<"$out") -eq 1 && "$out" != *"/inputs"* && -z "$(grep -v "^secrets named-by" "$t/xinputs.log")" ]] || fail "cargo --from sign: $out"
 # natively xless reads the paths directly: nothing is mounted or listed
 : > "$t/xinputs.log"; out=$("${cg[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/cg/o.yml" 2>/dev/null) || fail "native cargo failed"
-[[ "$(sed -n 1p <<<"$out")" == "xless next-build --config $t/cg/o.yml " && "$out" != *"/inputs"* && -z "$(grep -v "^secrets named-by" "$t/xinputs.log")" ]] || fail "native cargo: '$out'"
+[[ "$(sed -n 1p <<<"$out")" == "xless next-build --config $t/cg/o.yml " && "$out" != *"/inputs"* ]] || fail "native cargo: '$out'"
+# (natively on a Mac the build's sandbox opens the path inputs, so the run looks at them)
+[[ "$(uname -s)" == Darwin || -z "$(grep -v "^secrets named-by" "$t/xinputs.log")" ]] || fail "native cargo lists the inputs: $(cat "$t/xinputs.log")"
 # macOS: the same steps as a Tauri DMG; the path input reaches the build step
 out=$("${mac[@]}" FONTS_DIR="$t/fonts" "$S" --config "$t/cg/o.yml" --platform macos 2>"$t/err") || fail "cargo macos failed: $(cat "$t/err")"
 [[ $(wc -l <<<"$out") -eq 2 && "$out" != *"next-build"* ]] || fail "cargo macos: want two steps, no next-build: $out"
