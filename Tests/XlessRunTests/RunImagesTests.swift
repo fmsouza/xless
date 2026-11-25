@@ -88,7 +88,7 @@ import XlessImages
         try home.write("ov/app.yml", "type: react-native\nsource: ../src\n")
         let (host, code) = try run(["--config", home.overlay, "--dry-run"])
         #expect(code == 0 && builds(host).isEmpty && containers(host).isEmpty)
-        #expect(host.lines.contains("==> would build the image \(Self.base)-react-native first (there is none yet): Node, pnpm, Ruby, Bundler and hermesc, for React Native and Expo apps; ~8 min, once"))
+        #expect(host.lines.contains("==> would build the image \(Self.base)-react-native first (there is none yet): Node, pnpm, Ruby, Bundler and hermesc, for React Native and Expo apps; ~3 min, once"))
         #expect(host.output.contains { $0.contains("docker build --platform linux/arm64 --pull=false ") })
         #expect(host.output.contains { $0.contains("\(Self.base)-react-native xless ship") })
         // with no image at all it shows what there would be
@@ -171,7 +171,7 @@ import XlessImages
         try home.write("ov/app.yml", "type: react-native\nsource: ../src\nimage: mine:1\nxcode: \"26.6\"\n")
         #expect(try refused() == "testflight: image: in \(home.overlay) names mine:1, which is not on this machine (images are never pulled from a registry); build it first: docker build -t mine:1 <its folder>")
         home.images.add(xcode: "27.0", build: "27A266a", name: "mine:1", layers: ["mine"])
-        #expect(try refused().hasPrefix("testflight: image: in \(home.overlay) names mine:1, which holds the SDK of Xcode 27.0 (27A266a), not Xcode 26.6's; build it on the image of Xcode 26.6: docker build --build-arg XLESS_IMAGE=\(Self.base)"))
+        #expect(try refused().hasPrefix("testflight: image: in \(home.overlay) names mine:1, which holds the SDK of Xcode 27.0 (27A266a), not Xcode 26.6's; build it on the image of Xcode 26.6: docker build --pull=false --build-arg XLESS_IMAGE=\(Self.base)"))
         mine()
         home.images.change("mine:1") { $0.layers = ["os", "copied-labels"] }
         #expect(try refused().contains("which is not built on \(Self.base) as it is now"))

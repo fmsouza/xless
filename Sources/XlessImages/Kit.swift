@@ -25,7 +25,7 @@ public enum Kit: String, CaseIterable, Sendable {
     public var apps: String { self == .tauri ? "Tauri and Cargo apps" : "React Native and Expo apps" }
     public var holds: String { self == .tauri ? "Node, pnpm and Rust's installer" : "Node, pnpm, Ruby, Bundler and hermesc" }
     /// How long the first build of it takes, roughly.
-    public var estimate: String { self == .tauri ? "~1 min" : "~8 min" }
+    public var estimate: String { self == .tauri ? "~1 min" : "~3 min" }
 
     public func directory(share: URL) -> URL { share.appendingPathComponent("docker/\(rawValue)") }
 

@@ -13,7 +13,7 @@ public enum ImageName {
     /// Swift, xtool and rcodesign without an SDK: what `xless setup --docker` exports the SDK with, and removes again.
     public static func tools(arch: String) -> String { "\(repository):local-\(arch)-setup" }
 
-    /// The tag without an Xcode, as xless made it up to 0.9.
+    /// The tag without an Xcode, as xless made it up to 0.10.
     public static func plain(arch: String) -> String { "\(repository):local-\(arch)" }
 
     /// The Xcode version of a base image's name; nil: it is another image's.
@@ -53,7 +53,7 @@ public enum ImageLabel {
     public static let kitRecipe = "dev.xless.kit.recipe"
 
     /// The oldest xless that this one works with in an image.
-    public static let minimumVersion = "0.9.0"
+    public static let minimumVersion = "0.10.0"
 }
 
 /// Why an image is not used, and how to get one that is.

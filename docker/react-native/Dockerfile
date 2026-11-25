@@ -1,9 +1,10 @@
+# check=skip=InvalidDefaultArgInFrom
 # What React Native and Expo apps need besides the xless image: Node with corepack (pnpm and yarn), Ruby and Bundler (CocoaPods
 # comes from each app's Gemfile.lock at prepare time), and hermesc for the machine it runs on.
 #
 # `xless run --docker` builds it when it is needed, and `xless setup --docker --with react-native` ahead of that. It is an
 # ordinary Dockerfile, and a start for one of your own (docs/images.md):
-#   docker build --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t my-image <this folder>
+#   docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t my-image <this folder>
 # Everything downloaded is pinned by its SHA-256. The image holds Apple's SDK, as the one it is built on: never push it.
 ARG XLESS_IMAGE
 # Where Ruby and hermesc are compiled: the system the xless image is built on (versions.env's SWIFT_IMAGE), not that image, so a

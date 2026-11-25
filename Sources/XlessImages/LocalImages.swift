@@ -89,7 +89,7 @@ public struct LocalImages {
     public func custom(_ name: String, named variable: String, arch: String, pin: String?) throws -> Custom {
         guard ImageName.isReference(name) else { throw ImageProblem("\(variable) names '\(name)', which is not an image name", fix: "name a local image") }
         let what = "\(variable) names \(name), which"
-        func build(_ base: String) -> String { "docker build --build-arg XLESS_IMAGE=\(base) -t \(name) <its folder>" }
+        func build(_ base: String) -> String { "docker build --pull=false --build-arg XLESS_IMAGE=\(base) -t \(name) <its folder>" }
         guard let image = image(name) else {
             throw ImageProblem("\(what) is not on this machine (images are never pulled from a registry)", fix: "build it first: docker build -t \(name) <its folder>")
         }

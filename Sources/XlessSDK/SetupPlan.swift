@@ -80,7 +80,7 @@ public enum SetupPlan {
             }
             var build = [script, "image", "--arch", a, "--xcode", version, "--xcode-build", x.build, "--sdk-dir", sdkDir.path]
             if let bin = xlessBinaries[a] { build += ["--xless-bin", bin.path] }
-            steps.append(SetupStep(title: image, argv: build, estimate: est("~10 min", "")))
+            steps.append(SetupStep(title: image, argv: build, estimate: est("~7 min", "")))
             if exports { steps.append(SetupStep(title: "remove \(tools)", argv: ["docker", "image", "rm", tools], estimate: "seconds", action: .tidy)) }
             steps += kits.map { kit($0, arch: a, xcode: version, hostArch: hostArch, share: share) }
         }
@@ -91,7 +91,7 @@ public enum SetupPlan {
     public static func kit(_ kit: Kit, arch: String, xcode: String, hostArch: String, share: URL) -> SetupStep {
         let image = ImageName.base(arch: arch, xcode: xcode)
         return SetupStep(title: "\(image)-\(kit.rawValue): \(kit.holds), for \(kit.apps)",
-                         argv: ["docker", "build", "--platform", "linux/\(arch)", "--build-arg", "XLESS_IMAGE=\(image)", "-t", "\(image)-\(kit.rawValue)", kit.directory(share: share).path],
+                         argv: ["docker", "build", "--platform", "linux/\(arch)", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=\(image)", "-t", "\(image)-\(kit.rawValue)", kit.directory(share: share).path],
                          estimate: estimate(kit.estimate, arch: arch, hostArch: hostArch), action: .kit(kit, arch: arch, xcode: xcode))
     }
 

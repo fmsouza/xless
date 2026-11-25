@@ -14,9 +14,9 @@ struct CleanCommand: AsyncParsableCommand {
         abstract: "Remove the xless images, Docker volumes and cache, to free disk space.",
         discussion: """
         With no option it lists what there is and removes nothing. --images removes every local tag of xless's images \
-        (xless:local-…, and xless-base, xless-tauri and xless-rn of xless 0.9 and older), then the older builds that a later \
+        (xless:local-…, and xless-base, xless-tauri and xless-rn of xless 0.10 and older), then the older builds that a later \
         xless setup left untagged (label \(CleanPlan.imageLabel)); --old removes only what an upgrade leaves behind: the tags of \
-        xless 0.9 and older, and those older builds. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
+        xless 0.10 and older, and those older builds. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
         and \(CleanPlan.volumePrefix)*). --cache removes $XDG_CACHE_HOME/xless (default ~/.cache/xless): the exported SDKs, \
         Tauri work copies and downloads. --native removes the native install: $XLESS_NATIVE_HOME (default \
         ~/.local/share/xless-native: the Swift toolchain, xtool, rcodesign), the installed Darwin SDK and its \
@@ -25,7 +25,7 @@ struct CleanCommand: AsyncParsableCommand {
         """)
 
     @Flag(help: "Remove the xless images (every tag, and older untagged builds).") var images = false
-    @Flag(help: "Remove only what an upgrade leaves: the images of xless 0.9 and older, and the older builds that a later xless setup left untagged.") var old = false
+    @Flag(help: "Remove only what an upgrade leaves: the images of xless 0.10 and older, and the older builds that a later xless setup left untagged.") var old = false
     @Flag(help: "Remove the Docker volumes xless docker creates.") var volumes = false
     @Flag(help: "Remove the cache directory ($XDG_CACHE_HOME/xless, default ~/.cache/xless).") var cache = false
     @Flag(help: "Remove the native install (toolchain, tools, the installed SDK and its metadata).") var native = false

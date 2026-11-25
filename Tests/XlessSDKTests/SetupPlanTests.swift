@@ -70,7 +70,7 @@ private func kinds(_ steps: [SetupStep]) -> [String] {
     let steps = plan(kits: [.tauri, .reactNative])
     #expect(kinds(steps) == ["tools", "export", "meta", "image", "rm", "kit", "kit"])
     #expect(steps[5].action == .kit(.tauri, arch: "arm64", xcode: "27.0") && steps[6].action == .kit(.reactNative, arch: "arm64", xcode: "27.0"))
-    #expect(steps[6].argv == ["docker", "build", "--platform", "linux/arm64", "--build-arg", "XLESS_IMAGE=xless:local-arm64-xcode27.0",
+    #expect(steps[6].argv == ["docker", "build", "--platform", "linux/arm64", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=xless:local-arm64-xcode27.0",
                               "-t", "xless:local-arm64-xcode27.0-react-native", "\(share.path)/docker/react-native"])
     #expect(steps[6].title == "xless:local-arm64-xcode27.0-react-native: Node, pnpm, Ruby, Bundler and hermesc, for React Native and Expo apps")
 }

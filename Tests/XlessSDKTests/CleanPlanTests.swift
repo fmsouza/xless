@@ -33,7 +33,7 @@ xless:local-arm64
     #expect(CleanPlan.images(fromListing: "") == [])
 }
 
-/// The images of xless up to 0.9: by their names, or without the label that every image has now.
+/// The images of xless up to 0.10: by their names, or without the label that every image has now.
 @Test func whatAnUpgradeLeavesIsKnown() {
     let labelled = "xless:local-arm64-xcode27.0\nxless:local-arm64-xcode27.0-tauri\nxless-rn:local-arm64\n"
     #expect(CleanPlan.old(fromListing: listing, labelled: labelled) == [

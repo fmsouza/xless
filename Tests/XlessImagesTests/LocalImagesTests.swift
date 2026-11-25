@@ -168,7 +168,7 @@ func problem(_ body: () throws -> some Any) -> String {
     }
 
     @Test func anotherXcodesIsRefused() {
-        #expect(problem { try custom(pin: "27.0") } == "XLESS_IMAGE names mine:1, which holds the SDK of Xcode 26.6 (17F113), not Xcode 27.0's; build it on the image of Xcode 27.0: docker build --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t mine:1 <its folder>")
+        #expect(problem { try custom(pin: "27.0") } == "XLESS_IMAGE names mine:1, which holds the SDK of Xcode 26.6 (17F113), not Xcode 27.0's; build it on the image of Xcode 27.0: docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t mine:1 <its folder>")
         docker.images["xless:local-arm64-xcode26.6"] = nil
         #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is built for Xcode 26.6 (17F113), and the image xless:local-arm64-xcode26.6 is missing, which the steps with the secrets run in; build it from Xcode 26.6: xless setup --docker --xcode <path to Xcode 26.6's .app or .xip> --arch arm64")
     }
@@ -188,7 +188,7 @@ func problem(_ body: () throws -> some Any) -> String {
     @Test func theLabelsAloneDoNotMakeIt() {
         for layers in [["a"], ["a", "x", "c"], [], ["x", "a", "b"]] {
             mine(layers: layers)
-            #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is not built on xless:local-arm64-xcode26.6 as it is now (xless setup has built that again since, or the labels are copied); build it again: docker build --build-arg XLESS_IMAGE=xless:local-arm64-xcode26.6 -t mine:1 <its folder>", "\(layers)")
+            #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is not built on xless:local-arm64-xcode26.6 as it is now (xless setup has built that again since, or the labels are copied); build it again: docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode26.6 -t mine:1 <its folder>", "\(layers)")
         }
     }
 

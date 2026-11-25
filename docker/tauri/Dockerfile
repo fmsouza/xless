@@ -1,9 +1,10 @@
+# check=skip=InvalidDefaultArgInFrom
 # What Tauri and Cargo apps need besides the xless image: Node with corepack (pnpm and yarn), and Rust's installer. The
 # toolchain itself is the project's (its rust-toolchain.toml), installed at build time into the volume at /cache/rustup.
 #
 # `xless run --docker` builds it when it is needed, and `xless setup --docker --with tauri` ahead of that. It is an ordinary
 # Dockerfile, and a start for one of your own (docs/images.md):
-#   docker build --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t my-image <this folder>
+#   docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t my-image <this folder>
 # Everything downloaded is pinned by its SHA-256. The image holds Apple's SDK, as the one it is built on: never push it.
 ARG XLESS_IMAGE
 FROM ${XLESS_IMAGE}

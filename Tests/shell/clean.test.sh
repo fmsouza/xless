@@ -71,7 +71,7 @@ grep -q 'builder prune\|system prune' "$log" && fail "pruned Docker-wide caches"
 [[ ! -e "$cache" ]] || fail "cache left behind"
 grep -q 'docker builder prune' "$t/out" || fail "no build cache hint: $(cat "$t/out")"
 
-# --old: what an upgrade leaves (the images of xless 0.9 and older, shown, and the label prune): no image of this xless, no
+# --old: what an upgrade leaves (the images of xless 0.10 and older, shown, and the label prune): no image of this xless, no
 # volume, no cache.
 mkcache
 run --old --dry-run

@@ -265,7 +265,7 @@ run ok --docker --arch arm64 --sdk exports/x26 --dry-run
 popd >/dev/null
 [[ $code == 0 ]] || fail "--sdk exits $code: $(cat "$t/err")"
 grep -qF "Xcode 26.2 (17C52) from its SDK export $t/exports/x26" "$t/out" || fail "--sdk plan: $(cat "$t/out")"
-grep -qF -- "--sdk-dir $t/exports/x26 --xcode-build 17C52" "$t/out" || fail "--sdk is not the sdk image's context: $(cat "$t/out")"
+grep -qF -- "--xcode 26.2 --xcode-build 17C52 --sdk-dir $t/exports/x26 " "$t/out" || fail "--sdk is not the image's context: $(cat "$t/out")"
 # --sdk given an architecture's directory: refused, naming the export.
 run ok --docker --arch arm64 --sdk "$t/exports/x26/arm64" --dry-run
 [[ $code == 11 ]] && grep -qF -- "--sdk $t/exports/x26" "$t/err" || fail "--sdk <arch dir>: $code $(cat "$t/err")"

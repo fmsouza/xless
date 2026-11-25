@@ -8,7 +8,7 @@ public enum CleanPlan {
     /// keeps it once untagged, so `docker image prune --filter label=…` removes those, and only those.
     public static let imageLabel = ImageLabel.image
 
-    /// The images of xless up to 0.9: one Xcode's SDK, Tauri's and React Native's toolchains, each an image of its own.
+    /// The images of xless up to 0.10: one Xcode's SDK, Tauri's and React Native's toolchains, each an image of its own.
     public static let oldRepositories = ["xless-base", "xless-tauri", "xless-rn"]
 
     /// The Docker volumes `xless run --docker` creates: Rust toolchains for Tauri, and the React Native
@@ -24,7 +24,7 @@ public enum CleanPlan {
         references(listing) { $0 == ImageName.repository || oldRepositories.contains($0) }
     }
 
-    /// Those that nothing uses any more, as an upgrade leaves them: the images of xless up to 0.9, and what an interrupted setup
+    /// Those that nothing uses any more, as an upgrade leaves them: the images of xless up to 0.10, and what an interrupted setup
     /// left. `labelled`: the listing of the images that have the label of the SDK they hold, which this xless's all do.
     public static func old(fromListing listing: String, labelled: String) -> [String] {
         let current = Set(references(labelled) { $0 == ImageName.repository })
