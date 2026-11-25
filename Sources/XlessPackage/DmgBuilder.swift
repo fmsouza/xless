@@ -4,7 +4,7 @@ import XlessCore
 import XlessMachO
 import XlessSign
 
-/// Builds, signs, notarizes and staples a macOS DMG on Linux, without hdiutil: an HFS+ volume (mkfs.hfsplus + libdmg-hfsplus's
+/// Builds, signs, notarizes and staples a macOS DMG; on a Mac with its hdiutil, on Linux without: an HFS+ volume (mkfs.hfsplus + libdmg-hfsplus's
 /// `hfsplus`) compressed by `dmg`. The sequence is the one proven by the m2c Task 3 spike (docs/research/tauri-ios-contract.md,
 /// "macOS DMG — spike findings"). Every tool runs from an argv array, never a shell, so volume names with spaces or non-ASCII
 /// characters are safe.
@@ -48,6 +48,15 @@ public enum DmgBuilder {
             ["hfsplus", "--symlinks", "clone_link", "--special-modes", "no", img, "addall", stage],
             ["hfsplus", img, "symlink", "/Applications", "/Applications"],
             ["dmg", "-c", "zlib", "build", img, out.path],
+        ]
+    }
+
+    /// The same on a Mac, by its own tool. (Nothing pins its dates: two of one app differ.)
+    static func macCommands(volumeName: String, work: URL, out: URL) -> [[String]] {
+        let stage = stageDir(work).path
+        return [
+            ["ln", "-s", "/Applications", "\(stage)/Applications"],
+            ["/usr/bin/hdiutil", "create", "-quiet", "-volname", volumeName, "-srcfolder", stage, "-fs", "HFS+", "-format", "UDZO", out.path],
         ]
     }
 
@@ -105,7 +114,7 @@ public enum DmgBuilder {
     }
 
     static func buildInto(_ out: URL, signedApp: URL, volumeName: String, version: String, architectures: [MacArchitecture],
-                          dSYMs: URL? = nil, pin: (_ image: URL, _ app: URL) throws -> Void = DmgBuilder.pinDates,
+                          dSYMs: URL? = nil, onMac: Bool = false, pin: (_ image: URL, _ app: URL) throws -> Void = DmgBuilder.pinDates,
                           run: ([String]) throws -> Void) throws -> URL {
         try Packager.zipDSYMs(dSYMs, app: signedApp, into: out)
         let fm = FileManager.default
@@ -116,7 +125,8 @@ public enum DmgBuilder {
         try fm.copyItem(at: signedApp, to: stage.appendingPathComponent(signedApp.lastPathComponent))
         let dmg = out.appendingPathComponent(fileName(product: volumeName, version: version, architectures: architectures))
         let steps = [["chmod", "-R", "u=rwX,go=rX", stage.path]]
-            + commands(app: signedApp, volumeName: volumeName, work: work, out: dmg, sizeKB: sizeKB(of: stage))
+            + (onMac ? macCommands(volumeName: volumeName, work: work, out: dmg)
+                : commands(app: signedApp, volumeName: volumeName, work: work, out: dmg, sizeKB: sizeKB(of: stage)))
         for argv in steps {
             if argv[0] == "dmg" { try pin(imageFile(work), signedApp) }
             do { try run(argv) } catch {
@@ -142,7 +152,7 @@ public enum DmgBuilder {
         let cert = try await ASCCertificates(resources: ASCResources(client: client)).find(for: key, kind: kind)
         return try Files.atomicOutput(outputDir) { out in
             let dmg = try buildInto(out, signedApp: signedApp, volumeName: product, version: config.version, architectures: built,
-                                    dSYMs: dSYMs, run: DmgBuilder.shell)
+                                    dSYMs: dSYMs, onMac: isMac, run: DmgBuilder.shell)
             try PrivateFiles.with(stage: .package) { files in
                 let signer = try files.signer(key: key, certificate: cert.der)
                 try RCodesign.run(signArguments(dmg: dmg, keyPEM: signer.key, certPEM: signer.certificate), stage: .package)
@@ -151,6 +161,14 @@ public enum DmgBuilder {
             try Notary.checkStapled(dmg: dmg)
             return dmg
         }
+    }
+
+    private static var isMac: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
     }
 
     /// The DMG's signature: Developer ID key and certificate, no entitlements, no runtime flag (those belong to the app).

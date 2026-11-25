@@ -331,3 +331,28 @@ func signedButUnstapledRealDmgFailsTheStapleCheck() throws {
     _ = try DmgBuilder.build(signedApp: app, volumeName: "Hello", version: "1.0.0", architectures: [.arm64], outputDir: out, dSYMs: dSYMs, pin: { _, _ in }) { _ in }
     #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("Hello Tauri.app.dSYM.zip").path))
 }
+
+#if os(macOS)
+@Test func onAMacTheDMGIsMadeByHdiutil() throws {
+    let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("xless-hdiutil-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: root) }
+    let app = root.appendingPathComponent("Hello é.app"), versions = app.appendingPathComponent("Contents/Frameworks/F.framework/Versions/A")
+    try fm.createDirectory(at: versions, withIntermediateDirectories: true)
+    try fm.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent("out"), withIntermediateDirectories: true)
+    try fm.createSymbolicLink(atPath: versions.deletingLastPathComponent().appendingPathComponent("Current").path, withDestinationPath: "A")
+    try fm.createSymbolicLink(atPath: app.appendingPathComponent("Contents/away").path, withDestinationPath: "/etc/hosts")
+    try ExecutableFile.write("#!/bin/sh\n", to: app.appendingPathComponent("Contents/MacOS/Hello"), stage: .package)
+    let dmg = try DmgBuilder.buildInto(root.appendingPathComponent("out"), signedApp: app, volumeName: "Hello é", version: "1.0", architectures: [.arm64], onMac: true, run: DmgBuilder.shell)
+    #expect(dmg.lastPathComponent == "Hello é_1.0_aarch64.dmg")
+    let mount = root.appendingPathComponent("m").path
+    try Shell.run("/usr/bin/hdiutil", ["attach", "-quiet", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mount, dmg.path], stage: .package)
+    defer { _ = try? Shell.run("/usr/bin/hdiutil", ["detach", "-quiet", "-force", mount], stage: .package) }
+    #expect(try fm.destinationOfSymbolicLink(atPath: mount + "/Applications") == "/Applications")
+    let copy = try #require(try fm.contentsOfDirectory(atPath: mount).first { $0.hasSuffix(".app") })
+    #expect(fm.isExecutableFile(atPath: "\(mount)/\(copy)/Contents/MacOS/Hello"))
+    // links stay what they are
+    #expect(try fm.destinationOfSymbolicLink(atPath: "\(mount)/\(copy)/Contents/away") == "/etc/hosts")
+    #expect(try fm.destinationOfSymbolicLink(atPath: "\(mount)/\(copy)/Contents/Frameworks/F.framework/Versions/Current") == "A")
+}
+#endif
