@@ -321,6 +321,7 @@ static void take_default(int sig) {
     sigaddset(&only, sig);
     pthread_sigmask(SIG_UNBLOCK, &only, NULL);
     raise(sig);
+    _exit(128 + sig); // process 1 of a container: what a signal does by default is nothing
 }
 
 // Async-signal-safe.
@@ -349,15 +350,17 @@ static void forward_on(int sig) {
     sigaction(sig, &action, NULL);
 }
 
+// Counted first, then the handlers: a signal from here on waits until the tool is known (also when its start hangs), and
+// one that came before it is in `deferred`.
 static void tool_starts(void) {
     atomic_store(&owner, getpid());
+    atomic_fetch_add(&starting, 1);
     for (size_t i = 0; i < FORWARDED; i++) {
         struct sigaction now;
         if (sigaction(forwarded[i], NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
         atomic_store(&is_forwarded[i], 1);
         if (now.sa_handler == SIG_DFL) forward_on(forwarded[i]);
     }
-    atomic_fetch_add(&starting, 1);
 }
 
 static void tool_started(int tool) { // 0: it was not
@@ -400,7 +403,8 @@ static int spawn_session(const char *path, char *const argv[], char *const envp[
 
 int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
     tool_starts();
-    int e = spawn_session(path, argv, envp, cwd, out_fd, err_fd, pid);
+    // A signal that another thread took before it could know of this start: no tool is started any more.
+    int e = atomic_load(&deferred) ? EINTR : spawn_session(path, argv, envp, cwd, out_fd, err_fd, pid);
     tool_started(e == 0 ? *pid : 0);
     return e;
 }

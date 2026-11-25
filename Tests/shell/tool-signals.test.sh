@@ -24,6 +24,10 @@ for d in ("home", "data", "config", "cache", "run", "tmp", "bin"):
 # `xless clean` lists the images with it: it starts a process of its own and takes its time, unless it is told otherwise.
 with open(t + "/bin/docker", "w") as f:
     f.write(f"""#!/bin/sh
+if [ -e {t}/quick ]; then
+  rm {t}/quick
+  exit 0
+fi
 if [ -e {t}/polite ]; then
   sleep 300 &
   echo $! > {t}/child
@@ -64,7 +68,7 @@ def dispositions(ignored):
         signal.signal(s, signal.SIG_IGN if s == ignored else signal.SIG_DFL)
 
 def clear():
-    for name in ("tool", "child", "told", "polite"):
+    for name in ("tool", "child", "told", "polite", "quick"):
         if os.path.exists(f"{t}/{name}"): os.unlink(f"{t}/{name}")
 
 def start(ignored=None, polite=False):
@@ -121,6 +125,92 @@ for i in range(50):
     p.send_signal(signal.SIGTERM)
     if ended(p) != -signal.SIGTERM or not until(lambda: not tools(), 3): left.append((i, tools()))
 check(not left, "at whatever moment it comes, nothing is left running", left)
+
+# At the two moments no test meets by chance (Linux, where a preloaded library can make them).
+if sys.platform == "linux":
+    with open(t + "/moments.c", "w") as f:
+        f.write(r"""
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+static atomic_int once, raising, installed, forked; // forked: the tool of that moment
+static int is(const char *moment) {
+    const char *m = getenv("XLESS_TEST_MOMENT");
+    return m != NULL && strcmp(m, moment) == 0 && strcmp(program_invocation_short_name, "xless") == 0;
+}
+static int until(atomic_int *flag, int tenths) {
+    while (!atomic_load(flag) && tenths-- > 0) usleep(100000);
+    return atomic_load(flag);
+}
+static void *signalled(void *unused) {
+    sigset_t none;
+    sigemptyset(&none);
+    pthread_sigmask(SIG_SETMASK, &none, NULL);
+    pthread_kill(pthread_self(), SIGTERM);
+    return unused;
+}
+static void signal_elsewhere(void) {
+    pthread_t thread;
+    if (!atomic_exchange(&once, 1) && pthread_create(&thread, NULL, signalled, NULL) == 0) until(&raising, 10);
+}
+int raise(int sig) {
+    int (*real)(int) = (int (*)(int))dlsym(RTLD_NEXT, "raise");
+    if (is("deaf")) return 0; // as for process 1 of a container
+    atomic_store(&raising, 1);
+    if (is("start") || is("again")) until(&forked, 20);
+    return real(sig);
+}
+// Once the last handler is there (start), as the next tool is about to be started (again), or when one just was (forked),
+// the signal comes on another thread ...
+int sigaction(int sig, const struct sigaction *new, struct sigaction *old) {
+    int (*real)(int, const struct sigaction *, struct sigaction *) = (int (*)(int, const struct sigaction *, struct sigaction *))dlsym(RTLD_NEXT, "sigaction");
+    int r = real(sig, new, old);
+    if (sig == SIGHUP && new != NULL && new->sa_handler != SIG_DFL && new->sa_handler != SIG_IGN) {
+        atomic_store(&installed, 1);
+        if (is("start")) signal_elsewhere();
+    }
+    return r;
+}
+pid_t getpid(void) {
+    if (atomic_load(&installed) == 2 && is("again")) signal_elsewhere();
+    return (pid_t)syscall(SYS_getpid);
+}
+// ... and ends the process when the tool runs and nobody knows its number yet.
+pid_t fork(void) {
+    pid_t (*real)(void) = (pid_t (*)(void))dlsym(RTLD_NEXT, "fork");
+    pid_t pid = real();
+    int first = 1;
+    if (pid > 0 && is("again") && atomic_compare_exchange_strong(&installed, &first, 2)) return pid; // the one before
+    if (pid > 0 && is("forked")) signal_elsewhere();
+    if (pid > 0 && (is("start") || is("again"))) { atomic_store(&forked, 1); usleep(2000000); }
+    return pid;
+}
+""")
+    subprocess.run(["clang", "-shared", "-fPIC", "-o", t + "/moments.so", t + "/moments.c", "-ldl", "-lpthread"], check=True)
+    def at(moment):
+        clear()
+        if moment == "again": open(t + "/quick", "w").close()
+        return subprocess.Popen([xless, "clean"], env={**env, "LD_PRELOAD": t + "/moments.so", "XLESS_TEST_MOMENT": moment}, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=lambda: dispositions(None))
+    for moment, what in (("start", "is about to be started"), ("again", "is about to be started, not the first"), ("forked", "was started")):
+        p = at(moment)
+        rc = ended(p)
+        check(rc == -signal.SIGTERM and until(lambda: not tools(), 3) and not os.path.exists(t + "/quick"), f"a signal that another thread takes as a tool {what} leaves none behind", (rc, tools()))
+        subprocess.run(["pkill", "-9", "-f", t + "/bin/docker"])
+
+    p = at("deaf")
+    tool, child = pid_in("tool"), pid_in("child")
+    p.send_signal(signal.SIGTERM)
+    rc = ended(p)
+    check(rc == 128 + signal.SIGTERM and until(lambda: not alive(tool) and not alive(child)), "where a signal does not end it (process 1), xless ends all the same", rc)
+    end(tool, child)
 
 # Typed: Ctrl-C reaches xless by the terminal, and the tool by xless.
 clear()
