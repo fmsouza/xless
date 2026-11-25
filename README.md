@@ -31,7 +31,8 @@ The [whole table](docs/systems.md), with what was tried, what is not there and w
 
 ## Install
 
-On Linux (x86_64, arm64) and macOS 14 or later (Intel, Apple silicon), and inside WSL 2:
+On Linux (x86_64, arm64) and macOS 14 or later (Intel, Apple silicon), and inside WSL 2 (read [what a build can reach
+there](docs/security.md#in-wsl) before you build):
 
 ```sh
 curl -fsSL https://github.com/fmsouza/xless/releases/latest/download/install.sh | sh
@@ -82,8 +83,8 @@ To build only, with no Apple account: `xless run <project-dir> --build-number 1 
 - **On a Mac**, with Xcode installed and opened once, nothing else is set up ([build: on a Mac](docs/build.md#on-a-mac)).
 - **On Linux**, <a id="set-up"></a>`xless setup --xcode ~/Downloads/Xcode_27.xip`, once per Xcode version
   ([build: on Linux](docs/build.md#on-linux): what it needs and installs).
-- <a id="build-in-docker-instead"></a>**In Docker**, on either: `xless setup --docker --xcode …` once, then `xless run --docker …`. React Native, Tauri and Cargo
-  apps build there ([build: in Docker](docs/build.md#in-docker)).
+- <a id="build-in-docker-instead"></a>**In Docker**, on either: `xless setup --docker --xcode …` once, then
+  `xless run --docker …`. React Native, Tauri and Cargo apps build there ([build: in Docker](docs/build.md#in-docker)).
 - **In WSL 2**, as on Linux, but read [what a build can reach there](docs/security.md#in-wsl) first.
 - <a id="get-xcode"></a>**The Xcode download** that Linux and Docker need: [the versions, and how to get one](docs/xcode-versions.md).
 

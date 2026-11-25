@@ -34,13 +34,13 @@ xless team use ABCDE12345                   # your team ID, from that list
 xless auth api-key create --role ADMIN      # the key goes straight into the store, checked, never on disk in clear
 ```
 
-`--keep` keeps the session in memory, nothing of it on disk, for the next commands of this terminal (8 hours, at most 2 without use;
-`--keep 30m` for less, `xless auth logout` drops it) and asks whether to keep the store unlocked too, once its passphrase is typed. With a
-yes, everything below asks each secret **once**: the passphrase at `api-key create`, and no more sign-in
-([how it is kept, and for whom](secrets.md#staying-unlocked)). Without it each command asks for itself, once. (On Windows nothing
-is kept: leave `--keep` out.) `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
-and users need it; a key that only ships builds, edits the listing and releases can be `APP_MANAGER`, the default
-([roles](apple-account.md#xless-auth-api-key)).
+`--keep` keeps the session in memory, nothing of it on disk, for the next commands of this terminal (8 hours, at most 2
+without use; `--keep 30m` for less, `xless auth logout` drops it) and asks whether to keep the store unlocked too, once
+its passphrase is typed. With a yes, everything below asks each secret **once**: the passphrase at `api-key create`, and
+no more sign-in ([how it is kept, and for whom](secrets.md#staying-unlocked)). Without it each command asks for itself,
+once. (On Windows nothing is kept: leave `--keep` out.) `--role ADMIN` because provisioning (bundle IDs, certificates,
+profiles, devices) and users need it; a key that only ships builds, edits the listing and releases can be `APP_MANAGER`,
+the default ([roles](apple-account.md#xless-auth-api-key)).
 
 ### 2. The project
 
@@ -94,22 +94,24 @@ xless provision plan                                  # what the account lacks; 
 xless provision apply --company-name "Example Ltd"    # asks, then does it; --company-name for the team's first app
 ```
 
-(With the session still kept, `apply` asks nothing but to go ahead.) `plan` lists the steps by area (bundle IDs, capabilities, app groups, iCloud containers, certificates, keys,
-profiles, the app record, the listing, App Privacy, TestFlight groups), marks the ones that need the web session, and
-says what blocks it and what differs from the project without being changed (drift). `apply` runs them in that order
-in one process: one passphrase, at most one Apple ID sign-in, both before the first step. A new signing key is generated into the store before
-its certificate is requested; an APNs key is created and stored when an entitlement uses push notifications. It
-never deletes or revokes anything; running it again does only what is left, so after a failure, fix the cause and run
-it again. Details: [`xless provision`](apple-account.md#xless-provision).
+(With the session still kept, `apply` asks nothing but to go ahead.) `plan` lists the steps by area (bundle IDs,
+capabilities, app groups, iCloud containers, certificates, keys, profiles, the app record, the listing, App Privacy,
+TestFlight groups), marks the ones that need the web session, and says what blocks it and what differs from the project
+without being changed (drift). `apply` runs them in that order in one process: one passphrase, at most one Apple ID
+sign-in, both before the first step. A new signing key is generated into the store before its certificate is requested;
+an APNs key is created and stored when an entitlement uses push notifications. It never deletes or revokes anything;
+running it again does only what is left, so after a failure, fix the cause and run it again. Details: [`xless
+provision`](apple-account.md#xless-provision).
 
 The same without `provision`, one command at a time: [bootstrap.md](bootstrap.md).
 
 ### 5. Build and ship
 
-Get the machine ready once: [on a Mac](build.md#on-a-mac) Xcode, opened once; [on Linux](build.md#on-linux) `xless setup`;
-[Docker](build.md#in-docker) for an overlay. The build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own and
-without the secret variables: a held unlock or a kept Apple ID session is out of their reach
-([security.md](security.md#the-build-and-your-secrets)); in WSL read [In WSL](security.md#in-wsl) first. Then:
+Get the machine ready once: [on a Mac](build.md#on-a-mac) Xcode, opened once; [on Linux](build.md#on-linux) `xless
+setup`; [Docker](build.md#in-docker) for an overlay. The build runs the project's SwiftPM plugins and macros as you, but
+in a session and an empty keyring of their own and without the secret variables: a held unlock or a kept Apple ID
+session is out of their reach ([security.md](security.md#the-build-and-your-secrets)); in WSL read [In
+WSL](security.md#in-wsl) first. Then:
 
 ```sh
 xless run .                             # build, sign, upload, deliver to the TestFlight groups of xless.yml
