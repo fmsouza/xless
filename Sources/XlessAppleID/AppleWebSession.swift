@@ -73,17 +73,17 @@ public final class AppleWebSession: Sendable {
 
     /// Selects `teamID` (or the only team) on the developer portal; returns it.
     @discardableResult
-    public func selectTeam(_ teamID: String?) async throws -> PortalTeam {
-        let team = try AppleTeams.select(teamID, from: try await portal.teams())
+    public func selectTeam(_ teamID: String?, preferring known: [String] = []) async throws -> PortalTeam {
+        let team = try AppleTeams.select(teamID, preferring: known, from: try await portal.teams())
         await portal.use(team: team.teamId)
         return team
     }
 
     /// Makes `team` App Store Connect's current provider (see `AppleTeams.useProvider`).
     @discardableResult
-    public func useProvider(for team: PortalTeam,
+    public func useProvider(for team: PortalTeam, issuers: [String] = [],
                             choose: (([OlympusProvider]) async throws -> OlympusProvider)?) async throws -> OlympusProvider {
-        try await AppleTeams.useProvider(for: team, asc: asc, choose: choose)
+        try await AppleTeams.useProvider(for: team, asc: asc, issuers: issuers, choose: choose)
     }
 
     /// Forgets this process's copy of the session (a kept one stays kept until `xless auth logout` or its expiry).

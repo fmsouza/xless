@@ -63,7 +63,7 @@ private func runLinked(_ kind: PortalLinkedKind, team: String?, verbose: Bool, j
     try await AccountSession.run {
         let (session, transport) = try await AppleWebCLI.open(verbose: verbose)
         defer { transport.invalidate() }
-        let selected = try await session.selectTeam(AccountSession.resolveTeam(flag: team, saved: AccountSession.savedTeam()))
+        let selected = try await AppleWebCLI.selectTeam(AccountSession.resolveTeam(flag: team, saved: AccountSession.savedTeam()), in: session)
         let cli = LinkedIdentifierCLI(kind: kind, portal: WebLinkedIdentifiers(kind: kind, portal: session.portal),
                                       regeneration: { APIProfileRegeneration(cli: ProfileCLI(client: try AccountSession.open(team: selected.teamId, verbose: verbose).client),
                                                                              team: selected.teamId) },

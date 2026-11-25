@@ -77,6 +77,24 @@ enum AppleWebCLI {
         return (session, signedInOn)
     }
 
+    /// Selects the team: `team` (the option's, the project's or the saved one), else the Apple ID's only one, else that of
+    /// the xless.yml here or of the store's API keys.
+    /// - Parameter known: false for a command that must be told among several.
+    static func selectTeam(_ team: String?, in session: AppleWebSession, known: Bool = true) async throws -> PortalTeam {
+        guard team == nil, known else { return try await session.selectTeam(team) }
+        let here = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("appstore")
+        let project = StoreProject.nextTo(manifestDir: here)?.team, key = AccountSession.keyTeam(of: AccountSession.storeEntries())
+        let selected = try await session.selectTeam(nil, preferring: [project, key].compactMap { $0 })
+        if selected.teamId == project { say("Team \(selected.teamId), as in xless.yml here (--team chooses another).") }
+        else if selected.teamId == key { say("Team \(selected.teamId), the App Store Connect API key's (--team chooses another).") }
+        return selected
+    }
+
+    /// Makes the team's App Store Connect provider the current one.
+    static func useProvider(for team: PortalTeam, in session: AppleWebSession) async throws {
+        try await session.useProvider(for: team, issuers: AccountSession.keyIssuers(of: AccountSession.storeEntries(), team: team.teamId), choose: chooser())
+    }
+
     /// Asks which provider, when several App Store Connect teams share the portal team's name; nil without a terminal.
     static func chooser() -> (([OlympusProvider]) async throws -> OlympusProvider)? {
         if InputGate.isOff {

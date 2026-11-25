@@ -59,7 +59,7 @@ private func runKeys(team: String?, verbose: Bool, _ body: (PortalAuthKeys) asyn
     try await AccountSession.run {
         let (session, transport) = try await AppleWebCLI.open(verbose: verbose)
         defer { transport.invalidate() }
-        _ = try await session.selectTeam(AccountSession.resolveTeam(flag: team, saved: AccountSession.savedTeam()))
+        _ = try await AppleWebCLI.selectTeam(AccountSession.resolveTeam(flag: team, saved: AccountSession.savedTeam()), in: session)
         let out = try await body(PortalAuthKeys(portal: session.portal))
         await session.end()
         FileHandle.standardOutput.write(Data(out.utf8))
@@ -165,7 +165,7 @@ struct KeysCreateCommand: AsyncParsableCommand {
             let keys = try APIKeyWebCLI.unlocked(reason: "storing the new auth key") { AuthKeyStore(store: $0, catalogID: $1.id) }
             let (session, transport) = try await AppleWebCLI.open(verbose: trace.verbose)
             defer { transport.invalidate() }
-            let teamID = try await session.selectTeam(AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam())).teamId
+            let teamID = try await AppleWebCLI.selectTeam(AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam()), in: session).teamId
             var bundles: [String] = []
             if let bundleID { bundles.append(try await PortalBundleIDs(portal: session.portal).resolve(bundleID).id) }
             let creation = AuthKeyCreation(web: PortalAuthKeys(portal: session.portal),

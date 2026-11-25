@@ -125,6 +125,31 @@ final class AppleTeamsTests: XCTestCase {
         }
     }
 
+    func testAmongSeveralTeamsTheOneThatIsKnownServesWhenNoneIsGiven() throws {
+        let teams = [PortalTeam(teamId: "ABCDE12345", name: "A"), PortalTeam(teamId: "ZZZZZ99999", name: "B")]
+        XCTAssertEqual(try AppleTeams.select(nil, preferring: ["ZZZZZ99999"], from: teams).name, "B")
+        XCTAssertEqual(try AppleTeams.select(nil, preferring: ["QQQQQ11111", "ABCDE12345"], from: teams).name, "A", "one it is no member of is passed over")
+        XCTAssertEqual(try AppleTeams.select("ZZZZZ99999", preferring: ["ABCDE12345"], from: teams).name, "B", "the given one comes first")
+        XCTAssertEqual(try AppleTeams.select(nil, preferring: ["ZZZZZ99999"], from: [teams[0]]).name, "A", "the only one")
+        XCTAssertThrowsError(try AppleTeams.select(nil, preferring: ["QQQQQ11111"], from: teams))
+    }
+
+    func testAmongProvidersOfOneNameTheAPIKeysIssuerTellsWithoutAsking() async throws {
+        let ps = [OlympusProvider(providerId: 1, name: "Other"), OlympusProvider(providerId: 7, name: "Example Ltd", publicProviderId: "ISSUER-7"),
+                  OlympusProvider(providerId: 8, name: "Example Ltd", publicProviderId: "ISSUER-8")]
+        let (first, m1) = asc(ps, current: 8)
+        let there = try await AppleTeams.useProvider(for: team, asc: first, issuers: ["issuer-8"], choose: nil)
+        XCTAssertEqual(there.providerId, 8)
+        XCTAssertEqual(posts(m1), 0, "the current one is looked at first")
+        let (second, m2) = asc(ps, current: 1)
+        let found = try await AppleTeams.useProvider(for: team, asc: second, issuers: ["ISSUER-8"], choose: nil)
+        XCTAssertEqual(found.providerId, 8)
+        XCTAssertEqual(m2.requests.filter { $0.httpMethod == "POST" }.map(\.bodyString), [#"{"provider":{"providerId":7}}"#, #"{"provider":{"providerId":8}}"#])
+        let (neither, _) = asc(ps, current: 1)
+        let chosen = try await AppleTeams.useProvider(for: team, asc: neither, issuers: ["ISSUER-9"]) { $0[0] }
+        XCTAssertEqual(chosen.providerId, 7, "no key tells: a person chooses")
+    }
+
     /// App Store Connect with `providers`, currently on `current`; records the switches.
     func asc(_ providers: [OlympusProvider], current: Int) -> (ASCWebClient, MockTransport) {
         let now = Box(current)
@@ -135,7 +160,7 @@ final class AppleTeamsTests: XCTestCase {
                 return .init(status: 200)
             }
             let p = providers.first { $0.providerId == now.value }!
-            return .json(200, ["provider": ["providerId": p.providerId, "name": p.name],
+            return .json(200, ["provider": ["providerId": p.providerId, "name": p.name, "publicProviderId": p.publicProviderId as Any? ?? NSNull()],
                                "availableProviders": providers.map { ["providerId": $0.providerId, "name": $0.name] }])
         }
         return (ASCWebClient(web: AppleWebClient(transport: mock, stage: .account)), mock)

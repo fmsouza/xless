@@ -57,6 +57,26 @@ struct AccountSession {
     /// `--team`, else the saved default team (`xless team use`, #84), else none: the API key that resolves without a team.
     static func resolveTeam(flag: String?, saved: String?) -> String? { flag ?? saved }
 
+    /// The team of the App Store Connect API keys in the store, when they are all of one (known without the passphrase).
+    static func keyTeam(of entries: [VaultEntry]) -> String? {
+        let teams = Set(entries.filter { $0.kind == .ascAPIKey }.map { team(of: $0) ?? "" })
+        guard teams.count == 1, let team = teams.first, isTeamID(team) else { return nil }
+        return team
+    }
+
+    /// The issuer IDs of `team`'s API keys in the store, sorted.
+    static func keyIssuers(of entries: [VaultEntry], team: String) -> [String] {
+        Set(entries.filter { $0.kind == .ascAPIKey && self.team(of: $0) == team }.compactMap(\.metadata.issuerID)).sorted()
+    }
+
+    private static func team(of entry: VaultEntry) -> String? { entry.metadata.teamID ?? AuthStatusReport.team(fromName: entry.name) }
+
+    /// What the store holds, by name; nothing when that is not known.
+    static func storeEntries() -> [VaultEntry] {
+        guard !HeldSecrets.isOff else { return [] }
+        return ((try? SecretStoreCLI.store().catalog()) ?? nil)?.entries ?? []
+    }
+
     /// The team saved by `xless team use` (config.yml), when it is a team ID.
     static func savedTeam(env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         guard let team = (try? UserConfig.load(env: env))?.team, isTeamID(team) else { return nil }

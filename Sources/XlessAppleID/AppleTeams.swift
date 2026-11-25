@@ -27,9 +27,10 @@ public enum AppleTeams {
         }
     }
 
-    /// The team `teamID` among `teams`; with no ID, the only team. An ID the Apple ID does not have, or several teams
-    /// and no ID, is an `[account]` error.
-    public static func select(_ teamID: String?, from teams: [PortalTeam]) throws -> PortalTeam {
+    /// The team `teamID` among `teams`; with no ID, the only team, else the first of `known` that is one of them. An ID the
+    /// Apple ID does not have, or several teams and nothing that says which, is an `[account]` error.
+    /// - Parameter known: the teams that are known otherwise (the project's, the API key's).
+    public static func select(_ teamID: String?, preferring known: [String] = [], from teams: [PortalTeam]) throws -> PortalTeam {
         if let teamID {
             guard let team = teams.first(where: { $0.teamId == teamID }) else {
                 throw XlessError(.account, "this Apple ID is not a member of team \(teamID) (its teams: \(list(teams)))",
@@ -38,6 +39,7 @@ public enum AppleTeams {
             return team
         }
         guard teams.count == 1 else {
+            if let team = known.lazy.compactMap({ id in teams.first { $0.teamId == id } }).first { return team }
             if teams.isEmpty {
                 throw XlessError(.account, "this Apple ID belongs to no developer team",
                                  fix: "enroll in the Apple Developer Program or ask to be invited to a team, then re-run")
@@ -49,10 +51,12 @@ public enum AppleTeams {
     }
 
     /// Makes `team`'s provider App Store Connect's current one (switching and confirming when needed); returns it.
-    /// - Parameter choose: asks a person to pick among providers sharing the team's name; nil when there is no terminal.
-    public static func useProvider(for team: PortalTeam, asc: ASCWebClient,
+    /// - Parameters:
+    ///   - issuers: the issuer IDs of the team's API keys: they tell which of several providers sharing its name is meant.
+    ///   - choose: asks a person to pick among them when nothing tells; nil when there is no terminal.
+    public static func useProvider(for team: PortalTeam, asc: ASCWebClient, issuers: [String] = [],
                                    choose: (([OlympusProvider]) async throws -> OlympusProvider)?) async throws -> OlympusProvider {
-        let session = try await asc.session()
+        var session = try await asc.session()
         let provider: OlympusProvider
         switch match(team, in: session.providers) {
         case .one(let p):
@@ -61,6 +65,10 @@ public enum AppleTeams {
             throw XlessError(.account, "App Store Connect has no team named \"\(team.name)\" (\(team.teamId)) for this Apple ID",
                              fix: "the portal and App Store Connect are matched by team name: check that this Apple ID has App Store Connect access to the team (https://appstoreconnect.apple.com/access/users), then re-run")
         case .several(let ps):
+            if !issuers.isEmpty {
+                if let known = try await issued(ps, by: issuers, asc: asc, current: session) { return known }
+                session = try await asc.session()
+            }
             guard let choose else {
                 throw XlessError(.account, "App Store Connect has \(ps.count) teams named \"\(team.name)\" (providers \(ps.map { String($0.providerId) }.joined(separator: ", ")))",
                                  fix: "re-run in a terminal to choose one")
@@ -71,6 +79,20 @@ public enum AppleTeams {
             try await asc.switchProvider(to: provider.providerId)
         }
         return provider
+    }
+
+    /// The provider among `candidates` whose API keys `issuers` names, made the current one: App Store Connect says a
+    /// provider's public ID, which is that issuer ID, of the current one only.
+    private static func issued(_ candidates: [OlympusProvider], by issuers: [String], asc: ASCWebClient, current: OlympusSession) async throws -> OlympusProvider? {
+        let wanted = Set(issuers.map { $0.lowercased() })
+        func isOne(_ session: OlympusSession, _ p: OlympusProvider) -> Bool {
+            session.provider?.providerId == p.providerId && session.provider?.publicProviderId.map { wanted.contains($0.lowercased()) } == true
+        }
+        if let here = candidates.first(where: { isOne(current, $0) }) { return here }
+        for p in candidates where p.providerId != current.provider?.providerId {
+            if isOne(try await asc.switchProvider(to: p.providerId), p) { return p }
+        }
+        return nil
     }
 
     static func list(_ teams: [PortalTeam]) -> String {

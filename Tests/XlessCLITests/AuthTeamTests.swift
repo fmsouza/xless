@@ -3,7 +3,7 @@ import Foundation
 import Testing
 import XlessAppleID
 import XlessCore
-import XlessVault
+@testable import XlessVault
 @testable import xless
 
 private func tempEnv() throws -> ([String: String], URL) {
@@ -148,6 +148,18 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
     #expect(AuthStatusReport.team(fromName: "ASC_KEY_P8@ABCDE12345") == "ABCDE12345")
     #expect(AuthStatusReport.team(fromName: "ASC_KEY_P8@work") == nil)
     #expect(AuthStatusReport.team(fromName: "ASC_KEY_P8") == nil)
+}
+
+@Test func theTeamOfTheStoresAPIKeysServesWhenTheyAreAllOfOne() {
+    func entry(_ name: String, _ team: String?, issuer: String? = "I", kind: VaultEntry.Kind = .ascAPIKey) -> VaultEntry {
+        VaultEntry(name: name, kind: kind, metadata: .init(teamID: team, keyID: "K", issuerID: issuer), sealed: Data())
+    }
+    let one = [entry("ASC_KEY_P8@ABCDE12345", nil, issuer: "I1"), entry("ASC_KEY_P8@ABCDE12345.old", "ABCDE12345", issuer: "I2"), entry("XLESS_DIST_KEY", "ZZZZZ99999", kind: .signingKey)]
+    #expect(AccountSession.keyTeam(of: one) == "ABCDE12345")
+    #expect(AccountSession.keyIssuers(of: one, team: "ABCDE12345") == ["I1", "I2"])
+    #expect(AccountSession.keyTeam(of: one + [entry("ASC_KEY_P8@ZZZZZ99999", nil)]) == nil, "of two")
+    #expect(AccountSession.keyTeam(of: one + [entry("ASC_KEY_P8", nil)]) == nil, "of nobody knows which")
+    #expect(AccountSession.keyTeam(of: []) == nil)
 }
 
 // MARK: team list
