@@ -102,6 +102,9 @@ public protocol RunHost: AnyObject, Sendable {
     func physicalPath(_ path: String) -> String?
     /// The same file or directory, whatever the spellings; nil: one is not there (or not to be seen).
     func isSame(_ a: String, _ b: String) -> Bool?
+    /// Something is there (the link itself, or, followed, what it leads to); false: it is known not to be; nil: it cannot be told,
+    /// as below a directory that may not be searched.
+    func isThere(_ path: String, followed: Bool) -> Bool?
     func isReadable(_ path: String) -> Bool
     /// A regular file, or a link to one.
     func isFile(_ path: String) -> Bool

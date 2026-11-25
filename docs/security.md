@@ -467,7 +467,8 @@ unpacked from it with the Finder: use the install line.
 
 On macOS a path can be spelled in more than one way (upper and lower case, Unicode forms, `/private/tmp` and `/tmp`,
 `/System/Volumes/Data`). Where xless refuses a mount or looks whether one path is in another, it asks the kernel which file it
-is, not how it is written.
+is, not how it is written. What the kernel does not tell (a folder that you may not search, on either system) is not taken for
+one that is not there: the run stops.
 
 ## The build and your secrets
 

@@ -350,6 +350,12 @@ public final class PosixRunHost: RunHost {
         return x.st_dev == y.st_dev && x.st_ino == y.st_ino
     }
 
+    public func isThere(_ path: String, followed: Bool) -> Bool? {
+        var info = stat()
+        guard (followed ? stat(path, &info) : lstat(path, &info)) != 0 else { return true }
+        return errno == ENOENT ? false : nil
+    }
+
     public func isReadable(_ path: String) -> Bool { access(path, R_OK) == 0 }
 
     public func isFile(_ path: String) -> Bool {

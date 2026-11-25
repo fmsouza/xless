@@ -355,9 +355,7 @@ extension ProjectRun {
     private func keepConfiguration(of project: String, _ images: RunImages) throws -> [String] {
         func words(_ directory: String) -> [String] { ["--mount", RunText.bind("\(directory)/xless.yml", "/work/xless.yml", readOnly: true)] }
         let base = RunText.configurations(home: files.home)
-        var here = base
-        while !FileManager.default.fileExists(atPath: here), here != "/" { here = RunFiles.parent(here) }
-        guard try !files.directory(here, isIn: project) else {
+        guard try !files.directory(files.nearest(base), isIn: project) else {
             guard images.areTwo else { return [] }
             throw RunStop.usage("\(base), which holds the xless.yml of this run, is inside the project \(project), which is mounted into the build container; keep the project in its own directory")
         }

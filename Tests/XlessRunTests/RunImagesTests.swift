@@ -193,6 +193,10 @@ import XlessImages
         let kept = FakeRunHost(answer: home.answer()) // (the secrets are in the store)
         #expect(try home.run(["\(home.home)/.cache/xless"], docker: true, host: kept, environment: ["XLESS_DIST_KEY": "DIST-VALUE"], session: "/agent") == 2)
         #expect(containers(kept).isEmpty && !home.exists(home.secrets) && kept.lines.last?.contains("which holds the xless.yml of this run, is inside the project") == true)
+        let hidden = FakeRunHost(answer: home.answer())
+        hidden.unseen = ["\(home.home)/.cache/xless/run"]
+        #expect(try home.run([home.project], docker: true, host: hidden, environment: ["XLESS_DIST_KEY": "DIST-VALUE"], session: "/agent") == 2)
+        #expect(containers(hidden).isEmpty && !home.exists(home.secrets) && hidden.lines.last?.contains("cannot tell where \(home.home)/.cache/xless/run is") == true, "\(hidden.lines)")
         let key = try home.write("proj/key.pem", "k")
         #expect(try refused([home.project], ["XLESS_DIST_KEY_FILE": key]).contains("is inside the project \(home.project), which is mounted into the build container"))
         let store = FakeRunHost(answer: home.answer())

@@ -27,6 +27,8 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     /// Instead of what the system says.
     var physical: (@Sendable (String) -> String?)?
+    /// Paths of which the system says nothing, as of those below a directory that may not be searched.
+    var unseen: Swift.Set<String> = []
 
     init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
          answer: @escaping @Sendable (FakeRunHost, RunStep) -> Answer = { _, _ in (0, "") }) {
@@ -132,6 +134,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func realPath(_ path: String) -> String? { files.realPath(path) }
     func physicalPath(_ path: String) -> String? { physical.map { $0(path) } ?? files.physicalPath(path) }
     func isSame(_ a: String, _ b: String) -> Bool? { files.isSame(a, b) }
+    func isThere(_ path: String, followed: Bool) -> Bool? { unseen.contains(path) ? nil : files.isThere(path, followed: followed) }
     func isReadable(_ path: String) -> Bool { files.isReadable(path) }
     func isFile(_ path: String) -> Bool { files.isFile(path) }
     func temporaryFile() throws -> String { try files.temporaryFile() }
