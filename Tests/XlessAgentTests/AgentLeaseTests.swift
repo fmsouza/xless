@@ -179,6 +179,7 @@ private func client(_ directory: AgentDirectory, session: String? = nil, starts:
     }
     #expect(error?.kind == .refused)
     #expect(error?.cause.contains("xless session") == true)
+    #expect(error?.fix.contains("unset XLESS_SESSION") == true)
     #expect(started.count == 0)
 }
 

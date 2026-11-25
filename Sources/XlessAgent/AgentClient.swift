@@ -197,7 +197,7 @@ public final class AgentClient: @unchecked Sendable {
         if session != nil {
             guard let link = links.first(where: { isMySession($0) && $0.isGranted && $0.isSameSession }) else {
                 throw AgentError(.refused, "the `xless session` this runs in holds nothing any more (it ended, the system slept, or the screen was locked)",
-                                 fix: "start it again")
+                                 fix: "start it again; in a shell that outlived it (a tmux server started in it, say), `unset XLESS_SESSION`")
             }
             for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typedAgo: seed.typedAgo) }
             return
