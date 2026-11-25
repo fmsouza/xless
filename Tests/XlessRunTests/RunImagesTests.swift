@@ -318,6 +318,25 @@ import XlessImages
         #expect(left.isEmpty, "nothing is left of it: \(left)")
     }
 
+    /// One reading decides it all: the xless.yml that chose the images is the one that the containers get, whatever the project's holds by then.
+    @Test func theContainersHaveTheConfigurationThatChoseTheImages() throws {
+        mine()
+        let text = "name: App\nimage: mine:1\n"
+        try home.write("proj/xless.yml", text)
+        let home = home, seen = Notes()
+        let host = FakeRunHost(answer: home.answer { step in
+            guard step.isContainer else {
+                if step.words.contains("inspect") { _ = try? home.write("proj/xless.yml", "name: Evil\nimage: evil:1\n") }
+                return nil
+            }
+            let mount = step.words.first { $0.hasSuffix(",dst=/work/xless.yml,readonly") } ?? "type=bind,src=,"
+            seen.add((try? String(contentsOfFile: String(mount.dropFirst("type=bind,src=".count).prefix { $0 != "," }), encoding: .utf8)) ?? "none")
+            return nil
+        })
+        #expect(try home.run([home.project], docker: true, host: host, environment: home.files()) == 0)
+        #expect(names(host) == ["mine:1", Self.base] && seen.lines == [text, text])
+    }
+
     /// Also where the build is all there is to the run, and in the one container of a project without an image of its own: what the
     /// build leaves in the project is what the next run reads.
     @Test func everyContainerOfAProjectHasItsConfigurationReadOnly() throws {
