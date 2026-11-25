@@ -220,7 +220,8 @@ COMMANDS = [(command, answers) for command, answers in (
     ("provision plan --project $T/app", ()), ("provision apply --project $T/app --yes", ()), ("release submit --dir $T/appstore", ()),
     ("ship --project $T/app --platform ios --from sign", ()), ("store push --dir $T/appstore --yes --only text", ()),
     ("store push --dir $T/appstore --yes", SIGN_IN),   # with App Privacy details, which have no API
-    ("auth api-key create", SIGN_IN), ("run --config $T/cargo.yml", ()))]
+    ("auth api-key create", SIGN_IN), ("run $T/app", ()))]
+if sys.platform == "darwin": COMMANDS.append(("run --config $T/cargo.yml", ()))   # elsewhere an overlay builds in Docker only
 with concurrent.futures.ThreadPoolExecutor(len(COMMANDS)) as pool:   # each retries a while when Apple does not answer
     results = list(pool.map(lambda c: on_a_terminal_of_its_own((EMPTY if c[0].startswith("auth") else "") + "$X " + c[0], PASS, *c[1]), COMMANDS))
 for (command, answers), (rc, shown, n) in zip(COMMANDS, results):
@@ -228,8 +229,10 @@ for (command, answers), (rc, shown, n) in zip(COMMANDS, results):
     check(rc not in (0, 2, 23) and len(asked(shown)) == 1 + len(answers) and name + " opens the secret store (" in shown,
           f"`{command}` asks for the passphrase once{' and signs in once' if answers else ''}, and says why (exit {rc})", shown)
     if answers: check(name + " signs in to Apple: Apple's documented API does not cover what it does. Asked once for this command" in shown, "and why it signs in", shown)
-shown = results[-1][1]
-check("step 1/3" in shown and "(reading ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID, XLESS_DIST_KEY)" in shown, "xless run asks once for all of its steps, and says for which secrets", shown)
+for (command, _), (rc, shown, n) in zip(COMMANDS, results):
+    if not command.startswith("run"): continue
+    check("(reading ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID, XLESS_DIST_KEY)" in shown, f"`{command}` says for which secrets it asks, before its first step", shown)
+    check("==> " in shown[shown.index("passphrase: "):] and "==> TestFlight: step" not in shown[:shown.index("passphrase: ")], "and goes on from there", shown)
 check(gone(), "and nothing is held when they end", agents())
 a.close()
 sys.exit(1 if failures else 0)
