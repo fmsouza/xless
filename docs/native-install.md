@@ -117,7 +117,9 @@ The overlay is the one that the images build. What they have of other languages 
 | Tauri | rustup, Node and the package manager of the lockfile. An iOS app also has `llvm-tools` added to the toolchain. |
 | React Native | Node and the package manager of the lockfile, Ruby with Bundler 2.7.2. The gems, CocoaPods among them, are installed for the builds only. |
 
-The build runs in a sandbox that keeps the app's build code from your files and secrets; a line at the start says what it opens.
+The build runs in a sandbox that keeps the app's build code from your files and xless's secrets; a line at the start says what it
+opens. It does not keep it from the environment of your other programs, nor from turning your launch agents off and reading the
+variables in their files.
 [security.md](security.md#an-overlays-build-on-a-mac) says what that covers and what not. What the app's build needs beyond its
 checkout goes into `XLESS_BUILD_READ`:
 

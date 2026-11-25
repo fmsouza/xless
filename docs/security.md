@@ -33,8 +33,9 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 - **Code your build runs** (npm scripts, `build.rs`, SwiftPM plugins and macros, CocoaPods hooks, Xcode build phases),
   partly. Every tool xless runs starts without a secret variable, in a POSIX session of its own (which the xless agent
   refuses) and in an empty session keyring (no held unlock, no kept Apple ID session), and unable to open the store, and
-  an overlay app's build runs in a container that has no secret. It still runs as you and can read your files
-  ([below](#the-build-and-your-secrets)).
+  an overlay app's build runs in a container that has no secret, or on a Mac in a sandbox. Any other
+  build still runs as you and can read your files ([below](#the-build-and-your-secrets), and
+  [what the Mac's sandbox leaves open](#an-overlays-build-on-a-mac)).
 - **Logs, terminals and bug reports.** No secret is printed, put in an error, in a `--verbose` trace or on a command
   line.
 - **A network observer.** Everything goes over HTTPS to Apple's hosts; xless refuses a redirect from HTTPS to anything
@@ -577,8 +578,8 @@ And to type the passphrase on a terminal that the build never had: `xless run <d
 
 An app's build runs code you did not write. What that code can reach depends on how it is built:
 
-- **An overlay app on a Mac, natively (`xless run --config`)**, builds in a sandbox of macOS's, without a secret and without
-  your files; signing and uploading come after it, outside. [More below](#an-overlays-build-on-a-mac).
+- **An overlay app on a Mac, natively (`xless run --config`)**, builds in a sandbox of macOS's, without xless's secrets and
+  without your files; signing and uploading come after it, outside. [What it can still read and do](#an-overlays-build-on-a-mac).
 - **An overlay app (Tauri, Cargo, React Native: `xless run --docker --config`)** builds in three containers. The build
   container (step 2) gets no secret and no secret file, and is the only one that runs in an image with the app's
   toolchains (the kit, or an image you name); the next-build and signing containers run in the xless image, where no
@@ -755,7 +756,7 @@ whether a path that it guesses is there, it can tell); sockets (the xless agent'
 keychain's services, the pasteboard's, Apple events' and the window server's, starting an app (`open`), a job of its own in launchd or a
 service that other programs find, `sudo` and other programs that run as another user, other programs' memory and signals to them,
 mounting (a second `/dev`, or something else over its own directories), drivers (IOKit's, the Secure Enclave's key store among them).
-What it starts and leaves running is in the sandbox as well.
+What it starts itself and leaves running is in the sandbox as well (an agent of yours that it has launchd start is not: below).
 
 What the sandbox is not:
 
@@ -764,11 +765,13 @@ What the sandbox is not:
   and does more than it seems, is a way out. Of the services there are the ones that tell users and hosts, check certificates, watch
   files, take log messages and tell the types of documents (so it can list the apps that are installed).
 - **launchd answers it, and does some of what it asks**: the rules have no word for that (they refuse jobs of its own, and to stop,
-  signal or remove yours, but a rule that tells launchd's requests apart is for Apple's own programs). The build can **turn a launch
+  signal or remove yours, and the filter that tells launchd's requests apart, which Apple's own rules use, was refused to xless's). The build can **turn a launch
   agent of yours off, or on again** (`launchctl disable`, `enable`). That stays after the build, and after the sandbox: an agent
   that is turned off does not start at your next login. `launchctl print-disabled gui/$UID` shows what is off, `launchctl enable
   gui/$UID/<label>` turns it on (`disable`, off). It can start an agent that is loaded and not running (`launchctl kickstart`): as you
-  set it up, outside of the sandbox. And it can read what is in your agents' files, variables among them (`launchctl print`): keep no
+  set it up, outside of the sandbox. **So keep no agent, and nothing that one runs or reads, in `~/.cache/xless` or `XLESS_CACHE`,**
+  where the build can write: what it put there would run as you. The same goes for an app that you started from a build's directory
+  there and that added an agent, and an agent that asks a port of this Mac can be answered by the build. And it can read what is in your agents' files, variables among them (`launchctl print`): keep no
   secret there.
 - **The environment of your other programs can be read**, as any program of yours can (`KERN_PROCARGS2`, what `ps -E` shows): the
   rules have no word for it. A secret that is exported in a shell is in the environment of what that shell started. Keep secrets in
