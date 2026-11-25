@@ -80,7 +80,9 @@ struct ProvisionStep: Sendable {
     var text: String {
         let sign = switch action { case .create: "+"; case .enable: "+"; case .update: "~"; case .assign: "~"; case .push: "~" }
         let marks = (web ? " [web]" : "") + (checked ? "" : " (checked when applied)")
-        return (["  \(sign) \(action.rawValue) \(subject)\(marks)"] + details.map { "      \($0)" }).joined(separator: "\n")
+        // The listing's details are the changes of a push, some of several lines; every other one is a line.
+        let lines = if case .listing = work { true } else { false }
+        return (["  \(sign) \(action.rawValue) \(TerminalText.escaped(subject))\(marks)"] + details.map { "      \(TerminalText.escaped($0, keepingLines: lines))" }).joined(separator: "\n")
     }
 }
 
@@ -130,7 +132,7 @@ struct ProvisionPlan: Sendable {
     /// Refuses a plan with blockers: nothing is sent.
     func requireUnblocked() throws {
         guard let first = blockers.first else { return }
-        throw XlessError(.account, "\(first.message); nothing was sent" + (blockers.count > 1 ? " (and \(blockers.count - 1) more: see `xless provision plan`)" : ""), fix: first.fix)
+        throw XlessError(.account, "\(first.message); nothing was sent" + (blockers.count > 1 ? " (and \(blockers.count - 1) more: see `xless provision plan`)" : ""), fix: first.fix).printable
     }
 
     mutating func add(_ area: ProvisionArea, _ action: ProvisionStep.Action, _ subject: String, _ details: [String] = [], web: Bool = false,
@@ -138,7 +140,8 @@ struct ProvisionPlan: Sendable {
         steps.append(ProvisionStep(area: area, action: action, subject: subject, details: details, web: web, checked: checked, work: work))
     }
 
-    /// The plan grouped by area, then the drift, the blockers and the notes.
+    /// The plan grouped by area, then the drift, the blockers and the notes. What in their names (the project's, Apple's)
+    /// would drive the terminal or start a line of its own is written out (`TerminalText`).
     var text: String {
         var out = ""
         for area in ProvisionArea.allCases {
@@ -149,16 +152,16 @@ struct ProvisionPlan: Sendable {
         out += Self.driftText(drift, heading: "Drift")
         if !blockers.isEmpty {
             out += "Blocked (nothing is applied until these are fixed):\n"
-            out += blockers.map { "  x \($0.message) — \($0.fix)\n" }.joined()
+            out += blockers.map { "  x \(TerminalText.escaped("\($0.message) — \($0.fix)"))\n" }.joined()
         }
-        out += notes.map { "note: \($0)\n" }.joined()
+        out += notes.map { "note: \(TerminalText.escaped($0))\n" }.joined()
         return out + summary + "\n"
     }
 
     /// The drift section of the plan (and of what `apply` found while applying), empty without drift.
     static func driftText(_ drift: [ProvisionDrift], heading: String) -> String {
         guard !drift.isEmpty else { return "" }
-        return "\(heading) (left as it is: provision never deletes, revokes or replaces):\n" + drift.map { "  ! \($0.subject): \($0.message) — \($0.fix)\n" }.joined()
+        return "\(heading) (left as it is: provision never deletes, revokes or replaces):\n" + drift.map { "  ! \(TerminalText.escaped("\($0.subject): \($0.message) — \($0.fix)"))\n" }.joined()
     }
 
     var summary: String {
@@ -627,7 +630,7 @@ struct ProvisionApplier {
             say("done: " + (done.isEmpty ? "nothing" : done.map(\.result).joined(separator: "; ")))
             say("left: " + left.joined(separator: "; "))
             let failure = XlessError(.account, "\(step.area.title), \(step.action.rawValue) \(step.subject): \(e.cause) (\(done.count) of \(plan.steps.count) steps were done, \(left.count) left)",
-                                     fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left")
+                                     fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left").printable
             return ProvisionApplyFailure(applied: applied, failed: .init(area: step.area, action: step.action, subject: step.subject, cause: e.cause, fix: e.fix),
                                          left: plan.steps.enumerated().filter { $0.offset >= done.count && $0.offset != i }.map(\.element), error: failure)
         }

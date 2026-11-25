@@ -107,6 +107,34 @@ func newIdentifiersAreUniversalWithANameAppleTakes(platform: Platform) async thr
     try await check("App Store Connect gives no content for it") { $0.content = Data() }
 }
 
+/// What a terminal or a reader could be misled by, in a value that the project, the built app or Apple chose.
+private let hostile = "\u{1B}[2J\u{1B}[H\r\n  nothing is changed\u{9B}K\u{7F}\u{202E}\u{200B}\u{2028}"
+
+private func isPlain(_ text: String) -> Bool { TerminalText.escaped(text) == text }
+
+/// The plan is what the person reads before the account is changed: nothing in it can clear, hide or forge a line.
+@Test func nothingInThePlanOrItsRefusalDrivesTheTerminal() throws {
+    let request = CapabilityRequest(.pushNotifications)
+    func target(_ ents: [String: Any] = [:]) -> SigningTarget {
+        SigningTarget(platform: .ios, distribution: .appStore, bundleID: "com.example.app.\(hostile)", entitlements: ents,
+                      extensionPath: "PlugIns/W\(hostile).appex")
+    }
+    let old = SigningProfile(id: "P\(hostile)", name: "n", type: "IOS_APP_STORE", state: hostile, expires: nil, bundleID: "B0", certificateIDs: [],
+                             content: try fakeProfile([:]))
+    let lacking = target(["com.example.\(hostile)": true])
+    let reasons = lacking.problems(of: old, bundle: "B0", certificate: "C\(hostile)", now: Date())
+    #expect(reasons.contains { $0.hasPrefix("it is ") } && reasons.contains { $0.hasPrefix("it lacks ") } && reasons.contains { $0.contains("certificate C") })
+    let plan = SigningPlan(items: [.init(target: target(), bundle: nil, enable: [request], profile: .create),
+                                   .init(target: lacking, bundle: "B0", enable: [], profile: .replace([old], reasons: reasons))], certificate: "C\(hostile)")
+    #expect(plan.changes.count == 4)
+    for change in plan.changes { #expect(isPlain(change), "\(change)") }
+    #expect(plan.text.split(separator: "\n", omittingEmptySubsequences: false).count == 5)
+    #expect(isPlain(plan.text.replacingOccurrences(of: "\n", with: " ")))
+    #expect(plan.text.contains(#"for PlugIns/W\u{1B}[2J\u{1B}[H\u{D}\u{A}  nothing is changed\u{9B}K\u{7F}\u{202E}\u{200B}\u{2028}.appex, with certificate C\u{1B}"#))
+    do { try plan.requireNothing(off: "--no-provisioning-updates"); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(isPlain(e.cause) && isPlain(e.fix) && e.exitCode == 24) }
+}
+
 @Test func aProfileWithMoreThanAWeekLeftIsKept() async throws {
     let s = Signing()
     try s.registered { $0.expires = "2026-12-03T00:00:00.000+0000" }

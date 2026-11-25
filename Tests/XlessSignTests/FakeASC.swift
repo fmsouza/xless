@@ -29,6 +29,8 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
     var profiles: [Profile] = []
     /// Capability types App Store Connect refuses to enable (409).
     var refuse: Set<String> = []
+    /// What it says then.
+    var refusal = "This capability is not available for this platform."
     /// Capability types every new identifier has.
     var enabledByApple: [String] = []
     /// Deleted profiles stay listed (a listing that lags behind).
@@ -101,7 +103,7 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
             let data = (capabilities[parts[2]] ?? []).map { ["type": "bundleIdCapabilities", "id": "\(parts[2])_\($0)", "attributes": ["capabilityType": $0]] }
             (status, text) = (200, json(["data": data]))
         case ("POST", 2, "bundleIdCapabilities") where refuse.contains(attrs["capabilityType"] as? String ?? ""):
-            (status, text) = (409, #"{"errors":[{"status":"409","code":"ENTITY_ERROR","title":"There is a problem with the request entity","detail":"This capability is not available for this platform."}]}"#)
+            (status, text) = (409, json(["errors": [["status": "409", "code": "ENTITY_ERROR", "title": "There is a problem with the request entity", "detail": refusal]]]))
         case ("POST", 2, "bundleIdCapabilities"):
             let type = attrs["capabilityType"] as! String, resource = relID("bundleId")!
             capabilities[resource, default: []].append(type)

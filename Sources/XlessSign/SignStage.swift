@@ -16,12 +16,18 @@ public enum SignStage {
     }
 
     /// `codesign` runs rcodesign with the given arguments (a test seam: tests read the entitlement files it names).
+    /// Errors name what the build and Apple chose (an extension's path and bundle ID, Apple's own text): they leave as
+    /// `[sign]` errors with nothing in them that drives the terminal.
     static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL, secrets: Secrets,
                     client: ASCClient, manifest: EntitlementsManifest?, updatesOff: String? = nil, say: (String) -> Void = { _ in },
                     codesign: ([String]) throws -> Void) async throws -> URL {
-        try await Files.atomicOutput(outputDir) { partial in
-            try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
-                           client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: codesign)
+        do {
+            return try await Files.atomicOutput(outputDir) { partial in
+                try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
+                               client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: codesign)
+            }
+        } catch {
+            throw XlessError.wrapping(error, stage: .sign).printable
         }
     }
 

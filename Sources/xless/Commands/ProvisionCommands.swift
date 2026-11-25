@@ -197,7 +197,8 @@ enum ProvisionCLI {
         }
 
         func applier(web: @escaping () async throws -> ProvisionWebSide) -> ProvisionApplier {
-            ProvisionApplier(inputs: inputs, account: account, web: web, vault: vault, store: store, say: AppleWebCLI.say)
+            ProvisionApplier(inputs: inputs, account: account, web: web, vault: vault, store: store,
+                             say: { AppleWebCLI.say(TerminalText.escaped($0, keepingLines: true)) })
         }
     }
 

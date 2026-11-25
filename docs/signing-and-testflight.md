@@ -205,6 +205,8 @@ xless: sign: 3 changes on the account:
   create profile xless com.example.app.Widget IOS_APP_STORE (iOS App Store Connect for PlugIns/Widget.appex, with certificate 5B2C9D7E1F)
 ```
 
+- The names in it come from the project, the built app and Apple: control and invisible characters in them are written
+  out (`\u{1B}`), here, in `sign`'s errors and in the plan of `xless provision`, so none can hide or forge a line.
 - It asks nothing and needs no Apple ID: the App Store Connect API key makes these changes, in CI too.
 - It registers bundle IDs, enables capabilities (a capability that is enabled keeps its settings) and creates
   profiles. The only thing it ever deletes is a profile of that name, which xless made, when the profile cannot be

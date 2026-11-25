@@ -550,6 +550,32 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
     #expect(!before.isEmpty && before.allSatisfy { $0.hasPrefix("GET ") })
 }
 
+/// The extension's name and bundle ID are the build's: the plan and the errors of `sign` write out what would drive the terminal.
+@Test func whatTheBuildNamedItsExtensionCannotDriveTheTerminal() async throws {
+    let escapes = "\u{1B}[2J\u{1B}[H"
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    try f.renameExtension(to: "W\(escapes).appex")
+    var said = ""
+    _ = try await f.run(say: { said += $0 })
+    #expect(!said.contains("\u{1B}") && said.contains(#"PlugIns/W\u{1B}[2J\u{1B}[H.appex"#))
+
+    let g = try MultiBundleFixture(app: [:], ext: [:])
+    try g.renameExtension(to: "W\(escapes).appex")
+    try Plist.write(["CFBundleExecutable": "Ext", "CFBundleIdentifier": "org.other.\(escapes)"],
+                    to: g.input.appendingPathComponent("PlugIns/W\(escapes).appex/Info.plist"), stage: .sign)
+    do { _ = try await g.run(); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.stage == .sign && !e.description.contains("\u{1B}") && e.cause.contains(#"org.other.\u{1B}[2J"#)) }
+}
+
+/// Apple's own text in an error is no different.
+@Test func whatAppleAnswersCannotDriveTheTerminal() async throws {
+    let f = try MultiBundleFixture(app: ["aps-environment": "development"], ext: [:])
+    f.asc.refuse = ["PUSH_NOTIFICATIONS"]
+    f.asc.refusal = "no\u{1B}[2J"
+    do { _ = try await f.run(); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(!e.description.contains("\u{1B}") && e.cause.contains(#"no\u{1B}[2J"#)) }
+}
+
 @Test func withProvisioningUpdatesOffNothingIsChangedAndTheErrorListsWhatIsMissing() async throws {
     let f = try MultiBundleFixture(app: ["aps-environment": "development"], ext: [:])
     f.asc.bundleIDs[appID] = "B9"

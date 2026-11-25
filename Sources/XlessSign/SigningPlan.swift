@@ -72,7 +72,8 @@ public struct SigningPlan: Sendable {
     /// The certificate the profiles hold.
     public var certificate: String
 
-    /// One line per change, in the order they are made.
+    /// One line per change, in the order they are made. The names in it are the project's, the built app's and Apple's:
+    /// whatever would drive the terminal or start a line of its own is written out (`TerminalText`).
     public var changes: [String] {
         items.flatMap { item in
             let id = item.target.bundleID
@@ -86,7 +87,7 @@ public struct SigningPlan: Sendable {
             case .replace(let old, let reasons):
                 out.append("replace profile \(item.target.profileName) (\(old.map(\.id).joined(separator: ", ")), which xless made): \(reasons.joined(separator: "; "))")
             }
-            return out
+            return out.map { TerminalText.escaped($0) }
         }
     }
 
@@ -94,7 +95,7 @@ public struct SigningPlan: Sendable {
     public func requireNothing(off: String) throws {
         let changes = self.changes
         guard !changes.isEmpty else { return }
-        let renewed = items.flatMap { item in if case .replace(let old, _) = item.profile { old.map { "`xless profiles renew \($0.id)`" } } else { [String]() } }
+        let renewed = items.flatMap { item in if case .replace(let old, _) = item.profile { old.map { TerminalText.escaped("`xless profiles renew \($0.id)`") } } else { [String]() } }
         throw XlessError(.sign, "signing needs \(changes.count) change\(changes.count == 1 ? "" : "s") on the account, and provisioning updates are off (\(off)): \(changes.joined(separator: "; "))",
                          fix: "make them with `xless provision apply`\(renewed.isEmpty ? "" : " (and \(renewed.joined(separator: ", ")))"), or run `xless sign` once where xless may change the account, then re-run",
                          code: XlessError.provisioningNeeded)

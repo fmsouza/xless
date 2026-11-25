@@ -592,6 +592,23 @@ private final class TypingPassphrase: PassphrasePrompter {
     #expect(plan.drift.first?.message.contains("it lacks aps-environment") == true, "\(plan.text)")
 }
 
+/// The names in a plan are the project's and Apple's: none of them clears, hides or forges a line of it.
+@Test func nothingInAProvisionPlanDrivesTheTerminal() throws {
+    let hostile = "\u{1B}[2J\r\n  + create\u{202E}\u{200B}"
+    var plan = ProvisionPlan(team: team)
+    plan.add(.bundleIDs, .create, "com.example.\(hostile)", ["named \(hostile)"], .bundleID("com.example.x"))
+    plan.add(.listing, .push, "appstore/", ["~ name\n    \(hostile.replacingOccurrences(of: "\r\n", with: ""))"], .listing)
+    plan.drift = [ProvisionDrift(area: .profiles, subject: hostile, message: hostile, fix: hostile)]
+    plan.blockers = [ProvisionBlocker(area: .app, message: hostile, fix: hostile)]
+    plan.notes = [hostile]
+    #expect(TerminalText.escaped(plan.text, keepingLines: true) == plan.text)
+    #expect(plan.text.split(separator: "\n").count == 13, "\(plan.text)")
+    #expect(throws: XlessError(.account, #"\u{1B}[2J"# + "\n" + #"  + create\u{202E}\u{200B}; nothing was sent"#,
+                               fix: #"\u{1B}[2J"# + "\n" + #"  + create\u{202E}\u{200B}"#)) { try plan.requireUnblocked() }
+    let json = try ASCOutput.json(plan)
+    #expect(try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))["notes"] == .array([.string(hostile)]), "JSON keeps the values")
+}
+
 @Test func blockersStopApplyBeforeAnythingIsSent() async throws {
     let v = try TestVault(create: false)
     defer { v.cleanup() }
