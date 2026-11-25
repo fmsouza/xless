@@ -22,8 +22,11 @@ public struct CargoBuildContext: Sendable {
     }
 
     var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
-    /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it).
-    var tools: [String: String] { ["PATH": "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"] }
+    /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it); with an installed Xcode, before
+    /// it xless's `swift`.
+    var tools: [String: String] {
+        ["PATH": (sdk.isXcode ? RustApple.wrapperDirectory(workRoot: workRoot).path + ":" : "") + "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"]
+    }
     /// The cargo targets of this platform: on macOS, those of `macos.architectures`.
     public var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
     var inputsRecord: URL { workRoot.appendingPathComponent(".xless/cargo-inputs.json") }
@@ -76,6 +79,7 @@ public enum CargoBuilder {
             let r = ctx.resolved, block = r.platform, work = ctx.workRoot
             let minOS = try r.config.platform(ctx.platform).minimumOS
             let record = try readRecord(ctx)
+            if ctx.sdk.isXcode { try RustApple.writeSwiftWrapper(sdk: ctx.sdk, workRoot: work) }
             let inputURLs = record.paths.mapValues { URL(fileURLWithPath: $0, isDirectory: true) }
             let swift = try SwiftToolchain.load(env: ctx.env)
             let toolchain = ctx.overlay.toolchain

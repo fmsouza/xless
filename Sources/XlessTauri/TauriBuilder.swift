@@ -60,9 +60,11 @@ extension TauriWorkContext {
     /// The Tauri app root (the parent of the Tauri directory), where tauri-cli runs the frontend and cargo.
     var appRoot: URL { tauriDir.deletingLastPathComponent() }
     var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
-    /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it), no corepack prompt.
+    /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it), no corepack prompt. With an
+    /// installed Xcode, before them xless's `swift`.
     var tools: [String: String?] {
-        ["PATH": "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")", "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"]
+        let own = sdk.isXcode ? RustApple.wrapperDirectory(workRoot: workRoot).path + ":" : ""
+        return ["PATH": "\(own)\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")", "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"]
     }
 }
 
@@ -114,7 +116,8 @@ public enum TauriBuilder {
             log("installing \(binaryDependencies.count) binary dependencies")
             try BinaryDeps.install(binaryDependencies, into: ctx.workRoot, cache: cache.appendingPathComponent("downloads"))
         }
-        if let install = try installCommand(appRoot: ctx.appRoot) {
+        if var install = try installCommand(appRoot: ctx.appRoot) {
+            if ctx.sdk.isXcode { install.arguments = ownManager(install.arguments, appRoot: ctx.appRoot, path: ctx.env["PATH"] ?? "") }
             log("\(install.arguments.joined(separator: " ")) (\(install.lockfile))")
             try run(install.arguments, cwd: ctx.appRoot, env: ctx.tools, ctx: ctx, stage: .prepare)
         }
@@ -129,6 +132,15 @@ public enum TauriBuilder {
 
     static func rustupSteps(toolchainFile: Bool, activeToolchain: Bool, targets: [String] = [TauriEnvironment.target]) -> [[String]] {
         RustApple.rustupSteps(toolchainFile: toolchainFile, activeToolchain: activeToolchain, targets: targets)
+    }
+
+    /// On a Mac, `corepack pnpm …` as the user's own tools do it: the pnpm on PATH, unless package.json names a release for corepack to
+    /// run and there is a corepack (Node.js has none from 25 on).
+    static func ownManager(_ command: [String], appRoot: URL, path: String) -> [String] {
+        guard command.first == "corepack", command.count > 1 else { return command }
+        func onPath(_ name: String) -> Bool { path.split(separator: ":").contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") } }
+        let package = (try? Data(contentsOf: appRoot.appendingPathComponent("package.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        return onPath("corepack") && (package?["packageManager"] != nil || !onPath(command[1])) ? command : Array(command.dropFirst())
     }
 
     /// The frozen install for the app root's lockfile; nil without a package.json.
@@ -161,6 +173,7 @@ public enum TauriBuilder {
             let ios = try r.config.platform(.ios), minOS = ios.minimumOS
             let sdkRoot = try ctx.sdk.sdkPath("iphoneos")
             let target = TauriEnvironment.target
+            if ctx.sdk.isXcode { try RustApple.writeSwiftWrapper(sdk: ctx.sdk, workRoot: work) }
 
             // 1. Frontend, as tauri-cli runs it: `sh -c` in the app root with the hook env.
             try frontend(ctx, tauri: r.tauri, env: TauriEnvironment.frontend(sdk: ctx.sdk))
@@ -182,9 +195,8 @@ public enum TauriBuilder {
             let cargoOut = crate.targetDir.appendingPathComponent("\(target)/release", isDirectory: true)
             let staticLib = cargoOut.appendingPathComponent("lib\(crate.lib).a")
 
-            // 3. A Linux-built staticlib has no Swift objects; one that has was built on a Mac.
-            let nm = try rustLLVMTool("llvm-nm", ctx), objdump = try rustLLVMTool("llvm-objdump", ctx)
-            try SwiftPackages.checkNoSwiftObjects(staticLib: staticLib, objdump: objdump)
+            // 3. A Linux-built staticlib has no Swift objects; one that has was built on a Mac, where swift-rs builds them.
+            if !ctx.sdk.isXcode { try SwiftPackages.checkNoSwiftObjects(staticLib: staticLib, objdump: rustLLVMTool("llvm-objdump", ctx)) }
 
             // 4. Search paths: cargo's output dir first (the staticlib is linked in place as -l<crate lib>, not copied to
             // Externals/…/libapp.a as xcode-script does), then the project's LIBRARY_SEARCH_PATHS entries that exist
@@ -194,17 +206,8 @@ public enum TauriBuilder {
             let searchPaths = [cargoOut.path] + NativeLink.expandSettings(NativeLink.setting("LIBRARY_SEARCH_PATHS", in: r.target.settings) ?? "", vars: vars)
                 .filter { fm.fileExists(atPath: $0) && $0 != cargoOut.path }
 
-            // 5. Every Swift package of the app as one static library.
-            let (api, plugins) = try SwiftPackages.discover(metadata: Data(metadata.utf8))
-            let swiftDir = work.appendingPathComponent(".xless/swift", isDirectory: true)
-            log("Swift packages: Tauri\(plugins.map { ", \($0.name)" }.joined())")
-            let staged = try SwiftPackages.stage(tauriAPI: api, plugins: plugins, into: swiftDir)
-            let aggregate = try SwiftPackages.writeAggregate(minimumIOS: minOS, plugins: staged, into: swiftDir)
-            var swiftEnv = ctx.env
-            if case let path?? = ctx.tools["PATH"] { swiftEnv["PATH"] = path }
-            let swiftLib = try SwiftPackages.build(aggregateDir: aggregate, minimumIOS: minOS, sdk: ctx.sdk, env: swiftEnv, swift: swift)
-            let required = try SwiftPackages.requiredSymbols(cargoTargetDir: cargoOut, crateLib: crate.lib, nm: nm)
-            try SwiftPackages.checkGlobalSymbols(archive: swiftLib, required: required, nm: nm)
+            // 5. Every Swift package of the app as one static library (on a Mac, swift-rs put them in the staticlib).
+            let swiftLib = ctx.sdk.isXcode ? nil : try swiftLibrary(ctx, metadata: Data(metadata.utf8), minOS: minOS, swift: swift, cargoOut: cargoOut, crateLib: crate.lib)
 
             // 6. The target's own sources.
             let objDir = try Files.fresh(work.appendingPathComponent(".xless/obj", isDirectory: true))
@@ -215,7 +218,7 @@ public enum TauriBuilder {
                 let object = objDir.appendingPathComponent(rel + ".o")
                 try fm.createDirectory(at: object.deletingLastPathComponent(), withIntermediateDirectories: true)
                 log("clang \(rel)")
-                try run([swift?.tool("clang") ?? "clang"] + NativeLink.compileArguments(source: source.path, object: object.path, headerSearchPaths: headers, minOS: minOS, sdk: sdkRoot),
+                try run([ctx.sdk.compiler("clang", swift: swift)] + NativeLink.compileArguments(source: source.path, object: object.path, headerSearchPaths: headers, minOS: minOS, sdk: sdkRoot),
                         cwd: apple, env: ctx.tools, ctx: ctx, stage: .build)
                 objects.append(object.path)
             }
@@ -228,12 +231,12 @@ public enum TauriBuilder {
             let executable = linkDir.appendingPathComponent(ios.product)
             let inputs = NativeLink.LinkInputs(
                 objects: objects, libraryPaths: searchPaths, libraries: [crate.lib] + deps.libraries,
-                archives: [swiftLib.path], frameworkPaths: deps.frameworkPaths, frameworks: deps.frameworks, linkFlags: deps.linkFlags,
+                archives: swiftLib.map { [$0.path] } ?? [], frameworkPaths: deps.frameworkPaths, frameworks: deps.frameworks, linkFlags: deps.linkFlags,
                 sdkFrameworks: deps.sdkFrameworks, clangRuntime: try ctx.sdk.clangRuntime(platform: "ios").path,
                 swiftLibPaths: [sdkRoot.appendingPathComponent("usr/lib/swift").path, ctx.sdk.toolchain.appendingPathComponent("usr/lib/swift/iphoneos").path],
-                minOS: minOS, sdk: sdkRoot, ld64: ctx.sdk.ld64, output: executable.path)
+                minOS: minOS, sdk: sdkRoot, ld64: ctx.sdk.isXcode ? nil : ctx.sdk.ld64, output: executable.path)
             log("clang++ → \(ios.product)")
-            try Shell.run(swift?.tool("clang++") ?? "clang++", NativeLink.linkArguments(inputs), cwd: apple, env: ctx.tools, baseEnvironment: ctx.env, stage: .build,
+            try Shell.run(ctx.sdk.compiler("clang++", swift: swift), NativeLink.linkArguments(inputs), cwd: apple, env: ctx.tools, baseEnvironment: ctx.env, stage: .build,
                           keepErrorLine: { !$0.contains("does not support linking for platform iOS") })
 
             // 8. The dSYM, when the app crate was compiled with debug info: dsymutil reads the executable's debug map.
@@ -246,6 +249,22 @@ public enum TauriBuilder {
             log("dSYMs: \(try DSYM.keep([(executable: executable, dSYM: dSYM)], app: app, into: ctx.paths.dSYMs).summary)")
             return app
         }
+    }
+
+    /// The app's Swift packages as one static library, with every symbol that the staticlib asks of them.
+    private static func swiftLibrary(_ ctx: TauriBuildContext, metadata: Data, minOS: String, swift: SwiftToolchain?, cargoOut: URL, crateLib: String) throws -> URL {
+        let nm = try rustLLVMTool("llvm-nm", ctx)
+        let (api, plugins) = try SwiftPackages.discover(metadata: metadata)
+        let swiftDir = ctx.workRoot.appendingPathComponent(".xless/swift", isDirectory: true)
+        log("Swift packages: Tauri\(plugins.map { ", \($0.name)" }.joined())")
+        let staged = try SwiftPackages.stage(tauriAPI: api, plugins: plugins, into: swiftDir)
+        let aggregate = try SwiftPackages.writeAggregate(minimumIOS: minOS, plugins: staged, into: swiftDir)
+        var swiftEnv = ctx.env
+        if case let path?? = ctx.tools["PATH"] { swiftEnv["PATH"] = path }
+        let swiftLib = try SwiftPackages.build(aggregateDir: aggregate, minimumIOS: minOS, sdk: ctx.sdk, env: swiftEnv, swift: swift)
+        let required = try SwiftPackages.requiredSymbols(cargoTargetDir: cargoOut, crateLib: crateLib, nm: nm)
+        try SwiftPackages.checkGlobalSymbols(archive: swiftLib, required: required, nm: nm)
+        return swiftLib
     }
 
     /// The dSYM of the iOS executable xless linked (no `-x`, so its debug map is whole): `<executable>.dSYM`, made by

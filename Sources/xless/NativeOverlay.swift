@@ -119,6 +119,8 @@ struct NativeOverlay {
         out["PATH"] = path.joined(separator: ":")
         for (name, value) in xcode.environment(out) { out[name] = value }
         out["xcrun_db"] = temporary.appendingPathComponent("xcrun_db").path // its cache, which the user's own commands believe
+        // Nor the compilers' modules, of clang and of SwiftPM's manifests (which have no sandbox of their own in here to give them one).
+        for name in ["CLANG_MODULE_CACHE_PATH", "SWIFTPM_MODULECACHE_OVERRIDE"] { out[name] = buildHome.appendingPathComponent("ModuleCache").path }
         out["XLESS_TOOLS"] = try ownTools()
         out[OverlayPaths.homeVariable] = home
         out["XLESS_WORK_ROOT"] = work.deletingLastPathComponent().path
@@ -252,7 +254,7 @@ extension NativeOverlay {
         else if let mac = ctx.tauriMac { (targets, directory) = (TauriMacEnvironment.targets, source.appendingPathComponent(mac.tauriDir)) }
         else if let tauri = ctx.tauri { (targets, directory) = ([TauriEnvironment.target], source.appendingPathComponent(tauri.tauriDir)) }
         else { return }
-        try RustApple.prepareNative(source: source, searchFrom: directory, toolchain: ctx.cargo?.toolchain, targets: targets, env: env, log: Self.say)
+        try RustApple.prepareNative(source: source, searchFrom: directory, toolchain: ctx.cargo?.toolchain, targets: targets, llvmTools: ctx.tauri != nil, env: env, log: Self.say)
     }
 
     /// The top of the git checkout that `source` is in, and its git directory where that is elsewhere (a worktree's).

@@ -80,9 +80,9 @@ private func macSDK() throws -> DarwinSDK {
     let app = root.appendingPathComponent("app/src-tauri"), bin = root.appendingPathComponent("bin"), calls = root.appendingPathComponent("calls")
     for directory in [app, bin] { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
     let env = ["PATH": "\(bin.path):/usr/bin:/bin", "HOME": root.path]
-    func prepare(_ targets: [String], toolchain: String? = nil) throws -> [String] {
+    func prepare(_ targets: [String], toolchain: String? = nil, llvmTools: Bool = false) throws -> [String] {
         try? fm.removeItem(at: calls)
-        try RustApple.prepareNative(source: root.appendingPathComponent("app"), searchFrom: app, toolchain: toolchain, targets: targets, env: env, log: { _ in })
+        try RustApple.prepareNative(source: root.appendingPathComponent("app"), searchFrom: app, toolchain: toolchain, targets: targets, llvmTools: llvmTools, env: env, log: { _ in })
         return ((try? String(contentsOf: calls, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
     }
     func rustup(list: String) throws {
@@ -96,12 +96,43 @@ private func macSDK() throws -> DarwinSDK {
     #expect(try prepare(["aarch64-apple-ios", "aarch64-apple-darwin"]).isEmpty)
     #expect(try prepare(["aarch64-apple-darwin", "x86_64-apple-darwin"]) == ["src-tauri: target add x86_64-apple-darwin"])
     #expect(try prepare(["x86_64-apple-darwin"], toolchain: "1.97.0") == ["src-tauri: target add --toolchain 1.97.0 x86_64-apple-darwin"])
+    #expect(try prepare(["aarch64-apple-ios"], llvmTools: true) == ["src-tauri: component add llvm-tools"])
+    try rustup(list: "echo aarch64-apple-ios; echo llvm-tools-aarch64-apple-darwin")
+    #expect(try prepare(["aarch64-apple-ios"], llvmTools: true).isEmpty)
     // a toolchain that is not there
     try rustup(list: "exit 1")
     #expect(try prepare(["aarch64-apple-ios"], toolchain: "1.97.0") == ["src-tauri: toolchain install 1.97.0 --profile minimal", "src-tauri: target add --toolchain 1.97.0 aarch64-apple-ios"])
+    #expect(try prepare(["aarch64-apple-ios"], toolchain: "1.97.0", llvmTools: true).last == "src-tauri: component add --toolchain 1.97.0 llvm-tools")
     #expect(try prepare(["aarch64-apple-ios"]).first == "src-tauri: toolchain install stable --profile minimal")
     try Data().write(to: root.appendingPathComponent("app/rust-toolchain.toml"))
     #expect(try prepare(["aarch64-apple-ios"]) == ["src-tauri: toolchain install", "src-tauri: target add aarch64-apple-ios"])
+}
+
+/// The `swift` that a crate's build script finds on a Mac: no second sandbox, and Tauri's packages get the pinned SwiftRs.
+@Test func aBuildScriptsSwiftStartsNoSandboxAndHasThePinnedSwiftRs() throws {
+    let fm = FileManager.default, root = fm.temporaryDirectory.appendingPathComponent("xless swift-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: root) }
+    let app = root.appendingPathComponent("Xcode 27.app"), bin = app.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin")
+    let work = root.appendingPathComponent("work"), plugin = root.appendingPathComponent("plugin/ios"), api = root.appendingPathComponent("plugin/.tauri/tauri-api"), other = root.appendingPathComponent("other")
+    for directory in [bin, plugin, api, other] { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
+    try ExecutableFile.write("#!/bin/sh\nfor a in \"$@\"; do echo \"<$a>\"; done\n", to: bin.appendingPathComponent("swift"), stage: .build)
+    try Data("// https://github.com/Brendonovich/swift-rs".utf8).write(to: api.appendingPathComponent("Package.swift"))
+    for directory in [plugin, other] { try Data("// a package".utf8).write(to: directory.appendingPathComponent("Package.swift")) }
+    try RustApple.writeSwiftWrapper(sdk: DarwinSDK(xcode: InstalledXcode(app: app, version: "27.2", build: "27B52", source: "-")), workRoot: work)
+    func swift(_ arguments: String..., in directory: URL) throws -> String {
+        try Shell.run(work.path + "/.xless/bin/swift", arguments, cwd: directory, stage: .build).stdout.split(separator: "\n").joined()
+    }
+    #expect(try swift("-target", "arm64-apple-ios15.0", "-print-target-info", in: plugin) == "<-target><arm64-apple-ios15.0><-print-target-info>")
+    #expect(!fm.fileExists(atPath: plugin.path + "/Package.resolved"))
+    #expect(try swift("build", "-c", "release", "a b", in: plugin) == "<build><--disable-sandbox><-c><release><a b>")
+    for directory in [api, other] { _ = try swift("build", in: directory) }
+    for directory in [plugin, api] {
+        #expect(try String(contentsOfFile: directory.path + "/Package.resolved", encoding: .utf8).contains(SwiftPackages.swiftRs.revision))
+    }
+    #expect(!fm.fileExists(atPath: other.path + "/Package.resolved"))
+    try Data("its own".utf8).write(to: api.appendingPathComponent("Package.resolved"))
+    _ = try swift("build", in: api)
+    #expect(try String(contentsOfFile: api.path + "/Package.resolved", encoding: .utf8) == "its own")
 }
 
 @Test func anInstalledXcodesToolsAreCargosCompilerAndLinker() throws {
