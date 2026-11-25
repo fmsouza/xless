@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// The Apple session's cookies, in this process's memory only: never written to disk, never handed to another process,
+/// The Apple session's cookies, in this process's memory only: never written to disk in clear, never handed to a tool,
 /// gone when the process exits (or on `clear()`). A subset of RFC 6265: host-only and Domain cookies, Path, Secure,
 /// Expires and Max-Age. A Domain must contain the response's host and have a dot in it, so a cookie never reaches a host
 /// outside the domain that set it.

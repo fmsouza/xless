@@ -121,6 +121,7 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
 
 @Test func theCommandsThatNeedTheAppleIDSessionAreThoseWhoseHelpSaysSo() {
     let commands = AppleWebHelp.commands
+    #expect(Set(commands).count == commands.count) // each once
     #expect(commands.contains("apps create"))
     #expect(commands.contains { $0.hasPrefix("keys ") })
     #expect(!commands.contains("devices list"))

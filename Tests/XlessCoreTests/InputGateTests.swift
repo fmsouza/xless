@@ -21,10 +21,10 @@ func inputIsAskedForUnlessTheVariableSaysNot(value: String?, isOn: Bool) {
         try InputGate.$forced.withValue(true) { try InputGate.require("the secret store's passphrase (exporting NOTE)", fix: "run `xless unlock`") }
     }
     #expect(error?.stage == .input)
-    #expect(error?.stage.exitCode == 21)
+    #expect(error?.stage.exitCode == 23)
     #expect(error?.description == "[input] --no-input (XLESS_NO_INPUT): xless would ask for the secret store's passphrase (exporting NOTE) — run `xless unlock`")
     #expect(InputGate.refused?.stage == .input) // remembered: the command ends with it
-    #expect(Stage.allCases.filter { $0 != .input }.allSatisfy { $0.exitCode != 21 })
+    #expect(Stage.allCases.filter { $0 != .input }.allSatisfy { $0.exitCode != 23 })
 }
 
 @Test func inputIsNotAStageOfThePipeline() {

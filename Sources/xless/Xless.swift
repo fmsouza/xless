@@ -7,7 +7,7 @@ struct Xless: AsyncParsableCommand {
         abstract: "Build, sign and ship Apple-platform apps from Linux.",
         discussion: """
         Every command takes --no-input (or XLESS_NO_INPUT=1): instead of asking for a passphrase, a sign-in or a \
-        confirmation it fails at once, with exit code 21. `xless auth status --json` says what is held, and until when.
+        confirmation it fails at once, with exit code 23. `xless auth status --json` says what is held, and until when.
         """,
         version: XlessVersion.current,
         subcommands: [ShipCommand.self, PrepareCommand.self, BuildCommand.self, AssetsCommand.self, FinalizeCommand.self, SignCommand.self,

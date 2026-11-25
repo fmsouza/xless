@@ -12,7 +12,7 @@ enum AppleWebHelp {
     static let note = """
     Uses the Apple ID web session, not the App Store Connect API: Apple's own web interface, undocumented, for what the \
     API cannot do. It signs in with your Apple ID, password and two-factor code (or security key) on the terminal, unless \
-    `xless auth login --keep` kept a session; nothing of the session is written to disk.
+    `xless auth login --keep` kept a session; nothing of the session is written to disk in clear.
     """
 
     /// The commands that say so.
@@ -20,7 +20,7 @@ enum AppleWebHelp {
         func walk(_ command: any ParsableCommand.Type, _ path: [String]) -> [String] {
             let c = command.configuration
             let here = path + [c.commandName ?? ""]
-            let below = (c.subcommands + c.groupedSubcommands.flatMap(\.subcommands)).flatMap { walk($0, here) }
+            let below = c.subcommands.flatMap { walk($0, here) } // the groups' too
             return (c.discussion.contains(note) && below.isEmpty ? [here.joined(separator: " ")] : []) + below
         }
         return walk(Xless.self, []).map { String($0.dropFirst("xless ".count)) }

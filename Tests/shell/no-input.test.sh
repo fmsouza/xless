@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `--no-input` (XLESS_NO_INPUT=1) for every command that can ask for something: in a real terminal (a pseudo-terminal), with a
 # locked store and no Apple ID session, each first shows that it does ask (so the case is a real one), and then, with
-# --no-input, fails with exit code 21, the reason and nothing asked. Every command of xless is in one of the two lists
+# --no-input, fails with exit code 23, the reason and nothing asked. Every command of xless is in one of the two lists
 # below: a new one that is in neither fails the test. Nothing reaches Apple: the question comes first.
 #   Tests/shell/no-input.test.sh   (builds xless with `swift build`; XLESS_BIN=<path> uses that binary)
 set -euo pipefail
@@ -188,8 +188,8 @@ def both(command):
 with concurrent.futures.ThreadPoolExecutor(min(8, (os.cpu_count() or 2) * 2)) as pool:
     for command, (rc, out), (off, refused), (variable, _) in pool.map(both, ASKS):
         check(rc is None, f"`xless {command}` asks", (rc, out[-400:]))
-        check(off == 21, f"`xless {command} --no-input` ends with exit code 21", (off, refused[-400:]))
-        check(variable == 21, f"XLESS_NO_INPUT=1 xless {command} ends with exit code 21", variable)
+        check(off == 23, f"`xless {command} --no-input` ends with exit code 23", (off, refused[-400:]))
+        check(variable == 23, f"XLESS_NO_INPUT=1 xless {command} ends with exit code 23", variable)
         check("[input] --no-input (XLESS_NO_INPUT): xless would ask for " in refused, f"`xless {command} --no-input` says why", refused[-400:])
         check(not PROMPTS.search(refused.encode()) and not re.search(r"(?m)(passphrase|Password|Apple ID[^\r\n]*|again): ?$", refused), f"`xless {command} --no-input` asks nothing", refused[-400:])
 

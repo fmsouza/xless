@@ -70,9 +70,9 @@ public struct KeptSessionInfo: Sendable, Equatable {
 
 /// The opt-in Apple ID session cache (`xless auth login --keep`). The cookie jar is sealed (AES-256-GCM) with a random key
 /// made for it; the sealed jar and the key are two items of the xless agent, or two kernel-keyring keys, both dropped at
-/// the end of the hold (never past the session cookie's own expiry). Nothing is written to disk. Reading it back needs
-/// the same terminal session (the agent) or login session (the keyring). A kept session that cannot be opened (expired,
-/// tampered, half gone) is dropped and treated as none.
+/// the end of the hold (never past the session cookie's own expiry). Nothing is written to disk, unless it is saved across reboots too (`SavedSession`: sealed in the secret store).
+/// Reading it back needs the same terminal session (the agent) or login session (the keyring). A kept session that cannot
+/// be opened (expired, tampered, half gone) is dropped and treated as none.
 public struct AppleSessionCache: Sendable {
     /// What every item of a kept session starts with.
     public static let prefix = "xless-apple-session"

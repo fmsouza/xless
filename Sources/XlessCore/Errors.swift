@@ -18,7 +18,7 @@ public enum Stage: String, Sendable, CaseIterable, Comparable {
         case .upload: 17
         case .ib: 18
         case .account: 20
-        case .input: 21
+        case .input: 23
         }
     }
 

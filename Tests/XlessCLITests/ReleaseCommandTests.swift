@@ -218,3 +218,9 @@ private let waiting = #"{"type":"reviewSubmissions","id":"S1","attributes":{"sta
     await #expect(throws: XlessError.self) { _ = try await cli(t).phased(.pause, wanted) }
     #expect(t.writes.count == 1)
 }
+
+@Test func everyExitCodeMeansOneThing() {
+    // release submit has codes of its own (docs/apple-account.md); --no-input's must not be one of them
+    let codes = Stage.allCases.map(\.exitCode) + [ReleaseExit.preflightFailed, ReleaseExit.alreadyInReview, 0, 1, 2, 64, 130]
+    #expect(Set(codes).count == codes.count)
+}
