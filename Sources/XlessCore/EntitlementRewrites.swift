@@ -180,8 +180,12 @@ public struct IdentifierReplacement: Sendable, Equatable {
                 if changed.isEmpty { continue }
             }
             do {
-                // (a new file: what else the old one is, is not written)
-                try PropertyListSerialization.data(fromPropertyList: rewritten, format: format, options: 0).write(to: url, options: .atomic)
+                let new = try PropertyListSerialization.data(fromPropertyList: rewritten, format: format, options: 0)
+                // (a new file: what else the old one is, is not written. Not `.atomic`: on Windows that writes into the old file.)
+                let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions]
+                try FileManager.default.removeItem(at: url)
+                try new.write(to: url, options: .withoutOverwriting)
+                if let mode { try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path) }
             } catch {
                 throw XlessError(stage, "cannot write \(rel) in \(app.lastPathComponent): \(error)", fix: "check disk space and permissions")
             }

@@ -134,6 +134,15 @@ private func appTree() throws -> URL {
     #expect(try Data(contentsOf: app.appendingPathComponent("Info.plist")) != before)
 }
 
+#if !os(Windows)
+@Test(arguments: [0o644, 0o664, 0o755]) func aRewrittenInfoPlistKeepsItsMode(mode: Int) throws {
+    let app = try appTree(), plist = app.appendingPathComponent("Info.plist").path
+    try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: plist)
+    #expect(try map.rewriteInfoPlists(in: app, stage: .finalize).contains("Info.plist: SharedContainerGroup"))
+    #expect(try FileManager.default.attributesOfItem(atPath: plist)[.posixPermissions] as? Int == mode)
+}
+#endif
+
 @Test func aReplacementThatWouldChangeABundleIDIsRefused() throws {
     let app = try appTree()
     let e = #expect(throws: XlessError.self) { try IdentifierReplacement(["com.example.app": "com.x.y"]).rewriteInfoPlists(in: app, stage: .finalize) }
