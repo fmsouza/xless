@@ -74,4 +74,22 @@ n=xless-1.4.0-macos-arm64; mkdir -p "$t/x"; tar -xzf "$t/good/$n.tar.gz" -C "$t/
 COPYFILE_DISABLE=1 tar -czf "$t/good/$n.tar.gz" -C "$t/x" "$n"
 out=$(bash "$repo/scripts/release-assets.sh" 1.4.0 "$t/good" 2>&1) && fail "release-assets took a package with more in it"
 grep -q "libswift.dylib" <<<"$out" || fail "wrong message: $out"
+
+# The workflow: nothing is published unless every build and every install of it succeeded, and what pr.yml builds and installs is
+# what release.yml does: the same action, with the same inputs but the version, on the same runners.
+wf="$repo/.github/workflows"
+job() { awk -v j="  $2:" '$0 == j { on = 1; next } on && /^  [a-z]/ { exit } on { print }' "$wf/$1"; }
+grep -qx '    needs: \[plan, build, build-macos, verify\]' <<<"$(job release.yml publish)" || fail "publish does not need every job"
+grep -qx '    needs: \[plan, build, build-macos\]' <<<"$(job release.yml verify)" || fail "verify does not need every build"
+for j in build build-macos verify publish; do
+  [[ "$(job release.yml $j | grep -c "^    if: needs.plan.outputs.version != ''$")" == 1 ]] || fail "$j runs without a version, or after a failure"
+  grep -qE 'continue-on-error|always\(\)|!cancelled|failure\(\)' <<<"$(job release.yml $j)" && fail "$j goes on after a failure"
+done
+runner() { job "$1" "$2" | sed -n 's/^    runs-on: \([^ ]*\).*/\1/p'; }
+[[ -n "$(runner pr.yml package-macos)" && "$(runner pr.yml package-macos)" == "$(runner release.yml build-macos)" ]] || fail "macOS is built on other runners in pr.yml"
+inputs() { job "$1" "$2" | awk '/uses: .\/.github\/actions\/build-package/ { on = 1 } on && /^ +(os|arch|triple): / { print } on && /^      - / { exit }'; }
+diff <(inputs pr.yml package-macos) <(inputs release.yml build-macos) && diff <(inputs pr.yml package) <(inputs release.yml build) || fail "other inputs in pr.yml"
+for r in macos-15 macos-15-intel; do
+  grep -q "runner: $r }" <<<"$(job pr.yml install-macos)" && grep -q "runner: $r }" <<<"$(job release.yml verify)" || fail "$r installs not in both"
+done
 echo "verify-release.test.sh: ok"

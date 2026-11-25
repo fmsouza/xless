@@ -1,0 +1,5 @@
+# A GitHub-hosted runner that actionlint does not know yet (macOS 27 with Xcode 27):
+# https://github.blog/changelog/2026-10-16-xcode-27-runner-image-generally-available/
+self-hosted-runner:
+  labels:
+    - xcode-27
