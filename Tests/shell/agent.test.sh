@@ -142,7 +142,7 @@ for _ in range(600):
 ''')
 os.chmod(probe, 0o755)
 with open(t + "/bin/docker", "w") as f:   # a tool xless runs (`xless clean` lists the images with it)
-    f.write(f"#!/bin/sh\n[ -e {t}/probe-tool.done ] || {probe} tool >/dev/null 2>&1\nexit 0\n")
+    f.write(f"#!/bin/sh\nif [ -t 0 ]; then echo terminal; else echo none; fi > {t}/tool-stdin\n[ -e {t}/probe-tool.done ] || {probe} tool >/dev/null 2>&1\nexit 0\n")
 os.chmod(t + "/bin/docker", 0o755)
 with open(t + "/note", "w") as f:
     f.write(VALUE)
@@ -200,6 +200,7 @@ else:
 # ---- build code --------------------------------------------------------------------------------------------------------
 rc, shown, n = a.run("PATH=$T/bin:$PATH LEADER=$$ $X clean")
 log = [json.loads(l) for l in open(t + "/probe-tool.log")]
+check(open(t + "/tool-stdin").read() == "none\n", "a tool xless runs does not have the terminal's input (what you type)", open(t + "/tool-stdin").read())
 check({l["name"] for l in log} == {"child", "setsid", "group", "orphan"}, "a tool xless runs tried everything", log)
 for l in log:
     check(l["rc"] != 0 and not l["stolen"] and l["store"] != "unlocked", f"a tool xless runs is refused: {l['name']}", l)

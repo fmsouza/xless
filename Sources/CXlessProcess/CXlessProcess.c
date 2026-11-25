@@ -309,7 +309,9 @@ int xless_spawn_session(const char *path, char *const argv[], char *const envp[]
     if (!e) e = posix_spawnattr_setsigdefault(&attr, &all);
     if (!e) e = posix_spawnattr_setsigmask(&attr, &none);
     // Descriptors this process does not have open stay closed in the child.
-    if (!e && fcntl(0, F_GETFD) >= 0) e = posix_spawn_file_actions_addinherit_np(&actions, 0);
+    // A terminal's input is not the child's (it has no terminal, so nothing would stop it from reading what is typed).
+    if (!e && isatty(0)) e = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+    else if (!e && fcntl(0, F_GETFD) >= 0) e = posix_spawn_file_actions_addinherit_np(&actions, 0);
     if (!e && (out_fd >= 0 || fcntl(1, F_GETFD) >= 0)) e = posix_spawn_file_actions_adddup2(&actions, out_fd >= 0 ? out_fd : 1, 1);
     if (!e && (err_fd >= 0 || fcntl(2, F_GETFD) >= 0)) e = posix_spawn_file_actions_adddup2(&actions, err_fd >= 0 ? err_fd : 2, 2);
     if (!e && cwd != NULL) e = posix_spawn_file_actions_addchdir_np(&actions, cwd);
@@ -344,6 +346,12 @@ int xless_spawn_session(const char *path, char *const argv[], char *const envp[]
         int out = out_fd < 0 ? -1 : fcntl(out_fd, F_DUPFD_CLOEXEC, 3);
         int err = err_fd < 0 ? -1 : fcntl(err_fd, F_DUPFD_CLOEXEC, 3);
         if ((out_fd >= 0 && (out < 0 || dup2(out, 1) < 0)) || (err_fd >= 0 && (err < 0 || dup2(err, 2) < 0))) { e = errno; goto failed; }
+        // A terminal's input is not the child's (it has no terminal, so nothing would stop it from reading what is typed).
+        struct termios unused;
+        if (tcgetattr(0, &unused) == 0) {
+            int null = open("/dev/null", O_RDONLY);
+            if (null < 0 || dup2(null, 0) < 0) { e = errno; goto failed; }
+        }
         if (cwd != NULL && chdir(cwd) != 0) { e = errno; goto failed; }
         close_from_3(report);
         execve(path, argv, envp);

@@ -295,7 +295,7 @@ stopped after 20 seconds. `xless auth status --json` says beforehand what is hel
   (`$TMPDIR`, else `/tmp`), removed when the call ends: point `TMPDIR` at a tmpfs if that directory is on a disk you
   worry about.
 - **Tools start in a POSIX session of their own and an empty session keyring** (see
-  [below](#the-build-and-your-secrets)), without a file of xless's open, and xless makes itself non-dumpable before it
+  [below](#the-build-and-your-secrets)), without a file of xless's open and without the terminal as their input, and xless makes itself non-dumpable before it
   starts one, so the tool cannot attach to xless or read its memory or environment (Linux; on macOS the system's own
   rules on attaching to a process apply).
 - **`--verbose` traces are redacted** so you can paste them into an issue: the `Authorization` header, cookies, any

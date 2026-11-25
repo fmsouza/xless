@@ -70,7 +70,7 @@ int xless_reap(int pid, int nohang, int *code);
 
 /// Starts `path` with `argv` and `envp` (NULL-terminated) in a new POSIX session (setsid: its pid is its session and
 /// process group, and it has no controlling terminal), with every signal at its default disposition and none blocked.
-/// Its stdin is this process's; stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor
+/// Its stdin is this process's, or /dev/null when that is a terminal; stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor
 /// is closed in it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
 /// On Linux the child gets the calling thread's credentials (its session keyring).
 int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);

@@ -7,7 +7,8 @@ import Foundation
 ///
 /// - **A POSIX session of its own** (setsid), with no controlling terminal. A process can only leave its session for a
 ///   new one, so neither the tool nor anything it starts is ever again in the terminal's session, the one the xless
-///   agent serves (`XlessAgent`): it cannot get a held unlock or Apple ID session, even by running xless.
+///   agent serves (`XlessAgent`): it cannot get a held unlock or Apple ID session, even by running xless. Its standard
+///   input is never a terminal: without one of its own, nothing would stop it from reading what is typed there.
 /// - **An empty session keyring.** The child starts in a fresh, empty session keyring, so a remembered store unlock or a
 ///   kept Apple ID session (possessor-only keys in the user's session keyring) and the agent's access token are out of
 ///   its reach and its descendants'. xless itself keeps the user's keyring: a later stage still finds a remembered unlock.
