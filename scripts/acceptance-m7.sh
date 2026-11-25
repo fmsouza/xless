@@ -232,11 +232,14 @@ render() {
 
 # ---- people ---------------------------------------------------------------------------------------------------------
 tty_ok() { [[ -r /dev/tty && -w /dev/tty ]] && { : < /dev/tty; } 2>/dev/null; }
+# What was typed before a question is shown is no answer to it.
+fresh_tty() { python3 -I -c 'import termios; termios.tcflush(0, termios.TCIFLUSH)' < /dev/tty 2>/dev/null || true; }
 # Waits for a person: Enter goes on, "no" (or n) records that it did not happen. Returns 1 for no.
 pause() {   # MESSAGE
   local answer
   if [[ "$HUMAN" == auto ]]; then note "(human step answered by the test harness: $1)"; return 0; fi
   tty_ok || die "a person is needed here and there is no terminal: $1"
+  fresh_tty
   printf '\n*** %s\n*** Press Enter when done, or type no: ' "$1" > /dev/tty
   IFS= read -r answer < /dev/tty || answer=no
   case "$answer" in n|N|no|NO|No) note "Person: \"$1\" — answered no."; return 1 ;; esac
@@ -246,6 +249,7 @@ ask_yes() {   # QUESTION: yes → 0
   local answer
   if [[ "$HUMAN" == auto ]]; then note "(question answered no by the test harness: $1)"; return 1; fi
   tty_ok || die "a person is needed here and there is no terminal: $1"
+  fresh_tty
   printf '\n*** %s [y/N] ' "$1" > /dev/tty
   IFS= read -r answer < /dev/tty || answer=n
   case "$answer" in y|Y|yes|YES|Yes) note "Person: \"$1\" — yes."; return 0 ;; esac

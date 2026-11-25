@@ -276,4 +276,30 @@ kit retry
 [[ $code == 0 ]] || fail "after the fix: exit $code: $(tail -5 "$t/retry/err")"
 [[ $(calls retry '^release submit .* --release manual$') == 2 ]] || fail "not resubmitted after the rejection"
 
+# 8. What a person typed before a question was shown does not answer it.
+{ echo 'HUMAN=ask; note() { echo "NOTE $*"; }; die() { echo "$*"; exit 1; }'
+  sed -n '/^# ---- people/,/^# ---- helpers/p' "$repo/scripts/acceptance-m7.sh"
+  echo 'echo READY; sleep 1; ask_yes "Submit it?" || true; ask_yes "Sure?" || true'; } > "$t/people.sh"
+python3 -I - "$t/people.sh" <<'PY' || fail "typed-ahead input answered a question"
+import os, pty, re, sys
+pid, fd = pty.fork()
+if pid == 0: os.execv("/bin/bash", ["bash", sys.argv[1]])
+seen = b""
+def until(text):
+    global seen
+    while not re.search(text, seen):
+        try: chunk = os.read(fd, 4096)
+        except OSError: chunk = b""
+        if not chunk: sys.exit(f"no {text!r} in {seen!r}")
+        seen += chunk
+until(b"READY")
+os.write(fd, b"y\n")
+until(rb"Submit it\? \[y/N\] ")
+os.write(fd, b"\n")
+until(rb"Sure\? \[y/N\] ")
+os.write(fd, b"yes\n") # (one that is answered is heard)
+until(rb'"Sure\?" [^\n]*yes')
+sys.exit(b'"Submit it?" \xe2\x80\x94 no.' not in seen)
+PY
+
 echo "acceptance-m7: ok"

@@ -98,6 +98,16 @@ class Terminal:
         rc, rest = self.done()
         return rc, shown + rest, len(re.findall(PROMPT, (shown + rest).encode()))
 
+    def run_ahead(self, command, ahead, *answers):
+        """`run` with the passphrase, then `ahead` typed while the store is opened, before what is asked next is shown."""
+        self.type(command)
+        shown = self.answer(PASS)
+        shown += self.until(rb"\n") # the passphrase was read, and what was typed until then thrown away
+        os.write(self.fd, ahead.encode())
+        shown += "".join(self.answer(a) for a in answers)
+        rc, rest = self.done()
+        return rc, shown + rest
+
     def close(self):
         os.close(self.fd)
         os.kill(self.pid, signal.SIGHUP)
@@ -166,6 +176,7 @@ EXPORT = "$X secrets export NOTE --out $T/out.$RANDOM"
 rc, shown, n = a.run(EXPORT, PASS)
 check(rc == 0 and len(asked(shown)) == 1 and not agents(), "keep: never: the passphrase, and no question", shown)
 config("")
+write(t + "/never/xless/config.yml", "unlock: { keep: never }\n")
 rc, shown, n = a.run(EXPORT, PASS, "")
 check(rc == 0 and len(asked(shown)) == 2 and "Keep both for this terminal? [y/N] " in shown, "by default it offers, once, to keep what was typed", shown)
 check("xless secrets export opens the secret store (" in shown and "asked once for this command, and forgotten when it ends unless you keep it" in shown and "8 h (2 h without use)" in shown,
@@ -174,6 +185,12 @@ check(not agents() and "Nothing is kept" in shown, "Enter keeps nothing", (shown
 for answer in ("n", "Y e s", "maybe"):
     rc, shown, n = a.run(EXPORT, PASS, answer)
     check(rc == 0 and not agents(), f"only yes keeps ({answer!r})", shown)
+for ahead in ("y\n", "y"):
+    rc, shown = a.run_ahead(EXPORT, ahead, "")
+    check(rc == 0 and not agents() and "Nothing is kept" in shown, f"what is typed before the question is shown does not answer it ({ahead!r})", shown)
+write(t + "/ahead", VALUE)
+rc, shown = a.run_ahead("XDG_CONFIG_HOME=$T/never $X secrets import AHEAD --file $T/ahead", "y\n", "")
+check(rc == 0 and "Delete" in shown and os.path.exists(t + "/ahead"), "nor a question whose yes deletes something", shown)
 rc, shown, n = a.run("CI=1 " + EXPORT, PASS)
 check(rc == 0 and len(asked(shown)) == 1 and not agents(), "in CI it is not offered", shown)
 rc, shown, n = a.run("XLESS_NO_INPUT=1 " + EXPORT)
