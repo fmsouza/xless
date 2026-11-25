@@ -35,3 +35,8 @@ private func staleStageDir() throws -> URL {
     #expect(!FileManager.default.fileExists(atPath: dir.path))
     #expect(!FileManager.default.fileExists(atPath: dir.path + ".partial"))
 }
+
+@Test func temporaryFilesGoWhereTMPDIRSays() throws {
+    let path = ProcessInfo.processInfo.environment["TMPDIR"] ?? FileManager.default.temporaryDirectory.path
+    #expect(Files.temporary.standardizedFileURL.path == URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL.path)
+}

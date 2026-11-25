@@ -71,6 +71,9 @@ struct NativeOverlay {
                 guard !BuildPlaces.isBroad(BuildSandbox.real(path), home: home), !BuildPlaces.isBroad(BuildSandbox.real(path), home: BuildSandbox.userHome ?? home) else {
                     throw XlessError(.config, "\(what) is \(path), which would open a home directory to the app's build code", fix: "keep the overlay in its own directory and point source: at the app's checkout")
                 }
+                if let write = writes.first(where: { BuildSandbox.isBelow(BuildSandbox.real(path), BuildSandbox.real($0.path)) }) {
+                    throw XlessError(.config, "\(what) is \(path), in \(write.path), which the app's build code writes", fix: "keep the overlay and the app's checkout out of xless's own directories")
+                }
                 reads.append(path)
             }
         }
@@ -141,7 +144,8 @@ struct NativeOverlay {
         try makeDirectories()
         let (variables, reads) = try environment(buildNumber: buildNumber)
         let command = try sandbox(executable: executable, reads: reads).command(executable.path, words)
-        Self.say("\(xcode.summary)\nxless: the app's build code runs in a sandbox: it reads \(checkout.first ?? source.path) and \(overlay.deletingLastPathComponent().path), writes \(work.path) and \(buildHome.path), and nothing else of yours (docs/security.md)")
+        Self.say(xcode.summary)
+        Self.say("the app's build code runs in a sandbox: of your files it reads \(checkout.first ?? source.path), \(overlay.deletingLastPathComponent().path) and the tools on PATH, and writes \(work.path) and \(buildHome.path) (docs/security.md, \"An overlay's build on a Mac\")")
         let out = try OutputRelay(to: output), err = try OutputRelay(to: FileHandle.standardError)
         let status: Int32
         do {
