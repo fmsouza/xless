@@ -163,6 +163,22 @@ private final class Looking: @unchecked Sendable {
         #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
     }
 
+    /// However many there are (an app with many extensions has an entitlements file for each).
+    @Test func aSignalRemovesAllOfManyFiles() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: parent) }
+        await #expect(processExitsWith: .signal(SIGTERM)) { [parent = parent as String] in
+            Foundation.signal(SIGTERM, SIG_DFL)
+            try PrivateFiles.with(stage: .sign, in: URL(fileURLWithPath: parent)) { files in
+                for i in 0..<200 { _ = try files.write(plist: [:], as: "ent-\(i).plist") }
+                _ = try files.make("key.json")
+                kill(getpid(), SIGTERM)
+                sleep(20)
+            }
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: parent).isEmpty)
+    }
+
     /// What is done with is forgotten: a file of the same name that is not xless's own stays.
     @Test func onlyWhatIsThereAtTheTimeIsRemoved() async throws {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent("xless-private-\(UUID().uuidString)").path

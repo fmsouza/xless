@@ -177,6 +177,27 @@ private func stapleTicket(_ app: URL) throws { try Data("ticket".utf8).write(to:
     #expect(!FileManager.default.fileExists(atPath: (p8 as NSString).deletingLastPathComponent))
 }
 
+/// The submission takes minutes, with the key in a file that rcodesign reads: it goes, however it was written, when a signal
+/// ends xless meanwhile.
+@Test func aSignalDuringTheSubmissionRemovesTheKeyThatRcodesignReads() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"); defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let note = root.appendingPathComponent("directory").path
+    await #expect(processExitsWith: .signal(SIGTERM)) { [note = note as String] in
+        signal(SIGTERM, SIG_DFL)
+        try Notary.notarize(URL(fileURLWithPath: "/x.dmg"), secrets: Secrets(env: ["ASC_KEY_ID": "KEYID", "ASC_ISSUER_ID": "issuer", "ASC_KEY_P8": "very-secret"]), encodeKey: { args in
+            try Data("the whole key".utf8).write(to: URL(fileURLWithPath: args[2]), options: .atomic)
+            try Data((args[2] as NSString).deletingLastPathComponent.utf8).write(to: URL(fileURLWithPath: note))
+        }, run: { _ in
+            kill(getpid(), SIGTERM)
+            sleep(20)
+            return Notary.Run(log: "", failure: nil)
+        })
+    }
+    let directory = try String(contentsOfFile: note, encoding: .utf8)
+    #expect(!FileManager.default.fileExists(atPath: directory))
+}
+
 @Test func aRejectedZipIsReportedAsTheDMGIs() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"); defer { try? FileManager.default.removeItem(at: root) }
     let exit1 = XlessError(.package, "`rcodesign notary-submit` exited with 1", fix: "see the tool output above")
