@@ -41,6 +41,7 @@ class Terminal:
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.execve("/bin/bash", ["bash", "--noprofile", "--norc", "--noediting"], {**env, "PS1": "", "PS2": ""})
+        os.set_inheritable(self.fd, False) # the next terminal's shell would keep this one open
         self.seen = b""
         os.write(self.fd, b"stty -echo; PS1=; PS2=; echo READY$((1))\n")
         self.until(b"READY1")

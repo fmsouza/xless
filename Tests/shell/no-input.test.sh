@@ -51,6 +51,7 @@ def on_a_terminal(argv, answers=(), environment=env, seconds=60):
         os.chdir(t)
         # A terminal's command, not its leader.
         os.execve("/bin/sh", ["sh", "-c", '"$@"; exit $?', "sh", *argv], environment)
+    os.set_inheritable(fd, False)
     seen, at, answers, end = b"", 0, list(answers), time.time() + seconds
     while True:
         ready, _, _ = select.select([fd], [], [], 0.3)
@@ -66,10 +67,10 @@ def on_a_terminal(argv, answers=(), environment=env, seconds=60):
                 at = len(seen)
                 os.write(fd, (answers.pop(0) + "\n").encode())
                 continue
-            os.kill(pid, signal.SIGKILL); os.waitpid(pid, 0); os.close(fd)
+            os.kill(pid, signal.SIGKILL); os.close(fd); os.waitpid(pid, 0)
             return None, seen.decode(errors="replace")
         if time.time() > end:
-            os.kill(pid, signal.SIGKILL); os.waitpid(pid, 0); os.close(fd)
+            os.kill(pid, signal.SIGKILL); os.close(fd); os.waitpid(pid, 0)
             return "timeout", seen.decode(errors="replace")
     _, status = os.waitpid(pid, 0)
     os.close(fd)
@@ -78,7 +79,9 @@ def on_a_terminal(argv, answers=(), environment=env, seconds=60):
 # ---- a store with an App Store Connect key and signing keys, locked -----------------------------------------------------
 def write(path, text):
     with open(path, "w") as f: f.write(text)
-subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", t + "/ec.pem"], check=True, capture_output=True)
+while True: # macOS's LibreSSL writes a key that begins with a zero byte (1 of 256) too short: another one then
+    subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", t + "/ec.pem"], check=True, capture_output=True)
+    if len(subprocess.run(["openssl", "ec", "-in", t + "/ec.pem", "-outform", "DER"], check=True, capture_output=True).stdout) == 121: break
 subprocess.run(["openssl", "pkcs8", "-topk8", "-nocrypt", "-in", t + "/ec.pem", "-out", t + "/AuthKey_ABCDE12345.p8"], check=True, capture_output=True)
 subprocess.run(["openssl", "genrsa", "-out", t + "/rsa.pem", "2048"], check=True, capture_output=True)
 os.link(t + "/AuthKey_ABCDE12345.p8", t + "/AuthKey_FGHIJ67890.p8")

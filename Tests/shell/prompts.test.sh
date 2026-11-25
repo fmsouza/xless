@@ -52,6 +52,7 @@ class Terminal:
         if self.pid == 0:
             if argv: os.execve(argv[0], argv, env)
             os.execve("/bin/bash", ["bash", "--noprofile", "--norc", "--noediting", "-i"], {**env, "PS1": "", "PS2": ""})
+        os.set_inheritable(self.fd, False) # the next terminal's shell would keep this one open
         self.seen = b""
         if argv is None:
             os.write(self.fd, b"stty -echo; PS1=; PS2=; echo READY$((1))\n")
@@ -151,7 +152,9 @@ def config(text): write(t + "/config/xless/config.yml", text)
 
 # ---- a store with an App Store Connect key, a signing key and a secret, locked ------------------------------------------
 write(t + "/note", VALUE)
-subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", t + "/ec.pem"], check=True, capture_output=True)
+while True: # macOS's LibreSSL writes a key that begins with a zero byte (1 of 256) too short: another one then
+    subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", t + "/ec.pem"], check=True, capture_output=True)
+    if len(subprocess.run(["openssl", "ec", "-in", t + "/ec.pem", "-outform", "DER"], check=True, capture_output=True).stdout) == 121: break
 subprocess.run(["openssl", "pkcs8", "-topk8", "-nocrypt", "-in", t + "/ec.pem", "-out", t + "/AuthKey_ABCDE12345.p8"], check=True, capture_output=True)
 subprocess.run(["openssl", "genrsa", "-out", t + "/rsa.pem", "2048"], check=True, capture_output=True)
 write(t + "/app/xless.yml", "bundleID: com.example.app\nteamID: ABCDE12345\nversion: 1.0.0\nbuild: 1\nplatforms:\n  ios: { minimumOS: '17.0', product: App }\n")

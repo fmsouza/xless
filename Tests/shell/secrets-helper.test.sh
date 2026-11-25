@@ -73,7 +73,8 @@ run lock; ok lock; says lock "nothing to do"
 run passwd; refused passwd "is for the encrypted vault"
 
 # a testflight.env: data, whose secrets go into the store (one that is there already stays), and which is not changed
-openssl ecparam -name prime256v1 -genkey -noout -out "$t/ec.pem" 2>/dev/null
+# macOS's LibreSSL writes a key that begins with a zero byte (1 of 256) too short: another one then.
+until openssl ecparam -name prime256v1 -genkey -noout -out "$t/ec.pem" 2>/dev/null && [[ "$(openssl ec -in "$t/ec.pem" -outform DER 2>/dev/null | wc -c)" -eq 121 ]]; do :; done
 openssl pkcs8 -topk8 -nocrypt -in "$t/ec.pem" -out "$t/asc.p8" 2>/dev/null
 openssl genrsa -out "$t/devid.pem" 2048 2>/dev/null
 printf '# keys\nASC_KEY_ID=KEY1234567\nASC_ISSUER_ID=69a6de7e-1234-47e3-e053-5b8c7c11a4d1\nASC_KEY_P8_FILE=%s/asc.p8  # the key\nexport XLESS_DEVID_KEY_FILE="$HOME/../devid.pem"\nXLESS_DEMO_PASSWORD_FILE=%s/password\nXLESS_IMAGE=img\n' "$t" "$t" > "$t/testflight.env"
