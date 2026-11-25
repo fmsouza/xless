@@ -297,18 +297,22 @@ final class AgentLink {
     }
 
     func status() throws -> AgentStatus? {
-        try request(.status).body { r in
-            let granted = try r.bool(), count = Int(try r.uint32()), remaining = try r.int(), sessions = Int(try r.uint32())
-            let lease = try r.bool() ? AgentLeaseStatus(command: Self.printable(try r.string(max: AgentLimits.labelBytes)), remaining: try r.int()) : nil
-            let named = Int(try r.uint32())
-            guard named <= AgentLimits.items else { throw AgentError.malformed("\(named) items") }
-            let items = try (0..<named).map { _ in
-                AgentItemStatus(name: try r.string(max: AgentLimits.nameBytes), label: try r.string(max: AgentLimits.labelBytes),
-                                remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int(), typedAgo: try r.int())
-            }
-            return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items,
-                               isSameSession: isSameSession, lease: lease)
+        try request(.status).body { try Self.status(&$0, isSameSession: isSameSession) }
+    }
+
+    /// Its times are no longer than an agent's can be, whatever it says: who speaks may be no agent.
+    static func status(_ r: inout WireReader, isSameSession: Bool) throws -> AgentStatus {
+        func seconds(_ r: inout WireReader) throws -> Int { max(0, min(try r.int(), AgentLimits.seconds)) }
+        let granted = try r.bool(), count = Int(try r.uint32()), remaining = try seconds(&r), sessions = Int(try r.uint32())
+        let lease = try r.bool() ? AgentLeaseStatus(command: Self.printable(try r.string(max: AgentLimits.labelBytes)), remaining: try seconds(&r)) : nil
+        let named = Int(try r.uint32())
+        guard named <= AgentLimits.items else { throw AgentError.malformed("\(named) items") }
+        let items = try (0..<named).map { _ in
+            AgentItemStatus(name: try r.string(max: AgentLimits.nameBytes), label: try r.string(max: AgentLimits.labelBytes),
+                            remaining: try seconds(&r), idle: try seconds(&r), idleRemaining: try seconds(&r), typedAgo: try seconds(&r))
         }
+        return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items,
+                           isSameSession: isSameSession, lease: lease)
     }
 
     /// Asks the agent, of whatever version, to drop everything and end; waits for nothing.

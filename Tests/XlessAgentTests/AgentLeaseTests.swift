@@ -87,6 +87,24 @@ private func client(_ directory: AgentDirectory, session: String? = nil, starts:
     _ = (other, empty, usual)
 }
 
+@Test func whatListensInAnAgentsPlaceCannotClaimTimesNobodyCanShow() throws {
+    for wild in [Int.max, Int.min, -1] {
+        var w = WireWriter()
+        w.put(true); w.put(UInt32(1)); w.put(wild); w.put(UInt32(1))
+        w.put(true); w.put("xless run"); w.put(wild)
+        w.put(UInt32(1))
+        w.put("xless-vault:1"); w.put(""); w.put(wild); w.put(wild); w.put(wild); w.put(wild)
+        let status = try w.frame(code: .ok).withUnsafeBytes { bytes in
+            var r = WireReader(UnsafeRawBufferPointer(rebasing: bytes[AgentFrame.headerSize...]))
+            return try AgentLink.status(&r, isSameSession: false)
+        }
+        let item = try #require(status.items.first)
+        for n in [status.remaining, try #require(status.lease).remaining, item.remaining, item.idle, item.idleRemaining, item.typedAgo] {
+            #expect((0...AgentLimits.seconds).contains(n))
+        }
+    }
+}
+
 @Test func lockEndsALeasedAgentToo() throws {
     let (agent, holder) = try lease()
     defer { close(holder) }
