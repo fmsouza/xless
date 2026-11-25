@@ -64,7 +64,7 @@ public protocol SecretStore: AnyObject, Sendable {
     /// Gets ready to read and write values without asking again later: the vault asks its passphrase now (once per
     /// process; `remember` seconds also keeps it in the kernel keyring). Call before anything that cannot be undone
     /// (creating a key at Apple), so a key is never made that the store then cannot take. A helper needs nothing.
-    func unlock(_ catalog: SecretCatalog, remember: Int?, reason: String) throws
+    func unlock(_ catalog: SecretCatalog, remember: SecretHold?, reason: String) throws
     /// The value of `entry` (one of `catalog`'s), unlocking first when needed.
     func secret(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws -> SecretBytes
     /// Makes sure `entry`'s metadata is what was stored before it is used on its own (the API key's IDs). The vault

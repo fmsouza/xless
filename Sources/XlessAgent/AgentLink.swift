@@ -13,6 +13,14 @@ public struct AgentStatus: Sendable, Equatable {
     /// How many terminal sessions it serves.
     public let sessions: Int
     public let items: [AgentItemStatus]
+
+    public init(isGranted: Bool, count: Int, remaining: Int, sessions: Int, items: [AgentItemStatus]) {
+        self.isGranted = isGranted
+        self.count = count
+        self.remaining = remaining
+        self.sessions = sessions
+        self.items = items
+    }
 }
 
 public struct AgentHeld: Sendable {
@@ -138,12 +146,13 @@ final class AgentLink {
     // MARK: requests
 
     /// What is held as `name`, nil when nothing is. Throws `refused` when the agent does not serve this session.
-    func get(_ name: String) throws -> AgentHeld? { try fetch(name, nonce: AgentProof.nonce())?.held }
+    func get(_ name: String, using: Bool = true) throws -> AgentHeld? { try fetch(name, nonce: AgentProof.nonce(), using: using)?.held }
 
-    private func fetch(_ name: String, nonce: [UInt8]) throws -> (held: AgentHeld, proof: [UInt8])? {
+    private func fetch(_ name: String, nonce: [UInt8], using: Bool) throws -> (held: AgentHeld, proof: [UInt8])? {
         try request(.get) {
             $0.put(name)
             $0.put(bytes: nonce)
+            $0.put(using)
         }.body { r in
             guard try r.bool() else { return nil }
             let secret = try r.secret(max: AgentLimits.itemBytes)
@@ -155,7 +164,7 @@ final class AgentLink {
     /// Whether the agent holds `key` as `item`; if so this connection is trusted.
     @discardableResult func prove(has item: String, key: SymmetricKey) throws -> Bool {
         let nonce = AgentProof.nonce()
-        guard let (held, proof) = try fetch(item, nonce: nonce) else { return false }
+        guard let (held, proof) = try fetch(item, nonce: nonce, using: false) else { return false }
         held.secret.wipe()
         guard AgentProof.equal(proof, AgentProof.holds(item, key: key, nonce: nonce, agent: id)) else { return false }
         hasProved = true
@@ -163,7 +172,7 @@ final class AgentLink {
     }
 
     /// Holds `secret`. Only a trusted agent is sent one.
-    func put(_ name: String, label: String, _ secret: SecretBytes, hold: AgentHold, typed: Bool) throws {
+    func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typed: Bool) throws {
         guard isTrusted else { throw AgentError(.refused, "the xless agent is not one this command can trust", fix: "run `xless lock`, then `xless unlock`") }
         try request(.put) {
             $0.put(name); $0.put(label)
@@ -173,19 +182,16 @@ final class AgentLink {
         }.body { _ in }
     }
 
-    @discardableResult func drop(prefix: String) throws -> Int {
-        Int(try request(.drop) { $0.put(prefix) }.body { try $0.uint32() })
+    @discardableResult func drop(prefix: String, label: String = "") throws -> Int {
+        Int(try request(.drop) { $0.put(prefix); $0.put(label) }.body { try $0.uint32() })
     }
 
-    /// Has this session granted by proving that the command has the key held as `item`, which is then held for
-    /// `hold` (nil: as it was); whether it was.
-    func join(_ item: String, key: SymmetricKey, hold: AgentHold?) throws -> Bool {
-        let hold = hold ?? AgentHold(seconds: 0, idle: 0, maximum: 0)
+    /// Has this session granted by proving that the command has the key held as `item`; whether it was.
+    func join(_ item: String, key: SymmetricKey) throws -> Bool {
         do {
             try request(.join) {
                 $0.put(item)
-                $0.put(hold.seconds); $0.put(hold.idle); $0.put(hold.maximum)
-                $0.put(bytes: AgentProof.join(item, key: key, session: .current, hold: hold, nonce: nonce, agent: id))
+                $0.put(bytes: AgentProof.join(item, key: key, session: .current, nonce: nonce, agent: id))
             }.body { _ in }
             isGranted = true
             return true

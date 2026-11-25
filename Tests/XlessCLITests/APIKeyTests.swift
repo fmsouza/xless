@@ -352,10 +352,10 @@ func aFailedDownloadSaysTheKeyExistsAndShouldBeRevoked(error: APIKeyDownloadErro
 
 @Test func statusShowsTheRoleXlessRecorded() {
     let key = AuthStatusReport.StoreKey(name: "ASC_KEY_P8@\(team)", teamID: team, hasKeyID: true, hasIssuerID: true, role: "ADMIN,FINANCE")
-    let r = AuthStatusReport.build(env: [:], storeKey: .success(key), teamFlag: nil, savedTeam: nil, keyringAvailable: true, session: nil, now: Date())
+    let r = AuthStatusReport.build(env: [:], storeKey: .success(key), teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, now: Date())
     #expect(r.keyRole == "ADMIN,FINANCE")
     #expect(r.text.contains("key's role     ADMIN, FINANCE"))
-    let env = AuthStatusReport.build(env: ["ASC_KEY_P8": "x"], storeKey: .success(key), teamFlag: nil, savedTeam: nil, keyringAvailable: true,
+    let env = AuthStatusReport.build(env: ["ASC_KEY_P8": "x"], storeKey: .success(key), teamFlag: nil, savedTeam: nil, canKeep: true,
                                      session: nil, now: Date())
     #expect(env.keyRole == nil, "the store's role is not the environment key's")
 }

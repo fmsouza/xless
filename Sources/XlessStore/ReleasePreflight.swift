@@ -256,7 +256,7 @@ public struct ReleasePreflight: Sendable {
     func privacyCheck(_ input: Input) async throws -> PreflightCheck {
         guard let privacy else {
             return PreflightCheck("privacy", .warning, "App Privacy is not checked: it has no App Store Connect API",
-                                  fix: "keep an Apple ID web session (`xless auth login --keep 30m`) and re-run to check it")
+                                  fix: "keep an Apple ID web session (`xless auth login --keep`) and re-run to check it")
         }
         let state = try await privacy.publishState(app: input.app.id)
         guard state?.published == true else {

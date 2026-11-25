@@ -23,11 +23,10 @@ enum AgentProof {
     }
 
     /// A command's: that its session may use the agent. It names the session, so sent on by another process it grants nothing.
-    static func join(_ item: String, key: SymmetricKey, session: AgentSession, hold: AgentHold, nonce: [UInt8], agent: [UInt8]) -> [UInt8] {
+    static func join(_ item: String, key: SymmetricKey, session: AgentSession, nonce: [UInt8], agent: [UInt8]) -> [UInt8] {
         mac(key, "join") {
             $0.put(item); $0.put(bytes: nonce); $0.put(bytes: agent)
             $0.put(Int64(session.id)); $0.put(session.leaderStart)
-            $0.put(hold.seconds); $0.put(hold.idle); $0.put(hold.maximum)
         }
     }
 
@@ -292,10 +291,10 @@ final class AgentServer: @unchecked Sendable {
     }
 
     private func get(_ message: AgentMessage, _ c: Connection) throws {
-        let (name, nonce) = try message.body { (try $0.string(max: AgentLimits.nameBytes), try $0.bytes(max: 16)) }
+        let (name, nonce, using) = try message.body { (try $0.string(max: AgentLimits.nameBytes), try $0.bytes(max: 16), try $0.bool()) }
         guard requireGranted(c) else { return }
         var w = WireWriter()
-        if let secret = state.get(name), let status = state.status(of: name) {
+        if let secret = state.get(name, using: using), let status = state.status(of: name) {
             w.put(true)
             w.put(secret: secret)
             w.put(status.label); w.put(status.remaining); w.put(status.idle); w.put(status.idleRemaining)
@@ -306,8 +305,8 @@ final class AgentServer: @unchecked Sendable {
         c.channel.send(w.frame(code: .ok))
     }
 
-    private static func hold(_ r: inout WireReader) throws -> AgentHold {
-        AgentHold(seconds: try r.int(), idle: try r.int(), maximum: try r.int())
+    private static func hold(_ r: inout WireReader) throws -> SecretHold {
+        SecretHold(seconds: try r.int(), idle: try r.int(), maximum: try r.int())
     }
 
     private func put(_ message: AgentMessage, _ c: Connection) throws {
@@ -324,24 +323,22 @@ final class AgentServer: @unchecked Sendable {
 
     /// Also for every process of the user, as `lock` is (`xless secrets lock`, `xless auth logout` from any terminal).
     private func drop(_ message: AgentMessage, _ c: Connection) throws {
-        let prefix = try message.body { try $0.string(max: AgentLimits.nameBytes) }
+        let (prefix, label) = try message.body { (try $0.string(max: AgentLimits.nameBytes), try $0.string(max: AgentLimits.labelBytes)) }
         guard !prefix.isEmpty else { return refuse(c, .malformed, "a drop of nothing") }
         var w = WireWriter()
-        w.put(UInt32(state.drop(prefix: prefix)))
+        w.put(UInt32(state.drop(prefix: prefix, label: label)))
         c.channel.send(w.frame(code: .ok))
     }
 
     /// Another session (a second terminal) whose command has the key held as an item: its person typed the passphrase.
     private func join(_ message: AgentMessage, _ c: Connection) throws {
-        let (name, hold, proof) = try message.body { r in
-            (try r.string(max: AgentLimits.nameBytes), try Self.hold(&r), try r.bytes(max: 32))
-        }
+        let (name, proof) = try message.body { (try $0.string(max: AgentLimits.nameBytes), try $0.bytes(max: 32)) }
+        state.dropExpired()
         guard let peer = peer(c), let key = state.heldBytes(name)?.withUnsafeBytes({ SymmetricKey(data: $0) }),
-              AgentProof.equal(proof, AgentProof.join(name, key: key, session: peer.session, hold: hold, nonce: c.nonce, agent: id)) else {
+              AgentProof.equal(proof, AgentProof.join(name, key: key, session: peer.session, nonce: c.nonce, agent: id)) else {
             return refuse(c, .notGranted, "this process did not show that it has the key", end: false)
         }
         state.grant(peer.session)
-        state.renew(name, hold: hold)
         _ = isGranted(c)
         c.channel.send(WireWriter().frame(code: .ok))
     }

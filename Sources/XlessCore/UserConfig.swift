@@ -43,8 +43,8 @@ public enum SecretsBackend: Sendable, Equatable {
 }
 
 /// The user's own xless settings, `$XDG_CONFIG_HOME/xless/config.yml` (else `~/.config/xless/config.yml`): plain
-/// preferences, never a secret: `team`, the default Apple team (`xless team use`), and `secrets`, where the secrets
-/// live (`SecretsBackend`). Keys xless does not know are kept as they are when it writes the file (comments are not).
+/// preferences, never a secret: `team`, the default Apple team (`xless team use`), `secrets`, where the secrets live
+/// (`SecretsBackend`), and `unlock`, how long they may be held unlocked (`UnlockSettings`). Keys xless does not know are kept as they are when it writes the file (comments are not).
 public struct UserConfig: Sendable, Equatable {
     public var team: String?
 
@@ -88,7 +88,7 @@ public struct UserConfig: Sendable, Equatable {
         }
     }
 
-    private static func read(_ url: URL) throws -> [String: Any] {
+    static func read(_ url: URL) throws -> [String: Any] {
         guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw XlessError(.config, "cannot read \(url.path)", fix: "check its permissions, or remove it")

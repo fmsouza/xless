@@ -1,20 +1,6 @@
 import Foundation
 import XlessCore
 
-/// How long something is held.
-public struct AgentHold: Sendable, Equatable {
-    /// From now.
-    public var seconds: Int
-    /// Dropped after this long without being used.
-    public var idle: Int
-    /// The longest it may be held, renewals included, since the secret was last typed.
-    public var maximum: Int
-
-    public init(seconds: Int, idle: Int, maximum: Int) {
-        self.seconds = seconds; self.idle = idle; self.maximum = maximum
-    }
-}
-
 /// A POSIX session, told apart from a later one with the same number by when its leader started.
 public struct AgentSession: Sendable, Hashable {
     public let id: Int32
@@ -65,7 +51,7 @@ final class AgentState: @unchecked Sendable {
 
     /// Holds `secret` as `name`. `typed`: the person just gave it, so its longest hold starts again; else the same
     /// secret is renewed within the longest hold it already has.
-    func put(_ name: String, label: String, _ secret: SecretBytes, hold: AgentHold, typed: Bool) throws {
+    func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typed: Bool) throws {
         lock.lock()
         defer { lock.unlock() }
         guard !name.isEmpty, name.utf8.count <= AgentLimits.nameBytes else { throw AgentError.limit("that name") }
@@ -90,41 +76,28 @@ final class AgentState: @unchecked Sendable {
                            expires: .earlier(AgentDeadline(now, in: seconds), cap), idle: idle, idleEnds: AgentDeadline(now, in: idle))
     }
 
-    /// The secret held as `name`; using it starts its idle time again.
-    func get(_ name: String) -> SecretPages? {
+    /// The secret held as `name`; using it (not only looking at it) starts its idle time again.
+    func get(_ name: String, using: Bool = true) -> SecretPages? {
         lock.lock()
         defer { lock.unlock() }
         dropExpired()
         guard var item = items[name] else { return nil }
-        item.idleEnds = AgentDeadline(clock.now, in: item.idle)
-        items[name] = item
+        if using {
+            item.idleEnds = AgentDeadline(clock.now, in: item.idle)
+            items[name] = item
+        }
         return item.secret
     }
 
     /// Without using it.
     func heldBytes(_ name: String) -> SecretPages? { lock.withLock { items[name]?.secret } }
 
-    /// The person typed what proves they may have `name`: its longest hold starts again, and it lasts at least as long
-    /// as it did.
-    func renew(_ name: String, hold: AgentHold) {
+    /// Drops every item whose name starts with `prefix` (and is for `label`, unless it is empty); how many.
+    @discardableResult func drop(prefix: String, label: String = "") -> Int {
         lock.lock()
         defer { lock.unlock() }
         dropExpired()
-        guard let item = items[name], hold.seconds > 0, hold.idle > 0, hold.maximum > 0 else { return }
-        let now = clock.now
-        let cap = AgentDeadline(now, in: min(hold.maximum, AgentLimits.seconds))
-        let seconds = min(max(hold.seconds, item.expires.remaining(now)), AgentLimits.seconds)
-        items[name] = Item(name: name, label: item.label, secret: item.secret, cap: cap,
-                           expires: .earlier(AgentDeadline(now, in: seconds), cap), idle: min(hold.idle, AgentLimits.seconds),
-                           idleEnds: AgentDeadline(now, in: min(hold.idle, AgentLimits.seconds)))
-    }
-
-    /// Drops every item whose name starts with `prefix`; how many.
-    @discardableResult func drop(prefix: String) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        dropExpired()
-        let names = items.keys.filter { $0.hasPrefix(prefix) }
+        let names = items.filter { $0.key.hasPrefix(prefix) && (label.isEmpty || $0.value.label == label) }.keys
         for name in names { items.removeValue(forKey: name)?.secret.wipe() }
         return names.count
     }

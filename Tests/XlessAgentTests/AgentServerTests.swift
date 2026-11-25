@@ -27,7 +27,7 @@ final class TestAgent: @unchecked Sendable {
         state = AgentState(clock: clock.clock)
         for session in grant ?? [Self.ownSession] { state.grant(session) }
         for (name, text) in items {
-            try state.put(name, label: name, SecretBytes(utf8: text), hold: AgentHold(seconds: 3600, idle: 600, maximum: 7200), typed: true)
+            try state.put(name, label: name, SecretBytes(utf8: text), hold: SecretHold(seconds: 3600, idle: 600, maximum: 7200), typed: true)
         }
         let bound = try directory.bind()
         path = bound.path
@@ -48,17 +48,24 @@ final class TestAgent: @unchecked Sendable {
     }
 
     func link(timeout: Int = 5000) throws -> AgentLink { try AgentLink.connect(path: path, directory: directory, timeout: timeout) }
-
-    deinit { server.stop() }
 }
 
+/// A short-named directory (a socket's path is short), removed when the tests end: the agents of the tests, which run
+/// until then, use it.
 final class ScratchBox {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var made: [String] = []
+    private static let atEnd: Void = {
+        atexit { ScratchBox.made.forEach { try? FileManager.default.removeItem(atPath: $0) } }
+    }()
+
     let path: String
     init() {
         var template = Array("/tmp/xa-XXXXXX".utf8CString)
         path = String(cString: template.withUnsafeMutableBufferPointer { mkdtemp($0.baseAddress!) })
+        _ = Self.atEnd
+        Self.lock.withLock { Self.made.append(path) }
     }
-    deinit { try? FileManager.default.removeItem(atPath: path) }
 }
 
 /// Connected to `path` with nothing in between; the test speaks as it pleases.
@@ -129,7 +136,7 @@ private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck
     let link = try agent.link()
     let big = SecretBytes(count: AgentLimits.itemBytes)
     big.withUnsafeMutableBytes { for i in 0..<$0.count { $0[i] = UInt8(truncatingIfNeeded: i &* 31) } }
-    try link.put("big", label: "here", big, hold: AgentHold(seconds: 100, idle: 100, maximum: 100), typed: true)
+    try link.put("big", label: "here", big, hold: SecretHold(seconds: 100, idle: 100, maximum: 100), typed: true)
     #expect(try agent.link().get("big")?.secret == big)
     #expect(try link.status()?.items.map(\.name) == ["a", "big"])
     #expect(try link.drop(prefix: "bi") == 1)
@@ -166,7 +173,7 @@ private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck
     #expect(!link.isGranted)
     #expect(throws: AgentError.self) { try link.get("a") }
     #expect(throws: AgentError.self) {
-        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: AgentHold(seconds: 9, idle: 9, maximum: 9), typed: true)
+        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typed: true)
     }
     let status = try #require(try link.status())
     #expect(!status.isGranted)
@@ -240,7 +247,7 @@ def handshake(s):
     s.sendall(frame(2, field(nonce) + field(b'm' * 16)))
     return answer(s)
 def get(s, name=b'a'):
-    s.sendall(frame(11, field(name) + field(b'k' * 16)))
+    s.sendall(frame(11, field(name) + field(b'k' * 16) + b'\\x01'))
     return answer(s)
 
 """
@@ -333,7 +340,7 @@ final class Flag: @unchecked Sendable {
 
 @Test func theProgramThatStartedTheAgentIsServed() throws {
     var options = AgentServer.Options()
-    options.executable = try #require(AgentExecutable.current)
+    options.executable = AgentExecutable.current
     #expect(try TestAgent(options: options).link().get("a") != nil)
 }
 #endif
@@ -348,27 +355,24 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
     let agent = try TestAgent(grant: [AgentSession(id: 77, leaderStart: 7)], items: [vaultItem, ("a", "one")])
     let link = try agent.link()
     #expect(!link.isGranted)
-    #expect(try link.join("xless-vault:1", key: vaultKey, hold: AgentHold(seconds: 5000, idle: 900, maximum: 7200)))
+    #expect(try link.join("xless-vault:1", key: vaultKey))
     #expect(link.isGranted)
     #expect(try link.get("a")?.secret.utf8String() == "one")
     #expect(try agent.link().get("a") != nil)
-    #expect(agent.state.status(of: "xless-vault:1")?.remaining == 5000)
 }
 
 @Test func joiningWithAnotherKeyOrForAnotherItemIsRefused() throws {
     let agent = try TestAgent(grant: [AgentSession(id: 77, leaderStart: 7)], items: [vaultItem])
     let wrong = SymmetricKey(data: Data(repeating: 8, count: 32))
-    #expect(try agent.link().join("xless-vault:1", key: wrong, hold: AgentHold(seconds: 1, idle: 1, maximum: 1)) == false)
-    #expect(try agent.link().join("xless-vault:2", key: vaultKey, hold: AgentHold(seconds: 1, idle: 1, maximum: 1)) == false)
+    #expect(try agent.link().join("xless-vault:1", key: wrong) == false)
+    #expect(try agent.link().join("xless-vault:2", key: vaultKey) == false)
     #expect(try !agent.link().isGranted)
-    // a join holds nothing shorter, and a refused one changes nothing
-    #expect(agent.state.status(of: "xless-vault:1")?.remaining == 3600)
 }
 
 @Test func aProofRelayedBySomeoneElseGrantsNothing() throws {
     // The real client (this process's session) made the proof; the agent sees it come from build code's session.
     let agent = try TestAgent(grant: [AgentSession(id: 77, leaderStart: 7)], items: [vaultItem], peer: elsewhere())
-    #expect(try agent.link().join("xless-vault:1", key: vaultKey, hold: AgentHold(seconds: 5000, idle: 900, maximum: 7200)) == false)
+    #expect(try agent.link().join("xless-vault:1", key: vaultKey) == false)
     #expect(!agent.state.isGranted(other))
 }
 
@@ -388,7 +392,7 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
     let link = try agent.link()
     link.pretendAnotherSession()
     #expect(throws: AgentError.self) {
-        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: AgentHold(seconds: 9, idle: 9, maximum: 9), typed: true)
+        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typed: true)
     }
     #expect(agent.state.statuses().map(\.name) == ["a"])
 }

@@ -56,3 +56,20 @@ private func uniqueName() -> String { "xless-test-\(UUID().uuidString)" }
     let failure = KernelKeyring.Failure(operation: "add_key", code: EPERM)
     #expect(failure.description == "kernel keyring: add_key failed: Operation not permitted")
 }
+
+@Test(.enabled(if: keyringAvailable)) func keysAreRevokedByTheStartOfTheirName() throws {
+    let prefix = uniqueName()
+    _ = try KernelKeyring.store(name: "\(prefix):1", secret: SecretBytes(utf8: "x"), timeout: 60)
+    _ = try KernelKeyring.store(name: "\(prefix):2", secret: SecretBytes(utf8: "y"), timeout: 60)
+    let other = try KernelKeyring.store(name: "other-\(prefix)", secret: SecretBytes(utf8: "z"), timeout: 60)
+    defer { try? KernelKeyring.revoke(other) }
+    #expect(try KernelKeyring.revokeAll(prefix: "\(prefix):") == 2)
+    #expect(try KernelKeyring.find(name: "\(prefix):1") == nil)
+    #expect(try KernelKeyring.find(name: "other-\(prefix)") == other)
+    #expect(try KernelKeyring.revokeAll(prefix: "\(prefix):") == 0)
+}
+
+@Test func revokingWhereThereIsNoKeyringRevokesNothing() throws {
+    guard !keyringAvailable else { return }
+    #expect(try KernelKeyring.revokeAll(prefix: "xless-test-nothing") == 0)
+}

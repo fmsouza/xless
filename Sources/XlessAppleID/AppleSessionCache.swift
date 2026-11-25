@@ -2,27 +2,33 @@ import Crypto
 import Foundation
 import XlessCore
 
-/// Where a kept session's two keys live: the Linux kernel keyring in the CLI, memory in tests.
+/// Where a kept session's two keys live: the xless agent or the Linux kernel keyring in the CLI, memory in tests.
 public protocol SessionKeyStore: Sendable {
+    /// Whether a session can be kept here.
     var isAvailable: Bool { get }
-    /// Stores (replacing) `secret` as `name`, dropped by the store after `seconds`.
-    func put(_ name: String, _ secret: SecretBytes, seconds: Int) throws
-    func get(_ name: String) throws -> SecretBytes?
+    /// How many seconds of `hold` it can keep one.
+    func allowed(_ hold: SecretHold) -> Int
+    /// Stores (replacing) `secret` as `name`, dropped by the store when the hold ends.
+    func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws
+    /// - Parameter using: false to look only (its idle time goes on).
+    func get(_ name: String, using: Bool) throws -> SecretBytes?
     /// Drops `name`; whether there was one.
     @discardableResult func revoke(_ name: String) throws -> Bool
 }
 
-/// The session keyring (possessor-only, expired by the kernel; see `KernelKeyring`).
+/// The session keyring (possessor-only, expired by the kernel after at most an hour; see `KernelKeyring`).
 public struct KernelKeyringSessionStore: SessionKeyStore {
     public init() {}
 
     public var isAvailable: Bool { KernelKeyring.isAvailable }
 
-    public func put(_ name: String, _ secret: SecretBytes, seconds: Int) throws {
-        try KernelKeyring.store(name: name, secret: secret, timeout: seconds)
+    public func allowed(_ hold: SecretHold) -> Int { min(hold.seconds, KernelKeyring.maximumTimeout) }
+
+    public func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
+        try KernelKeyring.store(name: name, secret: secret, timeout: allowed(hold))
     }
 
-    public func get(_ name: String) throws -> SecretBytes? {
+    public func get(_ name: String, using: Bool) throws -> SecretBytes? {
         guard isAvailable, let key = try KernelKeyring.find(name: name) else { return nil }
         return try? KernelKeyring.read(key)
     }
@@ -50,12 +56,14 @@ public struct KeptSessionInfo: Sendable, Equatable {
 }
 
 /// The opt-in Apple ID session cache (`xless auth login --keep`). The cookie jar is sealed (AES-256-GCM) with a random key
-/// made for it; the sealed jar and the key are two kernel-keyring keys, both expiring after `--keep` (at most an hour,
-/// never past the cookies' own expiry). Nothing is written to disk. Reading it back needs the same login session
-/// (keyring possession), as with `ssh-agent`. A kept session that cannot be opened (expired, tampered, half gone) is
-/// dropped and treated as none.
+/// made for it; the sealed jar and the key are two items of the xless agent, or two kernel-keyring keys, both dropped at
+/// the end of the hold (never past the session cookie's own expiry). Nothing is written to disk. Reading it back needs
+/// the same terminal session (the agent) or login session (the keyring). A kept session that cannot be opened (expired,
+/// tampered, half gone) is dropped and treated as none.
 public struct AppleSessionCache: Sendable {
-    static let blobName = "xless-apple-session"
+    /// What every item of a kept session starts with.
+    public static let prefix = "xless-apple-session"
+    static let blobName = prefix
     static let keyName = "xless-apple-session-key"
     static let associatedData = Data("xless-apple-session/1".utf8)
     /// A session that would be kept for less than this is not kept.
@@ -67,6 +75,9 @@ public struct AppleSessionCache: Sendable {
         let created: Date
         let expires: Date
         let cookies: [CookieJar.Cookie]
+        /// The hold's idle time and maximum, for a session kept again after Apple refused it (nil: an older xless).
+        var idle: Int?
+        var maximum: Int?
     }
 
     let store: any SessionKeyStore
@@ -79,13 +90,14 @@ public struct AppleSessionCache: Sendable {
 
     public var isAvailable: Bool { store.isAvailable }
 
-    /// Seals `web`'s cookies and keeps them for `seconds`, or less when a cookie expires sooner. Replaces a kept session.
+    /// Seals `web`'s cookies and keeps them for the hold, or less when Apple's session cookie (`myacinfo`; any of them when
+    /// there is none) expires sooner. Replaces a kept session.
     @discardableResult
-    public func keep(_ web: AppleWebClient, appleID: String, seconds: Int) async throws -> KeptSessionInfo {
+    public func keep(_ web: AppleWebClient, appleID: String, hold: SecretHold) async throws -> KeptSessionInfo {
         guard store.isAvailable else { throw Self.unavailable() }
         let created = Self.whole(now())
-        var lifetime = min(seconds, KernelKeyring.maximumTimeout)
-        if let expiry = await web.earliestCookieExpiry() {
+        var lifetime = store.allowed(hold)
+        if let expiry = await web.sessionCookieExpiry() {
             lifetime = min(lifetime, Int(expiry.timeIntervalSince(created).rounded(.down)))
         }
         guard lifetime >= Self.minimumSeconds else {
@@ -94,12 +106,13 @@ public struct AppleSessionCache: Sendable {
         }
         let cookies = await web.cookieSnapshot()
         guard !cookies.isEmpty else {
-            throw XlessError(.account, "there is no Apple ID session to keep", fix: "sign in first (`xless auth login --keep 30m`)")
+            throw XlessError(.account, "there is no Apple ID session to keep", fix: "sign in first (`xless auth login --keep`)")
         }
         let info = KeptSessionInfo(appleID: appleID, created: created, expires: created.addingTimeInterval(TimeInterval(lifetime)))
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
-        var plain = try encoder.encode(Payload(appleID: appleID, created: info.created, expires: info.expires, cookies: cookies))
+        var plain = try encoder.encode(Payload(appleID: appleID, created: info.created, expires: info.expires, cookies: cookies,
+                                                   idle: hold.idle, maximum: hold.maximum))
         defer { plain.withUnsafeMutableBytes { SecretBytes.zero($0) } }
         let key = SymmetricKey(size: .bits256)
         let sealed = try AES.GCM.seal(plain, using: key, authenticating: Self.associatedData)
@@ -111,24 +124,25 @@ public struct AppleSessionCache: Sendable {
         defer { blob.wipe(); keyBytes.wipe() }
         forget()
         do {
-            try store.put(Self.blobName, blob, seconds: lifetime)
-            try store.put(Self.keyName, keyBytes, seconds: lifetime)
+            let kept = SecretHold(seconds: lifetime, idle: min(hold.idle, lifetime), maximum: hold.maximum)
+            try store.put(Self.blobName, blob, hold: kept)
+            try store.put(Self.keyName, keyBytes, hold: kept)
         } catch {
             forget()
-            throw XlessError(.account, "cannot keep the Apple ID session in the kernel keyring: \(error)", fix: "re-run without --keep")
+            throw XlessError(.account, "cannot keep the Apple ID session: \(error)", fix: "re-run without --keep")
         }
         return info
     }
 
     /// The kept session's Apple ID and expiry, without its cookies; nil when none is kept.
     public func info() -> KeptSessionInfo? {
-        guard let payload = load() else { return nil }
+        guard let payload = load(using: false) else { return nil }
         return KeptSessionInfo(appleID: payload.appleID, created: payload.created, expires: payload.expires)
     }
 
     /// Puts the kept session's cookies into `web`; its info, or nil when none is kept (nothing changes then).
     public func restore(into web: AppleWebClient) async -> KeptSessionInfo? {
-        guard let payload = load() else { return nil }
+        guard let payload = load(using: true) else { return nil }
         await web.restoreCookies(payload.cookies)
         return KeptSessionInfo(appleID: payload.appleID, created: payload.created, expires: payload.expires)
     }
@@ -141,9 +155,16 @@ public struct AppleSessionCache: Sendable {
         return a || b
     }
 
-    private func load() -> Payload? {
-        guard store.isAvailable else { return nil }
-        let blob = try? store.get(Self.blobName), keyBytes = try? store.get(Self.keyName)
+    /// What is left of the kept session's hold, to keep the session that replaces it for no longer.
+    func remainingHold() -> SecretHold? {
+        guard let payload = load(using: false) else { return nil }
+        let seconds = Int(payload.expires.timeIntervalSince(now()))
+        guard seconds > 0 else { return nil }
+        return SecretHold(seconds: seconds, idle: payload.idle ?? seconds, maximum: payload.maximum ?? seconds)
+    }
+
+    private func load(using: Bool) -> Payload? {
+        let blob = try? store.get(Self.blobName, using: using), keyBytes = try? store.get(Self.keyName, using: using)
         guard let blob, let keyBytes else {
             if blob != nil || keyBytes != nil { forget() }
             return nil
@@ -171,26 +192,11 @@ public struct AppleSessionCache: Sendable {
         return payload
     }
 
-    public static func unavailable() -> XlessError {
-        XlessError(.account, "--keep needs the kernel keyring, which is not available here (macOS, or a container that blocks it)",
+    /// - Parameter why: what stands in the way.
+    public static func unavailable(_ why: String? = nil) -> XlessError {
+        XlessError(.account, "the Apple ID session cannot be kept here\(why.map { ": \($0)" } ?? "")",
                    fix: "run without --keep; each command that needs the Apple ID session signs in")
     }
 
     static func whole(_ d: Date) -> Date { Date(timeIntervalSince1970: d.timeIntervalSince1970.rounded(.down)) }
-}
-
-/// `--keep` durations: `90s`, `30m`, `1h` or bare seconds; 1 s … 1 h.
-public enum KeepDuration {
-    public static func seconds(_ text: String) throws -> Int {
-        let t = text.trimmingCharacters(in: .whitespaces).lowercased()
-        let units: [Character: Int] = ["s": 1, "m": 60, "h": 3600]
-        var digits = Substring(t)
-        var unit = 1
-        if let last = t.last, let u = units[last] { digits = t.dropLast(); unit = u }
-        guard !digits.isEmpty, digits.allSatisfy({ $0.isASCII && $0.isNumber }), let n = Int(digits), n > 0,
-              n <= KernelKeyring.maximumTimeout / unit else {
-            throw XlessError(.account, "--keep \(text) is not a duration between 1s and 1h", fix: "e.g. --keep 30m (at most 1h)")
-        }
-        return n * unit
-    }
 }

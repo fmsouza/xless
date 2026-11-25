@@ -25,9 +25,31 @@ public final class AppleWebSession: Sendable {
     public static func open(web: AppleWebClient, cache: AppleSessionCache?,
                             prompter: () throws -> any SignInPrompter) async throws -> AppleWebSession {
         if let cache, let kept = await cache.restore(into: web) {
-            return AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
+            let session = AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
+            guard await session.isRefused() else { return session }
+            return try await signInAgain(web: web, kept: kept, cache: cache, prompter: try prompter())
         }
         return try await signIn(web: web, prompter: try prompter())
+    }
+
+    /// Whether Apple no longer takes the session: App Store Connect says so, and the developer portal too (an Apple ID
+    /// without App Store Connect is refused there only). A failure to reach Apple says nothing.
+    private func isRefused() async -> Bool {
+        guard let answer = try? await asc.send("GET", ASCWebClient.sessionPath), [401, 403].contains(answer.status) else { return false }
+        return (try? await portal.teams()) == nil
+    }
+
+    /// Signs in to the kept session's Apple ID again, as the device Apple trusted at the last sign-in, and keeps the new
+    /// session for what was left of the old one's time.
+    private static func signInAgain(web: AppleWebClient, kept: KeptSessionInfo, cache: AppleSessionCache,
+                                    prompter: any SignInPrompter) async throws -> AppleWebSession {
+        prompter.say("Apple no longer accepts the kept session: signing in again as \(kept.appleID) (it is kept as before).")
+        let hold = cache.remainingHold()
+        await web.keepTrustedDevice()
+        let appleID = try await AppleSignIn(client: web, prompter: prompter, stage: web.stage).run(as: kept.appleID)
+        var info: KeptSessionInfo?
+        if let hold { info = try? await cache.keep(web, appleID: appleID, hold: hold) } // too little left: not kept
+        return AppleWebSession(web: web, appleID: appleID, kept: info)
     }
 
     /// Always signs in (SRP and the second factor, on `prompter`); errors report `web.stage`.

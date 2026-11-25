@@ -26,7 +26,7 @@ struct ProvisionCommand: AsyncParsableCommand {
         drift with the command that would change it.
 
         """ + AppleWebHelp.note + """
-         Planning uses only a kept session (`xless auth login --keep 30m`); without one, the steps that need it are \
+         Planning uses only a kept session (`xless auth login --keep`); without one, the steps that need it are \
         listed as checked when applied.
         """,
         subcommands: [ProvisionPlanCommand.self, ProvisionApplyCommand.self])

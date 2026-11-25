@@ -200,7 +200,7 @@ struct ProvisionPlanner {
 
     /// Capabilities Apple enables on every new bundle ID: never reported as drift.
     static let enabledByApple: Set<CapabilityType> = [.inAppPurchase, .gameCenter]
-    static let noWebSession = "checked when applied: reading it needs the Apple ID web session (keep one with `xless auth login --keep 30m` to plan it exactly)"
+    static let noWebSession = "checked when applied: reading it needs the Apple ID web session (keep one with `xless auth login --keep` to plan it exactly)"
 
     var team: String { inputs.team }
 

@@ -7,9 +7,9 @@ public struct AgentSeed: Sendable {
     public let name: String
     public let label: String
     public let secret: SecretBytes
-    public let hold: AgentHold
+    public let hold: SecretHold
 
-    public init(name: String, label: String, secret: SecretBytes, hold: AgentHold) {
+    public init(name: String, label: String, secret: SecretBytes, hold: SecretHold) {
         self.name = name; self.label = label; self.secret = secret; self.hold = hold
     }
 }

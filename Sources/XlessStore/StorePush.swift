@@ -393,7 +393,7 @@ struct PushContext {
     mutating func planPrivacy() async throws {
         guard let wanted = app.privacy else { return }
         guard let privacy = push.privacy else {
-            note("privacy is not pushed: App Privacy needs the Apple ID web session (`xless store privacy push`, or keep a session first with `xless auth login --keep 30m`)")
+            note("privacy is not pushed: App Privacy needs the Apple ID web session (`xless store privacy push`, or keep a session first with `xless auth login --keep`)")
             return
         }
         for change in try await privacy.plan(wanted, app: target.app.id, appName: target.app.bundleID) { add(change) }

@@ -1,6 +1,7 @@
 import ArgumentParser
 import Crypto
 import Foundation
+import XlessAgent
 import XlessCore
 import XlessAppleID
 import XlessSign
@@ -31,7 +32,7 @@ struct SecretsCommand: AsyncParsableCommand {
 
 /// What the `secrets` commands share.
 enum SecretStoreCLI {
-    static let cache = KernelKeyringCache()
+    static let cache = HeldKeyCache()
 
     /// The store config.yml's `secrets.backend` names, made once per process and shared by every command and by the
     /// pipeline's lookups (`main`), so the vault's passphrase is asked at most once.
@@ -41,6 +42,12 @@ enum SecretStoreCLI {
 
     /// The configured store (the vault, or the credential helper).
     static func store() throws -> any SecretStore { try backend().store }
+
+    /// That this terminal has the vault unlocked, without asking for anything; nil when it has not.
+    static func witness() -> AgentWitness? {
+        guard case .success(.vault(let vault)) = configured, let file = (try? vault.vault.read()) ?? nil, let key = vault.heldKey(for: file) else { return nil }
+        return AgentWitness(item: HeldSecrets.name(ofVault: file.id), key: VaultCrypto.keyBytes(key))
+    }
 
     /// Drops the vault's data key this process unlocked (`VaultSecretStore.forget`): `main` calls it before exiting.
     static func forgetUnlock() {
@@ -81,19 +88,36 @@ enum SecretStoreCLI {
         return entry
     }
 
-    /// The `--remember` duration, refused up front (before any passphrase) where there is no keyring to keep it in.
-    static func remember(_ text: String?) throws -> Int? {
+    /// The `--remember` hold, refused up front (before any passphrase) where there is nothing to keep it in.
+    static func remember(_ text: String?) throws -> SecretHold? {
         guard let text else { return nil }
         if case .helper = try backend() {
             say("note: --remember is for the encrypted vault; the credential helper keeps its own lock")
             return nil
         }
-        let seconds = try RememberDuration.seconds(text)
+        let hold = try HeldSecrets.settings.get().hold(text, option: "--remember", stage: .config)
+        try requireSomewhereToHold()
+        return hold
+    }
+
+    static func requireSomewhereToHold() throws {
         guard cache.isAvailable else {
-            throw VaultError(.cacheUnavailable, "--remember needs the kernel keyring, which is not available here (macOS, or a container that blocks it)",
-                             fix: "run without --remember; each command that needs the store asks the passphrase")
+            throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(cache.isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(cache.agents))",
+                             fix: "run without it; each command that needs the store asks the passphrase")
         }
-        return seconds
+    }
+
+    /// Unlocks the vault and keeps it unlocked for `hold`; what to say about it.
+    static func unlock(_ vault: VaultSecretStore, hold: SecretHold) throws -> String {
+        let file = try existing(vault)
+        if cache.held(id: file.id) == nil {
+            say("Unlocking the secret store for the commands of this terminal, for \(HoldDuration.text(hold.seconds)) (\(HoldDuration.text(hold.idle)) without use); `xless lock` ends it.")
+        }
+        _ = try vault.key(for: file, remember: hold, reason: "unlocking")
+        guard let held = cache.held(id: file.id) else {
+            throw VaultError(.cacheUnavailable, "the store did not stay unlocked", fix: "run `xless lock`, then `xless unlock`")
+        }
+        return "the secret store stays unlocked \(VaultReport.held(held, now: Date())) (until `xless lock`)"
     }
 
     /// Fails if the store was replaced since `file` was read (the key in hand would not be its key).
@@ -119,7 +143,7 @@ enum SecretStoreCLI {
 }
 
 struct RememberOption: ParsableArguments {
-    @Option(help: "Keep the store unlocked for this long in the kernel keyring (Linux), e.g. 30m; at most 1h. Off by default.")
+    @Option(help: ArgumentHelp("Keep the store unlocked for later commands of this terminal (see `xless unlock`), for this long (e.g. 30m, 8h) or, without a duration, as long as config.yml's `unlock` says. Off by default.", valueName: "duration"))
     var remember: String?
 }
 
@@ -148,7 +172,9 @@ struct SecretsInitCommand: ParsableCommand {
             let passphrase = try VaultUnlocker.newPassphrase(terminal)
             let (file, key) = try VaultCrypto.newVault(passphrase: passphrase)
             try vault.vault.create(file)
-            if let remember { try SecretStoreCLI.cache.store(id: file.id, key: VaultCrypto.keyBytes(key), seconds: remember) }
+            // An unlock of a store that was here before opens nothing any more.
+            try? SecretStoreCLI.cache.forget(place: location.file.path)
+            if let remember { try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: remember, typed: true) }
             print("created the secret store at \(location.file.path)")
         }
     }
@@ -165,8 +191,7 @@ struct SecretsStatusCommand: ParsableCommand {
             case .vault(let vault):
                 let file = try vault.vault.read()
                 let cache = SecretStoreCLI.cache
-                let unlocked: Bool? = file.flatMap { f in cache.isAvailable ? ((try? cache.load(id: f.id)) ?? nil) != nil : nil }
-                print(VaultReport.status(location: vault.vault.location, file: file, unlocked: unlocked))
+                print(VaultReport.status(location: vault.vault.location, file: file, held: file.flatMap { cache.held(id: $0.id) }, canHold: cache.isAvailable))
             }
         }
     }
@@ -339,8 +364,8 @@ struct SecretsRmCommand: ParsableCommand {
 
 struct SecretsUnlockCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "unlock", abstract: "Keep the store unlocked for a while in the kernel keyring (Linux), so later commands of this session need no passphrase.")
-    @Option(help: "How long, e.g. 30m; at most 1h.") var remember: String
+        commandName: "unlock", abstract: "Keep the store unlocked for a while, so later commands of this terminal need no passphrase (the same as `xless unlock`).")
+    @Option(help: ArgumentHelp("How long, e.g. 30m or 8h; without a duration, as long as config.yml's `unlock` says.", valueName: "duration")) var remember: String
 
     func run() throws {
         try SecretStoreCLI.run {
@@ -348,15 +373,14 @@ struct SecretsUnlockCommand: ParsableCommand {
                 print("the credential helper keeps its own lock (unlock your keyring or agent with its own tools); nothing to do")
                 return
             }
-            let seconds = try SecretStoreCLI.remember(remember) ?? 0
-            _ = try vault.key(for: try SecretStoreCLI.existing(vault), remember: seconds, reason: "unlocking")
-            print("the secret store stays unlocked for \(seconds / 60 > 0 ? "\(seconds / 60) min" : "\(seconds) s") (until `xless secrets lock`)")
+            guard let hold = try SecretStoreCLI.remember(remember) else { return }
+            print(try SecretStoreCLI.unlock(vault, hold: hold))
         }
     }
 }
 
 struct SecretsLockCommand: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "lock", abstract: "Forget a remembered unlock now.")
+    static let configuration = CommandConfiguration(commandName: "lock", abstract: "Forget the store's unlock now (`xless lock` also drops a kept Apple ID session).")
 
     func run() throws {
         try SecretStoreCLI.run {
@@ -393,6 +417,8 @@ struct SecretsPasswdCommand: ParsableCommand {
                 guard current.id == file.id else { throw VaultError(.io, "the secret store was replaced while this command ran", fix: "re-run the command") }
                 return try VaultCrypto.rewrap(try VaultCrypto.upgrade(current, dataKey: key), dataKey: key, passphrase: passphrase)
             }
+            // An unlock the old passphrase gave does not outlive it.
+            _ = try SecretStoreCLI.cache.forget(id: file.id)
             print("changed the secret store's passphrase")
         }
     }

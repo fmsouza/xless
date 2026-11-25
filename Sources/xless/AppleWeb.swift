@@ -1,4 +1,6 @@
+import ArgumentParser
 import Foundation
+import XlessAgent
 import XlessAppleID
 import XlessCore
 
@@ -12,15 +14,27 @@ enum AppleWebHelp {
     API cannot do. It signs in with your Apple ID, password and two-factor code (or security key) on the terminal, unless \
     `xless auth login --keep` kept a session; nothing of the session is written to disk.
     """
+
+    /// The commands that say so.
+    static var commands: [String] {
+        func walk(_ command: any ParsableCommand.Type, _ path: [String]) -> [String] {
+            let c = command.configuration
+            let here = path + [c.commandName ?? ""]
+            let below = (c.subcommands + c.groupedSubcommands.flatMap(\.subcommands)).flatMap { walk($0, here) }
+            return (c.discussion.contains(note) && below.isEmpty ? [here.joined(separator: " ")] : []) + below
+        }
+        return walk(Xless.self, []).map { String($0.dropFirst("xless ".count)) }
+    }
 }
 
 enum AppleWebCLI {
-    static let cache = AppleSessionCache()
+    static let held = HeldSessionStore(witness: { SecretStoreCLI.witness() })
+    static let cache = AppleSessionCache(store: held)
 
     /// The terminal for the sign-in of an account command.
     static func prompter() throws -> TerminalPrompter {
         try TerminalPrompter(stage: .account, need: "signing in to Apple needs an interactive terminal",
-                             fix: "run it in a terminal (the Apple ID, password and code are never read from a pipe, a file or the environment), or keep a session first with `xless auth login --keep 30m` in this login session")
+                             fix: "run it in a terminal (the Apple ID, password and code are never read from a pipe, a file or the environment), or keep a session first with `xless auth login --keep` in this terminal")
     }
 
     /// A web client for one command; `invalidate` the transport at the end.

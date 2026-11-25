@@ -25,7 +25,7 @@ enum Main {
             Secrets.install(SecretStoreCLI.fallback)
         }
         do {
-            var command = try Xless.parseAsRoot()
+            var command = try Xless.parseAsRoot(Array(HoldArguments.withDefaults(CommandLine.arguments).dropFirst()))
             if var asyncCommand = command as? AsyncParsableCommand {
                 try await asyncCommand.run()
             } else {

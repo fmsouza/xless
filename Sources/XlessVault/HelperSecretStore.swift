@@ -50,7 +50,7 @@ public final class HelperSecretStore: SecretStore, @unchecked Sendable {
     }
 
     /// Nothing to unlock: the keyring asks for itself. (Callers read the catalog first, so the helper has answered.)
-    public func unlock(_ catalog: SecretCatalog, remember: Int?, reason: String) throws {}
+    public func unlock(_ catalog: SecretCatalog, remember: SecretHold?, reason: String) throws {}
 
     public func authenticate(_ entry: VaultEntry, in catalog: SecretCatalog, reason: String) throws {}
 

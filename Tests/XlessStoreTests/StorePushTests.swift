@@ -552,7 +552,7 @@ private func liveOnly() -> [String: (Int, String)] {
     m.app.privacy = emailLinked
     let (plan, _) = try await pusher(RoutedTransport(synced())).plan(app: fakeASCApp, manifest: m, dir: dir)
     #expect(plan.changes.isEmpty)
-    #expect(plan.notes == ["privacy is not pushed: App Privacy needs the Apple ID web session (`xless store privacy push`, or keep a session first with `xless auth login --keep 30m`)"])
+    #expect(plan.notes == ["privacy is not pushed: App Privacy needs the Apple ID web session (`xless store privacy push`, or keep a session first with `xless auth login --keep`)"])
     m.app.privacy = nil
     #expect(try await pusher(RoutedTransport(synced())).plan(app: fakeASCApp, manifest: m, dir: dir).0.notes.isEmpty, "no privacy key: not managed, nothing said")
 }

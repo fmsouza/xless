@@ -1,4 +1,5 @@
 import Foundation
+import XlessCore
 
 /// What `xless secrets list` and `status` print: names, kinds and metadata, never a value.
 public enum VaultReport {
@@ -26,8 +27,10 @@ public enum VaultReport {
         }.joined(separator: "\n")
     }
 
-    /// - Parameter unlocked: whether the unlock cache holds this store's key (nil: no cache here).
-    public static func status(location: VaultLocation, file: VaultFile?, unlocked: Bool?) -> String {
+    /// - Parameters:
+    ///   - held: the unlock kept for later commands, if any.
+    ///   - canHold: whether one can be kept here.
+    public static func status(location: VaultLocation, file: VaultFile?, held: HeldUnlock?, canHold: Bool = true, now: Date = Date()) -> String {
         guard let file else {
             return "No secret store at \(location.file.path) (create one with `xless secrets init`)."
         }
@@ -37,9 +40,21 @@ public enum VaultReport {
             "Format:   \(file.format) version \(file.version)" + formatNote(file),
             "Entries:  \(file.entries.count)",
             "KDF:      \(kdf.algorithm) (N=\(kdf.rounds), r=\(kdf.blockSize), p=\(kdf.parallelism)); entries sealed with AES-256-GCM",
-            "Unlocked: " + (unlocked.map { $0 ? "yes, cached in the kernel keyring until it expires or `xless secrets lock`" : "no" }
-                ?? "no (no kernel keyring here: each command asks the passphrase)"),
+            "Unlocked: " + (held.map { "yes, \(Self.held($0, now: now)); `xless lock` ends it" }
+                ?? (canHold ? "no (`xless unlock` keeps it unlocked for this terminal)" : "no (it cannot be kept unlocked here: each command asks the passphrase)")),
         ].joined(separator: "\n")
+    }
+
+    /// "in the xless agent for 7 h 12 min more, or 2 h without use".
+    public static func held(_ held: HeldUnlock, now: Date) -> String {
+        var text = held.backend == .agent ? "in the xless agent" : "in the kernel keyring"
+        if let expires = held.expires {
+            text += " for \(HoldDuration.text(Int(expires.timeIntervalSince(now)))) more"
+        } else {
+            text += " until it expires"
+        }
+        if let idle = held.idle { text += ", or \(HoldDuration.text(idle)) without use" }
+        return text
     }
 
     static func formatNote(_ file: VaultFile) -> String {

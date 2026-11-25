@@ -66,7 +66,7 @@ public enum AgentHost {
             options.lockOnScreenLock = try r.bool()
             for _ in 0..<(try r.uint32()) {
                 let name = try r.string(max: AgentLimits.nameBytes), label = try r.string(max: AgentLimits.labelBytes)
-                let hold = AgentHold(seconds: try r.int(), idle: try r.int(), maximum: try r.int())
+                let hold = SecretHold(seconds: try r.int(), idle: try r.int(), maximum: try r.int())
                 let secret = try r.secret(max: AgentLimits.itemBytes)
                 defer { secret.wipe() }
                 try state.put(name, label: label, secret, hold: hold, typed: true)

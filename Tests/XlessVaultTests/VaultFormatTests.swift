@@ -350,12 +350,12 @@ private func opens(_ entry: VaultEntry?, _ key: SymmetricKey) -> String? {
     let t = try TempStore()
     defer { t.cleanup() }
     var (file, _) = try VaultCrypto.newVault(passphrase: SecretBytes(utf8: "pass phrase"), kdf: testKDF())
-    let current = VaultReport.status(location: t.location, file: file, unlocked: nil)
+    let current = VaultReport.status(location: t.location, file: file, held: nil)
     #expect(current.contains("version 2") && !current.contains("sealed again") && !current.contains("newer xless"))
     file.version = 1
     file.minimumReaderVersion = 1
-    #expect(VaultReport.status(location: t.location, file: file, unlocked: nil).contains("sealed again with every field"))
+    #expect(VaultReport.status(location: t.location, file: file, held: nil).contains("sealed again with every field"))
     file.version = 3
     file.minimumReaderVersion = 3
-    #expect(VaultReport.status(location: t.location, file: file, unlocked: nil).contains("upgrade xless"))
+    #expect(VaultReport.status(location: t.location, file: file, held: nil).contains("upgrade xless"))
 }

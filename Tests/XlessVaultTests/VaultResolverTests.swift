@@ -57,7 +57,7 @@ private final class Terminal: @unchecked Sendable {
     do { _ = try secrets.required("XLESS_DIST_KEY", stage: .sign); Issue.record("expected a locked store") } catch let e as XlessError {
         #expect(e.stage == .sign)
         #expect(e.cause.contains("locked"))
-        #expect(e.fix.contains("xless secrets unlock"))
+        #expect(e.fix.contains("xless unlock"))
     }
 }
 
@@ -113,19 +113,15 @@ private final class Terminal: @unchecked Sendable {
     defer { t.cleanup() }
     let (file, key) = try t.make()
     let cache = MemoryCache()
-    let got = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: 1800, reason: "test")
+    let hold = SecretHold(seconds: 1800, idle: 600, maximum: 7200)
+    let got = try VaultUnlocker.dataKey(for: file, cache: cache, place: "/store", prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: hold, reason: "test")
     #expect(VaultCrypto.keyBytes(got) == VaultCrypto.keyBytes(key))
     #expect(cache.stored.map(\.1) == [1800])
-}
-
-@Test func rememberDurationsAreBoundedToAnHour() throws {
-    #expect(try RememberDuration.seconds("30m") == 1800)
-    #expect(try RememberDuration.seconds("1h") == 3600)
-    #expect(try RememberDuration.seconds("90s") == 90)
-    #expect(try RememberDuration.seconds("600") == 600)
-    for bad in ["0", "61m", "2h", "3601", "abc", "", "-5m", "1d", "m"] {
-        #expect(throws: VaultError.self, "\(bad)") { try RememberDuration.seconds(bad) }
-    }
+    #expect(cache.typed == [true])
+    #expect(cache.places == ["/store"])
+    // Again, with the key held: nothing is asked, and it is a renewal.
+    _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, remember: hold, reason: "test")
+    #expect(cache.typed == [true, false])
 }
 
 @Test func newPassphrasesAreConfirmedAndLongEnough() throws {

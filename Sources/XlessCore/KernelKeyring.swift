@@ -112,6 +112,36 @@ public enum KernelKeyring {
         try check(xless_key_revoke(key.serial), "revoke")
     }
 
+    /// Revokes every key of the session keyring whose name starts with `prefix`; how many.
+    @discardableResult
+    public static func revokeAll(prefix: String) throws -> Int {
+        guard isAvailable else { return 0 }
+        var serials = [Int32](repeating: 0, count: 256)
+        while true {
+            let size = serials.withUnsafeMutableBytes { xless_key_read(sessionKeyring, $0.baseAddress, $0.count) }
+            guard size >= 0 else { throw failure("read (session keyring)") }
+            let count = Int(size) / MemoryLayout<Int32>.size
+            if count <= serials.count { serials.removeLast(serials.count - count); break }
+            serials = [Int32](repeating: 0, count: count)
+        }
+        var revoked = 0
+        for serial in serials where name(serial)?.hasPrefix(prefix) == true {
+            try check(xless_key_revoke(serial), "revoke")
+            revoked += 1
+        }
+        return revoked
+    }
+
+    /// The name of a `user` key this process may look at.
+    private static func name(_ serial: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let size = buffer.withUnsafeMutableBufferPointer { xless_key_describe(serial, $0.baseAddress, $0.count) }
+        guard size >= 0, size <= buffer.count else { return nil }
+        let fields = String(cString: buffer).split(separator: ";", maxSplits: 4, omittingEmptySubsequences: false)
+        guard fields.count == 5, fields[0] == "user" else { return nil }
+        return String(fields[4])
+    }
+
     private static func check(_ result: Int, _ operation: String) throws {
         if result < 0 { throw failure(operation) }
     }

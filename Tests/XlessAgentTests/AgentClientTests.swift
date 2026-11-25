@@ -15,7 +15,7 @@ private final class Starts: @unchecked Sendable {
 private let far = AgentSession(id: 77, leaderStart: 7)
 private let key = SecretBytes(copying: [UInt8](repeating: 9, count: 32))
 private let keyText = String(decoding: [UInt8](repeating: 9, count: 32), as: UTF8.self)
-private let hold = AgentHold(seconds: 500, idle: 400, maximum: 5000)
+private let hold = SecretHold(seconds: 500, idle: 400, maximum: 5000)
 private let witness = AgentWitness(item: "xless-vault:1", key: key)
 
 private func client(_ directory: AgentDirectory, _ starts: Starts = Starts(), obstacle: AgentError? = nil) -> AgentClient {
@@ -75,13 +75,16 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     _ = box
 }
 
-@Test func aSecondTerminalJoinsWithTheStoresKeyAndUsesEverythingHeld() throws {
+@Test func aSecondTerminalsUnlockJoinsTheAgentAndRenewsIt() throws {
     let agent = try TestAgent(grant: [far], items: [("xless-vault:1", keyText), ("xless-apple-session", "cookies")])
-    let c = client(agent.directory)
+    let starts = Starts()
+    let c = client(agent.directory, starts)
     #expect(c.get("xless-vault:1") { $0 == key } == nil)
     #expect(c.get("xless-apple-session", witness: { nil }) == nil)
-    #expect(c.join(witness, hold: hold))
+    try c.put([AgentSeed(name: "xless-vault:1", label: "xless-vault:1", secret: key, hold: hold)], typed: true, witness: { witness })
+    #expect(starts.count == 0) // no second agent
     #expect(c.get("xless-vault:1") { $0 == key } == key)
+    #expect(agent.state.status(of: "xless-vault:1")?.remaining == 500)
     #expect(c.get("xless-apple-session", witness: { nil })?.utf8String() == "cookies") // in this test, the same session too
 }
 
@@ -157,4 +160,16 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(c.statuses().isEmpty)
     #expect(!FileManager.default.fileExists(atPath: bound.path))
     _ = box
+}
+
+@Test func lookingAndDroppingForOnePlaceReachTheAgent() throws {
+    let agent = try TestAgent(items: [("a", "one"), ("b", "two")]) // labelled with their names
+    let c = client(agent.directory)
+    agent.clock.advance(500)
+    #expect(c.get("a", using: false) { _ in true } != nil)
+    #expect(c.get("b", using: true) { _ in true } != nil)
+    agent.clock.advance(100)
+    #expect(agent.state.statuses().map(\.name) == ["b"])
+    #expect(c.drop(prefix: "b", label: "elsewhere") == 0)
+    #expect(c.drop(prefix: "b", label: "b") == 1)
 }

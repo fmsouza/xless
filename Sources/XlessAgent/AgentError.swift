@@ -52,7 +52,7 @@ public struct AgentError: Error, Equatable, Sendable, StageReportableError, Cust
 /// The bounds of what an agent holds and reads, whoever asks.
 public enum AgentLimits {
     /// The longest anything is held: 7 days, whatever is asked.
-    public static let seconds = 7 * 86400
+    public static let seconds = HoldDuration.maximum
     static let items = 8
     static let itemBytes = 128 << 10
     static let nameBytes = 200

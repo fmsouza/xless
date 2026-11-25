@@ -17,16 +17,23 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
 
     var isAvailable: Bool { available }
 
-    func put(_ name: String, _ secret: SecretBytes, seconds: Int) throws {
+    /// The longest it keeps anything (the kernel keyring: an hour).
+    var longest = HoldDuration.maximum
+    private(set) var used: [String] = []
+
+    func allowed(_ hold: SecretHold) -> Int { min(hold.seconds, longest) }
+
+    func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         let bytes = secret.withUnsafeBytes { Array($0) }
         lock.withLock {
-            items[name] = (bytes, clock.now.addingTimeInterval(TimeInterval(seconds)))
-            timeouts[name] = seconds
+            items[name] = (bytes, clock.now.addingTimeInterval(TimeInterval(hold.seconds)))
+            timeouts[name] = hold.seconds
         }
     }
 
-    func get(_ name: String) throws -> SecretBytes? {
+    func get(_ name: String, using: Bool) throws -> SecretBytes? {
         lock.withLock {
+            if using { used.append(name) }
             guard let item = items[name], item.until > clock.now else { return nil }
             return SecretBytes(copying: item.bytes)
         }
@@ -38,6 +45,8 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
     func tamper(_ name: String) { lock.withLock { items[name]?.bytes[20] ^= 0xFF } }
     var names: [String] { lock.withLock { items.keys.sorted() } }
 }
+
+private func hold(_ seconds: Int) -> SecretHold { SecretHold(seconds: seconds, idle: seconds, maximum: 86400) }
 
 final class AppleSessionCacheTests: XCTestCase {
     let t0 = Date(timeIntervalSince1970: 2_000_000_000)
@@ -59,7 +68,7 @@ final class AppleSessionCacheTests: XCTestCase {
         let store = MemoryKeyStore(clock: clock)
         let cache = AppleSessionCache(store: store, now: { clock.now })
         let web = try await signedInClient(clock: clock)
-        let info = try await cache.keep(web, appleID: "me@example.com", seconds: 1800)
+        let info = try await cache.keep(web, appleID: "me@example.com", hold: hold(1800))
         XCTAssertEqual(info.expires, t0.addingTimeInterval(1800))
         XCTAssertEqual(store.names, ["xless-apple-session", "xless-apple-session-key"])
         XCTAssertEqual(store.timeouts["xless-apple-session"], 1800)
@@ -80,11 +89,11 @@ final class AppleSessionCacheTests: XCTestCase {
         let clock = TestClock(t0)
         let store = MemoryKeyStore(clock: clock)
         let cache = AppleSessionCache(store: store, now: { clock.now })
-        let info = try await cache.keep(try await signedInClient(clock: clock, expiry: 900), appleID: "me@example.com", seconds: 3600)
+        let info = try await cache.keep(try await signedInClient(clock: clock, expiry: 900), appleID: "me@example.com", hold: hold(3600))
         XCTAssertEqual(info.expires, t0.addingTimeInterval(900))
         XCTAssertEqual(store.timeouts["xless-apple-session-key"], 900)
         do {
-            _ = try await cache.keep(try await signedInClient(clock: clock, expiry: 30), appleID: "me@example.com", seconds: 3600)
+            _ = try await cache.keep(try await signedInClient(clock: clock, expiry: 30), appleID: "me@example.com", hold: hold(3600))
             XCTFail("expected an error")
         } catch let e as XlessError { XCTAssertTrue(e.cause.contains("too soon"), e.cause) }
     }
@@ -93,7 +102,7 @@ final class AppleSessionCacheTests: XCTestCase {
         let clock = TestClock(t0)
         let store = MemoryKeyStore(clock: clock)
         let cache = AppleSessionCache(store: store, now: { clock.now })
-        try await cache.keep(try await signedInClient(clock: clock, expiry: nil), appleID: "me@example.com", seconds: 600)
+        try await cache.keep(try await signedInClient(clock: clock, expiry: nil), appleID: "me@example.com", hold: hold(600))
         clock.now = t0.addingTimeInterval(601)
         XCTAssertNil(cache.info())
         let web = AppleWebClient(transport: MockTransport { _ in .init(status: 200) })
@@ -107,12 +116,12 @@ final class AppleSessionCacheTests: XCTestCase {
         let clock = TestClock(t0)
         let store = MemoryKeyStore(clock: clock)
         let cache = AppleSessionCache(store: store, now: { clock.now })
-        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", seconds: 600)
+        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(600))
         store.tamper("xless-apple-session")
         XCTAssertNil(cache.info())
         XCTAssertEqual(store.names, [])
 
-        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", seconds: 600)
+        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(600))
         _ = try store.revoke("xless-apple-session-key")
         XCTAssertNil(cache.info())
         XCTAssertEqual(store.names, [])
@@ -123,32 +132,65 @@ final class AppleSessionCacheTests: XCTestCase {
         let store = MemoryKeyStore(clock: clock)
         let cache = AppleSessionCache(store: store, now: { clock.now })
         XCTAssertFalse(cache.forget())
-        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", seconds: 600)
+        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(600))
         XCTAssertTrue(cache.forget())
         XCTAssertNil(cache.info())
     }
 
-    func testKeepNeedsTheKeyring() async throws {
+    func testKeepNeedsSomewhereToKeepIt() async throws {
         let clock = TestClock(t0)
         let store = MemoryKeyStore(clock: clock)
         store.available = false
         let cache = AppleSessionCache(store: store, now: { clock.now })
         do {
-            _ = try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", seconds: 600)
+            _ = try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(600))
             XCTFail("expected an error")
         } catch let e as XlessError {
             XCTAssertEqual(e.stage, .account)
-            XCTAssertTrue(e.cause.contains("kernel keyring"))
+            XCTAssertTrue(e.cause.contains("cannot be kept here"))
         }
     }
 
-    func testKeepDurations() throws {
-        XCTAssertEqual(try KeepDuration.seconds("30m"), 1800)
-        XCTAssertEqual(try KeepDuration.seconds("1h"), 3600)
-        XCTAssertEqual(try KeepDuration.seconds("90"), 90)
-        for bad in ["0", "61m", "2h", "", "m", "-5s", "1.5h", "٣m"] {
-            XCTAssertThrowsError(try KeepDuration.seconds(bad), bad)
+    func testAHoldLongerThanTheStoreAllowsIsCutToThat() async throws {
+        let clock = TestClock(t0)
+        let store = MemoryKeyStore(clock: clock)
+        store.longest = 3600
+        let cache = AppleSessionCache(store: store, now: { clock.now })
+        let info = try await cache.keep(try await signedInClient(clock: clock, expiry: nil), appleID: "me@example.com", hold: hold(28800))
+        XCTAssertEqual(info.expires, t0.addingTimeInterval(3600))
+        XCTAssertEqual(store.timeouts["xless-apple-session"], 3600)
+    }
+
+    func testTheSessionCookieBoundsItNotEveryCookie() async throws {
+        // Apple's other cookies (a page's preference, say) may run out long before the session does.
+        let clock = TestClock(t0)
+        let mock = MockTransport { _ in
+            .init(status: 200, headers: ["Set-Cookie": "myacinfo=COOKIE-SECRET-1; Domain=.apple.com; Path=/; Max-Age=20000, dslang=US; Path=/; Max-Age=300"])
         }
+        let web = AppleWebClient(transport: mock, userAgent: "t", stage: .account, jar: CookieJar(now: { clock.now }))
+        _ = try await web.send(URLRequest(url: URL(string: "https://appstoreconnect.apple.com/olympus/v1/session")!))
+        let cache = AppleSessionCache(store: MemoryKeyStore(clock: clock), now: { clock.now })
+        let info = try await cache.keep(web, appleID: "me@example.com", hold: hold(28800))
+        XCTAssertEqual(info.expires, t0.addingTimeInterval(20000))
+    }
+
+    func testLookingAtAKeptSessionIsNotUsingIt() async throws {
+        let clock = TestClock(t0)
+        let store = MemoryKeyStore(clock: clock)
+        let cache = AppleSessionCache(store: store, now: { clock.now })
+        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(600))
+        XCTAssertNotNil(cache.info())
+        XCTAssertEqual(store.used, [])
+        _ = await cache.restore(into: AppleWebClient(transport: MockTransport { _ in .init(status: 200) }))
+        XCTAssertEqual(store.used, ["xless-apple-session", "xless-apple-session-key"])
+    }
+
+    func testASessionKeptByAnEarlierVersionIsRead() async throws {
+        // No idle time in it (a session an older xless put in the keyring).
+        let payload = try JSONDecoder().decode(AppleSessionCache.Payload.self, from: Data("""
+        {"version":1,"appleID":"me@example.com","created":1,"expires":2,"cookies":[]}
+        """.utf8))
+        XCTAssertNil(payload.idle)
     }
 }
 
@@ -160,9 +202,9 @@ final class AppleWebSessionTests: XCTestCase {
         let mock = MockTransport { _ in .init(status: 200, headers: ["Set-Cookie": "myacinfo=COOKIE-SECRET-1; Domain=.apple.com; Path=/"]) }
         let first = AppleWebClient(transport: mock, stage: .account)
         _ = try await first.send(URLRequest(url: URL(string: "https://idmsa.apple.com/x")!))
-        try await cache.keep(first, appleID: "me@example.com", seconds: 600)
+        try await cache.keep(first, appleID: "me@example.com", hold: hold(600))
 
-        let later = MockTransport { _ in .json(200, PortalWebClientTests.teams) }
+        let later = MockTransport { r in r.url?.path == "/olympus/v1/session" ? .json(200, [:]) : .json(200, PortalWebClientTests.teams) }
         let session = try await AppleWebSession.open(web: AppleWebClient(transport: later, stage: .account), cache: cache) {
             XCTFail("prompted")
             throw XlessError(.account, "no terminal", fix: "")
@@ -174,6 +216,81 @@ final class AppleWebSessionTests: XCTestCase {
         XCTAssertEqual(later.requests.first?.header("Cookie"), "myacinfo=COOKIE-SECRET-1")
         let portalTeam = await session.portal.teamID
         XCTAssertEqual(portalTeam, "ZZZZZ99999")
+    }
+
+    /// A session Apple refuses by now, with the trusted-device cookie of the sign-in that made it.
+    func keptRefused(store: MemoryKeyStore, seconds: Int = 600) async throws -> AppleSessionCache {
+        let cache = AppleSessionCache(store: store)
+        let old = AppleWebClient(transport: MockTransport { _ in
+            .init(status: 200, headers: ["Set-Cookie": "myacinfo=OLD; Domain=.apple.com; Path=/, DES5abc=TRUSTED; Domain=.idmsa.apple.com; Path=/; Max-Age=2592000"])
+        }, stage: .account)
+        _ = try await old.send(URLRequest(url: URL(string: "https://idmsa.apple.com/x")!))
+        try await cache.keep(old, appleID: "me@example.com", hold: SecretHold(seconds: seconds, idle: 300, maximum: 86400))
+        return cache
+    }
+
+    func testASessionAppleRefusesIsSignedInAgainWithTheTrustedDeviceCookieAndNoCode() async throws {
+        let store = MemoryKeyStore(clock: TestClock(Date()))
+        let cache = try await keptRefused(store: store)
+        let apple = FakeApple()
+        apple.completeStatus = 200 // Apple knows the device: no second factor
+        let signInCookies = Box<[String]>([])
+        let mock = MockTransport { r in
+            if r.url?.path == "/olympus/v1/session" || r.url?.host == "developer.apple.com" { return .init(status: 401) }
+            signInCookies.value.append(r.header("Cookie") ?? "")
+            var reply = try apple.handle(r)
+            if r.url?.path.hasSuffix("/complete") == true { reply.headers["Set-Cookie"] = "myacinfo=NEW; Domain=.apple.com; Path=/; Secure" }
+            return reply
+        }
+        let prompter = ScriptedPrompter(answers: [], secret: FakeApple.password)
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: mock, stage: .account), cache: cache) { prompter }
+        XCTAssertEqual(session.appleID, "me@example.com")
+        XCTAssertEqual(prompter.prompts, ["Password: "]) // not the Apple ID, not a code
+        XCTAssertTrue(prompter.said.contains { $0.contains("me@example.com") && $0.contains("no longer accepts") }, "\(prompter.said)")
+        let complete = signInCookies.value.filter { !$0.isEmpty }
+        XCTAssertFalse(complete.isEmpty)
+        XCTAssertTrue(complete.allSatisfy { $0.contains("DES5abc=TRUSTED") && !$0.contains("OLD") }, "\(complete)")
+        // Kept again, no longer than before.
+        XCTAssertLessThanOrEqual(try XCTUnwrap(store.timeouts["xless-apple-session"]), 600)
+        let again = AppleWebClient(transport: MockTransport { _ in .init(status: 200) })
+        _ = await cache.restore(into: again)
+        let cookies = await again.cookieSnapshot().map { "\($0.name)=\($0.value)" }.sorted()
+        XCTAssertEqual(cookies, ["DES5abc=TRUSTED", "myacinfo=NEW"])
+        XCTAssertNotNil(session.kept)
+    }
+
+    func testARefusedSessionThatCannotBeSignedInAgainIsAnErrorAndDropped() async throws {
+        let store = MemoryKeyStore(clock: TestClock(Date()))
+        let cache = try await keptRefused(store: store)
+        let mock = MockTransport { _ in .init(status: 401) }
+        do {
+            _ = try await AppleWebSession.open(web: AppleWebClient(transport: mock, stage: .account), cache: cache) {
+                throw XlessError(.account, "no terminal", fix: "")
+            }
+            XCTFail("expected an error")
+        } catch let e as XlessError { XCTAssertEqual(e.cause, "no terminal") }
+    }
+
+    func testAnAppleIDWithoutAppStoreConnectKeepsItsSession() async throws {
+        // App Store Connect refuses it, the developer portal does not.
+        let cache = try await keptRefused(store: MemoryKeyStore(clock: TestClock(Date())))
+        let mock = MockTransport { r in r.url?.path == "/olympus/v1/session" ? .init(status: 401) : .json(200, PortalWebClientTests.teams) }
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: mock, stage: .account), cache: cache) {
+            XCTFail("prompted")
+            throw XlessError(.account, "no terminal", fix: "")
+        }
+        XCTAssertNotNil(session.kept)
+    }
+
+    func testANetworkFailureIsNotARefusal() async throws {
+        let cache = try await keptRefused(store: MemoryKeyStore(clock: TestClock(Date())))
+        let mock = MockTransport { _ in throw URLError(.notConnectedToInternet) }
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: mock, stage: .account), cache: cache) {
+            XCTFail("prompted")
+            throw XlessError(.account, "no terminal", fix: "")
+        }
+        XCTAssertNotNil(session.kept)
+        XCTAssertNotNil(cache.info())
     }
 
     func testOpenSignsInWhenNothingIsKept() async throws {
@@ -216,7 +333,7 @@ final class AppleWebSessionTests: XCTestCase {
         }
         let store = MemoryKeyStore(clock: TestClock(Date()))
         let cache = AppleSessionCache(store: store)
-        try await cache.keep(web, appleID: "me@example.com", seconds: 600)
+        try await cache.keep(web, appleID: "me@example.com", hold: hold(600))
         outputs.append(String(describing: cache.info()))
         outputs.append(String(decoding: store.raw("xless-apple-session") ?? [], as: UTF8.self))
         outputs += lines.value

@@ -26,7 +26,7 @@ private func secret(_ text: String) -> SecretBytes { SecretBytes(utf8: text) }
 
 private func state(_ clock: TestClock) -> AgentState { AgentState(clock: clock.clock) }
 
-private let hold = AgentHold(seconds: 3600, idle: 600, maximum: 7200)
+private let hold = SecretHold(seconds: 3600, idle: 600, maximum: 7200)
 
 @Test func anItemIsHeldUntilItsTimeRunsOut() throws {
     let clock = TestClock(), s = state(clock)
@@ -51,14 +51,14 @@ private let hold = AgentHold(seconds: 3600, idle: 600, maximum: 7200)
 
 @Test func theTimeSpentAsleepCounts() throws {
     let clock = TestClock(), s = state(clock)
-    try s.put("a", label: "", secret("one"), hold: AgentHold(seconds: 3600, idle: 3600, maximum: 7200), typed: true)
+    try s.put("a", label: "", secret("one"), hold: SecretHold(seconds: 3600, idle: 3600, maximum: 7200), typed: true)
     clock.sleep(3600)
     #expect(s.get("a") == nil)
 }
 
 @Test func aWallClockSetBackDoesNotLengthenAHoldAndOneSetForwardEndsIt() throws {
     let clock = TestClock(), s = state(clock)
-    try s.put("a", label: "", secret("one"), hold: AgentHold(seconds: 3600, idle: 3600, maximum: 7200), typed: true)
+    try s.put("a", label: "", secret("one"), hold: SecretHold(seconds: 3600, idle: 3600, maximum: 7200), typed: true)
     clock.wall -= 100_000
     clock.advance(3600)
     #expect(s.get("a") == nil)
@@ -90,7 +90,7 @@ private let hold = AgentHold(seconds: 3600, idle: 600, maximum: 7200)
 
 @Test func noHoldIsLongerThanSevenDaysWhateverIsAsked() throws {
     let clock = TestClock(), s = state(clock)
-    try s.put("a", label: "", secret("one"), hold: AgentHold(seconds: 10_000_000, idle: 10_000_000, maximum: 20_000_000), typed: true)
+    try s.put("a", label: "", secret("one"), hold: SecretHold(seconds: 10_000_000, idle: 10_000_000, maximum: 20_000_000), typed: true)
     #expect(s.status(of: "a")?.remaining == 7 * 86400)
     #expect(s.status(of: "a")?.idle == 7 * 86400)
 }
@@ -135,7 +135,7 @@ private let hold = AgentHold(seconds: 3600, idle: 600, maximum: 7200)
     #expect(throws: AgentError.self) { try s2.put("big", label: "", SecretBytes(count: AgentLimits.itemBytes + 1), hold: hold, typed: true) }
     #expect(throws: AgentError.self) { try s2.put(String(repeating: "n", count: 201), label: "", secret("x"), hold: hold, typed: true) }
     #expect(throws: AgentError.self) { try s2.put("", label: "", secret("x"), hold: hold, typed: true) }
-    #expect(throws: AgentError.self) { try s2.put("zero", label: "", secret("x"), hold: AgentHold(seconds: 0, idle: 1, maximum: 1), typed: true) }
+    #expect(throws: AgentError.self) { try s2.put("zero", label: "", secret("x"), hold: SecretHold(seconds: 0, idle: 1, maximum: 1), typed: true) }
 }
 
 @Test func onlyTheSessionsGrantedMayUseTheAgentAndOnlyWhileTheirLeaderLives() throws {
@@ -159,4 +159,22 @@ private let hold = AgentHold(seconds: 3600, idle: 600, maximum: 7200)
     for i in 1...100 { s.grant(AgentSession(id: Int32(i), leaderStart: 1)) }
     #expect(s.sessions == AgentLimits.sessions)
     #expect(s.isGranted(AgentSession(id: 1, leaderStart: 1)))
+}
+
+@Test func lookingIsNotUsing() throws {
+    let clock = TestClock(), s = state(clock)
+    try s.put("a", label: "", secret("one"), hold: hold, typed: true)
+    clock.advance(599)
+    #expect(s.get("a", using: false) != nil)
+    clock.advance(1)
+    #expect(s.get("a", using: false) == nil)
+}
+
+@Test func whatIsForOnePlaceCanBeDropped() throws {
+    let clock = TestClock(), s = state(clock)
+    try s.put("xless-vault:1", label: "/one", secret("x"), hold: hold, typed: true)
+    try s.put("xless-vault:2", label: "/two", secret("y"), hold: hold, typed: true)
+    #expect(s.drop(prefix: "xless-vault:", label: "/one") == 1)
+    #expect(s.get("xless-vault:2") != nil)
+    #expect(s.drop(prefix: "xless-vault:") == 1)
 }

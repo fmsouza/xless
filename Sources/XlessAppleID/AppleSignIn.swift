@@ -36,9 +36,14 @@ public struct AppleSignIn {
     private func fail(_ cause: String, fix: String) -> XlessError { XlessError(stage, cause, fix: fix) }
 
     /// Signs in; returns the Apple ID (the email typed), for display only.
+    /// - Parameter known: the Apple ID, when it is known already (a kept session's): only the password is asked, and the
+    ///   second factor when Apple asks for it.
     @discardableResult
-    public func run() async throws -> String {
-        let account = try await prompter.ask("Apple ID (email): ").trimmingCharacters(in: .whitespacesAndNewlines)
+    public func run(as known: String? = nil) async throws -> String {
+        let account: String
+        if let known { account = known } else {
+            account = try await prompter.ask("Apple ID (email): ").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !account.isEmpty else { throw fail("no Apple ID given", fix: "type the email address of your Apple ID") }
         let password = try await prompter.askSecret("Password: ")
         guard !password.isEmpty else { throw fail("no password given", fix: "type the Apple ID's password") }

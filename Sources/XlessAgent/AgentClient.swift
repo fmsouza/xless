@@ -66,9 +66,9 @@ public final class AgentClient: @unchecked Sendable {
     }
 
     /// What is held as `name`, when `accept` recognises it (a store's key opens the store: nobody else can make one up).
-    public func get(_ name: String, accept: (SecretBytes) -> Bool) -> SecretBytes? {
+    public func get(_ name: String, using: Bool = true, accept: (SecretBytes) -> Bool) -> SecretBytes? {
         for link in links() where link.isGranted {
-            if let held = try? link.get(name) {
+            if let held = try? link.get(name, using: using) {
                 if accept(held.secret) { return held.secret }
                 held.secret.wipe()
             }
@@ -78,22 +78,22 @@ public final class AgentClient: @unchecked Sendable {
 
     /// What is held as `name` by an agent that can be believed: one of this session, or one that shows it has the key of
     /// `witness`. That key also has this session granted by an agent that did not know it yet.
-    public func get(_ name: String, witness: () -> AgentWitness?) -> SecretBytes? {
+    public func get(_ name: String, using: Bool = true, witness: () -> AgentWitness?) -> SecretBytes? {
         let links = links()
         for link in links where link.isGranted && link.isSameSession {
-            if let held = try? link.get(name) { return held.secret }
+            if let held = try? link.get(name, using: using) { return held.secret }
         }
         let others = links.filter { !($0.isGranted && $0.isSameSession) }
         guard !others.isEmpty, let witness = witness() else { return nil }
         for link in others where trusted(link, witness) {
-            if let held = try? link.get(name) { return held.secret }
+            if let held = try? link.get(name, using: using) { return held.secret }
         }
         return nil
     }
 
     /// Whether `link` grants this session (having it granted if need be) and has the witness's key.
     private func trusted(_ link: AgentLink, _ witness: AgentWitness) -> Bool {
-        if !link.isGranted, (try? link.join(witness.item, key: witness.symmetric, hold: nil)) != true { return false }
+        if !link.isGranted, (try? link.join(witness.item, key: witness.symmetric)) != true { return false }
         return (try? link.prove(has: witness.item, key: witness.symmetric)) == true
     }
 
@@ -102,25 +102,20 @@ public final class AgentClient: @unchecked Sendable {
         let links = links()
         if let problem, problem.kind == .unsafePath { throw problem }
         if let link = links.first(where: { $0.isGranted && $0.isSameSession }) ?? links.first(where: { link in witness().map { trusted(link, $0) } ?? false }) {
-            for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typed: typed) }
-            return
+            do {
+                for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typed: typed) }
+                return
+            } catch let e as AgentError where e.kind == .gone {} // it ended meanwhile: a new one
         }
         if let obstacle { throw obstacle }
         try startAgent(seeds, directory)
     }
 
-    /// Has this session granted by every agent that holds the witness's key, for at least as long as `hold` (nil: as it
-    /// is); whether one did.
-    public func join(_ witness: AgentWitness, hold: AgentHold?) -> Bool {
-        var any = false
-        for link in links() where !link.isGranted {
-            if (try? link.join(witness.item, key: witness.symmetric, hold: hold)) == true { any = true }
-        }
-        return any
+    /// Drops what is held under names that start with `prefix` (for `label` only, unless it is empty), in every agent;
+    /// how many.
+    @discardableResult public func drop(prefix: String, label: String = "") -> Int {
+        links().reduce(0) { $0 + ((try? $1.drop(prefix: prefix, label: label)) ?? 0) }
     }
-
-    /// Drops what is held under names that start with `prefix`, in every agent; how many.
-    @discardableResult public func drop(prefix: String) -> Int { links().reduce(0) { $0 + ((try? $1.drop(prefix: prefix)) ?? 0) } }
 
     /// Tells every agent, whatever its version, to drop everything and end; how many did.
     @discardableResult public func lockAll() throws -> Int {

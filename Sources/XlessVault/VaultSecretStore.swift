@@ -27,7 +27,7 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
         return catalog
     }
 
-    public func unlock(_ catalog: SecretCatalog, remember: Int?, reason: String) throws {
+    public func unlock(_ catalog: SecretCatalog, remember: SecretHold?, reason: String) throws {
         _ = try key(for: try file(of: catalog), remember: remember, reason: reason)
     }
 
@@ -75,13 +75,12 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
     }
 
     /// The data key of `file` without asking: the one this process unlocked, else a valid one in the unlock cache.
-    func heldKey(for file: VaultFile) -> SymmetricKey? {
+    public func heldKey(for file: VaultFile) -> SymmetricKey? {
         SecretScope.enter()
         return lock.withLock {
             if let dataKey, dataKey.id == file.id { return dataKey.key }
-            guard let cached = try? cache?.load(id: file.id) else { return nil }
+            guard let cached = try? cache?.load(id: file.id, using: true, accept: { VaultUnlocker.opens(file, $0) }) else { return nil }
             let key = SymmetricKey(data: cached)
-            guard (try? VaultCrypto.verify(file, dataKey: key)) != nil else { return nil }
             dataKey = (file.id, key)
             return key
         }
@@ -89,11 +88,11 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
 
     /// The data key for `file`: this process's, else the unlock cache's, else asked (`VaultUnlocker`). With
     /// `remember`, it is (also) kept in the cache.
-    public func key(for file: VaultFile, remember: Int?, reason: String) throws -> SymmetricKey {
+    public func key(for file: VaultFile, remember: SecretHold?, reason: String) throws -> SymmetricKey {
         SecretScope.enter() // before the passphrase and the data key are in memory
         return try lock.withLock {
             if remember == nil, let dataKey, dataKey.id == file.id { return dataKey.key }
-            let key = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: prompter, remember: remember, reason: reason)
+            let key = try VaultUnlocker.dataKey(for: file, cache: cache, place: vault.location.file.path, prompter: prompter, remember: remember, reason: reason)
             dataKey = (file.id, key)
             return key
         }

@@ -251,7 +251,7 @@ struct StorePrivacyCLI {
         if kept || terminal { return true }
         if explicit {
             throw XlessError(.account, "pushing App Privacy needs the Apple ID web session: no session is kept and there is no terminal to sign in on; nothing was sent",
-                             fix: "keep a session first with `xless auth login --keep 30m` (in a terminal, in this login session), or push the other parts without privacy")
+                             fix: "keep a session first with `xless auth login --keep` (in this terminal), or push the other parts without privacy")
         }
         return false
     }
