@@ -110,9 +110,10 @@ if [[ "$(uname)" == Linux ]]; then
   [[ $code -eq 10 ]] || fail "native overlay exits $code, want 10: $(cat "$t/err")"
   grep -q -- '--docker' "$t/err" || fail "the overlay refusal does not name --docker: $(cat "$t/err")"
   [[ ! -s "$t/out" && ! -s "$t/dlog" ]] || fail "something ran for a refused overlay: $(cat "$t/out" "$t/dlog")"
-  out=$("${runs[@]}" "$x" run --docker --config "$t/tauri.yml" --dry-run --build-number 1 --to finalize 2>"$t/err") || fail "xless run --docker --config failed: $(cat "$t/err")"
-  [[ "$out" == docker* ]] || fail "run --docker --config: $out"
 fi
+mkdir "$t/ov"; cp "$t/tauri.yml" "$t/ov/tauri.yml"
+out=$("${runs[@]}" "$x" run --docker --config "$t/ov/tauri.yml" --dry-run --build-number 1 --to finalize 2>"$t/err") || fail "xless run --docker --config failed: $(cat "$t/err")"
+[[ "$out" == docker* ]] || fail "run --docker --config: $out"
 # sign bootstrap: what it is called now, on standard error, and the same outcome as before
 code=0; "${runs[@]}" "$x" sign bootstrap --type distribution >"$t/out" 2>"$t/err" </dev/null || code=$?
 [[ $code -eq 15 && $(grep -c "^note: xless sign bootstrap is xless certs create now" "$t/err") -eq 1 && ! -s "$t/out" ]] || fail "sign bootstrap's notice ($code): $(cat "$t/err")"
