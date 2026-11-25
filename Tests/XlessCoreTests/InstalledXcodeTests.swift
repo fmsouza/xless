@@ -214,7 +214,9 @@ private func failure(_ body: () throws -> Void) -> XlessError? {
     let machine = try Machine()
     machine.selected = try machine.xcode("Xcode", "27.2", "27B52").path
     let xcode = try machine.finder.find(pin: nil, stage: .build)
-    let base = ["PATH": "/opt/swiftly/bin:/usr/bin", "HOME": "/h", "SDKROOT": "/sdk", "TOOLCHAINS": "org.swift.6", "SWIFT_EXEC": "/evil", "CC": "x", "DYLD_INSERT_LIBRARIES": "/evil.dylib"]
+    let base = ["PATH": "/opt/swiftly/bin:/usr/bin", "HOME": "/h", "SDKROOT": "/sdk", "TOOLCHAINS": "org.swift.6", "SWIFT_EXEC": "/evil", "CC": "x", "DYLD_INSERT_LIBRARIES": "/evil.dylib",
+                "SWIFT_DRIVER_CLANG_EXEC": "/evil", "SWIFT_DRIVER_LD_EXEC": "/evil", "SWIFT_EXEC_MANIFEST": "/evil", "SWIFTPM_CUSTOM_LIBS_DIR": "/evil",
+                "SWBBUILDSERVICE_PATH": "/evil", "XCBBUILDSERVICE_PATH": "/evil", "CCC_OVERRIDE_OPTIONS": "+-g", "COMPILER_PATH": "/evil"]
     let changes = xcode.environment(base)
     var env = base
     for (key, value) in changes { env[key] = value }

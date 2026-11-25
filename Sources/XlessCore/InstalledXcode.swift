@@ -56,18 +56,21 @@ public struct InstalledXcode: Sendable, Equatable {
     }
 
     /// What its tools find changed in `base` (nil: removed): this Xcode is the one Apple's tools use, its toolchain is first on PATH,
-    /// and nothing else chooses a toolchain, an SDK, a compiler or a library for them.
+    /// and none of the variables known to choose a toolchain, a compiler, an SDK or a library for them is there.
     public func environment(_ base: [String: String]) -> [String: String?] {
         var changes: [String: String?] = [:]
-        for name in base.keys where Self.chosenElsewhere.contains(name) || name.hasPrefix("DYLD_") { changes.updateValue(nil, forKey: name) }
+        for name in base.keys where Self.choosesElsewhere(name) { changes.updateValue(nil, forKey: name) }
         changes["DEVELOPER_DIR"] = developer.path
         changes["PATH"] = "\(toolchain.path)/usr/bin:\(base["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")"
         return changes
     }
 
-    static let chosenElsewhere: Set<String> = [
-        "SDKROOT", "TOOLCHAINS", "XCODE_DEFAULT_TOOLCHAIN_OVERRIDE", "XCODE_EXTRA_PLATFORM_FOLDERS", "XCODE_DEVELOPER_DIR_PATH", "SWIFT_EXEC", "SWIFT_EXEC_MANIFEST",
-        "SWIFT_DRIVER_SWIFT_EXEC", "SWIFT_DRIVER_SWIFT_FRONTEND_EXEC", "CC", "CXX", "LD", "AR", "LIBTOOL", "RANLIB", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS",
+    static func choosesElsewhere(_ name: String) -> Bool {
+        chosenElsewhere.contains(name) || ["DYLD_", "SWIFT_DRIVER_", "SWIFT_EXEC", "SWIFTPM_", "SWB", "XCB"].contains { name.hasPrefix($0) }
+    }
+
+    private static let chosenElsewhere: Set<String> = [
+        "SDKROOT", "TOOLCHAINS", "XCODE_DEFAULT_TOOLCHAIN_OVERRIDE", "XCODE_EXTRA_PLATFORM_FOLDERS", "XCODE_DEVELOPER_DIR_PATH", "CCC_OVERRIDE_OPTIONS", "COMPILER_PATH", "CC", "CXX", "LD", "AR", "LIBTOOL", "RANLIB", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS",
         "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH",
         "MACOSX_DEPLOYMENT_TARGET", "IPHONEOS_DEPLOYMENT_TARGET",
     ]
