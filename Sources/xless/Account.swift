@@ -114,6 +114,7 @@ enum AccountConfirm {
     static func confirm(_ question: String, action: String, yes: Bool, stage: Stage = .account,
                         terminal: () -> (any Confirming)? = { try? TerminalPrompter.forAccount() }) throws -> Bool {
         if yes { return true }
+        try InputGate.require("a confirmation (\(action))", fix: "re-run with --yes")
         guard let terminal = terminal() else {
             throw XlessError(stage, "\(action) needs a confirmation and there is no terminal", fix: "re-run with --yes")
         }
@@ -124,6 +125,6 @@ enum AccountConfirm {
 extension TerminalPrompter {
     /// The terminal for an account command's confirmation.
     static func forAccount() throws -> TerminalPrompter {
-        try TerminalPrompter(stage: .account, need: "the confirmation is read from a terminal, and there is none", fix: "re-run with --yes")
+        try TerminalPrompter(stage: .account, what: "a confirmation", need: "the confirmation is read from a terminal, and there is none", fix: "re-run with --yes")
     }
 }

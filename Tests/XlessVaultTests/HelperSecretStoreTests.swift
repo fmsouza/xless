@@ -97,6 +97,20 @@ private let pem = "-----BEGIN PRIVATE KEY-----\nMIG\"quote\\back/slash\té\n----
     #expect(try store.catalog()?.entries.isEmpty == true)
 }
 
+@Test func aHelperIsGivenNeitherTheSavedSessionNorItsName() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    try dir.script("files", fileHelper)
+    let store = try dir.store("files")
+    for (name, kind) in [("xless-apple-session", .generic), ("xless-apple-session", .appleSession), ("NOTE", .appleSession)] as [(String, VaultEntry.Kind)] {
+        let e = #expect(throws: VaultError.self) { try store.update(reason: "test") { _ in [.add(name: name, kind: kind, metadata: .init(), secret: SecretBytes(utf8: "x"))] } }
+        #expect(e?.kind == .invalidName)
+    }
+    #expect(try store.catalog()?.entries.isEmpty == true)
+    try store.update(reason: "test") { _ in [.add(name: "xless-sparkle", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "x"))] }
+    #expect(try store.catalog()?.entries.map(\.name) == ["xless-sparkle"])
+}
+
 @Test func aCredentialTheHelperNoLongerHasIsMissing() throws {
     let dir = try HelperDir()
     defer { dir.cleanup() }
@@ -213,7 +227,9 @@ private let pem = "-----BEGIN PRIVATE KEY-----\nMIG\"quote\\back/slash\té\n----
     try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: dir.bin.path)
     #expect(throws: VaultError.self) { try dir.store("files") }
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.bin.path)
-    #expect(try dir.store("files").helper.executable == helper.resolvingSymlinksInPath().path)
+    let real = try #require(realpath(helper.path, nil)) // resolvingSymlinksInPath drops macOS's /private
+    defer { free(real) }
+    #expect(try dir.store("files").helper.executable == String(cString: real))
     // Relative PATH entries are never searched.
     #expect(throws: VaultError.self) { try CredentialHelper.find(name: "files", env: ["PATH": "bin:.", "HOME": dir.home.path]) }
     // A name is never a path.
@@ -435,4 +451,19 @@ private func probeFiles(_ dir: HelperDir) throws -> [String] {
     #expect(helper.writersLock == VaultLocation.standard(env: env))
     try helper.update(reason: "test") { _ in [.add(name: "A", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "a"))] }
     #expect(FileManager.default.fileExists(atPath: VaultLocation.standard(env: env).lockFile.path))
+}
+
+@Test func withoutInputAHelperHasNoTerminalNoDisplayAndLittleTime() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    _ = try dir.script("ask", "echo \"display ${DISPLAY-none} ${WAYLAND_DISPLAY-none} ${GPG_TTY-none}\" > \"$HOME/saw\"; exec sleep 60")
+    let extra = ["DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0", "GPG_TTY": "/dev/ttys001"]
+    let helper = try CredentialHelper.find(name: "ask", env: dir.env.merging(extra) { $1 }, timeout: 120)
+    let start = Date()
+    let error = #expect(throws: VaultError.self) {
+        try InputGate.$forced.withValue(true) { _ = try helper.run(.get, input: nil, quietTimeout: 1) }
+    }
+    #expect(Date().timeIntervalSince(start) < 30)
+    #expect(error?.kind == .inputNeeded)
+    #expect(try dir.read("saw") == "display none none none\n")
 }

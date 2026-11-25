@@ -1,15 +1,21 @@
 import Foundation
+import XlessCore
 
 /// One secret in the store: its name, kind and non-secret metadata in clear (so `list` and `status` work while the store
 /// is locked), the secret itself sealed with the data key. The metadata is authenticated with the secret (it is the
 /// seal's associated data): an altered, added or removed name, kind or metadata field makes the entry fail to open.
 ///
 /// Entry formats: 1 (stores of `version` 1) authenticated `role`, `certificateType` and `services` only when set;
-/// 2 (`"version": 2` on the entry) authenticates every field, set or not. Fields a newer xless added are kept as they
-/// were read and written back unchanged.
+/// 2 (`"version": 2` on the entry) authenticates every field, set or not; 3 is 2 for an entry of the kind `appleSession`.
+/// Fields a newer xless added are kept as they were read and written back unchanged.
 public struct VaultEntry: Codable, Sendable, Equatable {
     /// The entry format this xless seals.
     public static let currentFormat = 2
+    /// The one it seals a saved Apple ID session in. The file calls that entry's kind `generic`, and only its format says
+    /// what it is: a release from before the kind could not read a store with a kind it does not know, but leaves an
+    /// entry of a newer format alone (it lists it, writes it back as it is, and never opens it).
+    static let sessionFormat = 3
+    static let newestFormat = sessionFormat
 
     public enum Kind: String, Codable, CaseIterable, Sendable {
         case ascAPIKey = "asc-api-key"
@@ -17,6 +23,9 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         case authKey = "auth-key"
         case password
         case generic
+        /// The Apple ID session `xless auth login --across-reboots` saves: xless's own, under one name
+        /// (`SecretEnvironment.savedSession`). No command gives its value out or imports one.
+        case appleSession = "apple-session"
     }
 
     public struct Metadata: Codable, Sendable, Equatable {
@@ -106,7 +115,8 @@ public struct VaultEntry: Codable, Sendable, Equatable {
     /// again, even when the store's version makes it invalid (`format` 0).
     var declaredVersion: Int?
 
-    init(name: String, kind: Kind, metadata: Metadata, sealed: Data, format: Int = VaultEntry.currentFormat) {
+    init(name: String, kind: Kind, metadata: Metadata, sealed: Data, format: Int? = nil) {
+        let format = format ?? (kind == .appleSession ? Self.sessionFormat : Self.currentFormat)
         self.name = name
         self.kind = kind
         self.metadata = metadata
@@ -122,18 +132,19 @@ public struct VaultEntry: Codable, Sendable, Equatable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
-        kind = try c.decode(Kind.self, forKey: .kind)
+        let written = try c.decode(Kind.self, forKey: .kind)
         metadata = try c.decode(Metadata.self, forKey: .metadata)
         sealed = try c.decode(Data.self, forKey: .sealed)
         declaredVersion = try c.decodeIfPresent(Int.self, forKey: .version)
         format = declaredVersion ?? 1
+        kind = format == Self.sessionFormat && written == .generic ? .appleSession : written
         unknown = try VaultJSON.unknownMembers(of: decoder, known: Self.knownKeys)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(name, forKey: .name)
-        try c.encode(kind, forKey: .kind)
+        try c.encode(kind == .appleSession ? .generic : kind, forKey: .kind)
         try c.encode(metadata, forKey: .metadata)
         try c.encode(sealed, forKey: .sealed)
         try c.encodeIfPresent(declaredVersion, forKey: .version)
@@ -148,11 +159,20 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         return plain(first) && name.unicodeScalars.allSatisfy { plain($0) || "._@-".unicodeScalars.contains($0) }
     }
 
+    /// Refuses an entry under the name of the saved Apple ID session that is not one, and one under another name.
+    public static func requireAllowed(name: String, kind: Kind) throws {
+        guard (name == SecretEnvironment.savedSession) != (kind == .appleSession) else { return }
+        guard kind == .appleSession else {
+            throw VaultError(.invalidName, "\(name) is the name of xless's own entry (an Apple ID session saved across reboots)", fix: "choose another name")
+        }
+        throw VaultError(.invalidName, "\(name) cannot be an Apple ID session: xless saves one under \(SecretEnvironment.savedSession)", fix: "choose another kind")
+    }
+
     /// What the seal authenticates besides the secret, length-prefixed so no two entries share it. Format 1: the eight
     /// first fields, then `role`, `certificateType` and `services` only when set (labelled). Format 2: every field, each
-    /// marked set or not. Nil for a format this xless cannot check.
+    /// marked set or not; format 3 the same. Nil for a format this xless cannot check.
     var associatedData: Data? {
-        guard format == 1 || format == 2 else { return nil }
+        guard (1...Self.newestFormat).contains(format) else { return nil }
         var out = Data("xless-vault-entry/\(format)".utf8)
         func field(_ s: String?) {
             guard let s else { out.append(0); return }
@@ -164,7 +184,7 @@ public struct VaultEntry: Codable, Sendable, Equatable {
         let m = metadata
         let dates = [m.created, m.expires].map { $0.map { String(Int64($0.timeIntervalSince1970)) } }
         for f in [name, kind.rawValue, m.teamID, m.keyID, m.issuerID, m.certificateID, dates[0], dates[1]] { field(f) }
-        if format == 2 {
+        if format >= 2 {
             for f in [m.role, m.certificateType, m.services] { field(f) }
             return out
         }

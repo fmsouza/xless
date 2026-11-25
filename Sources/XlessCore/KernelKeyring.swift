@@ -23,8 +23,8 @@ public enum KernelKeyring {
     /// The longest a key may live: one hour.
     public static let maximumTimeout = 3600
 
-    /// Possessor view, read, write, search and setattr; nothing for the user, group or others
-    /// (`KEY_POS_VIEW | KEY_POS_READ | KEY_POS_WRITE | KEY_POS_SEARCH | KEY_POS_SETATTR`).
+    /// Possessor view, read, search, link and setattr (not write); nothing for the user, group or others
+    /// (`KEY_POS_VIEW | KEY_POS_READ | KEY_POS_SEARCH | KEY_POS_LINK | KEY_POS_SETATTR`).
     public static let possessorOnly: UInt32 = 0x3b00_0000
 
     private static let sessionKeyring = Int32(XLESS_KEY_SPEC_SESSION_KEYRING)
@@ -49,11 +49,15 @@ public enum KernelKeyring {
 
     /// Stores `secret` as the `user` key `name` in the session keyring (replacing a key of that name), possessor-only,
     /// expiring after `timeout` seconds (1…3600). If the permissions or the timeout cannot be set, the key is revoked
-    /// and the call fails: a key never outlives its bound or is readable more widely than asked.
+    /// and the call fails: a key never outlives its bound or is readable more widely than asked. A key of that name there
+    /// already is revoked first: add_key would update it, which its permissions refuse.
     @discardableResult
     public static func store(name: String, secret: SecretBytes, timeout: Int) throws -> Key {
         guard (1...maximumTimeout).contains(timeout) else {
             throw Failure(operation: "store (timeout \(timeout)s is outside 1…\(maximumTimeout)s)", code: EINVAL)
+        }
+        while let old = try find(name: name) {
+            if xless_key_revoke(old.serial) < 0, !gone.contains(errno) { throw failure("revoke") }
         }
         let serial = secret.withUnsafeBytes { xless_key_add(name, $0.baseAddress, $0.count, sessionKeyring) }
         guard serial >= 0 else { throw failure("add_key") }
@@ -110,6 +114,37 @@ public enum KernelKeyring {
     /// Revokes the key: it can no longer be read and the kernel drops it.
     public static func revoke(_ key: Key) throws {
         try check(xless_key_revoke(key.serial), "revoke")
+    }
+
+    /// Revokes every key of the session keyring whose name starts with `prefix`; how many.
+    @discardableResult
+    public static func revokeAll(prefix: String) throws -> Int {
+        guard isAvailable else { return 0 }
+        var serials = [Int32](repeating: 0, count: 256)
+        while true {
+            let size = serials.withUnsafeMutableBytes { xless_key_read(sessionKeyring, $0.baseAddress, $0.count) }
+            guard size >= 0 else { throw failure("read (session keyring)") }
+            let count = Int(size) / MemoryLayout<Int32>.size
+            if count <= serials.count { serials.removeLast(serials.count - count); break }
+            serials = [Int32](repeating: 0, count: count)
+        }
+        var revoked = 0
+        var failed: Failure?
+        for serial in serials where name(serial)?.hasPrefix(prefix) == true {
+            if xless_key_revoke(serial) >= 0 { revoked += 1 } else if !gone.contains(errno) { failed = failure("revoke") }
+        }
+        if let failed { throw failed }
+        return revoked
+    }
+
+    /// The name of a `user` key this process may look at.
+    private static func name(_ serial: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let size = buffer.withUnsafeMutableBufferPointer { xless_key_describe(serial, $0.baseAddress, $0.count) }
+        guard size >= 0, size <= buffer.count else { return nil }
+        let fields = String(cString: buffer).split(separator: ";", maxSplits: 4, omittingEmptySubsequences: false)
+        guard fields.count == 5, fields[0] == "user" else { return nil }
+        return String(fields[4])
     }
 
     private static func check(_ result: Int, _ operation: String) throws {

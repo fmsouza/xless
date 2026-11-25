@@ -16,6 +16,17 @@ private func uniqueName() -> String { "xless-test-\(UUID().uuidString)" }
     #expect(try KernelKeyring.read(key) == SecretBytes(utf8: "unwrapped-data-key"))
 }
 
+/// A key of that name there already: its permissions let nobody write to it, so it is revoked and a new one added.
+@Test(.enabled(if: keyringAvailable)) func storingASecretAgainReplacesIt() throws {
+    let name = uniqueName()
+    let first = try KernelKeyring.store(name: name, secret: SecretBytes(utf8: "one"), timeout: 60)
+    let second = try KernelKeyring.store(name: name, secret: SecretBytes(utf8: "two"), timeout: 60)
+    defer { try? KernelKeyring.revoke(second) }
+    #expect(try KernelKeyring.find(name: name) == second)
+    #expect(try KernelKeyring.read(second) == SecretBytes(utf8: "two"))
+    #expect(throws: KernelKeyring.Failure.self) { try KernelKeyring.read(first) }
+}
+
 @Test(.enabled(if: keyringAvailable)) func revokedKeysCannotBeReadOrFound() throws {
     let name = uniqueName()
     let key = try KernelKeyring.store(name: name, secret: SecretBytes(utf8: "x"), timeout: 60)
@@ -55,4 +66,21 @@ private func uniqueName() -> String { "xless-test-\(UUID().uuidString)" }
 @Test func keyringFailuresNameTheOperationAndNeverTheSecret() {
     let failure = KernelKeyring.Failure(operation: "add_key", code: EPERM)
     #expect(failure.description == "kernel keyring: add_key failed: Operation not permitted")
+}
+
+@Test(.enabled(if: keyringAvailable)) func keysAreRevokedByTheStartOfTheirName() throws {
+    let prefix = uniqueName()
+    _ = try KernelKeyring.store(name: "\(prefix):1", secret: SecretBytes(utf8: "x"), timeout: 60)
+    _ = try KernelKeyring.store(name: "\(prefix):2", secret: SecretBytes(utf8: "y"), timeout: 60)
+    let other = try KernelKeyring.store(name: "other-\(prefix)", secret: SecretBytes(utf8: "z"), timeout: 60)
+    defer { try? KernelKeyring.revoke(other) }
+    #expect(try KernelKeyring.revokeAll(prefix: "\(prefix):") == 2)
+    #expect(try KernelKeyring.find(name: "\(prefix):1") == nil)
+    #expect(try KernelKeyring.find(name: "other-\(prefix)") == other)
+    #expect(try KernelKeyring.revokeAll(prefix: "\(prefix):") == 0)
+}
+
+@Test func revokingWhereThereIsNoKeyringRevokesNothing() throws {
+    guard !keyringAvailable else { return }
+    #expect(try KernelKeyring.revokeAll(prefix: "xless-test-nothing") == 0)
 }

@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import XlessAppleID
 import XlessCore
+import XlessVault
 @testable import xless
 
 private func tempEnv() throws -> ([String: String], URL) {
@@ -61,9 +62,9 @@ private func tempEnv() throws -> ([String: String], URL) {
     #expect(try TeamUseCommand.parse(["--clear"]).clear)
 }
 
-@Test func keepIsParsedAndBounded() throws {
+@Test func keepIsParsed() throws {
     #expect(try AuthLoginCommand.parse(["--keep", "30m"]).keep == "30m")
-    #expect(throws: XlessError.self) { try KeepDuration.seconds("2h") }
+    #expect(try AuthLoginCommand.parse([]).keep == nil)
 }
 
 // MARK: auth status
@@ -74,7 +75,7 @@ private let kept = KeptSessionInfo(appleID: "me@example.com", created: Date(time
 @Test func statusSaysWhereEachCredentialComesFromAndNeverItsValue() throws {
     let env = ["ASC_KEY_ID": "KEYSECRETISH", "ASC_ISSUER_ID_FILE": "/run/secrets/issuer", "ASC_KEY_P8": ""]
     let store = AuthStatusReport.StoreKey(name: "ASC_KEY_P8@ABCDE12345", teamID: "ABCDE12345", hasKeyID: true, hasIssuerID: true)
-    let r = AuthStatusReport.build(env: env, storeKey: .success(store), teamFlag: nil, savedTeam: "ABCDE12345", keyringAvailable: true,
+    let r = AuthStatusReport.build(env: env, storeKey: .success(store), teamFlag: nil, savedTeam: "ABCDE12345", canKeep: true,
                                    session: kept, now: Date(timeIntervalSince1970: 1_000_000 + 600))
     #expect(r.apiKey.map(\.source) == ["environment", "file", "store"])
     #expect(r.apiKey[1].detail == "$ASC_ISSUER_ID_FILE: /run/secrets/issuer")
@@ -96,19 +97,50 @@ private func ASCOutputJSON(_ r: AuthStatusReport) throws -> String {
     return String(decoding: try e.encode(r), as: UTF8.self)
 }
 
+@Test func statusSaysWhatIsHeldWhereUntilWhenAndForHowLongUnused() throws {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let held = HeldUnlock(backend: .agent, expires: now + 7200, idle: 1800, idleExpires: now + 900)
+    let r = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: nil, savedTeam: nil, canKeep: true, session: kept,
+                                   sessionHeld: held, store: .unlocked(held, now: now), neededBy: ["apps create", "keys create"], now: now)
+    #expect(r.store == .init(state: "unlocked", backend: "agent", expires: "1970-01-12T15:46:40Z", remainingSeconds: 7200, idleSeconds: 1800, idleRemainingSeconds: 900))
+    #expect(r.session.backend == "agent" && r.session.idleSeconds == 1800 && r.session.idleRemainingSeconds == 900)
+    #expect(r.session.neededBy == ["apps create", "keys create"])
+    #expect(r.text.contains("unlocked in the xless agent until 1970-01-12T15:46:40Z (2 h left, or 30 min without use); `xless lock` ends it"), "\(r.text)")
+    #expect(r.text.contains("kept for me@example.com in the xless agent until"), "\(r.text)")
+    #expect(r.text.contains("needed by: apps create, keys create"))
+    let json = try ASCOutputJSON(r)
+    #expect(json.contains("\"store\":{") && json.contains("\"idleRemainingSeconds\":900") && json.contains("\"state\":\"unlocked\""), "\(json)")
+    func text(_ store: AuthStatusReport.Store) -> String {
+        AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, store: store, now: now).text
+    }
+    #expect(text(.init(state: "locked")).contains("xless unlock"))
+    #expect(text(.init(state: "helper", detail: "xless-credential-pass")).contains("xless-credential-pass"))
+    #expect(text(.init(state: "error", detail: "cannot read it")).contains("cannot read it"))
+    #expect(text(.unlocked(HeldUnlock(backend: .keyring, expires: nil), now: now)).contains("unlocked in the kernel keyring"))
+}
+
+@Test func theCommandsThatNeedTheAppleIDSessionAreThoseWhoseHelpSaysSo() {
+    let commands = AppleWebHelp.commands
+    #expect(Set(commands).count == commands.count) // each once
+    #expect(commands.contains("apps create"))
+    #expect(commands.contains { $0.hasPrefix("keys ") })
+    #expect(!commands.contains("devices list"))
+    #expect(!commands.contains { $0.hasPrefix("secrets") })
+}
+
 @Test func statusReportsMissingErrorsAndNoSession() {
     struct Boom: Error {}
     let none = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: "ZZZZZ99999", savedTeam: "ABCDE12345",
-                                      keyringAvailable: false, session: nil, now: Date())
+                                      canKeep: false, session: nil, now: Date())
     #expect(none.apiKey.map(\.source) == ["missing", "missing", "missing"])
     #expect(none.team == "ZZZZZ99999" && none.teamSource == "flag")
     #expect(none.session.state == "unavailable")
     let broken = AuthStatusReport.build(env: [:], storeKey: .failure(XlessError(.config, "several entries", fix: "x")), teamFlag: nil,
-                                        savedTeam: nil, keyringAvailable: true, session: nil, now: Date())
+                                        savedTeam: nil, canKeep: true, session: nil, now: Date())
     #expect(broken.apiKey.allSatisfy { $0.source == "error" && $0.detail == "several entries" })
     #expect(broken.session.state == "none" && broken.teamSource == "none")
     let partial = AuthStatusReport.build(env: [:], storeKey: .success(.init(name: "ASC_KEY_P8", teamID: nil, hasKeyID: false, hasIssuerID: true)),
-                                         teamFlag: nil, savedTeam: nil, keyringAvailable: true, session: nil, now: Date())
+                                         teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, now: Date())
     #expect(partial.apiKey.map(\.source) == ["missing", "store", "store"])
 }
 

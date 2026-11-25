@@ -1,4 +1,6 @@
+import ArgumentParser
 import Foundation
+import XlessAgent
 import XlessAppleID
 import XlessCore
 
@@ -10,17 +12,30 @@ enum AppleWebHelp {
     static let note = """
     Uses the Apple ID web session, not the App Store Connect API: Apple's own web interface, undocumented, for what the \
     API cannot do. It signs in with your Apple ID, password and two-factor code (or security key) on the terminal, unless \
-    `xless auth login --keep` kept a session; nothing of the session is written to disk.
+    `xless auth login --keep` kept a session; nothing of the session is written to disk in clear.
     """
+
+    /// The commands that say so.
+    static var commands: [String] {
+        func walk(_ command: any ParsableCommand.Type, _ path: [String]) -> [String] {
+            let c = command.configuration
+            let here = path + [c.commandName ?? ""]
+            let below = c.subcommands.flatMap { walk($0, here) } // the groups' too
+            return (c.discussion.contains(note) && below.isEmpty ? [here.joined(separator: " ")] : []) + below
+        }
+        return walk(Xless.self, []).map { String($0.dropFirst("xless ".count)) }
+    }
 }
 
 enum AppleWebCLI {
-    static let cache = AppleSessionCache()
+    static let saved = VaultSavedSession()
+    static let held = HeldSessionStore(witness: { SecretStoreCLI.witness() })
+    static let cache = AppleSessionCache(store: held, saved: saved, maximum: { HeldSecrets.maximum })
 
     /// The terminal for the sign-in of an account command.
     static func prompter() throws -> TerminalPrompter {
         try TerminalPrompter(stage: .account, need: "signing in to Apple needs an interactive terminal",
-                             fix: "run it in a terminal (the Apple ID, password and code are never read from a pipe, a file or the environment), or keep a session first with `xless auth login --keep 30m` in this login session")
+                             fix: "run it in a terminal (the Apple ID, password and code are never read from a pipe, a file or the environment), or keep a session first with `xless auth login --keep` in this terminal")
     }
 
     /// A web client for one command; `invalidate` the transport at the end.
@@ -46,6 +61,9 @@ enum AppleWebCLI {
 
     /// Asks which provider, when several App Store Connect teams share the portal team's name; nil without a terminal.
     static func chooser() -> (([OlympusProvider]) async throws -> OlympusProvider)? {
+        if InputGate.isOff {
+            return { _ in throw InputGate.refusal("which App Store Connect team to use (several have that name)", fix: "run it without --no-input, in a terminal") }
+        }
         guard let terminal = try? prompter() else { return nil }
         return { providers in
             terminal.say("App Store Connect has several teams with that name:")

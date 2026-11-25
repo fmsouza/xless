@@ -3,7 +3,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-/// The Apple session's cookies, in this process's memory only: never written to disk, never handed to another process,
+/// The Apple session's cookies, in this process's memory only: never written to disk in clear, never handed to a tool,
 /// gone when the process exits (or on `clear()`). A subset of RFC 6265: host-only and Domain cookies, Path, Secure,
 /// Expires and Max-Age. A Domain must contain the response's host and have a dot in it, so a cookie never reaches a host
 /// outside the domain that set it.
@@ -46,6 +46,16 @@ final class CookieJar: @unchecked Sendable {
         let t = now()
         return lock.withLock { cookies.compactMap(\.expires).filter { $0 > t }.min() }
     }
+
+    /// When Apple's session cookie (`myacinfo`) runs out; `earliestExpiry` when there is none.
+    var sessionExpiry: Date? {
+        let t = now()
+        let session = lock.withLock { cookies.filter { $0.name == "myacinfo" && ($0.expires.map { $0 > t } ?? true) } }
+        return session.isEmpty ? earliestExpiry : session.compactMap(\.expires).min()
+    }
+
+    /// Only the trusted-device cookies (`DES…`): with them Apple may skip the second factor of a sign-in.
+    func keepTrustedDevice() { lock.withLock { cookies.removeAll { !$0.name.hasPrefix("DES") } } }
 
     func store(from response: HTTPURLResponse, for url: URL) {
         guard let raw = response.value(forHTTPHeaderField: "Set-Cookie"), let host = url.host?.lowercased() else { return }

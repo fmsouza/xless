@@ -178,6 +178,8 @@ struct AuthAPIKeyImportCommand: AsyncParsableCommand {
             try APIKeyStore.precheck(try APIKeyWebCLI.existingStore(), name: entry, team: teamID)
             let secret = try SecretsImportCommand.readFile(p8File)
             defer { secret.wipe() }
+            // Without input a locked store is known before Apple is asked about the key.
+            if InputGate.isOff { try SecretStoreCLI.store().unlock(try APIKeyWebCLI.existingStore(), remember: nil, reason: "importing API key \(keyID)") }
             let name = try await APIKeyImport.run(
                 secret: secret, keyID: keyID, issuerID: issuerId.trimmingCharacters(in: .whitespaces),
                 role: try role.map { try APIKeyRoles.parse([$0])[0] }, team: teamID, entry: entry,

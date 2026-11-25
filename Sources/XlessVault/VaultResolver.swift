@@ -61,7 +61,7 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
     /// team ID), else one recorded for no team (no `@`, no team ID). Another team's entries are never chosen; several
     /// left is an error.
     public static func preferredCandidate(for name: String, in file: some SecretEntries, team: String) throws -> VaultEntry? {
-        let all = file.entries.filter { $0.name == name || $0.name.hasPrefix(name + "@") }
+        let all = named(name, in: file)
         let own = all.filter { $0.metadata.teamID == team || $0.name == "\(name)@\(team)" }
         let found = own.isEmpty ? all.filter { $0.metadata.teamID == nil && !$0.name.contains("@") } : own
         guard found.count <= 1 else {
@@ -74,7 +74,7 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
     /// The entry standing for `name`: `name` itself or `name@…`, of `team` when one is selected; nil when none; an error
     /// when several remain.
     public static func candidate(for name: String, in file: some SecretEntries, team: String?) throws -> VaultEntry? {
-        var found = file.entries.filter { $0.name == name || $0.name.hasPrefix(name + "@") }
+        var found = named(name, in: file)
         if let team { found = found.filter { $0.metadata.teamID == team || $0.name == "\(name)@\(team)" } }
         guard found.count <= 1 else {
             throw VaultError(.ambiguous, "the secret store has several entries for \(name): \(found.map(\.name).joined(separator: ", "))",
@@ -83,6 +83,10 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
         return found.first
     }
 
+    /// An Apple ID session is no secret that anything asks for by name.
+    private static func named(_ name: String, in file: some SecretEntries) -> [VaultEntry] {
+        file.entries.filter { ($0.name == name || $0.name.hasPrefix(name + "@")) && $0.kind != .appleSession }
+    }
 }
 
 /// `VaultResolver.preferring(team:)`: lookups through the same resolver (and its unlocked key), by `preferredCandidate`.

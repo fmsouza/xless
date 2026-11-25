@@ -61,8 +61,8 @@ public enum VaultCrypto {
     /// The entry's secret, or an integrity error (never part of it). An entry of a newer format than this xless knows
     /// is an error that says to upgrade.
     public static func open(_ entry: VaultEntry, dataKey: SymmetricKey) throws -> SecretBytes {
-        if entry.format > VaultEntry.currentFormat {
-            throw VaultError(.newerFormat, "the entry \(entry.name) was written by a newer xless (entry format \(entry.format); this xless knows format \(VaultEntry.currentFormat) and older)",
+        if entry.format > VaultEntry.newestFormat {
+            throw VaultError(.newerFormat, "the entry \(entry.name) was written by a newer xless (entry format \(entry.format); this xless knows format \(VaultEntry.newestFormat) and older)",
                              fix: "upgrade xless (run the install line again: README.md#install) to use it")
         }
         // A current entry authenticates every field: one this xless does not know was added after it was sealed.

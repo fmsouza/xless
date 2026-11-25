@@ -13,13 +13,30 @@ import Testing
         ("NOTE", .generic, .init(), "GENERIC-VALUE"),
     ])
     let list = VaultReport.list(file)
-    let status = VaultReport.status(location: t.location, file: file, unlocked: false)
+    let status = VaultReport.status(location: t.location, file: file, held: nil)
     for text in [list, status] {
         for value in ["P8-VALUE", "GENERIC-VALUE", "PASSPHRASE-VALUE"] { #expect(!text.contains(value)) }
     }
     #expect(list.contains("ASC_KEY_P8") && list.contains("asc-api-key") && list.contains("KEYID12345") && list.contains("2026-09-21"))
     #expect(status.contains("Entries:  2") && status.contains("scrypt"))
-    #expect(VaultReport.status(location: t.location, file: nil, unlocked: nil).contains("xless secrets init"))
+    #expect(VaultReport.status(location: t.location, file: nil, held: nil).contains("xless secrets init"))
+}
+
+@Test func statusSaysWhereAnUnlockIsHeldAndUntilWhen() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, _) = try t.make()
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func unlocked(_ held: HeldUnlock?, canHold: Bool = true) -> String {
+        VaultReport.status(location: t.location, file: file, held: held, canHold: canHold, now: now)
+            .split(separator: "\n").first { $0.hasPrefix("Unlocked:") }.map(String.init) ?? ""
+    }
+    #expect(unlocked(nil).contains("no (`xless unlock`"))
+    #expect(unlocked(nil, canHold: false).contains("cannot be kept unlocked here"))
+    let agent = unlocked(HeldUnlock(backend: .agent, expires: now + 7200, idle: 1800, idleExpires: now + 600))
+    #expect(agent.contains("yes, in the xless agent for 2 h more, or 30 min without use") && agent.contains("xless lock"))
+    #expect(unlocked(HeldUnlock(backend: .keyring, expires: now + 1800)).contains("in the kernel keyring for 30 min more"))
+    #expect(unlocked(HeldUnlock(backend: .keyring, expires: nil)).contains("in the kernel keyring until it expires"))
 }
 
 @Test func errorsNeverCarryTheSecret() throws {

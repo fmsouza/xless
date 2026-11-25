@@ -216,7 +216,7 @@ enum ReleaseWeb {
         let (client, transport) = AppleWebCLI.client(verbose: verbose)
         do {
             let session = try await AppleWebSession.open(web: client, cache: AppleWebCLI.cache) {
-                throw XlessError(.account, "the kept session has expired", fix: "`xless auth login --keep 30m`")
+                throw XlessError(.account, "the kept session has expired", fix: "`xless auth login --keep`")
             }
             let selected = try await session.selectTeam(team)
             try await session.useProvider(for: selected, choose: AppleWebCLI.chooser())

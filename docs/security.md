@@ -20,28 +20,30 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 | The App Review demo account's password (`XLESS_DEMO_PASSWORD` or the name app.yml gives) | `xless secrets import`, the environment | Sign in to your app's demo account |
 | Webhook signing secrets (`XLESS_WEBHOOK_SECRET.<webhook ID>`) | `xless webhooks create` (random, made on this machine) | Sign requests that your webhook receiver takes as coming from App Store Connect |
 | Your Apple ID password and two-factor code | typed on the terminal | Everything the Apple ID can do |
-| The Apple ID web session (cookies) | the sign-in | The App Store Connect and developer portal web pages, until Apple expires it |
+| The Apple ID web session (cookies, a device trust cookie among them) | the sign-in | The App Store Connect and developer portal web pages, until Apple expires it |
 | The secret store's passphrase, and the store's data key once unlocked | typed on the terminal | Open every entry of the store |
 
 ## Who xless defends against
 
 - **Someone who gets the disk, a backup or a synced home directory.** Keys are in the encrypted store, never in clear
-  files (unless you export one). The Apple ID session and the store unlock are never written to disk.
-- **Other users of the machine.** The store, its directory and its lock are yours only (refused otherwise), and the
-  kernel keyring's cached keys are readable only by processes of your login session.
+  files (unless you export one). The store unlock is never written to disk, and the Apple ID session only sealed in the
+  store, when you ask for that (`--across-reboots`).
+- **Other users of the machine.** The store, its directory and its lock are yours only (refused otherwise); the xless
+  agent answers no other user, and the kernel keyring's cached keys are readable only by processes of your login session.
 - **Code your build runs** (npm scripts, `build.rs`, SwiftPM plugins and macros, CocoaPods hooks, Xcode build phases),
-  partly. Every tool xless runs starts without a secret variable, in an empty session keyring (no remembered unlock,
-  no kept Apple ID session) and unable to open the store, and an overlay app's build runs in a container that has no
-  secret. It still runs as you and can read your files ([below](#the-build-and-your-secrets)).
+  partly. Every tool xless runs starts without a secret variable, in a POSIX session of its own (which the xless agent
+  refuses) and in an empty session keyring (no held unlock, no kept Apple ID session), and unable to open the store, and
+  an overlay app's build runs in a container that has no secret. It still runs as you and can read your files
+  ([below](#the-build-and-your-secrets)).
 - **Logs, terminals and bug reports.** No secret is printed, put in an error, in a `--verbose` trace or on a command
   line.
 - **A network observer.** Everything goes over HTTPS to Apple's hosts; xless refuses a redirect from HTTPS to anything
   else, a non-HTTPS request in the Apple ID session, and `xless api` refuses any host but App Store Connect's API.
 
-Out of scope: malware or a person running **as you** while the store is unlocked or a session is kept (it can read
-the process's memory, the kernel keyring of your login session, or wait for you to type the passphrase), someone who
-has both the store file and its passphrase, and a compromised Apple account or Apple service. Code that runs on your
-machine as you can read your files and your login session's keyring: that is why the overlays build in Docker.
+Out of scope: malware or a person running **as you**, outside what xless starts, while the store is unlocked or a
+session is kept ([what it can do](#what-an-attacker-who-runs-as-you-can-do)), someone who has both the store file and its
+passphrase, and a compromised Apple account or Apple service. Code that runs on your machine as you can read your files
+and wait for you to type the passphrase: that is why the overlays build in Docker.
 
 ## Guarantees
 
@@ -53,9 +55,10 @@ machine as you can read your files and your login session's keyring: that is why
    auth key's `.p8`, which Apple serves once, in the same process that created it). Writing one to a file is explicit
    (`xless secrets export --out`, `xless sign bootstrap --out`): a new file, opened with `O_EXCL`, mode 0600, never an
    overwrite. Imports offer to delete the file they read.
-3. **Nothing kept longer than the command,** unless you opt in: the store's unlock (`--remember`) and the Apple ID
-   session (`xless auth login --keep`) can be kept for at most an hour, in the Linux kernel keyring, never on disk.
-   `xless secrets lock` and `xless auth logout` drop them at once.
+3. **Nothing kept longer than the command,** unless you opt in: the store's unlock (`xless unlock`, `--remember`) and
+   the Apple ID session (`xless auth login --keep`) can be held in memory, for 8 hours and 2 without use unless you say
+   otherwise, and never more than 7 days. `xless auth status` shows what is held, where and until when; `xless lock`
+   drops all of it at once. Only `--across-reboots` puts a session on disk, sealed in the store.
 4. **No secret on a command line, in a log, in an error, in a core dump or in a child's environment.** Secrets come
    from the terminal, the store, `NAME` or `NAME_FILE`; no option takes one (a test walks every command and fails on an
    option named like a secret). A secret under a name of your own (a demo account's `passwordSecret`) is removed from
@@ -113,26 +116,200 @@ throwaway entry; and a key the store fails to keep after all is written to a new
 a path asked on the terminal) with the `xless secrets import` command to run, rather than dropped
 ([secrets.md](secrets.md#when-the-helper-cannot-keep-a-key-apple-offers-once)).
 
-## Caches: off by default, at most an hour
+## Holding an unlock: off by default, in memory
+<a id="caches-off-by-default-at-most-an-hour"></a>
 
-| Cache | Turned on by | What is kept | Where | Dropped by |
-|---|---|---|---|---|
-| Store unlock | `--remember <duration>` on `xless secrets unlock`, `init`, `import`, `export` | the store's data key, named after the store's random ID | the session keyring | `xless secrets lock`, the time running out |
-| Apple ID session | `xless auth login --keep <duration>` | the session's cookies, sealed with AES-256-GCM under a random key made for them; the sealed cookies and that key are two separate keys | the session keyring | `xless auth logout`, the time running out, or the cookies' own expiry if sooner |
+Without any of this, a command that needs the store asks its passphrase and a web-session command signs in, and both
+forget everything when they end. Holding is asked for by name, never a default:
 
-- Durations are `90s`, `30m`, `1h` or seconds, at most one hour (`--keep` at least a minute: a session that would run
-  out sooner is not kept). The kernel expires the keys itself; when xless cannot set the bound or the permissions, it
-  revokes the key and fails rather than keep it longer or wider.
+| What is held | Turned on by | What it is | Dropped by |
+|---|---|---|---|
+| Store unlock | `xless unlock`; `--remember [<duration>]` on `xless secrets unlock`, `init`, `import`, `export` | the store's data key, named after the store's random ID | `xless lock`, `xless secrets lock`, `passwd`, another store in its place, the end of its time, its idle time, and the [events below](#when-it-ends) |
+| Apple ID session | `xless auth login --keep [<duration>]` | the session's cookies, sealed with AES-256-GCM under a random key made for them; the sealed cookies and that key are two separate items | `xless lock`, `xless auth logout`, the end of its time (or the cookies' own expiry, if sooner), its idle time, and the same events |
+
+They are held in one of two places, in memory only; `xless auth status` says which:
+
+- **The xless agent** (Linux and macOS): a small process of xless's, started by the first command that holds something.
+- **The Linux kernel keyring**, only where no agent can run and the keyring works: for an hour at most, and
+  [with less to end it](#the-kernel-keyring), which xless says.
+
+Durations are `90s`, `30m`, `8h`, `2d` or seconds. `unlock:` in config.yml sets the defaults and lowers the maximum:
+
+```yaml
+unlock:
+  duration: 8h              # without a duration on the command line
+  idle: 2h                  # dropped after this long without use
+  maximum: 7d               # the most that can be asked for; never more than 7d
+  lockOnSleep: true         # drop everything when the machine sleeps
+  lockOnScreenLock: true    # … and when the screen is locked (macOS)
+```
+
+Nothing lives longer than the maximum counted from when the passphrase or the password was last **typed**: a renewal, or a
+move from the kernel keyring to the agent, takes that time along (and where it is not known, the passphrase is asked). The
+clock keeps running while the machine sleeps. The settings count for what is held already, from the next command that uses
+it: a lowered maximum ends it sooner, and `lockOnSleep` or `lockOnScreenLock` switched on (or set for a second terminal
+that joins) holds for the agent from then on. They never loosen a hold: a raised maximum or a lock switched off counts for
+the next unlock after `xless lock`.
+
+### Who may use what the agent holds
+
+An agent serves a process only when **all** of these hold, each taken from the kernel, never from what the process says:
+
+1. It runs as **you**: the same user ID.
+2. It belongs to a **POSIX session that was granted**: the session (the shell of a terminal, tab, tmux pane or SSH login)
+   in which you typed the passphrase or the password. The agent lists the granted sessions by their leader's process ID
+   **and** start time, so a process ID used again later is not taken for it. Another terminal is granted once the store
+   is unlocked there too (`xless unlock` in it): it must show the agent that it knows the store's data key, which takes the
+   passphrase, and can add only the session the kernel says it is in.
+3. On macOS, it is **the same xless executable** as the agent (by the file's device and inode).
+
+Who speaks is taken once, pinned, and looked at again before every answer:
+
+- On Linux the kernel names the sender of every piece of a message (`SCM_CREDENTIALS`), and a pidfd opened at the first
+  one keeps hold of that process.
+- On macOS the kernel keeps only the process ID of whoever used the other end last, and says (`LOCAL_PEERTOKEN`) whose
+  that ID is *at the moment it is asked*. So the whole audit token, process version included, is read when the first
+  message comes; every later look must find the very same token. A process that has ended, or whose ID another one has
+  since, is refused, and the connection with it.
+
+Only then is a one-time challenge sent, which that process has to answer: so it was there when it was looked at, and not
+another one that had its ID by then. The command looks at the agent in the same way, and looks again before it sends a
+secret and before it takes one.
+
+**What refuses build code is rule 2.** Every tool xless runs (a compiler, swift-build, npm, cargo, pod, a hook, rcodesign)
+is started in a POSIX session of its own. A process can leave a session, for a new one, but no system call enters
+an existing one: so nothing that a build starts, however it forks, daemonizes or calls `setsid`, and not even the `xless`
+binary itself run by it, is in a granted session. It also starts with `XLESS_NO_SECRET_STORE=1`, with which
+xless looks for nothing held; that one the code could unset, the session it could not. `Tests/shell/agent.test.sh` runs
+such code against a real agent, every way of getting away included. What stays in the terminal's session runs no code of
+the project: the script behind `xless run` (its build step is an `xless ship`, whose tools are not), with `--docker` the
+docker client which that script runs (the build is in the container), and a
+[credential helper](#with-a-credential-helper), which may ask something on the terminal and already sees every secret.
+
+A session of its own has no terminal, so Ctrl-C and a closed window do not reach a tool by themselves: xless passes SIGINT,
+SIGTERM and SIGHUP on to the process group of each tool that runs, and ends as it would. (A `kill -9` of xless it cannot
+pass on.)
+
+Containers: xless never mounts the agent's socket. One mounted by hand gives nothing: on Linux a container's process is in
+no granted session; on macOS a socket does not cross into the VM.
+
+The other direction: the client gives a secret to an agent only when the agent's process is yours, and is in the client's
+own session or has shown (with a MAC) that it knows this store's data key; on macOS also only to its own executable. The
+directory of the sockets (`$XDG_RUNTIME_DIR/xless-agent`, your own temporary directory's `xless-agent` on macOS, else
+`/run/user/<uid>/xless-agent` or `/tmp/xless-agent-<uid>`) must be yours, mode 0700 and no symlink, or nothing is bound or
+connected to. A data key that does not open the store is never used.
+
+The agent process: no controlling terminal, no file of yours open, stdin, stdout and stderr on `/dev/null`, an empty
+environment, `/` as its directory, core dumps off; non-dumpable on Linux, `PT_DENY_ATTACH` on macOS; secrets
+in memory locked against swap (where the limit allows), left out of core dumps, and zeroed when dropped. It writes no
+log. It holds at most 8 items of 128 KiB, for at most 64 sessions, and gives a connection 10 seconds and 4 KiB before it
+knows who it is. An agent of another xless version is never misunderstood: the command says so, and `xless lock` ends it.
+
+### When it ends
+
+- The time given, the idle time, `xless lock` (every agent of yours, in every terminal, the keyring and a saved session:
+  every step is taken, whatever the others came to). `xless auth logout` drops the Apple ID session, `xless secrets lock`
+  the store's unlock.
+- An agent that **does not answer** (a stopped process, say) is never taken for nothing held, also when its queue is full
+  and the system refuses a connection as if nobody listened (macOS): its socket's name says which process made it. `xless
+  lock` ends that process where it can ask who listens and the kernel says that it is the one, and this very xless
+  (macOS); else it names the agent and fails, as `xless secrets lock`, `xless auth logout` and `passwd` do. A command
+  that looks for something held says so, waits for it once (1.5 s) and goes on.
+- **The terminals are closed**: when no granted session's leader is left (you closed the window, logged out of SSH, quit
+  the shell), the agent ends within 2 seconds. Logging out ends every session.
+- **The machine sleeps**: the agent compares a clock that stops during sleep with one that does not, and drops everything
+  when it wakes, before it answers anything (`lockOnSleep`).
+- **The screen is locked**, on macOS, within 2 seconds (`lockOnScreenLock`). On Linux a screen locker says so on D-Bus
+  only, which xless does not speak: let the locker run `xless lock`, for example with
+  `swayidle lock 'xless lock'`, `xss-lock -- sh -c 'xless lock; exec i3lock -n'`, or a systemd user unit for your desktop.
+- `passwd` (every unlock of that store), a store put in its place (the data key is named after the store's ID and checked
+  against the store before use), the agent's socket or its directory removed, and the agent process killed.
+
+No agent can be used where xless itself leads its POSIX session (`ssh host xless …`, `docker exec … xless`, without a
+shell: nothing of it would be left to serve), on Linux before 5.3 (no pidfd), nor where its directory or socket cannot be
+made at all (a read-only file system, a path too long, no Unix sockets). There, and only there, `xless unlock` uses the
+kernel keyring if it works, for at most an hour, and says so and what that lacks; else it is refused with the reason. An
+agent that could run and did not start this time is an error.
+
+### The kernel keyring
+
 - The keys are `user` keys in the **session keyring**, readable only by a process that holds that keyring (a
   "possessor"). Which processes those are is the system's choice: usually every process of your login session (on a
   desktop, every terminal of the login), and where no login session keyring was set up, your user's default session
   keyring, which all your processes without one share. Other users cannot read them; the permissions give nothing to
   the user, group or others outside possession. Every process that possesses the keys can read them; the tools xless
   runs, and so the code you build, do not ([below](#the-build-and-your-secrets)).
-- There is no cache on macOS (it has no kernel keyring) or in containers that block the keyring calls (Docker's default
-  seccomp profile does): `--remember` and `--keep` are refused there, and every command asks again.
+- The kernel expires the keys itself, after at most one hour; when xless cannot set the bound or the permissions, it
+  revokes the key and fails rather than keep it longer or wider.
+- **What ends a hold in the agent and not here:** a time without use (so an `--idle` is refused, and the configured one is
+  said not to be kept), sleep, a locked screen, a closed terminal. And `xless lock` drops the keys of the session keyring
+  it is run in: a screen locker, or a service of your login, may well have another one. The hour is the bound.
+- Beside the key is a note of when it ends and when the passphrase was typed, so the [maximum](#holding-an-unlock-off-by-default-in-memory)
+  is counted from there when the hold moves to an agent.
+
+A **longer keyring** was considered instead of an agent and left out: macOS and containers have none, a possessor is every
+process of the login rather than of a terminal, and it has no idle time, no sleep and no terminal to end with.
+
+### Across reboots
+
+`xless auth login --keep 3d --across-reboots` also saves the Apple ID session as an entry of the encrypted store
+(`xless-apple-session`), sealed under the store's data key as every entry is: after a reboot, a command that needs the
+session opens it once the store is unlocked, so the passphrase is asked, and not the Apple ID's password and code. It is
+off by default, needs xless's own encrypted store, ends at the time given at the latest, and is removed by `xless auth
+logout`, `xless lock`, a later `--keep` without it, or its end. It is an entry of a kind of its own, which no command
+imports, and which is never read as a secret by name, exported, or given to a build or a container; an older xless lists
+it and cannot open it. That one name is xless's: an import under it is refused, and an entry of your own that has had the
+name since before is left alone (and `--across-reboots` refused until it is renamed).
+
+The **macOS Keychain** and the **Secret Service** (GNOME Keyring, KWallet) were considered for the key that would open it
+without a passphrase, and are not used: they cannot keep it from build code.
+
+- *Keychain*: an item can be limited to one program by its code signature. xless is signed ad hoc, so that is the hash of
+  one build of it: every process of yours, build code included, can run that very xless with the environment and the
+  standard input of its choice (and, without the hardened runtime, with a library of its choice), and the Keychain then
+  gives *it* the key, without asking.
+- *Secret Service*: any process on your session bus reads every unlocked item; there is no rule per program.
+
+Both would let code that builds an app have a session that lasts across reboots, which nothing xless holds may. The same
+holds for a [credential helper](secrets.md#keeping-the-secrets-in-your-keyring-or-pass-credential-helpers), which any
+process of yours can run: there `--across-reboots` is refused.
+
+### What an attacker who runs as you can do
+
+A program that runs as you is not shut out by any of this, only by not running as you. How far it gets:
+
+- **In the same terminal session** as an unlock (something you started there yourself, not through xless: a background job
+  of that shell, a daemon that stayed in its session, `npm install` by hand), it can do what your next command there can:
+  run xless, or ask the agent itself, while it holds something.
+- **In any other session, as a native build's code is,** the agent refuses it. What it can still do is what it could
+  before there was an agent, held unlock or not: get into a granted session through something that is in it or drives it
+  (type into that terminal with `tmux send-keys`, terminal automation or, on macOS, an accessibility permission; attach to
+  your shell with `ptrace`, where the system allows it: Linux with `kernel.yama.ptrace_scope=0`, or as root), read what
+  you type from the terminal's device, or replace the `xless` you run and your shell's startup files.
+- It can always **drop** what is held: `xless lock` needs no grant, and it can kill the agent. That costs you a passphrase,
+  nothing else.
+- **With the disk only**, it has the sealed store, and needs the passphrase.
+
+So the agent and the sessions keep a build from helping itself to an unlock; they are no sandbox. Run builds you do not
+trust in Docker, or where nothing is held.
+
+### Asking for nothing: `--no-input`
+
+Every command takes `--no-input` (or `XLESS_NO_INPUT=1`, which the xless processes of a script inherit). Where it would
+ask for a passphrase, a sign-in, a code, a choice or a confirmation, it stops at once with `[input] …`, the fix, and exit
+code **23**, whatever else it was doing: no prompt goes around it (one gate stands before all of them, and a test runs every
+command of xless against it, in a terminal). A credential helper is started without a terminal or a display then, and
+stopped after 20 seconds. `xless auth status --json` says beforehand what is held and until when
+([fields](apple-account.md#xless-auth)).
+
+### What Apple decides
+
 - `xless auth logout` forgets the kept session on this machine. It does not sign you out at Apple: the cookies stay
   valid on Apple's side until Apple expires them. If you think a session leaked, change the Apple ID's password.
+- A session is kept for no longer than Apple's own session cookie says it lives, when it says so. How long Apple really
+  accepts a session is **not known**: it is undocumented and xless has not measured it. When Apple refuses a kept session
+  before its time, the command says so and signs in again for the rest of it, with the password only where Apple still
+  trusts this device (its `DES…` cookie is kept with the session for that) and with a code when Apple asks for one.
 - A kept session that cannot be opened (expired, altered, half gone) is dropped and treated as none.
 
 ## Process hardening
@@ -151,8 +328,11 @@ a path asked on the terminal) with the `xless secrets import` command to run, ra
   notarizes, gets the keys it needs as files, mode 0600, in a fresh 0700 directory of the temporary directory
   (`$TMPDIR`, else `/tmp`), removed when the call ends: point `TMPDIR` at a tmpfs if that directory is on a disk you
   worry about.
-- **Tools start in an empty session keyring** (see [below](#the-build-and-your-secrets)), and xless makes itself
-  non-dumpable before it starts one, so the tool cannot attach to xless or read its memory or environment.
+- **Tools start in a POSIX session of their own and an empty session keyring** (see
+  [below](#the-build-and-your-secrets)), without a file of xless's open and with no terminal as their standard input
+  (their output may be one, and code that runs as you can open its device), and xless makes itself non-dumpable before it
+  starts one, so the tool cannot attach to xless or read its memory or environment (Linux; on macOS the system's own
+  rules on attaching to a process apply).
 - **`--verbose` traces are redacted** so you can paste them into an issue: the `Authorization` header, cookies, any
   header named like an auth, token, secret, session, password, CSRF or signature header, every query string but the
   App Store Connect API's own (so a presigned upload address's signature never shows), the SRP exchange's values, and
@@ -178,8 +358,9 @@ An app's build runs code you did not write. What that code can reach depends on 
 - **A project directory (`xless run <dir>`)** is one `xless ship`: build, sign and upload in one process (one
   container with `--docker`, which gets the secrets the run needs). xless keeps what it holds out of the build tools'
   reach: they start without the secret variables (and without any name of your own the run reads a secret from),
-  in a fresh, empty session keyring, so a remembered store unlock or a kept Apple ID session is not theirs to read,
-  and with `XLESS_NO_SECRET_STORE=1`, so an xless they run never opens the store. Before it starts a tool, xless
+  in a POSIX session of their own, which [the xless agent refuses](#who-may-use-what-the-agent-holds), and a fresh, empty
+  session keyring, so a held store unlock or a kept Apple ID session is not theirs to read, and with
+  `XLESS_NO_SECRET_STORE=1`, so an xless they run never opens the store. Before it starts a tool, xless
   makes itself non-dumpable: the tool cannot attach to it or read its memory or its environment. Natively the build
   still runs as you: its SwiftPM plugins and macros can read your files, including the key files a `_FILE` variable
   names (the store keeps keys sealed on disk), and the environment of your shell, or of any other process of yours
@@ -194,8 +375,9 @@ xless run ~/MyApp --to finalize       # build only: reads no secret, opens no st
 xless run ~/MyApp --from sign         # sign and upload what it built: no build code runs
 ```
 
-Where the kernel keyring is unavailable (macOS, a container whose seccomp profile blocks it) there is nothing kept to
-hide; where it is available but a tool cannot be given an empty keyring, xless does not start the tool.
+Where the kernel keyring is unavailable (macOS, a container whose seccomp profile blocks it) there is nothing in it to
+hide; where it is available but a tool cannot be given an empty keyring, xless does not start the tool. Nor does it start
+one that cannot be given a session of its own.
 
 ## What goes to which host
 
@@ -252,7 +434,7 @@ everything else a release needs runs on the API key.
   signs for another site or account. The key's PIN, when the key wants one, is read like the password, sent to the key
   only (encrypted with the FIDO2 PIN protocol), and wiped after use. `--verbose` traces hide the challenge, the
   credential IDs, the user handle and the signature.
-- The cookies stay in this process's memory and are forgotten when it ends, unless `--keep` ([above](#caches-off-by-default-at-most-an-hour)).
+- The cookies stay in this process's memory and are forgotten when it ends, unless `--keep` ([above](#holding-an-unlock-off-by-default-in-memory)).
 - xless never accepts legal terms: when Apple wants an agreement accepted, the command stops and names the page.
 
 ## Wiping everything
@@ -264,15 +446,15 @@ what you keep. A key Apple still accepts stays dangerous wherever a copy of it i
 with the passphrase it had then. Then:
 
 ```sh
-xless secrets lock                       # forget a remembered unlock now
-xless auth logout                        # forget a kept Apple ID session (Apple's side expires on its own)
+xless lock                               # forget everything held, a session saved across reboots included
+                                         # (Apple's side of a session expires on its own)
 rm -rf ~/.local/share/xless/vault        # the secret store itself ($XDG_DATA_HOME/xless/vault): every key in it is gone
                                          # (with a credential helper: xless secrets list, then xless secrets rm each entry)
-rm -f ~/.config/xless/config.yml         # the default team (a preference, not a secret)
+rm -f ~/.config/xless/config.yml         # the default team and the unlock times (preferences, not secrets)
 ```
 
-The kernel keyring's keys also go when the login session's keyring is released (once no process of that session is
-left) and at a reboot.
+The agent ends with the terminals it serves; the kernel keyring's keys also go when the login session's keyring is
+released (once no process of that session is left). Neither survives a reboot.
 
 Files xless never deletes for you: exported keys (`xless secrets export`, `sign bootstrap --out`) and the files you
 imported from when you declined the offer to delete them. CI keeps its secrets in its own secret store.

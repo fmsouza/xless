@@ -27,18 +27,14 @@ public enum SwiftBuildRunner {
         var extra: [String: String?] = environment.processEnvironment(path: baseEnvironment["PATH"]).mapValues { $0 }
         for (k, v) in extraEnvironment { extra[k] = v }
         let env = ChildProcess.environment(baseEnvironment, extra: extra)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["swbuild", "build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path]
-        p.environment = env
+        let status: Int32
         do {
             try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
             _ = FileManager.default.createFile(atPath: log.path, contents: nil)
             let out = try FileHandle(forWritingTo: log)
             defer { try? out.close() }
-            p.standardOutput = out
-            try ChildProcess.start(p, stage: stage)
-            p.waitUntilExit()
+            status = try ChildProcess.start("/usr/bin/env", ["swbuild", "build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path],
+                                            environment: env, stdout: out.fileDescriptor, stage: stage).wait()
         } catch let e as XlessError {
             throw e
         } catch {
@@ -46,7 +42,7 @@ public enum SwiftBuildRunner {
         }
         let data = (try? Data(contentsOf: log)) ?? Data()
         var summary = SwiftBuildOutput.summarize(data)
-        if p.terminationStatus != 0 { summary.succeeded = false }
+        if status != 0 { summary.succeeded = false }
         return summary
     }
 }

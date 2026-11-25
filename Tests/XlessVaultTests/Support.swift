@@ -59,15 +59,36 @@ final class MemoryCache: VaultKeyCache, @unchecked Sendable {
     private let lock = NSLock()
     private var keys: [String: [UInt8]] = [:]
     private(set) var stored: [(String, Int)] = []
+    private(set) var typed: [Int] = []
+    /// Of each time it was looked into: whether that was to use what it holds.
+    private(set) var using: [Bool] = []
+    /// The seconds since the passphrase of what is held was typed; nil: not known.
+    var typedAgo: Int? = 100
+    private(set) var places: [String] = []
     var isAvailable: Bool { true }
 
-    func load(id: String) throws -> SecretBytes? { lock.withLock { keys[id].map { SecretBytes(copying: $0) } } }
-    func store(id: String, key: SecretBytes, seconds: Int) throws {
+    func load(id: String, using: Bool = true, accept: (SecretBytes) -> Bool = { _ in true }) throws -> SecretBytes? {
         lock.withLock {
-            keys[id] = key.withUnsafeBytes { Array($0) }
-            stored.append((id, seconds))
+            self.using.append(using)
+            guard let key = keys[id].map({ SecretBytes(copying: $0) }) else { return nil }
+            if accept(key) { return key }
+            keys[id] = nil
+            return nil
         }
     }
+    func store(id: String, key: SecretBytes, seconds: Int) throws {
+        try store(key, id: id, place: "", hold: SecretHold(seconds: seconds, idle: seconds, maximum: seconds), typedAgo: 0)
+    }
+    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws {
+        lock.withLock {
+            keys[id] = key.withUnsafeBytes { Array($0) }
+            stored.append((id, hold.seconds))
+            self.typed.append(typedAgo)
+            places.append(place)
+        }
+    }
+    func forget(place: String) throws { lock.withLock { keys = [:] } }
+    func held(id: String) -> HeldUnlock? { lock.withLock { keys[id] == nil ? nil : HeldUnlock(backend: .agent, expires: nil, typedAgo: typedAgo) } }
     func forget(id: String) throws -> Bool { lock.withLock { keys.removeValue(forKey: id) != nil } }
 }
 

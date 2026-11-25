@@ -13,8 +13,8 @@ public enum Shell {
     public static var scrubbedEnvironment: [String] { SecretEnvironment.scrubbed }
     /// Runs `executable` (resolved via PATH) with `arguments`. Throws XlessError(stage) on non-zero exit.
     /// The child inherits `baseEnvironment` (default: this process's environment; tests inject one instead of mutating the process) minus `scrubbedEnvironment`, plus `env` (explicit entries win;
-    /// a nil value removes a variable), plus `XLESS_NO_SECRET_STORE=1`; it starts in an empty session keyring
-    /// (`ChildProcess`). passthrough: stream output to the terminal instead of capturing it.
+    /// a nil value removes a variable), plus `XLESS_NO_SECRET_STORE=1`; it starts in a session of its own, with no terminal,
+    /// and an empty session keyring (`ChildProcess`). passthrough: stream output to the terminal instead of capturing it.
     /// captureTo: stream stdout and stderr to the terminal (like passthrough) and also write both, in order, to this file, so a caller
     /// can parse the full output (the error's tail keeps only 20 lines); the run returns once both pipes have ended.
     /// keepErrorLine: which stderr lines may appear in the error's 20-line tail (drops known noise, e.g. a linker
@@ -26,11 +26,7 @@ public enum Shell {
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
         stage: Stage, passthrough: Bool = false, captureTo: URL? = nil, keepErrorLine: (Substring) -> Bool = { _ in true }
     ) throws -> ShellResult {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = [executable] + arguments
-        if let cwd { p.currentDirectoryURL = cwd }
-        p.environment = ChildProcess.environment(baseEnvironment, extra: env)
+        let environment = ChildProcess.environment(baseEnvironment, extra: env)
 
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-shell-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -49,19 +45,20 @@ public enum Shell {
             _ = FileManager.default.createFile(atPath: captureTo.path, contents: nil)
             log = try FileHandle(forWritingTo: captureTo)
             pipes = [(Pipe(), FileHandle.standardOutput), (Pipe(), FileHandle.standardError)]
-            p.standardOutput = pipes[0].0
-            p.standardError = pipes[1].0
-        } else if !passthrough {
-            p.standardOutput = out
-            p.standardError = err
         }
-        do { try ChildProcess.start(p, stage: stage) } catch let e as XlessError {
+        let streams: [FileHandle?] = pipes.isEmpty ? (passthrough ? [nil, nil] : [out, err]) : pipes.map(\.0.fileHandleForWriting)
+        let p: ToolProcess
+        do {
+            p = try ChildProcess.start("/usr/bin/env", [executable] + arguments, environment: environment, cwd: cwd,
+                                       stdout: streams[0]?.fileDescriptor, stderr: streams[1]?.fileDescriptor, stage: stage)
+        } catch let e as XlessError {
             try? log?.close()
             throw e
         } catch {
             try? log?.close()
             throw XlessError(stage, "cannot start \(executable): \(error)", fix: "install \(executable) or check PATH")
         }
+        for (pipe, _) in pipes { try? pipe.fileHandleForWriting.close() } // the tool's now: the pipe ends with its last writer
         if let log {
             let lock = NSLock()
             for (pipe, terminal) in pipes {
@@ -75,18 +72,18 @@ public enum Shell {
                 }
             }
         }
-        p.waitUntilExit()
+        let status = p.wait()
         readers.wait()
         try? log?.close()
         try out.close()
         try err.close()
         let stdout = (try? String(contentsOf: outURL, encoding: .utf8)) ?? ""
         let stderr = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
-        if p.terminationStatus != 0 {
+        if status != 0 {
             let tail = stderr.split(separator: "\n").filter(keepErrorLine).suffix(20).joined(separator: "\n")
-            throw XlessError(stage, "`\(executable) \(arguments.joined(separator: " "))` exited with \(p.terminationStatus)\(tail.isEmpty ? "" : ":\n\(tail)")",
+            throw XlessError(stage, "`\(executable) \(arguments.joined(separator: " "))` exited with \(status)\(tail.isEmpty ? "" : ":\n\(tail)")",
                              fix: "see the tool output above")
         }
-        return ShellResult(status: p.terminationStatus, stdout: stdout, stderr: stderr)
+        return ShellResult(status: status, stdout: stdout, stderr: stderr)
     }
 }

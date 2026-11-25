@@ -26,12 +26,12 @@ store; never commit one. (`.gitignore` already excludes `*.p8` and `*.pem`.)
 
 ```sh
 xless secrets init                  # a new passphrase, twice; it cannot be recovered
-xless auth login --keep 30m         # Apple ID, password and the two-factor code, on the terminal; lists your teams
+xless auth login --keep             # Apple ID, password and the two-factor code, on the terminal; lists your teams
 xless team use ABCDE12345           # the default team of the account commands
 ```
 
-`--keep 30m` keeps the Apple ID session for the next commands of your login session, in the Linux kernel keyring,
-for at most an hour; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). Without
+`--keep` keeps the Apple ID session in memory for the next commands of this terminal, for 8 hours (2 without use) unless
+you say otherwise; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). Without
 it, each command that needs the session signs in again.
 
 ## 2. App Store Connect API key
@@ -183,8 +183,8 @@ To use the images on other machines (a CI runner, a build server), push them to 
 xless run <project-dir>                 # or, in the images: xless run --docker <project-dir>
 ```
 
-A native build runs the project's SwiftPM plugins and macros as you, but in an empty session keyring and without the
-secret variables, so a remembered unlock or a kept Apple ID session is out of their reach
+A native build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own
+and without the secret variables, so a held unlock or a kept Apple ID session is out of their reach
 ([security.md](security.md#the-build-and-your-secrets)). The keys come from the secret store: one passphrase per run, no secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight), which also covers the overlay apps and
 running `xless ship` in a container yourself).

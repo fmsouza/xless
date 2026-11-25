@@ -69,7 +69,8 @@ stage also removes its previous output.
 | upload | `xless upload` | `upload.json` (iOS only; rewritten at every state change, so it keeps the build ID if processing fails or times out). With a [`testflight:` block](xless-yml.md#testflight) it then delivers the processed build to your TestFlight groups. | 17 |
 
 Config errors exit 10, SDK errors exit 11 and the Apple account commands' errors exit 20
-([apple-account.md](apple-account.md#errors)). `xless run` itself exits 2 for a usage or configuration error of its own
+([apple-account.md](apple-account.md#errors)); a command that would have to ask something with `--no-input` exits 23.
+`xless run` itself exits 2 for a usage or configuration error of its own
 (a missing project, overlay or secret file). Errors are printed as `[stage] cause — fix`.
 
 All stage commands take `--platform ios|macos`, `--project <dir>` (default `.`) and `--build-number`; overlays take

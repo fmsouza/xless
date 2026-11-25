@@ -32,8 +32,11 @@ public actor AppleWebClient {
     /// Puts a cached session's cookies back (replacing the jar's).
     func restoreCookies(_ cookies: [CookieJar.Cookie]) { jar.restore(cookies) }
 
-    /// When the first of the session's cookies with an expiry runs out.
-    func earliestCookieExpiry() -> Date? { jar.earliestExpiry }
+    /// When the session runs out, as its cookies say.
+    func sessionCookieExpiry() -> Date? { jar.sessionExpiry }
+
+    /// Forgets the session but for what says that this device is trusted.
+    func keepTrustedDevice() { jar.keepTrustedDevice() }
 
     /// Whether the session holds any cookie (it signed in, or a kept session was restored).
     public var hasCookies: Bool { !jar.isEmpty }

@@ -57,7 +57,7 @@ private final class Terminal: @unchecked Sendable {
     do { _ = try secrets.required("XLESS_DIST_KEY", stage: .sign); Issue.record("expected a locked store") } catch let e as XlessError {
         #expect(e.stage == .sign)
         #expect(e.cause.contains("locked"))
-        #expect(e.fix.contains("xless secrets unlock"))
+        #expect(e.fix.contains("xless unlock"))
     }
 }
 
@@ -113,18 +113,35 @@ private final class Terminal: @unchecked Sendable {
     defer { t.cleanup() }
     let (file, key) = try t.make()
     let cache = MemoryCache()
-    let got = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: 1800, reason: "test")
+    let hold = SecretHold(seconds: 1800, idle: 600, maximum: 7200)
+    let got = try VaultUnlocker.dataKey(for: file, cache: cache, place: "/store", prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: hold, reason: "test")
     #expect(VaultCrypto.keyBytes(got) == VaultCrypto.keyBytes(key))
     #expect(cache.stored.map(\.1) == [1800])
+    #expect(cache.typed == [0])
+    #expect(cache.places == ["/store"])
+    // Again, with the key held: nothing is asked, and it is a renewal.
+    _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, remember: hold, reason: "test")
+    #expect(cache.typed == [0, 100])
+    cache.typedAgo = 0 // within the second: still not typed for this
+    _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, remember: hold, reason: "test")
+    #expect(cache.typed == [0, 100, 1])
 }
 
-@Test func rememberDurationsAreBoundedToAnHour() throws {
-    #expect(try RememberDuration.seconds("30m") == 1800)
-    #expect(try RememberDuration.seconds("1h") == 3600)
-    #expect(try RememberDuration.seconds("90s") == 90)
-    #expect(try RememberDuration.seconds("600") == 600)
-    for bad in ["0", "61m", "2h", "3601", "abc", "", "-5m", "1d", "m"] {
-        #expect(throws: VaultError.self, "\(bad)") { try RememberDuration.seconds(bad) }
+@Test func aRenewalAsksAgainWhenItIsNotKnownWhenThePassphraseWasTypedOrTooLongAgo() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, _) = try t.make()
+    let hold = SecretHold(seconds: 1800, idle: 600, maximum: 7200)
+    for age in [nil, 7200, 9000] {
+        let cache = MemoryCache()
+        _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: hold, reason: "test")
+        cache.typedAgo = age
+        let prompter = ScriptedPrompter(["correct horse battery"])
+        _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { prompter }, remember: hold, reason: "test")
+        #expect(prompter.asked == 1)
+        #expect(cache.typed == [0, 0])
+        // Without a renewal it is used as it is.
+        _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test")
     }
 }
 
@@ -175,4 +192,66 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     let secrets = Secrets(env: ["XLESS_DIST_KEY": "ENV"], fallback: nil)
     #expect(try secrets.preferring(team: "TEAMA12345").required("XLESS_DIST_KEY", stage: .sign) == "ENV")
     #expect(try Secrets(env: [:], fallback: nil).preferring(team: "").optional("XLESS_DIST_KEY") == nil)
+}
+
+@Test func withoutInputALockedStoreIsAnErrorOfItsOwnAndNothingIsAsked() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, key) = try t.make()
+    let error = #expect(throws: VaultError.self) {
+        try InputGate.$forced.withValue(true) {
+            try VaultUnlocker.dataKey(for: file, cache: nil, prompter: { Issue.record("the terminal was opened"); return nil }, reason: "exporting NOTE")
+        }
+    }
+    #expect(error?.kind == .inputNeeded)
+    #expect(error?.stageError(.upload).stage == .input)
+    #expect(error?.cause.contains("exporting NOTE") == true)
+    #expect(error?.fix.contains("xless unlock") == true)
+    // Held: nothing is needed.
+    let cache = MemoryCache()
+    try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: "", hold: SecretHold(seconds: 60, idle: 60, maximum: 60), typedAgo: 0)
+    _ = try InputGate.$forced.withValue(true) { try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test") }
+}
+
+@Test func theSavedSessionIsNoSecretOfTheEnvironment() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make(entries: [("xless-sparkle", .generic, .init(), "a key"), ("xless-apple-session@ABCDE12345", .generic, .init(), "mine")])
+    let store = VaultSecretStore(store: t.store, cache: nil, prompter: { ScriptedPrompter(Array(repeating: "correct horse battery", count: 3)) })
+    let name = SecretEnvironment.savedSession
+    #expect(try VaultResolver(secrets: store).lookup(name, stage: .config) == "mine")
+    try store.update(reason: "test") { _ in [.add(name: name, kind: .appleSession, metadata: .init(), secret: SecretBytes(utf8: "cookies"))] }
+    // Neither its value nor a word that it is there.
+    #expect(try VaultResolver(secrets: store).lookup(name, stage: .config) == "mine")
+    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup(name, stage: .config) == "mine")
+    #expect(try VaultResolver(secrets: store).preferring(team: "FGHIJ67890").lookup(name, stage: .config) == nil)
+    #expect(try VaultResolver(secrets: store).lookup("xless-apple", stage: .config) == nil)
+    // Another entry whose name starts so is one like any.
+    #expect(try VaultResolver(secrets: store).lookup("xless-sparkle", stage: .config) == "a key")
+    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup("xless-sparkle", stage: .config) == "a key")
+}
+
+/// A look lets an unlock's idle time go on; the first use after it does not.
+@Test func lookingAtAnUnlockIsNotUsingIt() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, key) = try t.make(entries: [("NOTE", .generic, .init(), "v")])
+    let cache = MemoryCache()
+    try cache.store(id: file.id, key: VaultCrypto.keyBytes(key), seconds: 60)
+    let store = VaultSecretStore(store: t.store, cache: cache, prompter: { nil })
+    for _ in 0..<3 { #expect(store.heldKey(for: file, using: false) != nil) }
+    #expect(cache.using == [false])
+    let catalog = try store.existingCatalog(), entry = try #require(catalog.entry(named: "NOTE"))
+    for _ in 0..<3 { #expect(try store.secret(entry, in: catalog, reason: "test").utf8String() == "v") }
+    #expect(cache.using == [false, true])
+    // Looked at and then written with.
+    let writer = VaultSecretStore(store: t.store, cache: cache, prompter: { nil })
+    #expect(writer.heldKey(for: file, using: false) != nil)
+    #expect(writer.heldKey(for: file) != nil && writer.heldKey(for: file) != nil)
+    #expect(cache.using == [false, true, false, true])
+    // Used at once.
+    let user = VaultSecretStore(store: t.store, cache: cache, prompter: { nil })
+    _ = try user.secret(entry, in: catalog, reason: "test")
+    #expect(user.heldKey(for: file, using: false) != nil)
+    #expect(cache.using == [false, true, false, true, true])
 }

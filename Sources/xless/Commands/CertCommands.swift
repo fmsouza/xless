@@ -125,6 +125,9 @@ struct CertsCreateCommand: AsyncParsableCommand {
         let type = try CertificateTypeArgument.parse(type)
         if csr != nil, name != nil { throw ValidationError("--name names where a generated key goes; with --csr nothing is stored") }
         if let name, !VaultEntry.isValidName(name) { throw ValidationError("--name \(name) is not an entry name: letters, digits and . _ @ -") }
+        if let name {
+            do { try VaultEntry.requireAllowed(name: name, kind: .signingKey) } catch let e as VaultError { throw ValidationError("--name: \(e.cause); \(e.fix)") }
+        }
         if type.needsECCKey, csr == nil { let e = CertificateCreation.needsCSR(type, stage: .account); throw ValidationError("\(e.cause); \(e.fix)") }
         switch type.relationship {
         case .merchantID?:

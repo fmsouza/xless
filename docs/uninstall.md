@@ -90,7 +90,8 @@ Use your prefix in place of `~/.local` if you installed with `--prefix` or `XLES
 `~/.local/share/xless/vault` is the [secret store](secrets.md): the only copy of the keys xless created for you.
 Before removing it, revoke at Apple the keys and certificates you no longer use, or export the ones you keep
 ([security.md](security.md#wiping-everything)); to keep it, remove everything in `~/.local/share/xless` but `vault`.
-Reinstalling or upgrading with the install line keeps it. Then, if you want:
+Reinstalling or upgrading with the install line keeps it. Run `xless lock` before you remove `xless`, so nothing is held
+any more (after an upgrade too: a new xless does not use the agent of the old one). Then, if you want:
 
 - free Docker's build cache ([above](#free-the-build-cache));
 - remove `~/.cache/xless` by hand if `xless clean` was already gone (and `docker image rm` the images and

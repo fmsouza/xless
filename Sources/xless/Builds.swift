@@ -214,12 +214,15 @@ enum Interrupt {
         source.setCancelHandler { close(readEnd); close(writeEnd) }
         source.resume()
         pipeWrite = writeEnd
-        let previous = signal(sig) { _ in
+        // Whole: the mask and the flags of what passes signals on to the tools (`xless_spawn_session`) are part of it.
+        var previous = sigaction()
+        sigaction(sig, nil, &previous)
+        signal(sig) { _ in
             var byte: UInt8 = 1
             _ = write(Interrupt.pipeWrite, &byte, 1)
         }
         defer {
-            signal(sig, previous)
+            sigaction(sig, &previous, nil)
             pipeWrite = -1
             source.cancel()
         }

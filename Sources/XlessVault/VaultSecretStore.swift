@@ -9,7 +9,8 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
     public let cache: (any VaultKeyCache)?
     let prompter: () -> (any PassphrasePrompter)?
     private let lock = NSLock()
-    private var dataKey: (id: String, key: SymmetricKey)?
+    /// `isLookedAt`: it is the unlock cache's, where it does not count as used yet.
+    private var dataKey: (id: String, key: SymmetricKey, isLookedAt: Bool)?
 
     /// - Parameter prompter: the terminal, or nil when there is none (called only when the passphrase is needed).
     public init(store: VaultStore, cache: (any VaultKeyCache)? = KernelKeyringCache(), prompter: @escaping () -> (any PassphrasePrompter)?) {
@@ -27,7 +28,7 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
         return catalog
     }
 
-    public func unlock(_ catalog: SecretCatalog, remember: Int?, reason: String) throws {
+    public func unlock(_ catalog: SecretCatalog, remember: SecretHold?, reason: String) throws {
         _ = try key(for: try file(of: catalog), remember: remember, reason: reason)
     }
 
@@ -48,10 +49,12 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
             for change in try body(SecretCatalog(file)) {
                 switch change {
                 case .add(let name, let kind, let metadata, let secret):
+                    try VaultEntry.requireAllowed(name: name, kind: kind)
                     guard next.entry(named: name) == nil else { throw Self.exists(name) }
                     next.entries.append(try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
                                                              dataKey: try key(for: file, remember: nil, reason: reason)))
                 case .replace(let name, let kind, let metadata, let secret):
+                    try VaultEntry.requireAllowed(name: name, kind: kind)
                     guard let index = next.entries.firstIndex(where: { $0.name == name }) else { throw Self.missing(name) }
                     var sealed = try VaultCrypto.seal(name: name, kind: kind, metadata: metadata, secret: secret,
                                                       dataKey: try key(for: file, remember: nil, reason: reason))
@@ -75,26 +78,36 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
     }
 
     /// The data key of `file` without asking: the one this process unlocked, else a valid one in the unlock cache.
-    func heldKey(for file: VaultFile) -> SymmetricKey? {
+    /// - Parameter using: false to look only (an unlock's idle time goes on).
+    public func heldKey(for file: VaultFile, using: Bool = true) -> SymmetricKey? {
         SecretScope.enter()
         return lock.withLock {
-            if let dataKey, dataKey.id == file.id { return dataKey.key }
-            guard let cached = try? cache?.load(id: file.id) else { return nil }
+            if let key = ownKey(for: file, using: using) { return key }
+            guard let cached = try? cache?.load(id: file.id, using: using, accept: { VaultUnlocker.opens(file, $0) }) else { return nil }
             let key = SymmetricKey(data: cached)
-            guard (try? VaultCrypto.verify(file, dataKey: key)) != nil else { return nil }
-            dataKey = (file.id, key)
+            dataKey = (file.id, key, !using)
             return key
         }
     }
 
+    /// The data key this process has; the lock is held. Its first use is one of the unlock it was looked up in, too.
+    private func ownKey(for file: VaultFile, using: Bool) -> SymmetricKey? {
+        guard let dataKey, dataKey.id == file.id else { return nil }
+        if using, dataKey.isLookedAt {
+            self.dataKey?.isLookedAt = false
+            _ = try? cache?.load(id: file.id, using: true, accept: { VaultUnlocker.opens(file, $0) })
+        }
+        return dataKey.key
+    }
+
     /// The data key for `file`: this process's, else the unlock cache's, else asked (`VaultUnlocker`). With
     /// `remember`, it is (also) kept in the cache.
-    public func key(for file: VaultFile, remember: Int?, reason: String) throws -> SymmetricKey {
+    public func key(for file: VaultFile, remember: SecretHold?, reason: String) throws -> SymmetricKey {
         SecretScope.enter() // before the passphrase and the data key are in memory
         return try lock.withLock {
-            if remember == nil, let dataKey, dataKey.id == file.id { return dataKey.key }
-            let key = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: prompter, remember: remember, reason: reason)
-            dataKey = (file.id, key)
+            if remember == nil, let key = ownKey(for: file, using: true) { return key }
+            let key = try VaultUnlocker.dataKey(for: file, cache: cache, place: vault.location.file.path, prompter: prompter, remember: remember, reason: reason)
+            dataKey = (file.id, key, false)
             return key
         }
     }
