@@ -44,14 +44,15 @@ public enum AgentLauncher {
     public static let argument = "__agent"
     static let channel: Int32 = 3
 
-    /// This program's file.
+    /// This program's file; nil where it was replaced or removed while it runs, so that what is there now is not this program.
     static var executablePath: String? {
         #if os(macOS)
-        var size = UInt32(PATH_MAX)
-        var buffer = [CChar](repeating: 0, count: Int(size))
-        guard _NSGetExecutablePath(&buffer, &size) == 0, let real = realpath(buffer, nil) else { return nil }
-        defer { free(real) }
-        return String(cString: real)
+        // The kernel's path follows a file that was moved, where the one it was started by does not.
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(getpid(), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let path = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        guard let here = AgentExecutable(at: path), here == AgentExecutable.current else { return nil }
+        return path
         #else
         // What this process runs, even when the file was replaced since.
         return "/proc/self/exe"
@@ -106,7 +107,7 @@ public enum AgentLauncher {
                               lease: (command: String, seconds: Int)?, executable: String?) throws -> (AgentChannel, String) {
         if let obstacle = obstacle(lease: lease != nil) { throw obstacle }
         guard let program = executable ?? executablePath else {
-            throw AgentError(.unavailable, "xless does not find its own program file to start its agent", fix: "run it by its full path")
+            throw AgentError(.failed, "xless was replaced or removed while it runs, so it cannot start its agent", fix: "run the command again")
         }
         try directory.prepare()
         var fds: [Int32] = [-1, -1]

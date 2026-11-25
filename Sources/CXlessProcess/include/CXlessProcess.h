@@ -151,12 +151,16 @@ void xless_secret_unmap(void *bytes, size_t size);
 /// nothing (Linux: see xless_disable_core_dumps). Returns 0.
 int xless_deny_attach(void);
 
+/// The file of the program the process runs, also when another one has its name since. macOS: of any process of the user;
+/// Linux: of this process. 0, or an errno value.
+int xless_process_file(int pid, uint64_t *device, uint64_t *inode);
+
 /// Who is at the other end of a connected Unix socket, as the kernel says.
 struct xless_peer {
     int pid;
     unsigned int uid;
     int sid;              // its POSIX session
-    uint64_t exe_device;  // its executable file (macOS; 0 elsewhere)
+    uint64_t exe_device;  // its executable file (macOS; 0 elsewhere, and where that file was replaced or removed since)
     uint64_t exe_inode;
     uint32_t token[8];    // its audit token (macOS): the last member is the process version, which no two processes share
 };

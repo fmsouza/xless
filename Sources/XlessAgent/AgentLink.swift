@@ -226,9 +226,12 @@ final class AgentLink {
         let peer = try channel.peer()
         let mine = AgentSession.current
         isSameSession = mine.isUsable && peer.session == mine && peer.uid == geteuid()
-        if isSameSession, let theirs = peer.executable, let me = AgentExecutable.current, theirs != me {
+        #if os(macOS)
+        // nil: its file was replaced or removed, so whatever it runs is not what is at that path now.
+        if isSameSession, peer.executable == nil || peer.executable != AgentExecutable.current {
             throw AgentError.versionMismatch(theirs: printableVersion(version) + ", another program file")
         }
+        #endif
     }
 
     private func printableVersion(_ text: String) -> String { Self.printable(text) }

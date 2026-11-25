@@ -16,13 +16,25 @@ struct AgentExecutable: Equatable, Sendable {
     let device: UInt64
     let inode: UInt64
 
-    /// This process's.
-    static var current: AgentExecutable? {
-        guard let path = AgentLauncher.executablePath else { return nil }
+    /// The one this process runs, also when it was moved, replaced or removed since.
+    static var current: AgentExecutable? { AgentExecutable(runBy: getpid()) }
+
+    init(device: UInt64, inode: UInt64) { self.device = device; self.inode = inode }
+
+    init?(runBy pid: Int32) {
+        var device: UInt64 = 0, inode: UInt64 = 0
+        guard xless_process_file(pid, &device, &inode) == 0 else { return nil }
+        self.init(device: device, inode: inode)
+    }
+
+    #if os(macOS)
+    /// The file at `path`.
+    init?(at path: String) {
         var st = stat()
         guard stat(path, &st) == 0 else { return nil }
-        return AgentExecutable(device: UInt64(truncatingIfNeeded: st.st_dev), inode: UInt64(st.st_ino))
+        self.init(device: UInt64(UInt32(bitPattern: st.st_dev)), inode: st.st_ino)
     }
+    #endif
 }
 
 extension AgentSession {

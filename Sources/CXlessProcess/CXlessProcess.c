@@ -928,6 +928,15 @@ int xless_deny_attach(void) {
 }
 
 #if defined(__linux__)
+int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
+    if (pid != getpid()) return ENOTSUP;
+    struct stat st;
+    if (stat("/proc/self/exe", &st) != 0) return errno;
+    *device = (uint64_t)st.st_dev;
+    *inode = (uint64_t)st.st_ino;
+    return 0;
+}
+
 int xless_peer_of(int fd, struct xless_peer *out) { (void)fd; memset(out, 0, sizeof *out); return ENOTSUP; }
 
 int xless_unix_passcred(int fd) {
@@ -1017,6 +1026,26 @@ long xless_process_program(int pid, char *buffer, size_t length) {
     return readlink(path, buffer, length);
 }
 #elif defined(__APPLE__)
+int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
+    // The program is what a process has mapped lowest: before it are only anonymous regions.
+    uint64_t at = 0;
+    for (int i = 0; i < 64; i++) {
+        struct proc_regionwithpathinfo region;
+        memset(&region, 0, sizeof region);
+        errno = 0;
+        if (proc_pidinfo(pid, PROC_PIDREGIONPATHINFO, at, &region, sizeof region) < (int)sizeof region) return errno ? errno : ESRCH;
+        const struct vinfo_stat *file = &region.prp_vip.vip_vi.vi_stat;
+        if (file->vst_ino != 0) {
+            *device = (uint64_t)file->vst_dev;
+            *inode = file->vst_ino;
+            return 0;
+        }
+        if (region.prp_prinfo.pri_size == 0) break;
+        at = region.prp_prinfo.pri_address + region.prp_prinfo.pri_size;
+    }
+    return ENOENT;
+}
+
 int xless_peer_of(int fd, struct xless_peer *out) {
     memset(out, 0, sizeof *out);
     uid_t euid;
@@ -1033,12 +1062,22 @@ int xless_peer_of(int fd, struct xless_peer *out) {
     // runs another program, even if another one has its pid now. Read after the session, so the session is that
     // process's too. (Whether that process is the peer is for the caller: the token is of whoever had its pid just now.)
     char path[PROC_PIDPATHINFO_MAXSIZE];
-    if (proc_pidpath_audittoken(&token, path, sizeof path) <= 0) return ESRCH;
+    errno = 0;
+    int named = proc_pidpath_audittoken(&token, path, sizeof path) > 0;
+    if (!named && errno != ENOENT) return ESRCH; // ENOENT: it runs, and its file was removed
+    // Where a file was put in the place of the one it runs (an upgrade), the path names the new one: the program is told
+    // only when the file at the path is the one the process has mapped.
     struct stat st;
-    if (stat(path, &st) == 0) {
-        out->exe_device = (uint64_t)st.st_dev;
-        out->exe_inode = (uint64_t)st.st_ino;
+    uint64_t device, inode;
+    if (named && stat(path, &st) == 0 && xless_process_file(pid, &device, &inode) == 0
+        && device == (uint64_t)(uint32_t)st.st_dev && inode == (uint64_t)st.st_ino) {
+        out->exe_device = device;
+        out->exe_inode = inode;
     }
+    // It is still that process: what was asked by its pid is of it.
+    audit_token_t again;
+    length = sizeof again;
+    if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERTOKEN, &again, &length) != 0 || memcmp(&again, &token, sizeof token) != 0) return ESRCH;
     memcpy(out->token, &token, sizeof out->token);
     out->pid = pid;
     out->uid = euid;
