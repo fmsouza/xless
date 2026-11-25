@@ -211,12 +211,48 @@ if [[ "$(uname)" != Linux ]]; then
   mkdir -p "$t/Not.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
   cp /usr/bin/true "$t/Not.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
   run ok
-  [[ $code == 11 ]] && grep -q 'is not used: its signature is not that of an Xcode' "$t/err" || fail "a planted Xcode: $code $(cat "$t/err")"
+  [[ $code == 11 ]] && grep -q 'is not used: it has no swift-build' "$t/err" || fail "a planted Xcode: $code $(cat "$t/err")"
+  for tool in swift-build clang ld; do cp /usr/bin/true "$t/Not.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/$tool"; done
+  run ok
+  [[ $code == 11 ]] && grep -q 'Not.app is not signed by Apple' "$t/err" || fail "a planted Xcode: $code $(cat "$t/err")"
   extra=()
   if [[ "$(xcode-select -p 2>/dev/null)" == *.app/Contents/Developer ]]; then
     run ok
     [[ $code == 0 ]] && grep -q '^==> Xcode ' "$t/out" && grep -q '^==> ready: nothing to install' "$t/out" || fail "a Mac with Xcode: $code $(cat "$t/out" "$t/err")"
     [[ ! -e "$t/home/.local" && ! -e "$t/home/.cache" ]] || fail "xless setup on a Mac wrote $(ls -a "$t/home")"
+    # Around the signature of the real one: its own program, Info.plist and list of files, links to its programs, and one that is
+    # another. It is refused before anything of it is started.
+    real="$(cd "$(xcode-select -p)/../.." && pwd -P)" forged="$t/Forged.app" run="$t/started"
+    bin=Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin
+    forge() {
+      local tool
+      chmod -RN "$forged" 2>/dev/null || true; rm -rf "$forged"
+      mkdir -p "$forged/Contents/MacOS" "$forged/$bin" "$forged/Contents/Developer/usr/bin"
+      cp "$real/Contents/MacOS/Xcode" "$forged/Contents/MacOS/"; cp -R "$real/Contents/_CodeSignature" "$forged/Contents/"
+      cp "$real/Contents/Info.plist" "$real/Contents/version.plist" "$forged/Contents/"
+      ln -s "$real/Contents/Developer/Platforms" "$forged/Contents/Developer/Platforms"
+      for tool in swift swift-build swift-package clang ld install_name_tool; do ln -s "$real/$bin/$tool" "$forged/$bin/$tool"; done
+      for tool in actool ibtool xcodebuild; do ln -s "$real/Contents/Developer/usr/bin/$tool" "$forged/Contents/Developer/usr/bin/$tool"; done
+      chmod -R go-w "$forged"
+    }
+    extra=(DEVELOPER_DIR="$forged/Contents/Developer")
+    for tool in $bin/swift $bin/swift-build $bin/swift-package $bin/clang $bin/ld $bin/install_name_tool Contents/Developer/usr/bin/actool Contents/Developer/usr/bin/ibtool Contents/Developer/usr/bin/xcodebuild; do
+      forge; rm "$forged/$tool"; printf '#!/bin/sh\ntouch "%s"\n' "$run" > "$forged/$tool"; chmod 755 "$forged/$tool"
+      run ok
+      [[ $code == 11 ]] && grep -q "is not used: .*/${tool##*/} is no program" "$t/err" || fail "an Xcode with a script as ${tool##*/}: $code $(cat "$t/err")"
+      forge; rm "$forged/$tool"; cp /bin/sh "$forged/$tool"; chmod 755 "$forged/$tool"
+      run ok
+      [[ $code == 11 ]] && grep -q "is not used: .*/${tool##*/} is not signed by Apple" "$t/err" || fail "an Xcode with Apple's shell as ${tool##*/}: $code $(cat "$t/err")"
+    done
+    forge; chmod +a 'everyone allow add_file,delete_child' "$forged/$bin"
+    run ok
+    [[ $code == 11 ]] && grep -q 'can be written by other users (its access control list' "$t/err" || fail "an Xcode with an access control list: $code $(cat "$t/err")"
+    forge; chmod 777 "$forged/Contents/Developer/usr/bin"
+    run ok
+    [[ $code == 11 ]] && grep -q 'Contents/Developer/usr/bin can be written by other users' "$t/err" || fail "an Xcode that others may write: $code $(cat "$t/err")"
+    chmod -RN "$forged"
+    [[ ! -e "$run" ]] || fail "a program of a refused Xcode was started"
+    extra=()
   fi
   [[ ! -s "$log" ]] || fail "xless setup on a Mac called docker: $(cat "$log")"
 else

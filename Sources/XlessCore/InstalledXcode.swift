@@ -27,15 +27,30 @@ public struct InstalledXcode: Sendable, Equatable {
     /// The line a build says it with.
     public var summary: String { "Xcode \(version) (\(build)) at \(app.path) (\(source))" }
 
-    /// Its program `name`, of the toolchain or of the developer directory; nil: it has none.
-    public func tool(_ name: String) -> URL? {
-        [toolchain, developer].map { $0.appendingPathComponent("usr/bin/\(name)") }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    /// The programs of it that xless starts: these, and no others.
+    public enum Program: String, Sendable, CaseIterable {
+        case swift, actool, ibtool, xcodebuild
+        case installNameTool = "install_name_tool"
+
+        /// What Apple signs it as.
+        var identifier: String {
+            switch self {
+            case .swift: "com.apple.swift-frontend"
+            case .xcodebuild: "com.apple.dt.xcodebuild"
+            case .actool, .ibtool, .installNameTool: "com.apple.\(rawValue)"
+            }
+        }
     }
 
-    /// Its program `name`, or the error that says it is not there.
-    public func require(_ name: String, stage: Stage) throws -> URL {
-        guard let tool = tool(name) else {
-            throw XlessError(stage, "\(app.path) has no \(name)", fix: "reinstall Xcode, or choose another one with DEVELOPER_DIR")
+    /// Its `program`, of the toolchain or of the developer directory; nil: it has none.
+    public func tool(_ program: Program) -> URL? {
+        [toolchain, developer].map { $0.appendingPathComponent("usr/bin/\(program.rawValue)") }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    /// Its `program`, or the error that says it is not there.
+    public func require(_ program: Program, stage: Stage) throws -> URL {
+        guard let tool = tool(program) else {
+            throw XlessError(stage, "\(app.path) has no \(program.rawValue)", fix: "reinstall Xcode, or choose another one with DEVELOPER_DIR")
         }
         return tool
     }
@@ -62,8 +77,9 @@ public struct InstalledXcode: Sendable, Equatable {
 /// names, else the newest of /Applications and ~/Applications. An `xcode:` pin takes the first of these that is that version; a
 /// DEVELOPER_DIR that is another is refused, since the user named it.
 ///
-/// What is found is used only when it is an Xcode of Apple's: its signature says so, and nobody but root and this user can change it
-/// (`problem`). A process of this user's own can replace xless itself as well.
+/// What is found is used only when the programs that xless starts, and those that they start, are Apple's by their signature, and
+/// nobody but root and this user can change them (`problem`). A process of this user's own can replace xless itself as well; the
+/// SDKs and the rest of Xcode's files are not looked at.
 public struct XcodeFinder {
     let environment: [String: String]
     /// The developer directory of `xcode-select`.
@@ -71,9 +87,9 @@ public struct XcodeFinder {
     /// Where Xcodes are installed.
     let applications: [URL]
     /// nil: its signature is Apple's; else why not.
-    let isGenuine: (URL) -> String?
+    let isGenuine: (InstalledXcode) -> String?
 
-    public init(environment: [String: String], selected: @escaping () -> String?, applications: [URL], isGenuine: @escaping (URL) -> String?) {
+    public init(environment: [String: String], selected: @escaping () -> String?, applications: [URL], isGenuine: @escaping (InstalledXcode) -> String?) {
         self.environment = environment; self.selected = selected; self.applications = applications; self.isGenuine = isGenuine
     }
 
@@ -155,63 +171,43 @@ public struct XcodeFinder {
 
     // MARK: - Is it an Xcode of Apple's
 
-    /// Why `xcode` is not used; nil: it is.
+    /// Why `xcode` is not used; nil: it is. Nothing of it was started by then.
     func problem(of xcode: InstalledXcode) -> String? {
-        for path in Self.guarded(xcode) {
-            var st = stat()
-            guard lstat(path, &st) == 0 else { return "\(path) is not there" }
-            if st.st_mode & S_IFMT == S_IFLNK { continue } // what it names is checked; a link's own mode says nothing
-            if let problem = Self.problem(path: path, owner: st.st_uid, group: st.st_gid, mode: UInt16(st.st_mode & 0o7777), isDirectory: st.st_mode & S_IFMT == S_IFDIR, user: geteuid()) {
-                return problem
-            }
-        }
-        return isGenuine(xcode.app)
+        Self.guarded(xcode).lazy.compactMap { TrustedPath.problem($0) }.first ?? isGenuine(xcode)
     }
 
-    /// Every directory from / to the toolchain's programs, and the compiler.
+    /// The programs of `xcode` that are there: those that xless starts, and those that they start (as far as they are known).
+    static func programs(of xcode: InstalledXcode) -> [(path: String, identifier: String?)] {
+        let directories = [xcode.toolchain, xcode.developer].map { $0.appendingPathComponent("usr/bin").path }
+        let named: [(String, String?)] = InstalledXcode.Program.allCases.map { ($0.rawValue, $0.identifier) } + [
+            ("swift-build", "com.apple.swift-package"), // which `swift build` is, and which puts plugins in their sandbox
+            ("swift-package", "com.apple.swift-package"), ("swiftc", "com.apple.swift-frontend"), ("swift-frontend", "com.apple.swift-frontend"),
+            ("clang", "com.apple.clang"), ("ld", "com.apple.ld"), // (what the toolchain below is to have)
+        ] + ["swift-driver", "swift-plugin-server", "clang++", "libtool", "lipo", "ar", "strip", "dsymutil", "codesign_allocate", "ibtoold"].map { ($0, nil) }
+        let services: [(String, String?)] = [
+            (xcode.developer.path + "/Library/Xcode/Agents/AssetCatalogAgent-AssetRuntime", nil),
+            (xcode.app.path + "/Contents/SharedFrameworks/SwiftBuild.framework/Versions/A/PlugIns/SWBBuildService.bundle/Contents/MacOS/SWBBuildService", "com.apple.dt.SWBBuildService"),
+        ]
+        return (directories.flatMap { directory in named.map { ("\(directory)/\($0.0)", $0.1) } } + services)
+            .filter { FileManager.default.fileExists(atPath: $0.0) }.map { (path: $0.0, identifier: $0.1) }
+    }
+
+    /// What nobody else may be able to change: those programs, and the directories that they find others and their libraries in.
     static func guarded(_ xcode: InstalledXcode) -> [String] {
-        let swift = xcode.toolchain.appendingPathComponent("usr/bin/swift")
-        var paths: [String] = [], at = ""
-        for part in swift.path.split(separator: "/") {
-            at += "/\(part)"
-            paths.append(at)
-        }
-        if let real = realpath(swift.path, nil) {
-            paths.append(String(cString: real))
-            free(real)
-        }
-        let programs = xcode.developer.appendingPathComponent("usr").path
-        return ["/"] + paths + [programs, programs + "/bin"].filter { FileManager.default.fileExists(atPath: $0) }
+        let toolchain = xcode.toolchain.path
+        return programs(of: xcode).map(\.path)
+            + [toolchain + "/usr/bin", toolchain + "/usr/lib", toolchain + "/usr/libexec", xcode.developer.path + "/usr/bin", xcode.developer.path + "/usr/lib",
+               xcode.developer.path + "/Library/Xcode", xcode.app.path + "/Contents/SharedFrameworks", xcode.app.path + "/Contents/Frameworks"]
+                .filter { FileManager.default.fileExists(atPath: $0) }
     }
 
-    /// A file that another user could replace or change: `path`'s owner is neither root nor this user, or others may write it. The
-    /// groups wheel and admin may (as /Applications has it): their members are administrators of this Mac.
-    static func problem(path: String, owner: UInt32, group: UInt32, mode: UInt16, isDirectory: Bool, user: UInt32) -> String? {
-        guard owner == 0 || owner == user else { return "\(path) belongs to another user" }
-        let sticky = isDirectory && mode & 0o1000 != 0
-        guard mode & 0o002 == 0 || sticky, mode & 0o020 == 0 || sticky || group == 0 || group == 80 else {
-            return "\(path) can be written by other users"
-        }
-        return nil
-    }
-
-    /// Xcode as Apple signs it: with its own certificate, for the App Store, or with its Developer ID.
-    static let requirement = #"identifier "com.apple.dt.Xcode" and (anchor apple or anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] or anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = "59GAB85EFG")"#
-    /// Its programs, which Apple signs as its own.
-    static let programs = ["swift", "clang", "ld"]
-
-    /// Why the signature of `app`, or of one of its programs, is not Apple's. Of the app its own code and Info.plist are checked, not
-    /// the gigabytes of its resources (`--ignore-resources`), and the programs each.
-    static func signatureProblem(_ app: URL) -> String? {
-        func holds(_ path: String, _ requirement: String) -> Bool {
-            (try? Shell.run("/usr/bin/codesign", ["--verify", "--ignore-resources", "-R=\(requirement)", path], stage: .sdk)) != nil
-        }
-        guard holds(app.path, requirement) else { return "its signature is not that of an Xcode of Apple's" }
-        let xcode = InstalledXcode(app: app, version: "", build: "", source: "")
-        for name in programs {
-            guard let tool = xcode.tool(name) else { return "it has no \(name)" }
-            guard holds(tool.path, "anchor apple") else { return "\(tool.path) is not signed by Apple" }
-        }
-        return nil
+    /// Why the signature of `xcode`, or of one of its programs, is not Apple's.
+    public static func signatureProblem(_ xcode: InstalledXcode) -> String? {
+        for name in ["swift", "swift-build", "clang", "ld"] where !FileManager.default.isExecutableFile(atPath: xcode.toolchain.path + "/usr/bin/\(name)") { return "it has no \(name)" }
+        if let problem = AppleSignature.problem(xcode: xcode.app.path) { return problem }
+        return programs(of: xcode).lazy.compactMap { program in
+            // (a link's name says nothing: what it names is started, and is what is signed)
+            AppleSignature.problem(program: URL(fileURLWithPath: program.path).resolvingSymlinksInPath().path, identifier: program.identifier)
+        }.first
     }
 }

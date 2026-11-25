@@ -52,7 +52,7 @@ struct MacNative: Sendable {
         do {
             let os = try Shell.run("/usr/bin/sw_vers", ["-buildVersion"], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             let meta = try ToolchainMetaCollector.collect(xcodeApp: xcode.app, buildMachineOSBuild: os)
-            let swift = try xcode.require("swift", stage: .sdk)
+            let swift = try xcode.require(.swift, stage: .sdk)
             let compiler = try Shell.run(swift.path, ["--version"], env: xcode.environment(env), baseEnvironment: env, stage: .sdk).stdout
             return MacNative(xcode: xcode, meta: meta, compiler: compiler.split(separator: "\n").first.map(String.init) ?? "", tools: tools)
         } catch let e as XlessError {

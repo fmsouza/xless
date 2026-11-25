@@ -4,7 +4,11 @@ import Foundation
 /// `XLESS_TOOLS` forces either, for all (`xcode`, `xless`) or for each (`actool=xless,ibtool=xcode`). It is a setting of the machine
 /// and not of the project, which builds on Linux with xless's all the same. (The compiler and the linker are Xcode's: xless has none.)
 public struct NativeTools: Sendable, Equatable {
-    public enum Tool: String, Sendable, CaseIterable { case actool, ibtool }
+    public enum Tool: String, Sendable, CaseIterable {
+        case actool, ibtool
+
+        var program: InstalledXcode.Program { self == .actool ? .actool : .ibtool }
+    }
     public enum Choice: String, Sendable { case xcode, xless }
 
     /// What is forced.
@@ -26,15 +30,15 @@ public struct NativeTools: Sendable, Equatable {
     public func program(_ tool: Tool, of xcode: InstalledXcode, stage: Stage) throws -> URL? {
         switch forced[tool] {
         case .xless: return nil
-        case .xcode: return try xcode.require(tool.rawValue, stage: stage)
-        case nil: return xcode.tool(tool.rawValue)
+        case .xcode: return try xcode.require(tool.program, stage: stage)
+        case nil: return xcode.tool(tool.program)
         }
     }
 
     /// `actool and ibtool: Xcode's`, the line a build says it with.
     public func summary(of xcode: InstalledXcode) -> String {
         func names(_ ours: Bool) -> [String] {
-            Tool.allCases.filter { (forced[$0] == .xless || forced[$0] == nil && xcode.tool($0.rawValue) == nil) == ours }.map(\.rawValue)
+            Tool.allCases.filter { (forced[$0] == .xless || forced[$0] == nil && xcode.tool($0.program) == nil) == ours }.map(\.rawValue)
         }
         return [(names(false), "Xcode's"), (names(true), "xless's own")].filter { !$0.0.isEmpty }
             .map { "\($0.0.joined(separator: " and ")): \($0.1)" }.joined(separator: "; ")

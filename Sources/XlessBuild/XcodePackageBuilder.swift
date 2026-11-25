@@ -70,7 +70,7 @@ public enum XcodePackageBuilder {
         // Another Xcode builds in a directory of its own, and reuses nothing of this one's.
         let scratch = project.appendingPathComponent(".xless/xcode-build-\(name)-\(xcode.build)", isDirectory: true)
         let environment = xcode.environment(env)
-        try Shell.run(try xcode.require("swift", stage: .build).path,
+        try Shell.run(try xcode.require(.swift, stage: .build).path,
                       arguments(destination, wrapper: wrapper, scratch: scratch, product: pc.product, minimumOS: pc.minimumOS),
                       cwd: project, env: environment, baseEnvironment: env, stage: .build, passthrough: true)
         let products = scratch.appendingPathComponent("out/Products/\(productsDirectory(destination))", isDirectory: true)
@@ -140,7 +140,7 @@ public enum XcodePackageBuilder {
         var paths: Set<String> = []
         for (_, _, range) in try MachO.sliceArchitectures(in: data) { paths.formUnion(try MachO.rpaths(in: data, slice: range).filter(isForeign)) }
         guard !paths.isEmpty else { return }
-        try Shell.run(try xcode.require("install_name_tool", stage: .build).path, paths.sorted().flatMap { ["-delete_rpath", $0] } + [executable.path],
+        try Shell.run(try xcode.require(.installNameTool, stage: .build).path, paths.sorted().flatMap { ["-delete_rpath", $0] } + [executable.path],
                       env: environment, stage: .build)
     }
 

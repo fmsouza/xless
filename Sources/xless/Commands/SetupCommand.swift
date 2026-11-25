@@ -146,7 +146,7 @@ struct SetupCommand: AsyncParsableCommand {
         if let given { env["DEVELOPER_DIR"] = given }
         let native = try MacNative.find(pin: nil, stage: .sdk, env: env)
         for p in Platform.allCases { try Requirements.checkSDK(native.meta.sdk(for: p), platform: p, stage: .sdk) }
-        let xcodebuild = try native.xcode.require("xcodebuild", stage: .sdk)
+        let xcodebuild = try native.xcode.require(.xcodebuild, stage: .sdk)
         let launched = (try? Shell.run(xcodebuild.path, ["-checkFirstLaunchStatus"], env: native.xcode.environment(env), stage: .sdk)) != nil
         say("==> \(native.xcode.summary)")
         say("    " + (try Platform.allCases.map { let s = try native.meta.sdk(for: $0); return "\(s.sdkName) SDK (\(s.sdkBuild))" }).joined(separator: ", ") + "; \(native.compiler)")

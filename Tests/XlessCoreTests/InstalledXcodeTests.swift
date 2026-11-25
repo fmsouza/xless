@@ -21,13 +21,19 @@ private final class Machine {
     func xcode(_ name: String, _ version: String, _ build: String, in directory: String = "Applications") throws -> URL {
         let app = root.appendingPathComponent("\(directory)/\(name).app")
         let bin = app.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin")
-        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
-        try Data().write(to: bin.appendingPathComponent("swift"))
+        let others = app.appendingPathComponent("Contents/Developer/usr/bin")
+        for directory in [bin, others, bin.deletingLastPathComponent().appendingPathComponent("lib"), app.appendingPathComponent("Contents/SharedFrameworks")] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        }
+        for file in [bin.appendingPathComponent("swift"), bin.appendingPathComponent("clang"), others.appendingPathComponent("actool")] { try Data().write(to: file) }
         // any umask
-        var at = bin.appendingPathComponent("swift")
+        var at = app
         while at.path.count > root.path.count {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: at.path)
             at.deleteLastPathComponent()
+        }
+        for path in try FileManager.default.subpathsOfDirectory(atPath: app.path) {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: app.path + "/" + path)
         }
         try Plist.write(["CFBundleShortVersionString": version, "ProductBuildVersion": build], to: app.appendingPathComponent("Contents/version.plist"), stage: .sdk)
         return app
@@ -35,8 +41,8 @@ private final class Machine {
 
     var finder: XcodeFinder {
         XcodeFinder(environment: environment, selected: { self.selected }, applications: [root.appendingPathComponent("Applications")],
-                    isGenuine: { app in
-                        guard let genuine = self.genuine, !genuine.contains(app.lastPathComponent) else { return nil }
+                    isGenuine: { xcode in
+                        guard let genuine = self.genuine, !genuine.contains(xcode.app.lastPathComponent) else { return nil }
                         return "its signature is not Apple's"
                     })
     }
@@ -138,7 +144,8 @@ private func failure(_ body: () throws -> Void) -> XlessError? {
 
 @Test func anXcodeThatOthersCanWriteIsRefused() throws {
     for part in ["", "/Contents", "/Contents/Developer", "/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
-                 "/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"] {
+                 "/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift", "/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang",
+                 "/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib", "/Contents/Developer/usr/bin", "/Contents/Developer/usr/bin/actool", "/Contents/SharedFrameworks"] {
         let machine = try Machine()
         let app = try machine.xcode("Xcode", "27.2", "27B52")
         machine.selected = app.path
@@ -171,19 +178,37 @@ private func failure(_ body: () throws -> Void) -> XlessError? {
     #expect(try machine.finder.find(pin: nil, stage: .build).app.path == app.path)
 }
 
-@Test func whoMayWriteAFile() {
-    func reason(_ owner: UInt32, _ group: UInt32, _ mode: UInt16, directory: Bool = true) -> String? {
-        XcodeFinder.problem(path: "/x", owner: owner, group: group, mode: mode, isDirectory: directory, user: 501)
+@Test func everyProgramThatXlessStartsIsChecked() throws {
+    let machine = try Machine()
+    machine.selected = try machine.xcode("Xcode", "27.2", "27B52").path
+    let xcode = try machine.finder.find(pin: nil, stage: .build)
+    let bin = xcode.toolchain.path + "/usr/bin/", others = xcode.developer.path + "/usr/bin/"
+    let there = Dictionary(uniqueKeysWithValues: XcodeFinder.programs(of: xcode).map { ($0.path, $0.identifier) })
+    #expect(there == [bin + "swift": "com.apple.swift-frontend", bin + "clang": "com.apple.clang", others + "actool": "com.apple.actool"])
+    // one of either directory, also a second one of the same name
+    try Data().write(to: URL(fileURLWithPath: bin + "actool"))
+    #expect(XcodeFinder.programs(of: xcode).filter { $0.path.hasSuffix("/actool") }.count == 2)
+    for program in InstalledXcode.Program.allCases {
+        try Data().write(to: URL(fileURLWithPath: others + program.rawValue))
+        #expect(XcodeFinder.programs(of: xcode).contains { $0.path == others + program.rawValue && $0.identifier == program.identifier })
     }
-    #expect(reason(0, 0, 0o755) == nil && reason(501, 20, 0o755) == nil)
-    #expect(reason(0, 80, 0o775) == nil)               // /Applications
-    #expect(reason(0, 0, 0o775) == nil)
-    #expect(reason(0, 20, 0o775)?.contains("/x can be written by other users") == true) // staff: every user
-    #expect(reason(502, 20, 0o755)?.contains("/x belongs to another user") == true)
-    #expect(reason(0, 0, 0o777)?.contains("other users") == true)
-    #expect(reason(0, 0, 0o1777) == nil)
-    #expect(reason(0, 0, 0o1777, directory: false)?.contains("other users") == true)
+    for name in ["swift-build", "ld", "ibtoold", "dsymutil"] {
+        try Data().write(to: URL(fileURLWithPath: bin + name))
+        #expect(XcodeFinder.programs(of: xcode).contains { $0.path == bin + name })
+    }
 }
+
+#if os(macOS)
+@Test func theSignatureOfAnXcodeIsThatOfEachOfItsPrograms() throws {
+    // nothing of Apple's in it: refused before its programs are looked at
+    let machine = try Machine()
+    let app = try machine.xcode("Xcode", "27.2", "27B52")
+    let xcode = InstalledXcode(app: app, version: "27.2", build: "27B52", source: "-")
+    #expect(XcodeFinder.signatureProblem(xcode) == "it has no swift-build")
+    for name in ["swift", "swift-build", "clang", "ld"] { try ExecutableFile.write(Data("#!/bin/sh\n".utf8), to: xcode.toolchain.appendingPathComponent("usr/bin/\(name)"), stage: .build) }
+    #expect(XcodeFinder.signatureProblem(xcode) == "\(app.path) is not signed by Apple")
+}
+#endif
 
 @Test func theToolsOfAnXcodeGetACleanEnvironment() throws {
     let machine = try Machine()
