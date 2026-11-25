@@ -74,22 +74,40 @@ final class RunCleanup: @unchecked Sendable {
         host.end(code)
     }
 
+    /// The secrets first: whatever else hangs, they are gone.
     private func cleanUp(_ state: inout State) {
+        Self.dropSecrets(state, nil, host)
         if let job = state.job { // and wait (5 s at most) for it, before another run may take the work copy
             Self.stopTree(job, host)
             for _ in 0..<50 where host.isRunning(job) { host.pause(0.1) }
         }
-        if let (cli, environment, label) = state.containers {
-            let ids = Self.containers(cli, environment, label: label, host)
-            if !ids.isEmpty, !Self.remove(ids, cli, environment, host) {
-                host.say("testflight: could not remove this run's containers; remove them with: \((cli + ["rm", "-f"] + ids).joined(separator: " "))")
-            }
-        }
+        if let containers = state.containers { remove(containers) }
         if let path = state.lock, Self.isOwn(path, host) { host.removeFile(path) }
         if let path = state.takeover { host.removeEmptyDirectory(path) }
-        Self.dropSecrets(state, nil, host)
+        Self.dropSecrets(state, nil, host) // what a step that writes them still wrote
         for path in state.temporary { host.removeFile(path) }
         state = State()
+    }
+
+    /// Removes the run's containers: within 15 s, or until the run is asked to stop once more, so that a docker that hangs holds
+    /// up nobody who wants to leave.
+    private func remove(_ containers: (cli: [String], environment: [String: String], label: String)) {
+        let (cli, environment, label) = containers, asked = max(host.stops, 1)
+        func docker(_ words: [String], quiet: Bool) -> (code: Int32, output: String)?? {
+            guard let step = try? host.start(RunStep(cli + words, environment: environment, output: .captured, quiet: quiet)) else { return .none }
+            let answer = host.finish(step, within: 15) { host.stops > asked }
+            if answer == nil { Self.stopTree(step.pid, host) }
+            return .some(answer)
+        }
+        guard let listed = docker(["ps", "-aq", "--filter", "label=\(label)"], quiet: true) else { return }
+        guard let listed else {
+            let words = cli.joined(separator: " ")
+            host.say("testflight: docker does not answer; remove what may be left of this run's containers with: \(words) rm -f $(\(words) ps -aq --filter label=\(label))")
+            return
+        }
+        let ids = listed.code == 0 ? Self.words(listed.output) : []
+        guard !ids.isEmpty, docker(["rm", "-f"] + ids, quiet: false)??.code != 0 else { return }
+        host.say("testflight: could not remove this run's containers; remove them with: \((cli + ["rm", "-f"] + ids).joined(separator: " "))")
     }
 
     /// Removes the secrets written for this run: one container's (`set`), or all of them.
@@ -101,7 +119,7 @@ final class RunCleanup: @unchecked Sendable {
     }
 
     static func firstLine(_ path: String) -> String? {
-        (try? String(contentsOfFile: path, encoding: .utf8)).map { String($0.prefix { $0 != "\n" }) }
+        (try? String(contentsOfFile: path, encoding: .utf8)).map { String(decoding: $0.utf8.prefix { $0 != UInt8(ascii: "\n") }, as: UTF8.self) }
     }
 
     /// The lock at `path` is still this process's.
@@ -123,8 +141,10 @@ final class RunCleanup: @unchecked Sendable {
         let step = RunStep(cli + ["ps", "-aq", "--filter", "label=\(label)"], environment: environment, output: .captured, quiet: true)
         guard let started = try? host.start(step) else { return [] }
         let (code, output) = host.finish(started)
-        return code == 0 ? output.split(whereSeparator: \.isWhitespace).map(String.init) : []
+        return code == 0 ? words(output) : []
     }
+
+    private static func words(_ text: String) -> [String] { text.split(whereSeparator: \.isWhitespace).map(String.init) }
 
     static func remove(_ ids: [String], _ cli: [String], _ environment: [String: String], _ host: any RunHost) -> Bool {
         guard let started = try? host.start(RunStep(cli + ["rm", "-f"] + ids, environment: environment, output: .captured)) else { return false }

@@ -118,7 +118,9 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
 - **Dry run.** `--dry-run` (or `XLESS_TESTFLIGHT_DRY_RUN=1`) prints the commands without running them.
 - **Stopping.** Stopping `xless run` (Ctrl-C, Ctrl-\\, or SIGTERM or SIGHUP, as a CI runner does when it cancels a job) takes
   effect at once, whichever step is running: with `--docker` it removes its containers and the secrets it wrote for them,
-  natively it stops xless (and what that runs), and it exits with code 130, 131, 143 or 129. Any other signal that ends a
+  natively it stops xless (and what that runs), and it exits with code 130, 131, 143 or 129. The secrets go first; a docker
+  that does not answer is waited for 15 s, or until you stop xless once more, and xless then says how to remove what may be
+  left. Any other signal that ends a
   process does the same (128 and its number), and so does a fault of xless's own; one that `nohup` or a script's `&` made it
   ignore does nothing. A SIGKILL cannot be caught: after one, remove what is left with
   `docker rm -f $(docker ps -q --filter label=xless.run)`.

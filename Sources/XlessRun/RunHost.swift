@@ -57,6 +57,8 @@ public protocol RunHost: AnyObject, Sendable {
     func start(_ step: RunStep) throws -> StartedStep
     /// Waits for it; its exit code (128 + the signal that ended it) and what it printed, when that is returned.
     func finish(_ step: StartedStep) -> (code: Int32, output: String)
+    /// The same, for so long at most, or until `stopped`; nil: it still runs.
+    func finish(_ step: StartedStep, within seconds: Double, unless stopped: () -> Bool) -> (code: Int32, output: String)?
     /// Becomes `words`; comes back only when it cannot be started, with why.
     func become(_ words: [String], environment: [String: String]) -> String
 
@@ -65,6 +67,8 @@ public protocol RunHost: AnyObject, Sendable {
     func onStop(_ stop: @escaping @Sendable (Int32) -> Void) throws
     /// Whether the run has been asked to stop.
     var stopping: Bool { get }
+    /// How many times.
+    var stops: Int { get }
     /// Ends this process now.
     func end(_ code: Int32) -> Never
     /// A fault of this process's own that leaves no chance to clean up removes `path` too (a directory: once it is empty).

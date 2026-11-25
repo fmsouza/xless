@@ -73,6 +73,27 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: file) != cleansUp)
     }
 
+    @Test func aStepIsWaitedForSoLong() throws {
+        func start(_ script: String) throws -> StartedStep { try host.start(RunStep(["sh", "-c", script], environment: environment, output: .captured)) }
+        let quick = try #require(try host.finish(start("echo a; sleep 0.1; echo b; exit 3"), within: 20) { false })
+        #expect(quick.code == 3 && quick.output == "a\nb\n")
+        let much = try #require(try host.finish(start("i=0; while [ $i -lt 20000 ]; do echo 0123456789; i=$((i+1)); done"), within: 20) { false })
+        #expect(much.code == 0 && much.output.utf8.count == 220_000)
+        let gone = try #require(try host.finish(start("kill -9 $$"), within: 20) { false })
+        #expect(gone.code == 137)
+        // one whose output another process still has
+        let held = try #require(try host.finish(start("sleep 5 & echo a"), within: 20) { false })
+        #expect(held.code == 0 && held.output == "a\n")
+        let closed = try start("exec >&-; exec sleep 30")
+        #expect(host.finish(closed, within: 0.2) { false } == nil)
+        let slow = try start("exec sleep 30")
+        #expect(host.finish(slow, within: 20) { true } == nil)
+        for step in [closed, slow] {
+            host.terminate(step.pid)
+            #expect(host.finish(StartedStep(pid: step.pid, reading: nil, shows: false)).code == 143)
+        }
+    }
+
     @Test func theProcessTable() throws {
         let step = try host.start(RunStep(["sleep", "30"], environment: environment))
         #expect(host.isRunning(step.pid))

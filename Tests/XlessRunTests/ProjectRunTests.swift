@@ -120,16 +120,18 @@ import XlessCore
         #expect(containers(store).isEmpty && store.lines.last == "==> xless exited with code 12 (the secret store)")
     }
 
-    @Test func aStopRemovesWhatTheRunHas() async throws {
+    /// A run that is stopped in its build, with this docker.
+    private func stopped(_ docker: @escaping @Sendable (FakeRunHost, RunStep) -> FakeRunHost.Answer?) async -> (FakeRunHost, Int32?) {
         let home = home
         let inBuild = DispatchSemaphore(value: 0), go = DispatchSemaphore(value: 0)
-        let host = FakeRunHost(answer: home.answer { step in
-            if step.words.contains("ps") { return (0, "c0ffee\n") }
-            guard step.line.contains("--to finalize") else { return nil }
+        let well = home.answer()
+        let host = FakeRunHost { host, step in
+            if let answer = docker(host, step) { return answer }
+            guard step.line.contains("--to finalize") else { return well(host, step) }
             inBuild.signal()
             go.wait()
             return (143, "")
-        })
+        }
         let thread = Thread { _ = try? home.run(["--config", home.overlay], docker: true, host: host) }
         thread.start()
         let code = await withCheckedContinuation { done in
@@ -139,13 +141,41 @@ import XlessCore
                 go.signal()
             }
         }
+        return (host, code)
+    }
+
+    @Test func aStopRemovesWhatTheRunHas() async throws {
+        let home = home, left = Notes()
+        let (host, code) = await stopped { _, step in
+            guard step.isCleanUp("ps") else { return nil }
+            if home.exists(home.secrets) { left.add("the secrets") }
+            return (0, "c0ffee\n")
+        }
         #expect(code == 143)
+        #expect(left.lines.isEmpty, "they go before anything that may hang")
         #expect(!home.exists(home.secrets))
         #expect(try FileManager.default.contentsOfDirectory(atPath: "\(home.home)/.cache/xless/locks").isEmpty)
         #expect(host.killed.count == 1, "the step")
         let last = host.allSteps.suffix(2)
         #expect(last.first?.line.hasPrefix("docker ps -aq --filter label=xless.run=4242.") == true && last.last?.line == "docker rm -f c0ffee")
         #expect(!host.allSteps.contains { $0.line.contains("--from sign") }, "and no step after it")
+    }
+
+    @Test func aDockerThatHangsHoldsUpNoStop() async throws {
+        let (silent, code) = await stopped { _, step in step.isCleanUp("ps") ? (FakeRunHost.hangs, "") : nil }
+        #expect(code == 143 && silent.limits == [15] && silent.killed.count == 2, "the step, and that docker")
+        #expect(silent.lines.last?.contains("docker does not answer; remove what may be left of this run's containers with: docker rm -f $(docker ps -aq --filter label=xless.run=4242.") == true)
+        #expect(!home.exists(home.secrets))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: "\(home.home)/.cache/xless/locks").isEmpty)
+        let (slow, _) = await stopped { _, step in step.isCleanUp("ps") ? (0, "c0ffee\n") : step.words.contains("c0ffee") ? (FakeRunHost.hangs, "") : nil }
+        #expect(slow.limits == [15, 15] && slow.lines.last == "testflight: could not remove this run's containers; remove them with: docker rm -f c0ffee")
+        // asked once more: it ends at once
+        let (asked, again) = await stopped { host, step in
+            guard step.isCleanUp("ps") else { return nil }
+            host.more = 1
+            return (0, "c0ffee\n")
+        }
+        #expect(again == 143 && asked.lines.last?.contains("docker does not answer") == true)
     }
 
     @Test func noSecretMayBeInWhatTheBuildContainerMounts() throws {

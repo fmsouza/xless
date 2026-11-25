@@ -115,8 +115,41 @@ public final class PosixRunHost: RunHost {
         }
         var status: Int32 = 0
         while waitpid(step.pid, &status, 0) < 0 { if errno != EINTR { return (1, String(decoding: output, as: UTF8.self)) } }
+        return (code(status), String(decoding: output, as: UTF8.self))
+    }
+
+    private func code(_ status: Int32) -> Int32 {
         let signal = status & 0x7F
-        return (signal == 0 ? (status >> 8) & 0xFF : 128 + signal, String(decoding: output, as: UTF8.self))
+        return signal == 0 ? (status >> 8) & 0xFF : 128 + signal
+    }
+
+    public func finish(_ step: StartedStep, within seconds: Double, unless stopped: () -> Bool) -> (code: Int32, output: String)? {
+        var output: [UInt8] = [], reading = step.reading
+        if let reading { _ = fcntl(reading, F_SETFL, O_NONBLOCK) }
+        defer { if let reading { close(reading) } }
+        var buffer = [UInt8](repeating: 0, count: 16384)
+        /// Takes what is there.
+        func take() {
+            while let descriptor = reading {
+                let n = read(descriptor, &buffer, buffer.count)
+                if n > 0 {
+                    output += buffer[..<n]
+                } else if n == 0 || (errno != EINTR && errno != EAGAIN) {
+                    close(descriptor)
+                    reading = nil
+                } else if errno == EAGAIN { return }
+            }
+        }
+        let start = xless_clock_awake_ms()
+        while true {
+            var status: Int32 = 0
+            let ended = waitpid(step.pid, &status, WNOHANG)
+            take()
+            if ended == step.pid { return (code(status), String(decoding: output, as: UTF8.self)) }
+            if ended < 0, errno != EINTR { return (1, String(decoding: output, as: UTF8.self)) }
+            if stopped() || Double(xless_clock_awake_ms() - start) >= seconds * 1000 { return nil }
+            pause(0.02)
+        }
     }
 
     public func become(_ words: [String], environment: [String: String]) -> String {
@@ -150,6 +183,7 @@ public final class PosixRunHost: RunHost {
     }
 
     public var stopping: Bool { xless_stop_signal() != 0 }
+    public var stops: Int { Int(xless_stops()) }
     public func end(_ code: Int32) -> Never { xless_end_run(code) }
     public func removeOnFault(_ path: String, isDirectory: Bool) { _ = xless_remove_when_ended(path, isDirectory ? 1 : 0) }
 

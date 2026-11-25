@@ -80,6 +80,15 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
         return result
     }
 
+    /// An answer of this code: the step does not end.
+    static let hangs: Int32 = -1
+    func finish(_ step: StartedStep, within seconds: Double, unless stopped: () -> Bool) -> (code: Int32, output: String)? {
+        let answer = finish(step)
+        lock.withLock { limits.append(seconds) }
+        return answer.code == Self.hangs || stopped() ? nil : answer
+    }
+    private(set) var limits: [Double] = []
+
     func become(_ words: [String], environment: [String: String]) -> String {
         became = words
         becameWith = environment
@@ -88,6 +97,9 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     func onStop(_ stop: @escaping @Sendable (Int32) -> Void) throws { lock.withLock { self.stop = stop } }
     var stopping: Bool { lock.withLock { stopped } }
+    var stops: Int { lock.withLock { (stopped ? 1 : 0) + more } }
+    /// More requests to stop.
+    var more = 0
     func end(_ code: Int32) -> Never {
         lock.withLock { ended = code }
         hasEnded.signal()
@@ -192,6 +204,8 @@ final class RunHome: Sendable {
 
 extension RunStep {
     var line: String { words.joined(separator: " ") }
+    /// `docker <command>`, of the clean-up.
+    func isCleanUp(_ command: String) -> Bool { words.contains(command) && line.contains("label=xless.run=") }
     /// `docker run …`, of a step.
     var isContainer: Bool { words.contains("--rm") && !words.contains("--entrypoint") }
 }

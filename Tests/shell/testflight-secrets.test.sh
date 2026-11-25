@@ -52,9 +52,11 @@ for a in "$@"; do
 done
 X
 # The fake docker: each `run` logs its command and, for each /secrets/store mount, which files it can see, and what the
-# run directory holds at that moment. DSLEEP: a run whose command has that word sleeps (to be stopped).
+# run directory holds at that moment. DSLEEP: a run whose command has that word sleeps (to be stopped). DHANG: asked
+# for the run's containers, it never answers.
 cat > "$t/bin/docker" <<'D'
 #!/usr/bin/env bash
+[[ -z "${DHANG:-}" || "$*" != "ps "*label=xless.run=* ]] || { echo $$ > "$DHANG"; exec sleep 60; }
 case "$1" in context|image|ps|rm) exit 0 ;; esac
 [[ "$1" == run ]] || exit 0
 { echo "run $*"
@@ -157,6 +159,21 @@ for sig in INT TERM HUP QUIT USR1 USR2 ALRM VTALRM PROF XCPU XFSZ SYS ABRT TRAP 
     [[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "$sig/$where: the lock outlived the stopped run"
   done
 done
+
+# a docker that does not answer the clean-up any more: the secrets are gone at once, and asking once more ends the run
+reset; rm -f "$t/hung"
+dfl "${docker[@]}" DSLEEP="--from sign" DHANG="$t/hung" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" & pid=$!; bg+=("$pid")
+for _ in $(seq 100); do [[ -s "$t/dpid" ]] && break; sleep 0.1; done
+[[ -s "$t/dpid" && -d "$RUN" ]] || fail "hanging docker: never reached the point to stop: $(cat "$t/dlog" "$t/xlog")"
+kill -INT "$pid"
+for _ in $(seq 100); do [[ -s "$t/hung" ]] && break; sleep 0.1; done
+[[ -s "$t/hung" && ! -e "$RUN" ]] || fail "hanging docker: the secrets wait for it: $(ls -R "$RUN" 2>&1)"
+start=$SECONDS; kill -INT "$pid"; code=0; wait "$pid" || code=$?
+[[ $code -eq 130 && $((SECONDS - start)) -lt 6 ]] || fail "hanging docker: exit $code after $((SECONDS - start)) s, want 130 at once"
+grep -qF "docker does not answer; remove what may be left of this run's containers with: docker rm -f \$(docker ps -aq --filter label=xless.run=$pid." "$t/err" || fail "hanging docker: no word on what may be left: $(cat "$t/err")"
+for _ in $(seq 50); do kill -0 "$(cat "$t/hung")" 2>/dev/null || break; sleep 0.1; done
+kill "$(cat "$t/hung")" 2>/dev/null && fail "hanging docker: it outlived the run"
+[[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "hanging docker: the lock outlived the stopped run"
 
 # a SIGKILL leaves no chance to clean up: the next run on the work copy, which takes its lock over, removes them
 reset; K="$t/run/xless/ffffffffffffffffffffffffffffffff"
