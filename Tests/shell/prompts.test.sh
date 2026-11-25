@@ -20,7 +20,7 @@ guard=()
 if [[ "$(uname)" == Darwin ]]; then
   guard=(sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip "*:*"))(deny network-outbound (literal "/private/var/run/mDNSResponder"))')
 fi
-${guard[@]+"${guard[@]}"} python3 -I - "$x" "$t" <<'PY'
+${guard[@]+"${guard[@]}"} python3 -I - "$x" "$t" "$repo" <<'PY'
 import concurrent.futures, json, os, pty, re, select, signal, socket, subprocess, sys, termios, time
 
 if sys.platform == "darwin":
@@ -34,7 +34,7 @@ PROMPT = rb"(assphrase|again): |\[y/N\] |Apple ID \(email\): |Password: "
 PASS, VALUE = "correct horse battery staple", "the value of NOTE"
 keep = {k: os.environ[k] for k in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH") if k in os.environ}
 env = {**keep, "HOME": t + "/home", "XDG_DATA_HOME": t + "/data", "XDG_CONFIG_HOME": t + "/config", "XDG_RUNTIME_DIR": t + "/run",
-       "TMPDIR": t + "/tmp", "TERM": "dumb", "LC_ALL": "C", "X": xless, "T": t, "https_proxy": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9"}
+       "TMPDIR": t + "/tmp", "TERM": "dumb", "LC_ALL": "C", "X": xless, "T": t, "XLESS_SHARE": sys.argv[3], "https_proxy": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9"}
 for d in ("home", "data", "config", "run", "tmp", "bin"):
     os.mkdir(f"{t}/{d}", 0o700)
 failures = 0
