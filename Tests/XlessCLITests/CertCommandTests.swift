@@ -275,6 +275,77 @@ private final class Made: @unchecked Sendable {
     #expect(e?.stage == .sign && e?.fix.contains("--allow-new") == true)
 }
 
+/// `sign bootstrap --out`: the same creation with its key in a new file instead of the store.
+private func keyFile() throws -> (dir: URL, path: String) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-certs-out-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    return (dir, dir.appendingPathComponent("dist.pem").path)
+}
+
+@Test func aKeyFileIsWrittenBeforeTheCertificateIsRequested() async throws {
+    let (dir, path) = try keyFile()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let journal = Journal()
+    let api = FakeCertificates(journal: journal, create: { _, csr in resource("C1", der: try issue(csr)) },
+                               atPost: { journal.add("written=\(FileManager.default.fileExists(atPath: path))") })
+    let created = try await CertificateCreation(api: api, stage: .sign, refuseIfAny: true).run(type: .distribution, file: path)
+    #expect(journal.events == ["list DISTRIBUTION", "POST DISTRIBUTION", "written=true"])
+    #expect(created.certificate.id == "C1" && created.entry == nil && created.team == team)
+    let mode = try #require(try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int)
+    #expect(mode & 0o777 == 0o600)
+    #expect(try SigningKey(pem: String(contentsOfFile: path, encoding: .utf8)).matches(certificateDER: Array(try #require(created.certificate.der))))
+}
+
+@Test func aKeyFileIsRemovedWhenNoCertificateCanBeItsOwn() async throws {
+    for (existing, failure) in [([resource("C0")], nil), ([], ASCError(status: 409, items: []) as Error?), ([], XlessError(.sign, "cannot build the token", fix: ""))] {
+        let (dir, path) = try keyFile()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let api = FakeCertificates(journal: Journal(), existing: existing, create: { _, _ in throw failure ?? CancellationError() })
+        let e = await accountError { _ = try await CertificateCreation(api: api, stage: .sign, refuseIfAny: true).run(type: .distribution, file: path) }
+        #expect(e?.stage == .sign && e?.isAmbiguousCertificateCreation == false)
+        if failure is ASCError { #expect(e?.cause.contains("its private key (\(path)) was removed") == true) }
+        #expect(!FileManager.default.fileExists(atPath: path))
+    }
+}
+
+@Test func aKeyFileIsKeptWhenTheCertificateMayExist() async throws {
+    for failure in [ASCError(status: 503, items: []) as Error, URLError(.timedOut), CancellationError(),
+                    DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "html"))] {
+        let (dir, path) = try keyFile()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let journal = Journal()
+        let api = FakeCertificates(journal: journal, create: { _, _ in throw failure })
+        let e = await accountError { _ = try await CertificateCreation(api: api, stage: .sign).run(type: .distribution, file: path) }
+        #expect(e?.isAmbiguousCertificateCreation == true && e?.stage == .sign)
+        #expect(e?.fix.contains("the private key is kept in \(path)") == true && e?.fix.contains("--allow-new") == true)
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(journal.events.filter { $0.hasPrefix("POST") }.count == 1)
+    }
+}
+
+@Test func aKeyFilesCertificateIsFoundWhenTheAnswerWasLost() async throws {
+    let (dir, path) = try keyFile()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let made = Made()
+    let api = FakeCertificates(journal: Journal(), create: { _, csr in
+        made.add(resource("C7", der: try issue(csr)))
+        throw URLError(.networkConnectionLost)
+    }, listed: { made.certificates })
+    #expect(try await CertificateCreation(api: api, stage: .sign).run(type: .distribution, file: path).certificate.id == "C7")
+    #expect(FileManager.default.fileExists(atPath: path))
+}
+
+@Test func aKeyFileThatExistsIsNeverOverwrittenAndNothingIsSent() async throws {
+    let (dir, path) = try keyFile()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("mine".utf8).write(to: URL(fileURLWithPath: path))
+    let journal = Journal()
+    let api = FakeCertificates(journal: journal, create: { _, _ in resource("X") })
+    _ = await accountError { _ = try await CertificateCreation(api: api, stage: .sign).run(type: .distribution, file: path) }
+    #expect(journal.events.isEmpty)
+    #expect(try String(contentsOfFile: path, encoding: .utf8) == "mine")
+}
+
 @Test func applePayProcessingNeedsACSR() async throws {
     let api = FakeCertificates(journal: Journal(), create: { _, _ in Issue.record("POST sent"); return resource("X") })
     let e = await accountError {
@@ -455,7 +526,6 @@ private func listing(_ items: [String]) -> String { #"{"data":[\#(items.joined(s
 @Test func limitMessagesListBothDeveloperIDGenerations() async throws {
     #expect(CertificateType.developerIDApplicationG2.listArguments == "--type developer-id-application --type developer-id-application-g2")
     #expect(CertificateType.distribution.listArguments == "--type distribution")
-    #expect(CertificateKind.developerID.listArguments == "--type developer-id-application-g2 --type developer-id-application")
     #expect(try CertificateTypeArgument.parseForList("developer-id") == [.developerIDApplication, .developerIDApplicationG2])
     #expect(try CertificateTypeArgument.parseForList("developer-id-application-g2") == [.developerIDApplicationG2])
     let ambiguous = await accountError {

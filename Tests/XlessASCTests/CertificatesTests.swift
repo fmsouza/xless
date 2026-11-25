@@ -9,6 +9,9 @@ import XlessCore
 private func certificates(_ t: MockTransport) -> ASCCertificates {
     ASCCertificates(resources: ASCResources(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in })))
 }
+private func profiles(_ t: MockTransport) -> ASCProfiles {
+    ASCProfiles(resources: ASCResources(client: ASCClient(credentials: testCreds, transport: t, sleep: { _ in })))
+}
 private func query(_ r: URLRequest) -> [String] {
     (URLComponents(url: r.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { "\($0.name)=\($0.value ?? "")" }
 }
@@ -138,7 +141,7 @@ func certificateJSON(_ id: String, type: String = "DISTRIBUTION", expires: Strin
         return #"{"type":"profiles","id":"\#(id)","attributes":{"name":"\#(name)","profileType":"IOS_APP_STORE","profileState":"ACTIVE"},"relationships":{"certificates":{"data":[\#(refs)]}}}"#
     }
     let t = MockTransport([(200, dataList([profile("P2", "b", certs: ["C1", "C2"]), profile("P1", "a", certs: ["C1"]), profile("P3", "c", certs: ["C3"])]))])
-    let using = try await certificates(t).profiles(using: "C1")
+    let using = try await profiles(t).profiles(holding: "C1")
     #expect(using == [ASCCertificateProfile(id: "P1", name: "a", profileType: "IOS_APP_STORE", profileState: "ACTIVE"),
                       ASCCertificateProfile(id: "P2", name: "b", profileType: "IOS_APP_STORE", profileState: "ACTIVE")])
     let q = query(t.requests[0])
@@ -167,7 +170,7 @@ func certificateJSON(_ id: String, type: String = "DISTRIBUTION", expires: Strin
         // P3's certificates: C1 is not among them.
         (200, #"{"data":[\#(refs(fifty + ["X51"]))],"links":{"self":"x"}}"#),
     ])
-    let using = try await certificates(t).profiles(using: "C1")
+    let using = try await profiles(t).profiles(holding: "C1")
     #expect(using.map(\.id) == ["P1", "P4"])
     #expect(t.requests.map { $0.url!.path } == ["/v1/profiles", "/v1/profiles", "/v1/profiles/P1/relationships/certificates",
                                                 "/v1/profiles/P1/relationships/certificates", "/v1/profiles/P3/relationships/certificates"])
@@ -181,8 +184,11 @@ func certificateJSON(_ id: String, type: String = "DISTRIBUTION", expires: Strin
     await #expect(throws: XlessError.self) { _ = try await certificates(MockTransport([(200, dataList([]))])).passTypeID("pass.com.example.none") }
 }
 
-@Test func expirationDatesInBothForms() {
-    #expect(ASCCertificates.parseDate("2027-03-01T12:00:00.000+0000") == Date(timeIntervalSince1970: 1_803_902_400))
-    #expect(ASCCertificates.parseDate("2027-03-01T12:00:00Z") == Date(timeIntervalSince1970: 1_803_902_400))
-    #expect(ASCCertificates.parseDate("soon") == nil)
+@Test func expirationDatesInEveryForm() {
+    for text in ["2027-03-01T12:00:00.000+0000", "2027-03-01T12:00:00+0000", "2027-03-01T12:00:00.000Z", "2027-03-01T12:00:00Z",
+                 "2027-03-01T14:00:00.000+02:00", "2027-03-01T14:00:00+02:00"] {
+        #expect(ASCDate.parse(text) == Date(timeIntervalSince1970: 1_803_902_400), "\(text)")
+    }
+    #expect(ASCDate.parse("soon") == nil)
+    #expect(ASCDate.day(Date(timeIntervalSince1970: 1_803_902_400)) == "2027-03-01")
 }

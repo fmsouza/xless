@@ -386,11 +386,7 @@ public enum PkgBuilder {
         let kind = CertificateKind.installer
         let key = try SigningKey(pem: secrets.required(kind.secretName, stage: .package))
         let client = ASCClient(credentials: try ASCCredentials.fromSecrets(secrets, stage: .package))
-        let cert = try await CertificateService(client: client).find(matching: key, kind: kind)
-        guard let der = cert.attributes.certificateContent.flatMap({ Data(base64Encoded: $0) }) else {
-            throw XlessError(.package, "certificate \(cert.id) has no content",
-                             fix: "re-run; if it persists, check the certificate in App Store Connect")
-        }
+        let cert = try await ASCCertificates(resources: ASCResources(client: client)).find(for: key, kind: kind)
         return try Files.atomicOutput(outputDir) { out in
             let pkg = try buildInto(out, signedApp: signedApp, config: config, dSYMs: dSYMs, run: run, pack: pack)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-pkg-sign-\(UUID().uuidString)")
@@ -403,7 +399,7 @@ public enum PkgBuilder {
                 throw XlessError(.package, "cannot write temporary key files",
                                  fix: "check free space and permissions of the temp directory")
             }
-            let certPEM = "-----BEGIN CERTIFICATE-----\n\(der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
+            let certPEM = "-----BEGIN CERTIFICATE-----\n\(cert.der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
             try certPEM.write(to: certURL, atomically: true, encoding: .utf8)
             try run(["rcodesign"] + signArguments(pkg: pkg, keyPEM: keyURL, certPEM: certURL), tmp)
             return pkg

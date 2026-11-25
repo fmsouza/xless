@@ -49,9 +49,8 @@ public enum SignStage {
         }
         let targets = try SignTargets.plan(app: input, platform: platform, appBundleID: bundleID, appEntitlements: user,
                                            manifest: manifest, teamID: config.teamID, declared: declared)
-        let certService = CertificateService(client: client)
         let profiles = ProfileService(client: client)
-        let cert = try await certService.find(matching: key, kind: kind)
+        let cert = try await ASCCertificates(resources: ASCResources(client: client)).find(for: key, kind: kind)
         var provisioned: [Provisioned] = []
         for target in targets {
             provisioned.append(try await provision(target, platform: platform, distribution: distribution, certificateID: cert.id,
@@ -64,9 +63,6 @@ public enum SignStage {
         if platform == .ios { try Entitlements.checkAppGroups(provisioned.map { ($0.target.bundleID, $0.target.entitlements, $0.granted) }) }
         let merged = try provisioned.map {
             try Entitlements.merge(user: $0.target.entitlements, profile: $0.granted, platform: platform, teamID: config.teamID, bundleID: $0.target.bundleID)
-        }
-        guard let der = cert.attributes.certificateContent.flatMap({ Data(base64Encoded: $0) }) else {
-            throw XlessError(.sign, "certificate \(cert.id) has no content", fix: "re-run; if it persists, check the certificate in App Store Connect")
         }
 
         let app = try Files.copyBundle(input, intoFreshDir: outputDir)
@@ -85,7 +81,7 @@ public enum SignStage {
         guard FileManager.default.createFile(atPath: keyURL.path, contents: Data(key.pem.utf8), attributes: [.posixPermissions: 0o600]) else {
             throw XlessError(.sign, "cannot write signing key to temp dir", fix: "check free space and permissions of \(FileManager.default.temporaryDirectory.path)")
         }
-        let certPEM = "-----BEGIN CERTIFICATE-----\n\(der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
+        let certPEM = "-----BEGIN CERTIFICATE-----\n\(cert.der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
         try certPEM.write(to: certURL, atomically: true, encoding: .utf8)
         var nestedEntitlements: [(path: String, file: URL)] = []
         for (i, p) in provisioned.enumerated() {

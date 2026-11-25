@@ -351,12 +351,11 @@ struct ProvisionPlanner {
     func planCertificates(_ plan: inout ProvisionPlan) async throws {
         let file = try vault.file()
         for kind in inputs.certificateKinds {
-            let types = kind.ascTypes.compactMap(CertificateType.init(rawValue:))
-            let valid = try await account.list(types: types, withContent: true).filter { ($0.expires ?? .distantFuture) > now }
+            let valid = try await account.list(types: kind.types, withContent: true).filter { ($0.expires ?? .distantFuture) > now }
             let name = kind.certificateType.displayName
             func matching(_ pem: String) -> ASCCertificate? {
                 guard let key = try? SigningKey(pem: pem) else { return nil }
-                return valid.first { c in c.der.map { (try? key.matches(certificateDER: Array($0))) == true } ?? false }
+                return key.certificate(in: valid, now: now).valid?.certificate
             }
             func found(_ cert: ASCCertificate, from source: String) {
                 plan.known.certificates[kind] = cert.id
@@ -840,9 +839,9 @@ struct ProvisionApplier {
         do {
             return try await account.create(type: type, csrPEM: try key.csrPEM(commonName: "xless"), relatedID: nil)
         } catch {
-            guard ASCCertificates.isAmbiguous(error) else { throw creation.refused(type, error, removedEntry: nil, keptEntry: nil) }
+            guard ASCCertificates.isAmbiguous(error) else { throw creation.refused(type, error) }
             if let made = await creation.made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error, excluding: before) { return made }
-            throw creation.ambiguous(type, error, kept: nil)
+            throw creation.ambiguous(type, error)
         }
     }
 }

@@ -39,37 +39,30 @@ struct SignBootstrapCommand: AsyncParsableCommand {
     func run() async throws {
         SecretScope.enter() // generates a private key and reads the App Store Connect key
         guard let out else { return try await runIntoStore() }
-        // Persist the key exclusively BEFORE any network call so a write failure can never burn a certificate slot.
-        let key = try await withStage(.sign) { try SigningKey.generate() }
-        try key.writeExclusively(toPath: out)
-        if csrOnly {
-            do {
-                try await withStage(.sign) {
+        try await withStage(.sign) {
+            if csrOnly {
+                let key = try SigningKey.generate()
+                try key.writeExclusively(toPath: out)
+                do {
                     try SigningKey.writeExclusively(Data(try key.csrPEM(commonName: "xless").utf8), toPath: "\(out).csr", mode: 0o644)
-                }
-            } catch {
-                try? FileManager.default.removeItem(atPath: out)
-                throw error
-            }
-        } else {
-            do {
-                try await withStage(.sign) {
-                    let client = ASCClient(credentials: try ASCCredentials.fromSecrets(Secrets(), stage: .sign))
-                    let cert = try await CertificateService(client: client).bootstrap(kind: type, allowNew: allowNew, key: key)
-                    print("created certificate \(cert.id) (\(cert.attributes.certificateType ?? type.createType))")
-                }
-            } catch {
-                // Keep the key only if the certificate may exist (ambiguous create); otherwise it is useless.
-                if !((error as? XlessError)?.isAmbiguousCertificateCreation ?? false) {
+                } catch {
                     try? FileManager.default.removeItem(atPath: out)
+                    throw error
                 }
-                throw error
+            } else {
+                let client = ASCClient(credentials: try ASCCredentials.fromSecrets(Secrets(), stage: .sign))
+                let created = try await creation(client).run(type: type.certificateType, file: out).certificate
+                print("created certificate \(created.id) (\(created.attributes.certificateType ?? type.certificateType.rawValue))")
             }
         }
         print("""
         wrote private key to \(out)\(csrOnly ? " and CSR to \(out).csr" : "")
         Keep it in the secret store (`xless secrets import \(type.secretName) --file \(out)`) and/or as the secret \(type.secretName) (or \(type.secretName)_FILE) in your CI, then delete the local copy.
         """)
+    }
+
+    private func creation(_ client: ASCClient) -> CertificateCreation {
+        CertificateCreation(api: ASCCertificates(resources: ASCResources(client: client)), stage: .sign, refuseIfAny: !allowNew, say: AppleWebCLI.say)
     }
 
     /// The default: `xless certs create --type <kind>` with bootstrap's own checks (no second certificate without
@@ -84,9 +77,7 @@ struct SignBootstrapCommand: AsyncParsableCommand {
             // The API key of the same team the entry is named after.
             let secrets = Secrets(fallback: AccountSession.storeFallback(team))
             let client = ASCClient(credentials: try ASCCredentials.fromSecrets(secrets, stage: .sign))
-            let creation = CertificateCreation(api: ASCCertificates(resources: ASCResources(client: client)), stage: .sign, refuseIfAny: !allowNew,
-                                               say: AppleWebCLI.say)
-            let created = try await creation.run(type: type.certificateType, relatedID: nil, entry: entry, team: team, keys: {
+            let created = try await creation(client).run(type: type.certificateType, relatedID: nil, entry: entry, team: team, keys: {
                 try APIKeyWebCLI.unlocked(reason: "storing the new signing key") { CertificateKeyStore(store: $0, catalogID: $1.id) }
             })
             print(created.text, terminator: "")

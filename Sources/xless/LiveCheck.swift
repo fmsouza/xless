@@ -103,7 +103,7 @@ struct LiveCheck {
                 return answer
             }
             await run.check("api", "GET /v1/profiles?include=certificates") {
-                .count(try await ASCCertificates(resources: r).profiles(using: certificate.id).count, "profile")
+                .count(try await ASCProfiles(resources: r).profiles(holding: certificate.id).count, "profile")
             }
         }
         var profiles: [ASCProfile] = []

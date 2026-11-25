@@ -208,7 +208,40 @@ struct CertificateCreated: Encodable {
     }
 }
 
-/// Creating a certificate: from a key xless generates (stored first), or from someone else's CSR.
+extension XlessError {
+    static let ambiguousCertificate = "certificate creation is ambiguous"
+    /// Whether a certificate's create request failed in a way that may have made the certificate.
+    var isAmbiguousCertificateCreation: Bool { cause.hasPrefix(Self.ambiguousCertificate) }
+}
+
+/// Where a new certificate's private key is, for the messages: an entry of the secret store, or a file.
+enum NewKeyPlace: Equatable {
+    case entry(String), file(String)
+
+    var removed: String {
+        switch self {
+        case .entry(let e): "its private key was removed from the secret store (\(e))"
+        case .file(let f): "its private key (\(f)) was removed"
+        }
+    }
+
+    var notRemoved: String {
+        switch self {
+        case .entry(let e): "its private key could not be removed from the secret store: remove \(e) with `xless secrets rm \(e)`"
+        case .file(let f): "its private key could not be removed: delete \(f)"
+        }
+    }
+
+    var kept: String {
+        switch self {
+        case .entry(let e): "the private key is kept in the secret store as \(e) in case the certificate exists: `xless certs link` records it with its certificate once App Store Connect lists one for it (if none ever does, remove it with `xless secrets rm \(e)`)"
+        case .file(let f): "the private key is kept in \(f) in case the certificate exists (if it does not, delete the file and re-run; another certificate next to it needs --allow-new)"
+        }
+    }
+}
+
+/// Creating a certificate: from a key xless generates (stored first), or from someone else's CSR. `xless certs create`,
+/// `xless sign bootstrap` and `xless provision apply` all create theirs here.
 struct CertificateCreation {
     let api: any CertificateAPI
     var stage: Stage = .account
@@ -263,16 +296,44 @@ struct CertificateCreation {
             if ASCCertificates.isAmbiguous(error) {
                 // The key is new: any certificate listed for it was made by this request.
                 guard let made = await made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error, excluding: []) else {
-                    throw ambiguous(type, error, kept: entry)
+                    throw ambiguous(type, error, kept: .entry(entry))
                 }
                 certificate = made
                 return try finish(certificate, entry: entry, team: team, store: store, secret: secret)
             }
             var removed = true
             do { try CertificateKeyStore.remove(entry, from: store.store) } catch { removed = false }
-            throw refused(type, error, removedEntry: removed ? entry : nil, keptEntry: removed ? nil : entry)
+            throw refused(type, error, key: .entry(entry), removed: removed)
         }
         return try finish(certificate, entry: entry, team: team, store: store, secret: secret)
+    }
+
+    /// The same with the key in a new file instead of the store (`sign bootstrap --out`, mode 0600, never overwritten):
+    /// written before anything is sent, removed again unless its certificate was, or may have been, made.
+    func run(type: CertificateType, file path: String) async throws -> CertificateCreated {
+        let key = try generate()
+        try key.writeExclusively(toPath: path)
+        /// Whether the file is gone.
+        func remove() -> Bool { unlink(path) == 0 || errno == ENOENT }
+        let csr: String
+        do {
+            try await precheck(type)
+            csr = try key.csrPEM(commonName: "xless")
+        } catch {
+            _ = remove()
+            throw error
+        }
+        let certificate: ASCCertificate
+        do {
+            certificate = try await api.create(type: type, csrPEM: csr, relatedID: nil)
+        } catch {
+            guard ASCCertificates.isAmbiguous(error) else { throw refused(type, error, key: .file(path), removed: remove()) }
+            guard let made = await made(type, for: KeyMatch.publicKey(privateKeyPEM: key.pem), after: error, excluding: []) else {
+                throw ambiguous(type, error, kept: .file(path))
+            }
+            certificate = made
+        }
+        return CertificateCreated(certificate: certificate, entry: nil, team: certificate.der.flatMap { CertificateFacts(der: $0) }?.teamID)
     }
 
     /// Records the certificate made for the key stored as `entry`.
@@ -311,8 +372,8 @@ struct CertificateCreation {
         do {
             certificate = try await api.create(type: type, csrPEM: csrPEM, relatedID: relatedID)
         } catch {
-            guard ASCCertificates.isAmbiguous(error) else { throw refused(type, error, removedEntry: nil, keptEntry: nil) }
-            guard let made = await made(type, for: key, after: error, excluding: before) else { throw ambiguous(type, error, kept: nil) }
+            guard ASCCertificates.isAmbiguous(error) else { throw refused(type, error) }
+            guard let made = await made(type, for: key, after: error, excluding: before) else { throw ambiguous(type, error) }
             certificate = made
         }
         var created = CertificateCreated(certificate: certificate, entry: nil, team: certificate.der.flatMap { CertificateFacts(der: $0) }?.teamID)
@@ -347,16 +408,14 @@ struct CertificateCreation {
                    fix: "pass the CSR your payment provider (or `openssl req -new` with an prime256v1 key) gave you: --csr <file>")
     }
 
-    func ambiguous(_ type: CertificateType, _ error: Error, kept entry: String?) -> XlessError {
-        XlessError(stage, "\(CertificateService.ambiguousMarker): the request to create the \(type.displayName) certificate failed (\(XlessError.wrapping(error, stage: stage).cause)) and may or may not have succeeded",
-                   fix: "check `xless certs list \(type.listArguments)` before retrying"
-                       + (entry.map { "; the private key is kept in the secret store as \($0) in case the certificate exists: `xless certs link` records it with its certificate once App Store Connect lists one for it (if none ever does, remove it with `xless secrets rm \($0)`)" } ?? ""))
+    func ambiguous(_ type: CertificateType, _ error: Error, kept place: NewKeyPlace? = nil) -> XlessError {
+        XlessError(stage, "\(XlessError.ambiguousCertificate): the request to create the \(type.displayName) certificate failed (\(XlessError.wrapping(error, stage: stage).cause)) and may or may not have succeeded",
+                   fix: "check `xless certs list \(type.listArguments)` before retrying" + (place.map { "; \($0.kept)" } ?? ""))
     }
 
-    func refused(_ type: CertificateType, _ error: Error, removedEntry: String?, keptEntry: String?) -> XlessError {
+    func refused(_ type: CertificateType, _ error: Error, key place: NewKeyPlace? = nil, removed: Bool = true) -> XlessError {
         let wrapped = XlessError.wrapping(error, stage: stage)
-        let what = removedEntry.map { "; its private key was removed from the secret store (\($0))" }
-            ?? keptEntry.map { "; its private key could not be removed from the secret store: remove \($0) with `xless secrets rm \($0)`" } ?? ""
+        let what = place.map { "; \(removed ? $0.removed : $0.notRemoved)" } ?? ""
         var fix = wrapped.fix
         if let e = error as? ASCError {
             switch e.status {

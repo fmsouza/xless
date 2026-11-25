@@ -23,9 +23,9 @@ private let exceptions: [String: String] = [
 private let pending: Set<String> = [
     "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
     "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds/{}/betaBuildLocalizations", "/v1/bundleIds",
-    "/v1/certificates", "/v1/profiles", "/v1/profiles/{}", "/v1/profiles/{}/relationships/certificates",
+    "/v1/profiles", "/v1/profiles/{}", "/v1/profiles/{}/relationships/certificates",
 ]
-private let pendingCallers: Set<String> = ["XlessSign/CertificateService.swift", "XlessSign/ProfileService.swift"]
+private let pendingCallers: Set<String> = ["XlessSign/ProfileService.swift"]
 
 /// Files outside XlessASC that send through `ASCClient` themselves: file → why.
 private let clientCallers: [String: String] = [
