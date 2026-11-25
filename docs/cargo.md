@@ -30,7 +30,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 
 ## Requirements
 
-- To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate; for macOS the Developer ID certificate), plus the secrets file described under [One command: TestFlight](signing-and-testflight.md#one-command-testflight).
+- To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate; for macOS the Developer ID certificate), plus its keys in the secret store (or, in CI, the variables under [One command: TestFlight](signing-and-testflight.md#one-command-testflight)).
 - The `xless-tauri` image, which carries Rust's installer, LLVM binutils and the tools that build a DMG. `xless setup --docker` builds it ([README](../README.md#build-in-docker-instead)).
 - The app repository is a git checkout, and `Cargo.lock` is committed and up to date (`--locked`). xless copies the **tracked** files of `source:` (and only those) into a work copy under `~/.cache/xless/work/<overlay name>`; the source is never written to. Commit the lockfile, the plist, the icon or asset catalog and every file the overlay refers to. Untracked and ignored files are not copied: a file the app's `build.rs` reads from the tree and git ignores is missing in the work copy. Data that lives outside the repository goes in as a [build input](#build-inputs).
 - `source:` may be a directory inside a git checkout (a workspace in a monorepo). The version lookup and the `GIT_SHA` placeholder read that checkout's git data.
@@ -161,7 +161,7 @@ A copy may not replace the bundle's own files (the executable, `Info.plist`, `Pk
 
 A `build.rs` may read a directory named by an environment variable, for example fonts kept outside the repository. `inputs` declares such directories; each has a `name` (letters, digits, `.`, `_`, `-`), an `env` variable that carries its directory into the build (it follows the same rules as `env:` and must not repeat another input's or an `env:` name) and one source:
 
-- **`path:`** a directory on the host, absolute, `~`-prefixed or relative to the source root. It may be outside the source. In docker it is mounted **read-only** at `/inputs/<name>` in the build container only (step 2 of [Shipping](#shipping)), and the variable holds that container path. Natively nothing is mounted and the variable holds the host path. The path may not contain a tab or a line break. `xless cargo inputs --config <overlay> [--source <dir>]` prints `name<TAB>path` for each path input: the list `scripts/testflight.sh` mounts.
+- **`path:`** a directory on the host, absolute, `~`-prefixed or relative to the source root. It may be outside the source. In docker it is mounted **read-only** at `/inputs/<name>` in the build container only (step 2 of [Shipping](#shipping)), and the variable holds that container path. Natively nothing is mounted and the variable holds the host path. The path may not contain a tab or a line break. `xless cargo inputs --config <overlay> [--source <dir>]` prints `name<TAB>path` for each path input: the list `xless run` mounts.
 - **`git:` and `rev:`.** An `https://` URL and the full, lowercase 40-character commit (`git rev-parse HEAD`); a branch, tag or short hash is refused because it moves. xless clones the input into `$XLESS_CACHE/inputs/<name>-<rev>` during `prepare` and reuses the clone while it is at that commit; with `xless run --docker` that is `~/.cache/xless/inputs` on the host. The overlay then needs nothing on the build machine but network access for the first clone. git never prompts for credentials, so a private repository fails with a clone error.
 
 `input:<name>/<path>` in `infoPlist`, `icon` and `resources[].from` reads from the input. A `path:` that is not a directory stops `prepare` (exit 19).
@@ -172,7 +172,7 @@ A `build.rs` may read a directory named by an environment variable, for example 
 
 `build: dated` works as for Tauri ([tauri.md](tauri.md#build-numbers)). On iOS, `prepare` and `build` ask App Store Connect for the builds of this version and pick `<version>.<YYYYMMDDNN>` above all of them; the number is recorded in the work copy and reused by every later stage, so credentials are needed from `prepare` on. `XLESS_BUILD_NUMBER` or `--build-number` replaces the lookup, and under `build: dated` it must itself have the dated form for the app's version (`1.0.0.2026101501`). On macOS there is no App Store Connect build: the number is `<version>.<YYYYMMDDHHmm>` (UTC) from the clock when the run starts.
 
-`xless next-build --config <overlay>` handles cargo overlays: it prints the number the next iOS run would use (the version from the overlay or the package's `Cargo.toml`, the bundle ID from `ios.bundleID` or `bundleID`), a read-only App Store Connect query. `scripts/testflight.sh` runs it as step 1. `xless inspect --config` refuses a cargo overlay, and `xless tauri inspect` is for Tauri overlays only.
+`xless next-build --config <overlay>` handles cargo overlays: it prints the number the next iOS run would use (the version from the overlay or the package's `Cargo.toml`, the bundle ID from `ios.bundleID` or `bundleID`), a read-only App Store Connect query. `xless run` runs it as step 1. `xless inspect --config` refuses a cargo overlay, and `xless tauri inspect` is for Tauri overlays only.
 
 ## Creating the App Store Connect app record
 
@@ -184,7 +184,7 @@ As for Tauri ([tauri.md](tauri.md#creating-the-app-store-connect-app-record)), w
 xless run --docker --config ~/ci/my-app.overlay.yml [extra xless ship args, e.g. --from upload]
 ```
 
-The script and its options are those of Tauri ([tauri.md](tauri.md#shipping)): three containers in the `xless-tauri` image, so the app's build code (`build.rs`, proc-macros) never runs next to a secret.
+The run and its options are those of Tauri ([tauri.md](tauri.md#shipping)): three containers in the `xless-tauri` image, so the app's build code (`build.rs`, proc-macros) never runs next to a secret.
 
 1. `xless next-build --config <overlay> --source <source>`, with the App Store Connect key only. Skipped when `XLESS_BUILD_NUMBER` or `--build-number` is given, when resuming after `build`, and for macOS.
 2. `xless ship --to finalize` with no secret file or variable: prepare, build, assets, finalize.
@@ -192,7 +192,7 @@ The script and its options are those of Tauri ([tauri.md](tauri.md#shipping)): t
 
 What differs for cargo:
 
-- **Mounts.** As for Tauri, plus `~/.cache/xless/inputs` at `/cache/inputs` (the clones of git inputs) and each path input read-only at `/inputs/<name>`, with `XLESS_INPUTS_MOUNTED=1`, in step 2 only. The script lists the path inputs by running `xless cargo inputs` on the host (`$XLESS_SELF`, else `xless` on `PATH`); `make testflight CONFIG=…` and `make dmg CONFIG=…` call the script directly, so for a cargo overlay they need `xless` on `PATH` (or `XLESS_SELF` set to a built one). Its refusals (exit 2) are in [build inputs](#build-inputs).
+- **Mounts.** As for Tauri, plus `~/.cache/xless/inputs` at `/cache/inputs` (the clones of git inputs) and each path input read-only at `/inputs/<name>`, with `XLESS_INPUTS_MOUNTED=1`, in step 2 only. The path inputs are the ones `xless cargo inputs` lists on your machine. Its refusals (exit 2) are in [build inputs](#build-inputs).
 - **Caches.** `~/.cache/xless/work`, `~/.cache/xless/downloads` and the docker volumes `xless-rustup` and `xless-cargo`: the Rust toolchains and the crates survive between runs. The first build downloads Rust and compiles the whole dependency graph, which takes several minutes and several GB.
 - **Stages.** `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios|macos`. Exit codes are the ones in [pipeline.md](pipeline.md#stages): config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
 - **Native.** As for Tauri: `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds are untested in this milestone.

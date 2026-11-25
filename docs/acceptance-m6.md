@@ -4,7 +4,7 @@ Scope: `type: cargo` overlays ([cargo.md](cargo.md)). Unlike the earlier records
 maintainer** to run on their Linux box: it needs an Apple Developer account, a device and a Mac, which the builder of
 the milestone did not have. The Linux tests that the builder could run are `swift test` and
 `bash Tests/shell/testflight.test.sh` (overlay parsing and every refusal, plist templates, inputs and the secret-file
-checks, the script's three steps in a dry run). Fill in the result column as you go.
+checks, the three steps of `xless run` in a dry run). Fill in the result column as you go.
 
 Before you start: the images from `xless setup --docker` ([README](../README.md#build-in-docker-instead)), the one-time Apple setup
 from [bootstrap.md](bootstrap.md) (API key, Apple Distribution key, Developer ID Application key), the secrets file

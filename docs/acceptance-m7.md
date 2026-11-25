@@ -69,7 +69,7 @@ The steps (each row of the record's table is one):
 | 5 | `xless auth logout`; `xless run <app>` with nothing in the environment (the store only), its processes watched; `xless testflight testers add` | Installing the build from TestFlight on a device |
 | 6 | `xless release submit --build <step 5's build> --release manual` (`--dry-run` first), `xless release status` until *Pending Developer Release*, `xless release publish` | Waiting for App Review (days): the script stops with exit code 75; run it again later, or with `--wait` |
 | 7 | Key files under `$HOME`; `strings` on the store; the environments of steps 5 and 8; `coredumpctl`; what the scans of the `--verbose` traces found; `xless lock`, then `xless auth status` and the kernel keyring | A sign-in, only if none was traced before |
-| 8 | `xless run --docker <app> --to finalize`, then `--from sign`, every container inspected (mounts, variable names). It runs right after step 5: once App Review approves the version, Apple takes no more builds of it. An xless.yml project in Docker is one container that gets the store's secrets when it signs (scripts/testflight.sh), so the run is split where the build ends | — |
+| 8 | `xless run --docker <app> --to finalize`, then `--from sign`, every container inspected (mounts, variable names). It runs right after step 5: once App Review approves the version, Apple takes no more builds of it. An xless.yml project in Docker is one container that gets the store's secrets when it signs, so the run is split where the build ends | — |
 | 9 | — | The answer: was a portal opened in a browser? |
 
 When Apple rejects the version, step 6 stops with exit code 76: read the reason in Apple's email (not in App Store
