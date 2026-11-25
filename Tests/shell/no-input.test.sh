@@ -14,8 +14,18 @@ if [[ -z "$x" ]]; then
   x="$(cd "$repo" && env -u DEVELOPER_DIR swift build --show-bin-path)/xless"
 fi
 
-python3 -I - "$x" "$t" "$repo" <<'PY'
-import concurrent.futures, json, os, plistlib, pty, re, select, shlex, signal, subprocess, sys, time, zipfile
+# Nothing may reach Apple, whatever the commands do: a Mac's URL loading heeds no proxy variable, so there a sandbox
+# without network.
+guard=()
+if [[ "$(uname)" == Darwin ]]; then guard=(sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip "*:*"))(deny network-outbound (literal "/private/var/run/mDNSResponder"))'); fi
+${guard[@]+"${guard[@]}"} python3 -I - "$x" "$t" "$repo" <<'PY'
+import concurrent.futures, json, os, plistlib, pty, re, select, shlex, signal, socket, subprocess, sys, time, zipfile
+
+if sys.platform == "darwin":
+    with socket.create_server(("127.0.0.1", 0)) as here:
+        try: socket.create_connection(here.getsockname(), 2).close()
+        except PermissionError: pass
+        else: sys.exit("FAIL the sandbox lets the network through: nothing was run")
 
 xless, t, repo = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2]), sys.argv[3]
 PASS = "correct horse battery staple"
@@ -160,6 +170,14 @@ ASKS = {
     "keys list": "", "keys create": "--service apns", "keys show": "ABCDE12345", "keys revoke": "ABCDE12345",
     "apps create": f"--bundle-id {B} --name App --sku SKU1 --locale en-US", "store privacy pull": f"--app {B} --dir %T/newstore", "store privacy push": "--dir %T/appstore",
 }
+# What each asks first. A command that Apple's API covers never signs in, so it asks for the store's passphrase (its key);
+# one that keeps a new key opens the store before Apple makes it. (The inventory of #183; the rest of what a composite
+# command asks, and how often: prompts.test.sh and ProvisionTests.)
+SIGN_IN_FIRST = {"xcode download", "auth login", "auth api-key list", "auth api-key revoke", "team list", "keys list", "keys show", "keys revoke",
+                 "store privacy pull", "store privacy push",
+                 *(f"{group} {verb}" for group in ("app-groups", "icloud-containers") for verb in ("list", "create", "assign", "unassign"))}
+def asks_first(shown): return "the Apple ID" if re.search(r"Apple ID[^\r\n]{0,20}: $", shown) else "a new passphrase" if re.search(r"New [^\r\n]*: $", shown) else "the passphrase" if re.search(r"assphrase: $", shown) else "a confirmation" if shown.endswith("[y/N] ") else shown[-200:]
+
 # The environment of some: another (empty) store, where the question is about what is not there yet.
 EMPTY = {"XDG_DATA_HOME": t + "/empty"}
 MORE = {"live-check": {"XLESS_LIVE_APPLE": "1"}, "secrets init": {"XDG_DATA_HOME": t + "/none"},
@@ -190,6 +208,9 @@ def both(command):
 with concurrent.futures.ThreadPoolExecutor(min(8, (os.cpu_count() or 2) * 2)) as pool:
     for command, (rc, out), (off, refused), (variable, _) in pool.map(both, ASKS):
         check(rc is None, f"`xless {command}` asks", (rc, out[-400:]))
+        if command not in LATE:
+            first = "a new passphrase" if command == "secrets init" else "a confirmation" if command == "secrets rm" else "the Apple ID" if command in SIGN_IN_FIRST else "the passphrase"
+            check(asks_first(out) == first, f"`xless {command}` asks for {first} first", asks_first(out))
         check(off == 23, f"`xless {command} --no-input` ends with exit code 23", (off, refused[-400:]))
         check(variable == 23, f"XLESS_NO_INPUT=1 xless {command} ends with exit code 23", variable)
         check("[input] --no-input (XLESS_NO_INPUT): xless would ask for " in refused, f"`xless {command} --no-input` says why", refused[-400:])
