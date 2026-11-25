@@ -3,52 +3,14 @@ import Crypto
 import Foundation
 import XlessCore
 
-/// What shows that a command and an agent have the same store's key.
-public struct AgentWitness: Sendable {
-    /// The item an agent holds it as.
-    public let item: String
-    public let key: SecretBytes
-
-    public init(item: String, key: SecretBytes) { self.item = item; self.key = key }
-
+extension AgentWitness {
     var symmetric: SymmetricKey { key.withUnsafeBytes { SymmetricKey(data: $0) } }
 }
 
-/// An agent that is there and did not do as it was asked.
-public struct AgentUnanswered: Sendable, Equatable {
-    /// 0: not known.
-    public let pid: Int32
-    public let path: String
-
-    public init(pid: Int32, path: String) { self.pid = pid; self.path = path }
-
+extension AgentUnanswered {
     /// Nobody takes connections there: the process its name says, when that one runs (here: a container may have
     /// another's directory, and other pids).
     init(busy path: String) { self.init(pid: AgentDirectory.Owner(of: path).flatMap { $0.isRunning ? $0.pid : nil } ?? 0, path: path) }
-
-    public var cause: String { "an xless agent (\(pid > 0 ? "process \(pid), " : "")\(path)) does not answer: what it holds may still be held" }
-    public var fix: String {
-        // By the time it is read the process may have ended, and its pid be another one's.
-        let end = pid > 0 ? "if `ps -p \(pid) -o args=` still says `xless __agent`, end it (`kill -9 \(pid)`)" : "end every agent of yours (`pkill -9 -f 'xless __agent'`)"
-        return "\(end), then run `xless lock`"
-    }
-}
-
-/// What a drop came to.
-public struct AgentDropped: Sendable, Equatable {
-    public let count: Int
-    /// Why not every agent could be told; nil: every one was.
-    public let unreached: AgentError?
-
-    public init(count: Int, unreached: AgentError?) { self.count = count; self.unreached = unreached }
-}
-
-/// What `lockAll` came to.
-public struct AgentLocked: Sendable, Equatable {
-    public let ended: Int
-    public let unanswered: [AgentUnanswered]
-
-    public init(ended: Int, unanswered: [AgentUnanswered]) { self.ended = ended; self.unanswered = unanswered }
 }
 
 /// A command's side of the agents: every one of the user's in the directory is looked at, what one says is taken only

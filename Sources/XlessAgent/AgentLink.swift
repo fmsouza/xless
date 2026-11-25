@@ -3,42 +3,6 @@ import Crypto
 import Foundation
 import XlessCore
 
-/// What an agent says of itself.
-public struct AgentStatus: Sendable, Equatable {
-    /// Whether it serves this process's session: only then are its items named.
-    public let isGranted: Bool
-    public let count: Int
-    /// The seconds its longest hold has left.
-    public let remaining: Int
-    /// How many terminal sessions it serves.
-    public let sessions: Int
-    public let items: [AgentItemStatus]
-    /// It is a process of this very session, by the kernel's word.
-    public let isSameSession: Bool
-    /// When it is on a lease; its items are then named for every process of the user, by kind.
-    public let lease: AgentLeaseStatus?
-
-    public init(isGranted: Bool, count: Int, remaining: Int, sessions: Int, items: [AgentItemStatus], isSameSession: Bool, lease: AgentLeaseStatus? = nil) {
-        self.isSameSession = isSameSession
-        self.lease = lease
-        self.isGranted = isGranted
-        self.count = count
-        self.remaining = remaining
-        self.sessions = sessions
-        self.items = items
-    }
-}
-
-/// Of an agent on a lease (`xless session`).
-public struct AgentLeaseStatus: Sendable, Equatable {
-    /// The command it is for.
-    public let command: String
-    /// The seconds it has left at most.
-    public let remaining: Int
-
-    public init(command: String, remaining: Int) { self.command = command; self.remaining = remaining }
-}
-
 public struct AgentHeld: Sendable {
     public let secret: SecretBytes
     public let status: AgentItemStatus

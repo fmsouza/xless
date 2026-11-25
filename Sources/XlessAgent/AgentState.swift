@@ -1,35 +1,6 @@
 import Foundation
 import XlessCore
 
-/// A POSIX session, told apart from a later one with the same number by when its leader started.
-public struct AgentSession: Sendable, Hashable {
-    public let id: Int32
-    public let leaderStart: UInt64
-
-    public init(id: Int32, leaderStart: UInt64) { self.id = id; self.leaderStart = leaderStart }
-
-    /// Whether it can be granted: it has a number in this PID namespace, and its leader runs.
-    public var isUsable: Bool { id > 0 && leaderStart != 0 }
-}
-
-public struct AgentItemStatus: Sendable, Equatable {
-    public let name: String
-    /// What it is for (the store's path), or empty.
-    public let label: String
-    /// Seconds until it is dropped whatever happens.
-    public let remaining: Int
-    public let idle: Int
-    /// Seconds until it is dropped when nobody uses it.
-    public let idleRemaining: Int
-    /// Seconds since it was typed.
-    public let typedAgo: Int
-
-    public init(name: String, label: String, remaining: Int, idle: Int, idleRemaining: Int, typedAgo: Int = 0) {
-        self.name = name; self.label = label; self.remaining = remaining; self.idle = idle; self.idleRemaining = idleRemaining
-        self.typedAgo = typedAgo
-    }
-}
-
 /// What an agent holds, for how long, and for whom. Synchronised: tests look at it while the agent's thread uses it.
 final class AgentState: @unchecked Sendable {
     private struct Item {
