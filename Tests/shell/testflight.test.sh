@@ -22,6 +22,8 @@ out=$("${base[@]}" "$S" "$t/proj" 2>/dev/null) || fail "dry run failed"
 [[ "$out" == *"xless ship --platform ios"* ]] || fail "missing ship command: $out"
 [[ "$out" == *"ISSUER-SECRET-VALUE"* ]] && fail "issuer value leaked"
 [[ "$out" == *"dst=/secrets/asc.p8,readonly"* && "$out" == *"ASC_KEY_P8_FILE=/secrets/asc.p8"* ]] || fail "p8 not mounted by path: $out"
+# the command printed after the upload names the project on the host, not the mount
+[[ "$out" == *"-e XLESS_PROJECT_ORIGIN=$t/proj "* ]] || fail "the project's place on the host is not passed: $out"
 
 # explicit context wins, image override, build number override
 out=$("${base[@]}" DOCKER_CONTEXT=other XLESS_IMAGE=img:1 XLESS_BUILD_NUMBER=42 "$S" "$t/proj" 2>/dev/null)
@@ -130,6 +132,8 @@ done
 [[ "$s1" == *"dst=/secrets/asc.p8,readonly"* && "$s1" == *"-e ASC_KEY_ID"* && "$s1" != *"dist-key"* && "$s1" != *"/cache/"* ]] || fail "step 1 mounts: $s1"
 [[ "$s3" == *"dst=/secrets/asc.p8,readonly"* && "$s3" == *"dst=/secrets/dist-key.pem,readonly"* && "$s3" == *"ASC_ISSUER_ID_FILE=/secrets/asc-issuer-id"* ]] || fail "step 3 secrets: $s3"
 [[ "$s3" == *"--mount type=bind,src=$t/home/.cache/xless/work,dst=/cache/work"* && "$s3" != *"xless-cargo"* && "$s3" != *"/cache/downloads"* ]] || fail "step 3 mounts: $s3"
+# the command printed after the upload names the overlay on the host; the steps that upload nothing are not told
+[[ "$s3" == *"-e XLESS_PROJECT_ORIGIN=$t/ov/my.overlay.yml "* && "$s1$s2" != *"XLESS_PROJECT_ORIGIN"* ]] || fail "the overlay's place on the host: $out"
 [[ "$out" == *"ISSUER-SECRET-VALUE"* ]] && fail "issuer value leaked"
 # no default build number: dated decides in step 1
 msg=$("${base[@]}" "$S" --config "$t/ov/my.overlay.yml" 2>&1 >/dev/null) || true
@@ -235,6 +239,7 @@ printf 'x' > "$t/dist.pem"; printf 'x' > "$t/installer.pem"
 lane=("${mac[@]}" XLESS_DIST_KEY_FILE="$t/dist.pem" XLESS_INSTALLER_KEY_FILE="$t/installer.pem")
 out=$("${lane[@]}" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload 2>/dev/null)
 [[ $(wc -l <<<"$out") -eq 3 ]] || fail "macos --to upload: want three steps: $out"
+[[ "$(tail -1 <<<"$out")" == *"-e XLESS_PROJECT_ORIGIN=$t/ov/my.overlay.yml "* ]] || fail "macos --to upload: the overlay's place on the host: $out"
 dmgship=$(line "--to package "); pkgship=$(line "--distribution app-store")
 [[ "$dmgship" == *"xless ship --platform macos --config /config/my.overlay.yml --source /source --from sign --to package "* ]] || fail "the DMG ship changed with the lane on: $dmgship"
 [[ "$pkgship" == *"xless ship --platform macos --config /config/my.overlay.yml --source /source --distribution app-store --from sign --to upload "* ]] || fail "pkg ship wrong: $pkgship"
@@ -320,6 +325,7 @@ done
 [[ "$s2" != *".cache/xless"* && "$s2" != *"xless-cargo"* && "$s2" != *"/cache/downloads"* ]] || fail "rn step 2 mounts Tauri caches: $s2"
 [[ "$s2" == *"XLESS_SOURCE_ORIGIN=$t/rn/app "* && "$s2" == *"-e XLESS_BUILD_NUMBER "* && "$s2" != *"XLESS_RN_CLEAN"* ]] || fail "rn step 2 env: $s2"
 [[ "$s3" == *" xless-base:local-"*" xless ship --platform ios --config /config/app.yml --source /source --from sign --to upload "* ]] || fail "rn step 3: $s3"
+[[ "$s3" == *"-e XLESS_PROJECT_ORIGIN=$t/rn/"*".yml "* ]] || fail "rn: the overlay's place on the host: $s3"
 [[ "$s3" == *"-v $vol:/cache/work -e XLESS_WORK_ROOT=/cache/work -e XLESS_WORK_VOLUME=$vol "* && "$s3" == *"dst=/secrets/dist-key.pem,readonly"* ]] || fail "rn step 3 mounts: $s3"
 [[ "$s3" != *"cocoapods"* && "$s3" != *"corepack"* && "$s3" != *".cache/xless"* ]] || fail "rn step 3 mounts build caches: $s3"
 # image and volume overrides; XLESS_RN_CLEAN reaches the build

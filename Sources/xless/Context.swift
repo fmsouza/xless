@@ -14,6 +14,8 @@ struct Context {
     let secrets: Secrets
     /// `--build-number` or `XLESS_BUILD_NUMBER`, when given (re-resolved on every invocation).
     let buildOverride: String?
+    /// `--config`: the overlay file, nil for a project directory.
+    var configFile: URL? = nil
     /// With `--config`: the parsed Tauri overlay, the source tree it points at and the work copy location.
     var overlay: TauriOverlay? = nil
     var sourceRoot: URL? = nil
@@ -32,6 +34,17 @@ struct Context {
     var cargo: CargoOverlay? = nil
     /// The cargo overlay resolved for `platform`; its `config` is the settled one (`config`).
     var cargoResolved: ResolvedCargo? = nil
+
+    /// `xless release submit` for the build just uploaded, whole: it finds the project, with its listing and its team, from
+    /// any directory. No `--team`: that takes only a key recorded for the team, and the project's configuration names the
+    /// same team, whose key is preferred as it was for the upload.
+    /// - Parameter env: in a container, `XLESS_PROJECT_ORIGIN` is the host's path of the overlay or of the project
+    ///   directory (scripts/testflight.sh), which the command is pasted beside; nothing else reads it.
+    func submitCommand(for record: UploadRecord, env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        let origin = env["XLESS_PROJECT_ORIGIN"].flatMap { $0.hasPrefix("/") ? $0 : nil }
+        if let configFile { return record.submitCommand(["--config", origin ?? configFile.path]) }
+        return record.submitCommand(["--dir", URL(fileURLWithPath: origin ?? project.path).appendingPathComponent("appstore").path])
+    }
 
     /// True with `--config` and a Tauri overlay, for either platform.
     var isTauri: Bool { overlay != nil }
@@ -71,7 +84,8 @@ struct Context {
     /// untouched. Applied after validation, so sign/package/upload all see it.
     /// The secret names the configuration gives of its own join `SecretEnvironment.scrub` before any tool runs.
     static func load(_ opts: ProjectOptions, distribution: Distribution? = nil, env: [String: String] = ProcessInfo.processInfo.environment, fresh: Bool = false) async throws -> Context {
-        let context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh)
+        var context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh)
+        context.configFile = opts.configURL
         for name in context.config.secretNames { SecretEnvironment.scrub(name) }
         return context
     }

@@ -22,11 +22,14 @@ public struct UploadRecord: Codable, Sendable, Equatable {
     }
 
     /// The command that submits the processed build to App Review; nil when it is not processed, or anything in it is not
-    /// what App Store Connect gives (it is printed, to be pasted into a shell).
-    public var submitCommand: String? {
+    /// what App Store Connect gives, or not plain text (it is printed, to be pasted into a shell).
+    /// - Parameter project: the options that find the project from any directory (`--dir` or `--config`).
+    public func submitCommand(_ project: [String]) -> String? {
         guard processingState == "VALID", let platform, let id = buildID, BuildReference.isBuildID(id), let bundleID, let version,
-              bundleID.wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9.-]*/) != nil, version.wholeMatch(of: /[0-9]+(\.[0-9]+){0,2}/) != nil else { return nil }
-        return "xless release submit --app \(bundleID) --platform \(platform.rawValue) --app-version \(version) --build \(id)"
+              bundleID.wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9.-]*/) != nil, version.wholeMatch(of: /[0-9]+(\.[0-9]+){0,2}/) != nil,
+              project.allSatisfy({ TerminalText.escaped($0) == $0 }) else { return nil }
+        let words = ["xless", "release", "submit"] + project + ["--app", bundleID, "--platform", platform.rawValue, "--app-version", version, "--build", id]
+        return words.map(ShellWord.quoted).joined(separator: " ")
     }
 
     /// A record on disk. It is only a hint, in a directory that build code can write: whoever uses one asks App Store

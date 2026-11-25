@@ -195,7 +195,7 @@ enum StageRunner {
             let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
             try enc.encode(record).write(to: recordURL, options: .atomic)
         }
-        guard let tf = ctx.config.testflight, let buildID = record.buildID else { return done(record, nil) }
+        guard let tf = ctx.config.testflight, let buildID = record.buildID else { return done(ctx, record, nil) }
         let secrets = ctx.secrets
         let result = try await TestFlightPublisher(client: client).publish(
             bundleID: bundleID, buildID: buildID, buildNumber: build, config: tf) { name in
@@ -205,12 +205,12 @@ enum StageRunner {
             }
         }
         for w in result.warnings { FileHandle.standardError.write(Data((w + "\n").utf8)) }
-        return done(record, result)
+        return done(ctx, record, result)
     }
 
     /// After everything else: what comes next, the same build's way to the App Store.
-    private static func done(_ record: UploadRecord, _ result: TestFlightResult?) -> UploadOutcome {
-        if let command = record.submitCommand {
+    private static func done(_ ctx: Context, _ record: UploadRecord, _ result: TestFlightResult?) -> UploadOutcome {
+        if let command = ctx.submitCommand(for: record) {
             FileHandle.standardError.write(Data("next: submit this build to App Review (sends nothing with --dry-run):\n  \(command)\n".utf8))
         }
         return UploadOutcome(record: record, testflight: result)

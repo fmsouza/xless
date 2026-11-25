@@ -149,4 +149,7 @@ private final class Passphrase: PassphrasePrompter, @unchecked Sendable {
     let session = try AccountSession.open(team: nil, project: "ABCDE12345", verbose: false, env: [:], store: { store })
     #expect(session.team == "ABCDE12345")
     #expect(session.client.issuerID == "69a6de70-03db-47e3-e053-5b8c7c11a4d1", "the key stored for no team, as provision finds it")
+    // `--team` does not take it: the command printed after an upload names the project instead, whose team is preferred.
+    #expect(try VaultResolver.candidate(for: "ASC_KEY_P8", in: file, team: "ABCDE12345") == nil)
+    #expect(try VaultResolver.preferredCandidate(for: "ASC_KEY_P8", in: file, team: "ABCDE12345") != nil)
 }

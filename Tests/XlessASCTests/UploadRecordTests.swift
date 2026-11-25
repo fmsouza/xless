@@ -50,21 +50,24 @@ private let record = UploadRecord(buildUploadID: "U1", buildID: "B1", state: "CO
     }
 }
 
-@Test func theNextCommandNamesTheAppTheVersionAndTheBuild() {
-    #expect(record.submitCommand == "xless release submit --app com.example.app --platform ios --app-version 1.1 --build B1")
+@Test func theNextCommandNamesTheProjectTheAppTheVersionAndTheBuild() {
+    #expect(record.submitCommand(["--dir", "/p/appstore"]) == "xless release submit --dir /p/appstore --app com.example.app --platform ios --app-version 1.1 --build B1")
+    #expect(record.submitCommand(["--config", "/my overlays/o'neil.yml"])
+        == #"xless release submit --config '/my overlays/o'\''neil.yml' --app com.example.app --platform ios --app-version 1.1 --build B1"#)
     var mac = record
     mac.platform = .macos
-    #expect(mac.submitCommand == "xless release submit --app com.example.app --platform macos --app-version 1.1 --build B1")
+    #expect(mac.submitCommand([]) == "xless release submit --app com.example.app --platform macos --app-version 1.1 --build B1")
     var processing = record
     processing.processingState = "PROCESSING"
-    #expect(processing.submitCommand == nil)
+    #expect(processing.submitCommand([]) == nil)
     // Nothing that a shell or a terminal would read as more than a word.
     for odd in ["1.1; rm -rf ~", "$(id)", "\u{1b}[2J", ""] {
         var r = record
         r.version = odd
-        #expect(r.submitCommand == nil)
+        #expect(r.submitCommand([]) == nil)
         r = record
         r.bundleID = odd
-        #expect(r.submitCommand == nil)
+        #expect(r.submitCommand([]) == nil)
     }
+    #expect(record.submitCommand(["--dir", "/p/\u{1b}[2J"]) == nil && record.submitCommand(["--dir", "/p/\u{200B}/q"]) == nil)
 }

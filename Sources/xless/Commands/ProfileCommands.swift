@@ -470,18 +470,12 @@ struct ProfileCLI {
 
     /// The `xless profiles create` command line that makes this profile again.
     static func createCommand(type: ProfileType, bundle: String, certificates: [String], devices: [String], name: String, team: String? = nil) -> String {
-        var parts = ["xless profiles create", "--type \(type.argument)", "--bundle-id \(shellQuoted(bundle))"]
+        var parts = ["xless profiles create", "--type \(type.argument)", "--bundle-id \(ShellWord.quoted(bundle))"]
         parts += certificates.map { "--cert \($0)" }
         if type.usesDevices, !devices.isEmpty { parts.append("--devices \(devices.joined(separator: ","))") }
         // `--name=…` keeps a name that starts with `-` a value.
-        parts.append("--name=\(shellQuoted(name))")
+        parts.append("--name=\(ShellWord.quoted(name))")
         if let team { parts.append("--team \(team)") }
         return parts.joined(separator: " ")
-    }
-
-    static func shellQuoted(_ text: String) -> String {
-        let plain = text.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) && $0.isASCII || "._-*/".unicodeScalars.contains($0) }
-        if plain, !text.isEmpty, !text.contains("*") { return text }
-        return "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

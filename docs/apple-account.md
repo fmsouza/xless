@@ -34,7 +34,7 @@ and send where, in [security.md](security.md).
 
 | Option | What it does |
 |---|---|
-| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). When the xless.yml here names a team that the Apple ID is not a member of, that is an error: another one is used only with `--team`. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
+| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). When the xless.yml here names a team that the Apple ID is not a member of, that is an error: another one is used only with `--team`. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app (for `xless release`: another app than the project's). Keys from the environment are used as they are. |
 | `--json` | Prints JSON instead of a table (see [JSON output](#json-output)). |
 | `--yes` | Answers yes to the confirmation that every destructive call asks. Without a terminal, such a call is refused unless `--yes` is given; it never goes ahead silently. |
 | `--verbose` | Shows every HTTP exchange with Apple on standard error. The trace never shows the key, the token, a cookie or a secret field: they read `<redacted>`. |
@@ -897,7 +897,8 @@ The last step to the App Store, with the App Store Connect API key (`/v1/appStor
   why none was taken, and the pre-flight that the version has no build. A version that carries another build than the one
   uploaded last keeps it, with a note. A file that is a link, larger than 64 KiB or not
   readable is ignored with a note. `xless run`, `ship` and `upload` print the whole command, with `--build`, once the
-  build is processed.
+  build is processed: it can be pasted in any directory, since it names the project's `appstore/` (`--dir`) or the overlay
+  (`--config`) by its absolute path, and with it the listing and the team whose key is preferred.
 
   Exit codes: **0** submitted (or a dry run that passed), **21** the pre-flight failed (nothing was sent), **22** the
   version is already in review (nothing was sent), **20** any other error. With `--json`, one document:

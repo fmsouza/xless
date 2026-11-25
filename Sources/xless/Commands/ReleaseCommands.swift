@@ -60,8 +60,10 @@ struct ReleaseTargetOptions: ParsableArguments {
                              fix: "pass --app <app ID or bundle ID> (see `xless apps list`)\(directory.config == nil ? ", or --config <overlay>" : "")")
         }
         let samePlatform = m.map { ($0.platform ?? "IOS") == (platform ?? $0.platform ?? "IOS") } ?? false
+        // The project's team goes with the project's own app, however it is named, not with another app.
+        let own = self.app == nil || m != nil || project?.bundleID(for: platform) == app
         return ReleaseWanted(app: app, platform: platform, version: appVersion ?? (manifestVersion && samePlatform ? m?.version : nil),
-                             team: self.app == nil ? project?.team : nil)
+                             team: own ? project?.team : nil)
     }
 }
 
