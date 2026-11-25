@@ -224,6 +224,8 @@ final class FakeImages: @unchecked Sendable {
     func remove(_ name: String) { lock.withLock { images[name] = nil } }
     func change(_ name: String, _ body: (inout LocalImage) -> Void) { lock.withLock { if var image = images[name] { body(&image); images[name] = image } } }
     func has(_ name: String) -> Bool { lock.withLock { images[name] != nil } }
+    /// The name of the image with this ID, which is what a container must be of; else what was given.
+    func name(_ id: String) -> String { lock.withLock { images.values.filter { $0.id == id }.map(\.name).min() } ?? "not an ID: \(id)" }
 
     /// An image as `xless setup --docker` builds it.
     func add(xcode: String, build: String, name: String? = nil, layers more: [String] = [], id: String? = nil) {
@@ -236,7 +238,7 @@ final class FakeImages: @unchecked Sendable {
         let name = ImageName.base(arch: "arm64", xcode: xcode), base = lock.withLock { images[name] }!
         var image = base
         image.name = kit.image(on: base)
-        image.id = "sha256:\(kit.rawValue)"
+        image.id = "sha256:\(kit.rawValue)\(xcode)"
         image.layers.append(kit.rawValue)
         image.labels.merge([ImageLabel.kit: kit.rawValue, ImageLabel.kitBase: base.id, ImageLabel.kitRecipe: try kit.recipe(share: share)]) { $1 }
         set(image)
@@ -245,6 +247,7 @@ final class FakeImages: @unchecked Sendable {
     /// docker's answer to a question or a build of images; nil: it is another command.
     func answer(_ words: [String], share: URL) -> FakeRunHost.Answer? {
         guard words.first == "docker" else { return nil }
+        if words.suffix(2) == ["context", "show"] { return (0, "here\n") }
         if words.contains("ls"), words.contains("image") { return (0, lock.withLock { images.keys.sorted().joined(separator: "\n") } + "\n") }
         if words.contains("inspect") {
             guard let image = lock.withLock({ images[words.last ?? ""] }) else { return (1, "\n") }

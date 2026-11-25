@@ -26,7 +26,7 @@ extension ProjectRun {
 
     /// How the steps run: the images, the caches and the arguments that every one has.
     private struct Steps {
-        var images = RunImages(build: "", secrets: "")
+        var images = RunImages.none
         var mounts: [String] = []
         var buildCaches: [String] = [], signCaches: [String] = []
         /// `--config`, and `--source`.
@@ -211,7 +211,7 @@ extension ProjectRun {
     private func nextBuild(_ overlay: Overlay, _ steps: Steps) throws {
         let command = overlay.isReactNative || overlay.isCargo ? ["next-build"] : ["tauri", "next-build"]
         host.say("==> TestFlight: step 1/3, next build number (App Store Connect, read-only)")
-        let words = docker ? dockerRun + steps.mounts + secrets.api + storeMounts("next") + [steps.images.secrets, "xless"] + command + steps.arguments
+        let words = docker ? dockerRun + steps.mounts + secrets.api + storeMounts("next") + [steps.images.secrets.reference, "xless"] + command + steps.arguments
             : [xself] + command + steps.arguments
         let result = step(words, docker ? .identifiers : .everything, told: !docker, output: .captured)
         if dryRun {
@@ -245,7 +245,7 @@ extension ProjectRun {
         let output: RunStep.Output = simulator ? .both : .shown
         let result: (code: Int32, output: String)
         if docker {
-            result = step(dockerRun + steps.mounts + steps.buildCaches + ["-e", "XLESS_SOURCE_ORIGIN=\(overlay.source)"] + buildNumberWords + [steps.images.build, "xless"] + ship, .nothing, output: output)
+            result = step(dockerRun + steps.mounts + steps.buildCaches + ["-e", "XLESS_SOURCE_ORIGIN=\(overlay.source)"] + buildNumberWords + [steps.images.build.reference, "xless"] + ship, .nothing, output: output)
         } else {
             // without the secret variables (xless also scrubs them from its tools; the files stay on disk), without what a session
             // holds, and with the secret store closed to it
@@ -275,7 +275,7 @@ extension ProjectRun {
     }
 
     private func signStep(_ steps: Steps, _ ship: [String], _ keys: [String], output: RunStep.Output = .shown) -> (code: Int32, output: String) {
-        docker ? step(dockerRun + steps.mounts + steps.signCaches + secrets.api + keys + buildNumberWords + [steps.images.secrets, "xless"] + ship, .identifiers, output: output)
+        docker ? step(dockerRun + steps.mounts + steps.signCaches + secrets.api + keys + buildNumberWords + [steps.images.secrets.reference, "xless"] + ship, .identifiers, output: output)
             : step([xself] + ship, .everything, told: true, output: output)
     }
 

@@ -65,6 +65,8 @@ public final class ProjectRun {
     var xcodePin: String?
     var xcodeTag: String?
     var pinFile = ""
+    /// What `pinFile` held when the run began.
+    private var pinned = Data()
 
     public init(_ arguments: [String], context: RunContext, host: any RunHost) {
         self.arguments = arguments
@@ -148,7 +150,11 @@ public final class ProjectRun {
 
     private func readTop() throws -> RunTop {
         let top: RunTop
-        do { top = try RunTop(yaml: String(contentsOfFile: pinFile, encoding: .utf8)) } catch {
+        do {
+            pinned = try Data(contentsOf: URL(fileURLWithPath: pinFile))
+            guard let text = String(data: pinned, encoding: .utf8) else { throw RunStop.usage("\(pinFile) is not UTF-8 text") }
+            top = try RunTop(yaml: text)
+        } catch let stop as RunStop { throw stop } catch {
             throw XlessError(.config, "\(pinFile) is not valid YAML: \(error)", fix: "fix it (docs/configuration.md)")
         }
         xcodePin = top["xcode"]
@@ -279,7 +285,7 @@ public final class ProjectRun {
         try chooseDocker()
         try findSecrets(RunSecrets.Needs(next: false, signs: signs, uploads: span.to >= .upload), top: top)
         if setting("XLESS_BUILD_NUMBER") == nil { environment["XLESS_BUILD_NUMBER"] = "\(Int(host.now.timeIntervalSince1970) / 60)" }
-        var images = RunImages(build: "", secrets: ""), split = span
+        var images = RunImages.none, split = span
         if docker {
             try prepareDocker()
             try mountFiles(platform: .ios)
@@ -294,16 +300,22 @@ public final class ProjectRun {
         if docker {
             if images.areTwo { buildMounts = [try files.real(project)] }
             try materialize()
-            let run = dockerRun + ["--mount", RunText.bind(project, "/work"), "-w", "/work"], number = ["-e", "XLESS_BUILD_NUMBER"], ship = ["xless", "ship", "--platform", "ios"]
+            let configuration = try keepConfiguration(of: project, images)
+            let run = dockerRun + ["--mount", RunText.bind(project, "/work")] + configuration, number = ["-e", "XLESS_BUILD_NUMBER"], platform = ["--platform", "ios"]
             let given = secrets.api + secrets.sign + storeMounts("sign") + origin(project)
             if images.areTwo {
                 func stages(_ from: RunStage, _ to: RunStage) -> [String] { ["--from", from.name, "--to", to.name] + split.extra }
                 if split.from <= .finalize {
-                    code = step(run + number + [images.build] + ship + stages(split.from, min(split.to, .finalize)), .nothing).code
+                    code = step(run + ["-w", "/work"] + number + [images.build.reference, "xless", "ship"] + platform + stages(split.from, min(split.to, .finalize)), .nothing).code
+                    if !configuration.isEmpty { sayChangedConfiguration() }
                 }
-                if code == 0, signs { code = step(run + given + number + [images.secrets] + ship + stages(max(split.from, .sign), split.to), .identifiers).code }
+                // in no directory that the build can write, and so with none of its files as a tool's configuration
+                if code == 0, signs {
+                    code = step(run + given + ["-w", "/"] + number + [images.secrets.reference, "xless", "ship", "--project", "/work"] + platform + stages(max(split.from, .sign), split.to), .identifiers).code
+                }
             } else {
-                code = step(run + given + number + [images.secrets] + ship + span.extra, signs ? .identifiers : .nothing).code
+                code = step(run + given + ["-w", "/work"] + number + [images.secrets.reference, "xless", "ship"] + platform + span.extra, signs ? .identifiers : .nothing).code
+                if !configuration.isEmpty { sayChangedConfiguration() }
             }
         } else if signs {
             code = step([xself, "ship", "--platform", "ios"] + span.extra, .everything, told: true, directory: project).code
@@ -320,9 +332,46 @@ public final class ProjectRun {
     /// The container that builds it without the secrets mounts the whole project.
     private func refuseSecretsInBuild(_ project: String) throws {
         let directory = try files.real(project)
+        guard try !files.isBroad(directory) else {
+            throw RunStop.usage("\(directory) would be mounted into the build container, and it is / or holds your home directory; keep the project in its own directory")
+        }
         for (name, path) in secretFiles() where try files.file(path, isIn: directory) {
             throw RunStop.usage("\(name) (\(path)) is inside the project \(project), which is mounted into the build container; keep secrets out of it")
         }
+    }
+}
+
+extension ProjectRun {
+    /// The words that give a project's container its xless.yml as it was when the run began, read-only: the build's code can write
+    /// everything else that is mounted, and the configuration decides what is signed for whom. It is kept in a directory of the run's
+    /// own, outside of the project. (One container for all, with a project that holds that directory: there is nothing to keep apart.)
+    private func keepConfiguration(of project: String, _ images: RunImages) throws -> [String] {
+        func words(_ directory: String) -> [String] { ["--mount", RunText.bind("\(directory)/xless.yml", "/work/xless.yml", readOnly: true)] }
+        let base = "\(files.home)/.cache/xless/run"
+        var here = base
+        while !FileManager.default.fileExists(atPath: here), here != "/" { here = RunFiles.parent(here) }
+        guard try !files.directory(here, isIn: project) else {
+            guard images.areTwo else { return [] }
+            throw RunStop.usage("\(base), which holds the xless.yml of this run, is inside the project \(project), which is mounted into the build container; keep the project in its own directory")
+        }
+        if dryRun { return words("\(base)/<run>") }
+        let directory = "\(base)/\((0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined())"
+        do {
+            try cleanup.change { state in
+                state.trees.append(directory)
+                try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                let file = "\(directory)/xless.yml"
+                try pinned.write(to: URL(fileURLWithPath: file))
+                // (a docker whose root is another user reads it)
+                try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file)
+            }
+        } catch { throw RunStop.usage("cannot write this run's copy of xless.yml in \(directory): \(error.localizedDescription)") }
+        return words(directory)
+    }
+
+    private func sayChangedConfiguration() {
+        guard !dryRun, (try? Data(contentsOf: URL(fileURLWithPath: pinFile))) != pinned else { return }
+        host.say("==> warning: \(pinFile) is not what it was when this run began. The run keeps to what it was; look at what changed it before you run this project again")
     }
 }
 

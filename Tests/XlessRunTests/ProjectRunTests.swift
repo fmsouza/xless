@@ -240,7 +240,7 @@ import XlessCore
         environment["XLESS_TESTFLIGHT_ENV"] = file
         environment["XLESS_IMAGE"] = "img:0"
         #expect(try home.run(["--config", home.overlay], docker: true, host: host, environment: environment) == 0)
-        #expect(containers(host)[1].image == "img:1" && containers(host)[0].environment["ASC_KEY_ID"] == "FILEID")
+        #expect(containers(host)[1].image == "sha256:mine" && containers(host)[0].environment["ASC_KEY_ID"] == "FILEID")
         try home.write("testflight.env", "A=1\nB=$(touch \(marker))\n")
         let refused = FakeRunHost(answer: home.answer())
         #expect(try home.run(["--config", home.overlay], docker: true, host: refused, environment: environment) == 2)

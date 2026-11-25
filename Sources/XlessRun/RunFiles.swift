@@ -24,6 +24,11 @@ struct RunFiles {
         return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
     }
 
+    /// xless's cache directory.
+    static func cache(_ directory: String?, home: String) -> URL {
+        URL(fileURLWithPath: directory.flatMap { RunText.isAbsolute($0) ? $0 : nil } ?? "\(home)/.cache").appendingPathComponent("xless")
+    }
+
     /// A regular file, or a link to one.
     func isFile(_ path: String) -> Bool { host.isFile(path) }
 
