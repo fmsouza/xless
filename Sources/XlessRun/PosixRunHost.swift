@@ -43,7 +43,7 @@ public final class PosixRunHost: RunHost {
 
     public var currentDirectory: String {
         let pwd = ProcessInfo.processInfo.environment["PWD"] ?? ""
-        return pwd.hasPrefix("/") && isSame(pwd, ".") ? pwd : FileManager.default.currentDirectoryPath
+        return RunText.isAbsolute(pwd) && isSame(pwd, ".") == true ? pwd : FileManager.default.currentDirectoryPath
     }
 
     public func show(_ line: String) { write(Array("\(line)\n".utf8), to: 1) }
@@ -61,9 +61,9 @@ public final class PosixRunHost: RunHost {
 
     public func program(_ name: String, path: String?) -> String? {
         func runs(_ file: String) -> Bool { isFile(file) && access(file, X_OK) == 0 }
-        if name.contains("/") { return runs(name) ? name : nil }
-        for directory in (path ?? "/usr/bin:/bin").split(separator: ":", omittingEmptySubsequences: false) {
-            let file = (directory.isEmpty ? "." : String(directory)) + "/" + name
+        if name.utf8.contains(UInt8(ascii: "/")) { return runs(name) ? name : nil }
+        for directory in RunText.cut(path ?? "/usr/bin:/bin", at: ":", keepingEmpty: true) {
+            let file = (directory.isEmpty ? "." : directory) + "/" + name
             if runs(file) { return file }
         }
         return nil
@@ -176,7 +176,7 @@ public final class PosixRunHost: RunHost {
 
     public func children() -> [Int32: [Int32]] {
         var out: [Int32: [Int32]] = [:]
-        for line in ps(["-A", "-o", "pid=,ppid="]).split(separator: "\n") {
+        for line in RunText.lines(ps(["-A", "-o", "pid=,ppid="])) {
             let ids = line.split(separator: " ").compactMap { Int32($0) }
             if ids.count == 2 { out[ids[1], default: []].append(ids[0]) }
         }
@@ -197,12 +197,13 @@ public final class PosixRunHost: RunHost {
     public func realPath(_ path: String) -> String? {
         guard let resolved = realpath(path, nil) else { return nil }
         defer { free(resolved) }
-        return String(cString: resolved)
+        return String(validatingCString: resolved)
     }
 
-    public func isSame(_ a: String, _ b: String) -> Bool {
+    public func isSame(_ a: String, _ b: String) -> Bool? {
         var x = stat(), y = stat()
-        return stat(a, &x) == 0 && stat(b, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
+        guard stat(a, &x) == 0, stat(b, &y) == 0 else { return nil }
+        return x.st_dev == y.st_dev && x.st_ino == y.st_ino
     }
 
     public func isReadable(_ path: String) -> Bool { access(path, R_OK) == 0 }
@@ -214,7 +215,7 @@ public final class PosixRunHost: RunHost {
 
     public func temporaryFile() throws -> String {
         let given = ProcessInfo.processInfo.environment["TMPDIR"] ?? ""
-        let directory = given.isEmpty ? "/tmp" : given.hasSuffix("/") && given != "/" ? String(given.dropLast()) : given
+        let directory = given.isEmpty ? "/tmp" : given.utf8.last == UInt8(ascii: "/") && given != "/" ? String(given.dropLast()) : given
         var template = Array("\(directory)/xless-run.XXXXXXXXXX".utf8CString)
         let descriptor = mkstemp(&template)
         guard descriptor >= 0 else { throw Failure(code: errno) }

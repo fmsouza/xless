@@ -50,7 +50,7 @@ final class WorkCopyLock {
         let takeover = "\(path).takeover"
         guard let old = try? String(contentsOfFile: path, encoding: .utf8) else { throw RunStop.usage("cannot take the lock \(path) of the work copy \(key)") }
         func field(_ name: String) -> String {
-            old.split(separator: "\n").first { $0.hasPrefix("\(name)=") }.map { String($0.dropFirst(name.count + 1)) } ?? ""
+            RunText.lines(old).lazy.compactMap { RunText.value(of: "\(name)=", in: $0) }.first ?? ""
         }
         let pid = field("pid"), started = field("started")
         let who = "another run (pid \(pid) on \(field("host")), started \(started))"

@@ -106,7 +106,7 @@ final class RunCleanup: @unchecked Sendable {
 
     /// The lock at `path` is still this process's.
     static func isOwn(_ path: String, _ host: any RunHost) -> Bool {
-        ((try? String(contentsOfFile: path, encoding: .utf8)) ?? "").split(separator: "\n").contains("pid=\(host.processID)")
+        RunText.lines((try? String(contentsOfFile: path, encoding: .utf8)) ?? "").contains("pid=\(host.processID)")
     }
 
     /// Ends a process and every one under it, the deepest first: a step ignores the interrupt that the terminal sends to all.

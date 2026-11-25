@@ -55,12 +55,12 @@ public struct RunRequest: Sendable, Equatable {
         var i = arguments.startIndex
         /// The value of the option at `i`: after its `=`, else the next argument.
         func value(_ option: String, _ what: String) throws -> String {
-            if arguments[i].hasPrefix(option + "=") { return String(arguments[i].dropFirst(option.count + 1)) }
+            if let value = RunText.value(of: option + "=", in: arguments[i]) { return value }
             guard i + 1 < arguments.endIndex else { throw RunStop.usage("\(option) needs \(what)") }
             i += 1
             return arguments[i]
         }
-        func isOption(_ option: String) -> Bool { arguments[i] == option || arguments[i].hasPrefix(option + "=") }
+        func isOption(_ option: String) -> Bool { arguments[i] == option || RunText.has(option + "=", before: arguments[i]) }
         while i < arguments.endIndex {
             if isOption("--platform") { platform = try value("--platform", "ios or macos") }
             else if isOption("--destination") { destination = try value("--destination", "device or simulator") }
@@ -77,11 +77,11 @@ public struct RunRequest: Sendable, Equatable {
             guard words.count >= 2 else { throw RunStop.usage(usage) }
             request = RunRequest(target: .overlay(words[1]))
             words.removeFirst(2)
-            if let next = words.first, !next.hasPrefix("-") { throw RunStop.usage("--config replaces <project-dir>; give one or the other") }
+            if let next = words.first, !RunText.has("-", before: next) { throw RunStop.usage("--config replaces <project-dir>; give one or the other") }
         } else {
             request = RunRequest(target: .project(first))
             words.removeFirst()
-            if words.contains(where: { $0 == "--config" || $0.hasPrefix("--config=") }) { throw RunStop.usage("--config replaces <project-dir>; give one or the other") }
+            if words.contains(where: { $0 == "--config" || RunText.has("--config=", before: $0) }) { throw RunStop.usage("--config replaces <project-dir>; give one or the other") }
             if destination == "simulator" { throw RunStop.usage("--destination simulator needs --config <overlay.yml> (a React Native app)") }
             if platform == "macos" { throw RunStop.usage("--platform macos needs --config <overlay.yml> (a Tauri or cargo app)") }
         }
@@ -115,10 +115,10 @@ struct RunSpan: Equatable {
                 guard i + 1 < request.rest.endIndex else { throw RunStop.usage("\(word) needs a stage") }
                 i += 1
                 if word == "--from" { from = request.rest[i]; fromGiven = true } else { to = request.rest[i] }
-            } else if word.hasPrefix("--from=") { from = String(word.dropFirst("--from=".count)); fromGiven = true }
-            else if word.hasPrefix("--to=") { to = String(word.dropFirst("--to=".count)) }
+            } else if let stage = RunText.value(of: "--from=", in: word) { from = stage; fromGiven = true }
+            else if let stage = RunText.value(of: "--to=", in: word) { to = stage }
             else {
-                if word == "--build-number" || word.hasPrefix("--build-number=") { span.buildNumberGiven = true }
+                if word == "--build-number" || RunText.has("--build-number=", before: word) { span.buildNumberGiven = true }
                 span.extra.append(word)
             }
             i += 1
@@ -138,8 +138,8 @@ struct RunSpan: Equatable {
         var span = RunSpan(from: .build, to: .upload, extra: request.rest)
         for word in request.rest {
             if previous == "--to" { to = word }
-            if word.hasPrefix("--to=") { to = String(word.dropFirst("--to=".count)) }
-            if word == "--build-number" || word.hasPrefix("--build-number=") { span.buildNumberGiven = true }
+            if let stage = RunText.value(of: "--to=", in: word) { to = stage }
+            if word == "--build-number" || RunText.has("--build-number=", before: word) { span.buildNumberGiven = true }
             previous = word
         }
         span.to = try RunStage.named(to)

@@ -100,7 +100,7 @@ extension ProjectRun {
     private func makeAbsolute(_ name: String) throws {
         let path = environment[name] ?? ""
         guard host.isReadable(path) else { throw RunStop.usage("\(name) points to a file that does not exist or is unreadable") }
-        if !path.hasPrefix("/") { environment[name] = files.absolute(path) }
+        if !RunText.isAbsolute(path) { environment[name] = files.absolute(path) }
     }
 
     /// Which secret holds the TestFlight demo account's password: the host's xless reads the configuration (nothing when the
@@ -116,7 +116,7 @@ extension ProjectRun {
         }
         let answer = ask([xself, "secrets", "named-by"] + what, quiet: true)
         // (an answer that is not names, as from an xless too old to know the command, counts as none)
-        let names = answer.output.split(separator: "\n").map(String.init)
+        let names = RunText.lines(answer.output)
         if answer.code == 0, names.allSatisfy({ $0.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*(@[A-Z0-9]{10})?/) != nil }) {
             secrets.demoNames = names
         } else {
@@ -212,8 +212,8 @@ extension ProjectRun {
         }
         // Where xless will put them (SecretRunBase): refused before anything is written when a build mount holds it.
         let base: String
-        if let runtime = setting("XDG_RUNTIME_DIR"), runtime.hasPrefix("/"), files.isDirectory(runtime) { base = "\(runtime)/xless" }
-        else if let cache = setting("XDG_CACHE_HOME"), cache.hasPrefix("/") { base = "\(cache)/xless/secrets" }
+        if let runtime = setting("XDG_RUNTIME_DIR"), RunText.isAbsolute(runtime), files.isDirectory(runtime) { base = "\(runtime)/xless" }
+        else if let cache = setting("XDG_CACHE_HOME"), RunText.isAbsolute(cache) { base = "\(cache)/xless/secrets" }
         else { base = "\(files.home)/.cache/xless/secrets" }
         try refuseInBuildMounts(base)
         host.say("==> secrets from the secret store: \(setTexts.joined(separator: " "))")
@@ -254,7 +254,7 @@ extension ProjectRun {
         let answer = ask([xself, "secrets", "materialize", "--check"] + secrets.team + setTexts)
         if !all.allSatisfy({ $0.hasPrefix("?") }) { try require(answer.code, " (the secret store)") }
         // (only optional ones: a store that cannot be read gives none of them)
-        let found = answer.code == 0 ? answer.output.split(separator: "\n").map(String.init) : []
+        let found = answer.code == 0 ? RunText.lines(answer.output) : []
         secrets.sets = secrets.sets.compactMap { set in
             var kept = set
             kept.names.removeAll { name in
@@ -287,7 +287,7 @@ extension ProjectRun {
     private func refuseInBuildMounts(_ path: String) throws {
         var here = path
         while !FileManager.default.fileExists(atPath: here), here != "/" { here = RunFiles.parent(here) }
-        for mount in buildMounts where FileManager.default.fileExists(atPath: mount) && files.directory(here, isIn: mount) {
+        for mount in buildMounts where try FileManager.default.fileExists(atPath: mount) && files.directory(here, isIn: mount) {
             throw RunStop.usage("the secret store's files (\(path)) would be inside \(mount), which is mounted into the build container; point XDG_RUNTIME_DIR elsewhere")
         }
     }

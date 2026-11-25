@@ -84,10 +84,10 @@ public protocol RunHost: AnyObject, Sendable {
     func terminate(_ pid: Int32)
     func pause(_ seconds: Double)
 
-    /// The path with every symbolic link resolved; nil: there is no such file.
+    /// The path with every symbolic link resolved; nil: there is no such file (or it is not to be seen, or not in UTF-8).
     func realPath(_ path: String) -> String?
-    /// The same file or directory, whatever the spellings.
-    func isSame(_ a: String, _ b: String) -> Bool
+    /// The same file or directory, whatever the spellings; nil: one is not there (or not to be seen).
+    func isSame(_ a: String, _ b: String) -> Bool?
     func isReadable(_ path: String) -> Bool
     /// A regular file, or a link to one.
     func isFile(_ path: String) -> Bool

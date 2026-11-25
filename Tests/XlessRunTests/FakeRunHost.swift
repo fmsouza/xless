@@ -113,7 +113,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func pause(_ seconds: Double) { if stopping, Thread.current.threadDictionary["run"] != nil { pthread_exit(nil) } }
 
     func realPath(_ path: String) -> String? { files.realPath(path) }
-    func isSame(_ a: String, _ b: String) -> Bool { files.isSame(a, b) }
+    func isSame(_ a: String, _ b: String) -> Bool? { files.isSame(a, b) }
     func isReadable(_ path: String) -> Bool { files.isReadable(path) }
     func isFile(_ path: String) -> Bool { files.isFile(path) }
     func temporaryFile() throws -> String { try files.temporaryFile() }

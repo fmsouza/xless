@@ -72,7 +72,7 @@ public enum SecretRunBase {
     public static func choose(env: [String: String] = ProcessInfo.processInfo.environment, allowDisk: Bool,
                               isMemory: (String) -> Bool = isMemoryFileSystem) throws -> URL {
         let allow = "or pass --allow-disk-secrets (xless run --allow-disk-secrets …) to accept them on disk for the run's length"
-        if let runtime = env["XDG_RUNTIME_DIR"], runtime.hasPrefix("/"), isDirectory(runtime) {
+        if let runtime = env["XDG_RUNTIME_DIR"], isAbsolute(runtime), isDirectory(runtime) {
             guard allowDisk || isMemory(runtime) else {
                 throw XlessError(.config, "XDG_RUNTIME_DIR (\(runtime)) is not a memory file system (tmpfs): the run's secrets would be written to disk",
                                  fix: "point XDG_RUNTIME_DIR at a tmpfs (systemd's /run/user/<uid>), \(allow)")
@@ -80,13 +80,13 @@ public enum SecretRunBase {
             return URL(fileURLWithPath: runtime, isDirectory: true).appendingPathComponent("xless", isDirectory: true)
         }
         guard allowDisk else {
-            let why = env["XDG_RUNTIME_DIR"].map { $0.isEmpty ? "is empty" : $0.hasPrefix("/") ? "(\($0)) is not a directory" : "(\($0)) is not an absolute path" } ?? "is not set"
+            let why = env["XDG_RUNTIME_DIR"].map { $0.isEmpty ? "is empty" : isAbsolute($0) ? "(\($0)) is not a directory" : "(\($0)) is not an absolute path" } ?? "is not set"
             throw XlessError(.config, "XDG_RUNTIME_DIR \(why): there is no memory file system (tmpfs) for the run's secrets",
                              fix: "run on a host that sets it (systemd: /run/user/<uid>), set *_FILE variables yourself, \(allow)")
         }
         // Under the home directory: the one place Colima and Docker Desktop share with their VM by default.
         let cache: URL
-        if let xdg = env["XDG_CACHE_HOME"], xdg.hasPrefix("/") {
+        if let xdg = env["XDG_CACHE_HOME"], isAbsolute(xdg) {
             cache = URL(fileURLWithPath: xdg, isDirectory: true)
         } else {
             let home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
@@ -99,6 +99,9 @@ public enum SecretRunBase {
     public static func isMemoryFileSystem(_ path: String) -> Bool {
         MemoryFileSystem.contains(path)
     }
+
+    /// By its first byte, as `xless run` takes it: to Swift a "/" and a mark that combines with it are one character.
+    private static func isAbsolute(_ path: String) -> Bool { path.utf8.first == UInt8(ascii: "/") }
 
     static func isDirectory(_ path: String) -> Bool {
         var st = stat()

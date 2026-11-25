@@ -250,7 +250,7 @@ public final class ProjectRun {
     func prepareDocker() throws {
         guard has("docker") else { throw RunStop.usage("docker is not installed (and no native xless is on PATH)") }
         var name = setting("DOCKER_CONTEXT")
-        if name == nil, ask(["docker", "context", "ls", "--format", "{{.Name}}"], quiet: true).output.split(separator: "\n").contains("colima-xless") { name = "colima-xless" }
+        if name == nil, RunText.lines(ask(["docker", "context", "ls", "--format", "{{.Name}}"], quiet: true).output).contains("colima-xless") { name = "colima-xless" }
         architecture = host.architecture
         if let name { dockerCLI += ["--context", name] }
         // --pull=never: a missing local image is need(images:)'s message, not a Docker Hub "pull access denied".
@@ -273,7 +273,7 @@ public final class ProjectRun {
         let wanted = "\(name)-xcode\(tag)"
         if imageExists(wanted) { return wanted }
         let versions = (try? String(contentsOfFile: "\(context.share)/versions.env", encoding: .utf8)) ?? ""
-        let shipped = versions.split(separator: "\n").first { $0.hasPrefix("XCODE_VERSION=") }.map { String($0.dropFirst("XCODE_VERSION=".count)) }
+        let shipped = RunText.lines(versions).lazy.compactMap { RunText.value(of: "XCODE_VERSION=", in: $0) }.first
         if let shipped, RunText.xcodeTag(shipped) == tag, imageExists(name) { return name }
         pinMissing.append(wanted)
         return name

@@ -96,7 +96,7 @@ import Testing
     @Test func files() throws {
         let a = try host.temporaryFile(), b = a + ".b"
         defer { host.removeFile(a); host.removeFile(b) }
-        #expect(host.link(a, b) && !host.link(a, b) && host.isSame(a, b) && !host.isSame(a, "/"))
+        #expect(host.link(a, b) && !host.link(a, b) && host.isSame(a, b) == true && host.isSame(a, "/") == false)
         #expect(host.realPath(a + ".none") == nil && host.realPath("/usr/../") == "/")
         #expect(host.makeDirectory(a + ".d") && !host.makeDirectory(a + ".d"))
         host.removeEmptyDirectory(a + ".d")

@@ -41,7 +41,7 @@ extension ProjectRun {
         if overlay.isSimulator, !overlay.isReactNative { throw RunStop.usage("--destination simulator builds React Native overlays only") }
         guard let given = setting("XLESS_SOURCE") ?? top["source"] else { throw RunStop.usage("\(path) has no source: (set it, or set XLESS_SOURCE)") }
         overlay.source = files.expanded(given)
-        if !overlay.source.hasPrefix("/") { overlay.source = "\(overlay.directory)/\(overlay.source)" }
+        if !RunText.isAbsolute(overlay.source) { overlay.source = "\(overlay.directory)/\(overlay.source)" }
         guard files.isDirectory(overlay.source) else { throw RunStop.usage("the app source \(overlay.source) does not exist") }
         overlay.source = files.absolute(overlay.source)
         let span = try RunSpan.overlay(request)
@@ -68,7 +68,7 @@ extension ProjectRun {
         if docker {
             if overlay.isReactNative, !overlay.isSimulator, !dryRun { try compareImages(steps) }
             // The store's secrets for steps 1 and 3, now that nothing else can stop the run before step 1.
-            buildMounts = [overlay.directory, overlay.mounted].map { host.realPath($0) ?? $0 } + inputs.map(\.path)
+            buildMounts = try [overlay.directory, overlay.mounted].map(files.real) + inputs.map(\.path)
             if !overlay.isReactNative { buildMounts += ["work", "downloads", "inputs"].map { "\(steps.cache)/\($0)" } }
             try materialize()
         }
@@ -89,27 +89,27 @@ extension ProjectRun {
     private func findMount(_ overlay: inout Overlay) {
         overlay.mounted = overlay.source
         let answer = ask(["git", "-C", overlay.source, "rev-parse", "--show-toplevel"], quiet: true)
-        let top = answer.output.hasSuffix("\n") ? String(answer.output.dropLast()) : answer.output
+        let top = answer.output.utf8.last == UInt8(ascii: "\n") ? String(decoding: answer.output.utf8.dropLast(), as: UTF8.self) : answer.output
         guard answer.code == 0, !top.isEmpty, let source = host.realPath(overlay.source), let checkout = host.realPath(top),
-              source.hasPrefix("\(checkout)/") else { return }
+              let below = RunText.value(of: "\(checkout)/", in: source) else { return }
         overlay.mounted = checkout
-        overlay.below = String(source.dropFirst(checkout.count))
+        overlay.below = "/\(below)"
     }
 
     /// The overlay's directory, the source and the path inputs are mounted into the container that runs the app's build code: no
     /// secret may live below them. (Natively nothing is mounted: the build runs on the host, without the secret variables.)
     private func checkMounts(_ overlay: Overlay) throws -> [(name: String, path: String)] {
-        let config = host.realPath(overlay.directory) ?? overlay.directory, source = host.realPath(overlay.mounted) ?? overlay.mounted
+        let config = try files.real(overlay.directory), source = try files.real(overlay.mounted)
         // Both are mounted whole: never the file system root, the home directory or a directory above it.
-        for directory in [config, source] where files.isBroad(directory) {
+        for directory in [config, source] where try files.isBroad(directory) {
             throw RunStop.usage("\(directory) would be mounted into the build container, and it is / or holds your home directory; keep the overlay in its own directory and point source: at the app's checkout")
         }
         let secretFiles = secretFiles()
         for (name, path) in secretFiles {
-            if files.file(path, isIn: config) {
+            if try files.file(path, isIn: config) {
                 throw RunStop.usage("\(name) (\(path)) is inside the overlay's directory \(config), which is mounted into the build container; keep the overlay in its own directory, away from secrets")
             }
-            if files.file(path, isIn: source) {
+            if try files.file(path, isIn: source) {
                 throw RunStop.usage("\(name) (\(path)) is inside the app source \(source), which is mounted into the build container; keep secrets out of the source")
             }
         }
@@ -119,18 +119,18 @@ extension ProjectRun {
         let answer = ask([xself, "cargo", "inputs", "--config", overlay.path, "--source", overlay.source])
         guard answer.code == 0 else { throw RunStop.usage("cannot list the path inputs of \(overlay.path) (\"\(xself)\" cargo inputs failed)") }
         var inputs: [(name: String, path: String)] = []
-        for line in answer.output.split(separator: "\n") {
-            let parts = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        for line in RunText.lines(answer.output) {
+            let parts = RunText.cut(line, at: "\t", max: 1, keepingEmpty: true)
             let name = parts[0], path = parts.count > 1 ? parts[1] : ""
             if name.isEmpty { continue }
             guard name.wholeMatch(of: /[A-Za-z0-9._-]+/) != nil, name != ".", name != ".." else {
                 throw RunStop.usage("the path input '\(name)' has a name that cannot be a mount point")
             }
-            guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { throw RunStop.usage("the path input '\(name)' (\(path)) does not exist") }
-            guard !files.isBroad(path) else {
+            guard RunText.isAbsolute(path), FileManager.default.fileExists(atPath: path) else { throw RunStop.usage("the path input '\(name)' (\(path)) does not exist") }
+            guard try !files.isBroad(path) else {
                 throw RunStop.usage("the path input '\(name)' (\(path)) would be mounted into the build container, and it is / or holds your home directory; point it at the folder the build needs")
             }
-            for (variable, file) in secretFiles where host.isSame(file, path) || files.file(file, isIn: path) {
+            for (variable, file) in secretFiles where try files.file(file, isOrIsIn: path) {
                 throw RunStop.usage("\(variable) (\(file)) is inside the path input '\(name)' (\(path)), which is mounted into the build container; keep secrets out of the path inputs")
             }
             inputs.append((name, path))
@@ -246,7 +246,7 @@ extension ProjectRun {
         }
         cleanup.dropSecrets("next") // step 1's copy of the key: done with
         if result.code != 0 { throw RunStop(code: finished(result.code)) }
-        let number = result.output.split(separator: "\n").last.map(String.init) ?? ""
+        let number = RunText.lines(result.output).last ?? ""
         guard number.wholeMatch(of: /[0-9]+(\.[0-9]+)*/) != nil else { throw RunStop.usage("xless \(command.joined(separator: " ")) printed '\(number)', not a build number") }
         environment["XLESS_BUILD_NUMBER"] = number
     }
@@ -291,7 +291,7 @@ extension ProjectRun {
         return 0
     }
 
-    private func last(of output: String, _ suffix: String) -> String { output.split(separator: "\n").last { $0.hasSuffix(suffix) }.map(String.init) ?? "" }
+    private func last(of output: String, _ suffix: String) -> String { RunText.lines(output).last { $0.hasSuffix(suffix) } ?? "" }
 
     /// Step 3: sign, package, upload with the secrets; no build code runs here.
     private func saySigning(_ span: RunSpan) -> RunStage {
@@ -317,7 +317,7 @@ extension ProjectRun {
         let span = overlay.span, uploads = span.to >= .upload
         let from = saySigning(span)
         func show(_ kind: String, _ path: String) {
-            let shown = docker && path.hasPrefix("/cache/work") ? "\(steps.cache)/work" + path.dropFirst("/cache/work".count) : path
+            let shown = docker ? RunText.value(of: "/cache/work", in: path).map { "\(steps.cache)/work\($0)" } ?? path : path
             host.say("==> \(kind): \(shown)")
         }
         let first = signStep(steps, shipWords(steps, [], from: from, to: min(span.to, .package), span), secrets.sign + storeMounts("sign"), output: .both)

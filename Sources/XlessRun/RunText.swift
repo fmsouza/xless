@@ -26,7 +26,7 @@ enum RunText {
     /// `word` quoted for a shell when it needs it, as the dry run prints commands.
     static func quoted(_ word: String) -> String {
         if word.wholeMatch(of: /[A-Za-z0-9_.\/:=,@%+-]+/) != nil { return word }
-        return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return "'" + replace("'", in: word, with: "'\\''") + "'"
     }
 
     static func commandLine(_ words: [String]) -> String { words.map { quoted($0) + " " }.joined() }
@@ -47,12 +47,43 @@ enum RunText {
 
     /// A `docker run --mount` bind; a path with ',' or '"' is CSV-quoted, so any path works.
     static func bind(_ source: String, _ destination: String, readOnly: Bool = false) -> String {
-        let src = source.contains(",") || source.contains("\"") ? "\"src=\(source.replacingOccurrences(of: "\"", with: "\"\""))\"" : "src=\(source)"
-        return "type=bind,\(src),dst=\(destination)\(readOnly ? ",readonly" : "")"
+        let quoted = source.utf8.contains { $0 == UInt8(ascii: ",") || $0 == UInt8(ascii: "\"") }
+        return "type=bind,\(quoted ? "\"src=\(replace("\"", in: source, with: "\"\""))\"" : "src=\(source)"),dst=\(destination)\(readOnly ? ",readonly" : "")"
     }
 
-    /// A run directory as `xless secrets materialize` makes it: nothing else is ever removed as one.
+    /// A run directory as `xless secrets materialize` makes it, <…>/xless/<32 hex digits> or <…>/xless/secrets/<32 hex digits>:
+    /// nothing else is ever removed as one.
     static func isSecretsDirectory(_ path: String) -> Bool {
-        path.wholeMatch(of: /\/([^\/]+\/)*xless(\/secrets)?\/[0-9a-f]{32}/) != nil && !path.contains("/../") && !path.contains("/./")
+        guard isAbsolute(path) else { return false }
+        var parts = Array(cut(path, at: "/", keepingEmpty: true).dropFirst())
+        guard !parts.contains(where: { ["", ".", ".."].contains($0) }), let id = parts.popLast(), id.utf8.count == 32,
+              id.utf8.allSatisfy({ UInt8(ascii: "0")...UInt8(ascii: "9") ~= $0 || UInt8(ascii: "a")...UInt8(ascii: "f") ~= $0 }) else { return false }
+        if parts.last == "secrets" { parts.removeLast() }
+        return parts.last == "xless"
+    }
+
+    // MARK: - Bytes
+    //
+    // Paths, and what programs say, are cut and compared by their bytes: to Swift a "/" and a mark that combines with it are one
+    // Character, which is not "/", and "\r\n" is one that is not a line break.
+
+    static func isAbsolute(_ path: String) -> Bool { path.utf8.first == UInt8(ascii: "/") }
+
+    static func cut(_ text: String, at separator: Unicode.Scalar, max: Int = .max, keepingEmpty: Bool = false) -> [String] {
+        text.utf8.split(separator: UInt8(ascii: separator), maxSplits: max, omittingEmptySubsequences: !keepingEmpty).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// Those that are not empty.
+    static func lines(_ text: String) -> [String] { cut(text, at: "\n") }
+
+    static func has(_ prefix: String, before text: String) -> Bool { text.utf8.starts(with: prefix.utf8) }
+
+    /// What follows `prefix`; nil: `text` does not start with it.
+    static func value(of prefix: String, in text: String) -> String? {
+        has(prefix, before: text) ? String(decoding: text.utf8.dropFirst(prefix.utf8.count), as: UTF8.self) : nil
+    }
+
+    private static func replace(_ byte: Unicode.Scalar, in text: String, with other: String) -> String {
+        cut(text, at: byte, keepingEmpty: true).joined(separator: other)
     }
 }

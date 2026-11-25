@@ -160,12 +160,24 @@ import XlessCore
         try refused(secrets, "is inside the app source")
         secrets["XLESS_DIST_KEY_FILE"] = try home.write("ov/key.pem", "k")
         try refused(secrets, "is inside the overlay's directory")
+        // nor does a name that starts with a mark that combines with the "/" before it
+        for mark in ["\u{301}", "\u{200D}", "\u{FE0F}"] {
+            for (place, what) in [("src", "is inside the app source"), ("ov", "is inside the overlay's directory")] {
+                try FileManager.default.createDirectory(atPath: "\(home.root)/\(place)/\(mark)keys", withIntermediateDirectories: true)
+                secrets["XLESS_DIST_KEY_FILE"] = try home.write("\(place)/\(mark)keys/key.pem", "k")
+                try refused(secrets, what)
+            }
+            try FileManager.default.createDirectory(atPath: "\(home.root)/src/\(mark)run", withIntermediateDirectories: true)
+            try refused(["XDG_RUNTIME_DIR": "\(home.root)/src/\(mark)run"], "which is mounted into the build container; point XDG_RUNTIME_DIR elsewhere")
+        }
         // a link to it does not hide it
         try FileManager.default.createSymbolicLink(atPath: "\(home.root)/link.pem", withDestinationPath: "\(home.root)/ov/key.pem")
         secrets["XLESS_DIST_KEY_FILE"] = "\(home.root)/link.pem"
         try refused(secrets, "is inside the overlay's directory")
         try refused(["XDG_RUNTIME_DIR": "\(home.root)/src"], "which is mounted into the build container; point XDG_RUNTIME_DIR elsewhere")
         try refused(["XLESS_TESTFLIGHT_ENV": home.write("src/x.env", "A=1\n")], "ENV_FILE")
+        // what cannot be told is refused: a home that is not there
+        try refused(["HOME": "\(home.root)/none"], "cannot tell where \(home.root)/none is")
         try refused(["XLESS_SOURCE": home.home], "holds your home directory")
         try refused(["XLESS_SOURCE": home.root], "holds your home directory")
         try refused(["XLESS_SOURCE": "/"], "holds your home directory")
