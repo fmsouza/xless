@@ -19,6 +19,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     let programs: Swift.Set<String>
     let isMac: Bool
+    let isWSL: Bool
     let directory: String
     /// What a step does, and its answer.
     let answer: @Sendable (FakeRunHost, RunStep) -> Answer
@@ -30,10 +31,11 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     /// Paths of which the system says nothing, as of those below a directory that may not be searched.
     var unseen: Swift.Set<String> = []
 
-    init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
+    init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, isWSL: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
          answer: @escaping @Sendable (FakeRunHost, RunStep) -> Answer = { _, _ in (0, "") }) {
         self.programs = programs
         self.isMac = isMac
+        self.isWSL = isWSL
         self.directory = directory
         self.processes = processes
         self.answer = answer

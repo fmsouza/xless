@@ -17,6 +17,8 @@ import Foundation
 /// - **`XLESS_NO_SECRET_STORE=1`**, so an xless the build runs never opens the store (and leaves the keyring too).
 /// - **No `XLESS_SESSION`**: it is not told where what an `xless session` holds is (it would be refused there too).
 /// - **No secret variable**: `Shell.scrubbedEnvironment` (the registered secrets and every name the run resolved).
+/// - **On the kernel of WSL, kept from Windows' own sockets** (`Filter.windows`): a seccomp filter, for good, for it and all that
+///   it starts. Without it a build could start Windows programs, `wsl.exe -u root` among them, and mount the Windows drives.
 /// - **xless is not dumpable** (`SecretScope`): the child cannot attach to xless or read its memory or its environment
 ///   (`/proc/<pid>/environ`, which holds the secret variables it was started with).
 public enum ChildProcess {
@@ -40,15 +42,40 @@ public enum ChildProcess {
     /// Starts `executable` (an absolute path) in a session of its own and a fresh, empty session keyring. Where there is no
     /// keyring to hide (macOS, a container whose seccomp profile blocks the calls), it keeps xless's; where there is one but
     /// a new one cannot be joined, the child is not started: `XlessError(stage)`.
+    /// On the kernel of WSL a `confined` one is under `Filter.windows`; where that cannot be set it is not started either.
     /// - Parameters:
     ///   - environment: the whole environment (`environment(_:extra:)`).
     ///   - stdout, stderr: descriptors for the tool's output and error output (nil: xless's own).
+    ///   - confined: false for the docker client alone (`Shell.docker`).
     @discardableResult
     public static func start(_ executable: String, _ arguments: [String], environment: [String: String], cwd: URL? = nil,
-                             stdout: Int32? = nil, stderr: Int32? = nil, stage: Stage) throws -> ToolProcess {
+                             stdout: Int32? = nil, stderr: Int32? = nil, confined: Bool = true, stage: Stage) throws -> ToolProcess {
+        try start(executable, arguments, environment: environment, cwd: cwd, stdout: stdout, stderr: stderr, filter: confined ? .here : nil,
+                  stage: stage)
+    }
+
+    /// The seccomp filter that a tool runs under.
+    struct Filter: @unchecked Sendable { // (it points at what never changes)
+        let pointer: UnsafePointer<xless_filter>
+        static let windows = Filter(pointer: xless_windows_filter())
+        static func on(wsl: Bool) -> Filter? { wsl ? windows : nil }
+        /// That of this system's kernel.
+        static let here = on(wsl: xless_is_wsl_kernel() == 1)
+    }
+
+    @discardableResult
+    static func start(_ executable: String, _ arguments: [String], environment: [String: String], cwd: URL? = nil,
+                      stdout: Int32? = nil, stderr: Int32? = nil, filter: Filter?, stage: Stage) throws -> ToolProcess {
         SecretScope.enter()
         let spawn = { @Sendable in
-            try ToolProcess(executable: executable, arguments: arguments, environment: environment, cwd: cwd, stdout: stdout, stderr: stderr)
+            do {
+                return try ToolProcess(executable: executable, arguments: arguments, environment: environment, cwd: cwd, stdout: stdout, stderr: stderr,
+                                       filter: filter)
+            } catch let error as ToolProcess.Unconfined {
+                let name = ((executable == "/usr/bin/env" ? arguments.first ?? executable : executable) as NSString).lastPathComponent
+                throw XlessError(stage, "cannot keep \(name) from Windows (seccomp: \(String(cString: strerror(error.code)))), so it is not started",
+                                 fix: "WSL 1 has no such filter: move to WSL 2 (wsl --set-version <distribution> 2); see docs/security.md#in-wsl")
+            }
         }
         #if os(Linux)
         guard KernelKeyring.isAvailable else { return try spawn() }
@@ -86,7 +113,10 @@ public final class ToolProcess: @unchecked Sendable {
     private let lock = NSLock()
     private var status: Int32?
 
-    fileprivate init(executable: String, arguments: [String], environment: [String: String], cwd: URL?, stdout: Int32?, stderr: Int32?) throws {
+    /// It could not be put under its filter: an errno value.
+    struct Unconfined: Error { let code: Int32 }
+
+    fileprivate init(executable: String, arguments: [String], environment: [String: String], cwd: URL?, stdout: Int32?, stderr: Int32?, filter: ChildProcess.Filter?) throws {
         var pid: Int32 = 0
         var started: Int32 = 0
         let argv = [executable] + arguments
@@ -94,11 +124,12 @@ public final class ToolProcess: @unchecked Sendable {
         // ETXTBSY: another thread's fork still held the tool open for writing (a script written just now); it passes.
         for attempt in 0..<20 {
             started = withCStrings(argv) { a in
-                withCStrings(envp) { e in xless_spawn_session(executable, a, e, cwd?.path, stdout ?? -1, stderr ?? -1, &pid) }
+                withCStrings(envp) { e in xless_spawn_session(executable, a, e, cwd?.path, stdout ?? -1, stderr ?? -1, filter?.pointer, &pid) }
             }
             guard started == ETXTBSY, attempt < 19 else { break }
             usleep(50_000)
         }
+        if started < 0 { throw Unconfined(code: -started) }
         guard started == 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(started), userInfo: [NSLocalizedDescriptionKey: "\(executable): \(String(cString: strerror(started)))"])
         }

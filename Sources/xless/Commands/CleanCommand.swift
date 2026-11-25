@@ -54,9 +54,9 @@ struct CleanCommand: AsyncParsableCommand {
             do {
                 let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
                 if listOnly || doOld {
-                    let all = try Shell.run("docker", ls, stage: .sdk).stdout
+                    let all = try Shell.docker(ls, stage: .sdk).stdout
                     if asks {
-                        for ref in CleanPlan.old(fromListing: all, labelled: try Shell.run("docker", ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout) {
+                        for ref in CleanPlan.old(fromListing: all, labelled: try Shell.docker(ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout) {
                             guard let image = LocalImages.here.image(ref), CleanPlan.isStillOld(ref, id: image.id, now: image) else { continue }
                             imageRefs.append(ref)
                             oldIDs[ref] = image.id
@@ -64,7 +64,7 @@ struct CleanCommand: AsyncParsableCommand {
                     } else { imageRefs = CleanPlan.images(fromListing: all) }
                 }
                 if listOnly || doVolumes {
-                    volumeNames = CleanPlan.volumes(fromListing: try Shell.run("docker", ["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout)
+                    volumeNames = CleanPlan.volumes(fromListing: try Shell.docker(["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout)
                 }
             } catch {
                 guard listOnly else {
@@ -109,7 +109,7 @@ struct CleanCommand: AsyncParsableCommand {
 
         var failures: [String] = []
         if !volumeNames.isEmpty {
-            do { try Shell.run("docker", ["volume", "rm"] + volumeNames, stage: .sdk, passthrough: true) } catch {
+            do { try Shell.docker(["volume", "rm"] + volumeNames, stage: .sdk, passthrough: true) } catch {
                 failures.append("some volumes were not removed (one in use by a container? docker ps -a)")
             }
         }
@@ -119,17 +119,17 @@ struct CleanCommand: AsyncParsableCommand {
                     say("kept \(ref): it is another image now")
                     continue
                 }
-                do { try Shell.run("docker", ["image", "rm", ref], stage: .sdk, passthrough: true) } catch {
+                do { try Shell.docker(["image", "rm", ref], stage: .sdk, passthrough: true) } catch {
                     failures.append("\(ref) was not removed (in use by a container? docker ps -a)")
                 }
             }
         } else if !imageRefs.isEmpty {
-            do { try Shell.run("docker", ["image", "rm"] + imageRefs, stage: .sdk, passthrough: true) } catch {
+            do { try Shell.docker(["image", "rm"] + imageRefs, stage: .sdk, passthrough: true) } catch {
                 failures.append("some images were not removed (one in use by a container? docker ps -a)")
             }
         }
         if doOld {
-            do { try Shell.run("docker", ["image", "prune", "--force", "--filter", "label=\(CleanPlan.imageLabel)"], stage: .sdk, passthrough: true) } catch {
+            do { try Shell.docker(["image", "prune", "--force", "--filter", "label=\(CleanPlan.imageLabel)"], stage: .sdk, passthrough: true) } catch {
                 failures.append("the untagged older builds were not pruned")
             }
         }

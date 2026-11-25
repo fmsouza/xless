@@ -18,13 +18,18 @@ public struct RunStep: Sendable, Equatable {
     public var output = Output.shown
     /// Its standard error goes nowhere: a question whose answer is its exit code.
     public var quiet = false
+    /// On the kernel of WSL it, and all that it starts, has no way to Windows (docs/security.md#in-wsl): a step that builds, and a
+    /// program that reads the project. Not the docker client, and not an xless that may ask a credential helper, which either may be
+    /// or may start a program of Windows (the tools of every xless are, whatever it is itself).
+    public var confined = false
 
-    public init(_ words: [String], environment: [String: String], directory: String? = nil, output: Output = .shown, quiet: Bool = false) {
+    public init(_ words: [String], environment: [String: String], directory: String? = nil, output: Output = .shown, quiet: Bool = false, confined: Bool = false) {
         self.words = words
         self.environment = environment
         self.directory = directory
         self.output = output
         self.quiet = quiet
+        self.confined = confined
     }
 }
 
@@ -51,6 +56,8 @@ public protocol RunHost: AnyObject, Sendable {
     /// As the images' names have it: arm64 or amd64.
     var architecture: String { get }
     var isMac: Bool { get }
+    /// The kernel is that of WSL, where what a build does natively may become root (docs/security.md#in-wsl).
+    var isWSL: Bool { get }
     var now: Date { get }
     /// The directory a relative path starts at, as the user sees it (`$PWD`).
     var currentDirectory: String { get }
@@ -124,4 +131,9 @@ public protocol RunHost: AnyObject, Sendable {
     func removeEmptyDirectory(_ path: String)
     /// Removes a directory and what is in it, without following a link.
     func removeTree(_ path: String)
+}
+
+extension RunHost {
+    /// A native run of a project is two processes: one that builds, with no secret, and one that signs.
+    var splitsNative: Bool { isMac || isWSL }
 }

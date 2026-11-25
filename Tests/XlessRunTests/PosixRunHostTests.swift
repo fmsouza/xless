@@ -1,3 +1,4 @@
+import CXlessProcess
 import Foundation
 import Testing
 @testable import XlessRun
@@ -18,6 +19,40 @@ import Testing
     @Test func aStepHasTheGivenEnvironmentAndNothingElse() throws {
         let names = try run(["env"]).output.split(separator: "\n").map { String($0.prefix { $0 != "=" }) }
         #expect(Set(names) == ["PATH", "ONLY"])
+    }
+
+    /// On the kernel of WSL a confined step, and no other, is kept from Windows; elsewhere none.
+    @Test func aConfinedStepIsKeptFromWindows() throws {
+        func state(wsl: Bool, confined: Bool) throws -> String {
+            let host = PosixRunHost(isWSL: wsl)
+            #expect(host.isWSL == wsl)
+            let step = RunStep(["grep", "-E", "^(NoNewPrivs|Seccomp):", "/proc/self/status"], environment: environment, output: .captured, confined: confined)
+            return host.finish(try host.start(step)).output
+        }
+        #if os(Linux)
+        #expect(try state(wsl: true, confined: true) == "NoNewPrivs:\t1\nSeccomp:\t2\n")
+        let own = try String(contentsOfFile: "/proc/self/status", encoding: .utf8).split(separator: "\n").filter { $0.hasPrefix("NoNewPrivs:") || $0.hasPrefix("Seccomp:") }.joined(separator: "\n") + "\n"
+        for (wsl, confined) in [(true, false), (false, true), (false, false)] { #expect(try state(wsl: wsl, confined: confined) == own) }
+        #else
+        #expect(!PosixRunHost().isWSL)
+        #expect(throws: (any Error).self) { try state(wsl: true, confined: true) } // there is no such filter here
+        #endif
+    }
+
+    /// Fails closed, and says why.
+    @Test func aConfinedStepThatCannotBeIsNotStarted() throws {
+        var none = xless_filter(program: nil, length: 0)
+        try withUnsafePointer(to: &none) { none in
+            let host = PosixRunHost(isWSL: true, filter: none)
+            let file = try host.temporaryFile()
+            defer { host.removeFile(file) }
+            do {
+                _ = host.finish(try host.start(RunStep(["sh", "-c", "echo ran > \(file)"], environment: environment, confined: true)))
+                Issue.record("it was started")
+            } catch { #expect("\(error)".hasPrefix("it cannot be kept from Windows (seccomp: "), "\(error)") }
+            #expect(try Data(contentsOf: URL(fileURLWithPath: file)).isEmpty)
+            #expect(try host.finish(host.start(RunStep(["true"], environment: environment))).code == 0)
+        }
     }
 
     /// What is not UTF-8 in this process's environment is the same bytes in a step's.

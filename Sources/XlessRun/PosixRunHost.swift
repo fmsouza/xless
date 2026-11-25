@@ -11,10 +11,12 @@ import Glibc
 #endif
 
 /// macOS and Linux.
-public final class PosixRunHost: RunHost {
+public final class PosixRunHost: RunHost, @unchecked Sendable { // (`filter` points at what never changes)
     struct Failure: Error, CustomStringConvertible {
         let code: Int32
-        var description: String { String(cString: strerror(code)) }
+        var description: String {
+            code < 0 ? "it cannot be kept from Windows (seccomp: \(String(cString: strerror(-code)))); see docs/security.md#in-wsl" : String(cString: strerror(code))
+        }
     }
 
     /// This process's arguments that are not UTF-8, by the bytes of what `arguments` makes of them: for a step they are the bytes
@@ -59,7 +61,15 @@ public final class PosixRunHost: RunHost {
 
     private static func name(_ variable: [UInt8]) -> ArraySlice<UInt8> { variable.prefix { $0 != UInt8(ascii: "=") } }
 
-    public init() {
+    public let isWSL: Bool
+    /// What a confined step runs under.
+    private let filter: UnsafePointer<xless_filter>?
+
+    public convenience init() { self.init(isWSL: xless_is_wsl_kernel() == 1) }
+
+    init(isWSL: Bool, filter: UnsafePointer<xless_filter> = xless_windows_filter()) {
+        self.isWSL = isWSL
+        self.filter = isWSL ? filter : nil
         let given = Self.strings(UnsafePointer(CommandLine.unsafeArgv))
         words = Dictionary(zip(Self.texts(given).map { Array($0.utf8) }, given)) { first, _ in first }.filter { $0.key != $0.value }
         variables = Dictionary(grouping: Self.strings(xless_environment())) { String(decoding: Self.name($0), as: UTF8.self) }
@@ -177,7 +187,7 @@ public final class PosixRunHost: RunHost {
         var pid: Int32 = 0
         let code = withStrings(bytes(step.words)) { words in
             withStrings(bytes(step.environment)) { environment in
-                xless_spawn_step(path, words, environment, step.directory, out, quiet, &pid)
+                xless_spawn_step(path, words, environment, step.directory, out, quiet, step.confined ? filter : nil, &pid)
             }
         }
         guard code == 0 else {
