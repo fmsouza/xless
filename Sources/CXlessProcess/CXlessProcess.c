@@ -31,6 +31,7 @@
 #include <crt_externs.h>
 #include <dlfcn.h>
 #include <libproc.h>
+#include <sys/attr.h>
 #include <mach/mach_time.h>
 #include <sys/ptrace.h>
 #include <sys/sysctl.h>
@@ -502,6 +503,22 @@ static void tool_ended(int tool) {
         int it = tool;
         if (atomic_compare_exchange_strong(&tools[i], &it, 0)) return;
     }
+}
+
+long xless_physical_path(const char *path, char *buffer, size_t length) {
+#ifdef __APPLE__
+    // Asked by path, not of a descriptor (F_GETPATH_NOFIRMLINK): a directory that may be searched need not be readable.
+    struct attrlist wanted = { .bitmapcount = ATTR_BIT_MAP_COUNT, .forkattr = ATTR_CMNEXT_NOFIRMLINKPATH };
+    struct { uint32_t length; attrreference_t path; char text[PATH_MAX]; } __attribute__((packed)) answer;
+    if (getattrlist(path, &wanted, &answer, sizeof answer, FSOPT_ATTR_CMN_EXTENDED) != 0 || answer.length > sizeof answer) return -1;
+    const char *text = (const char *)&answer.path + answer.path.attr_dataoffset, *end = (const char *)&answer + answer.length;
+    if (answer.path.attr_length <= 1 || text < answer.text || text + answer.path.attr_length > end || answer.path.attr_length > length) return -1;
+    memcpy(buffer, text, answer.path.attr_length); // its 0 too
+    return (long)answer.path.attr_length - 1;
+#else
+    (void)path; (void)buffer; (void)length;
+    return -1;
+#endif
 }
 
 char *const *xless_environment(void) {

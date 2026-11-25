@@ -281,6 +281,15 @@ public final class PosixRunHost: RunHost {
         return String(validatingCString: resolved)
     }
 
+    public func physicalPath(_ path: String) -> String? {
+        #if os(macOS)
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        return xless_physical_path(path, &buffer, buffer.count) > 0 ? String(validatingCString: buffer) : nil
+        #else
+        return realPath(path)
+        #endif
+    }
+
     public func isSame(_ a: String, _ b: String) -> Bool? {
         var x = stat(), y = stat()
         guard stat(a, &x) == 0, stat(b, &y) == 0 else { return nil }

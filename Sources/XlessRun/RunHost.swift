@@ -92,6 +92,9 @@ public protocol RunHost: AnyObject, Sendable {
 
     /// The path with every symbolic link resolved; nil: there is no such file (or it is not to be seen, or not in UTF-8).
     func realPath(_ path: String) -> String?
+    /// The path as the file system holds it, its links resolved. It is another one than `realPath` where macOS shows folders of
+    /// its data volume (/System/Volumes/Data) as if they were in /, /Users among them. nil: it cannot be told.
+    func physicalPath(_ path: String) -> String?
     /// The same file or directory, whatever the spellings; nil: one is not there (or not to be seen).
     func isSame(_ a: String, _ b: String) -> Bool?
     func isReadable(_ path: String) -> Bool

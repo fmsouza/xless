@@ -24,6 +24,9 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     private(set) var became: [String]?
     private(set) var becameWith: [String: String] = [:]
 
+    /// Instead of what the system says.
+    var physical: (@Sendable (String) -> String?)?
+
     init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
          answer: @escaping @Sendable (FakeRunHost, RunStep) -> Answer = { _, _ in (0, "") }) {
         self.programs = programs
@@ -126,6 +129,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func pause(_ seconds: Double) { if stopping, Thread.current.threadDictionary["run"] != nil { pthread_exit(nil) } }
 
     func realPath(_ path: String) -> String? { files.realPath(path) }
+    func physicalPath(_ path: String) -> String? { physical.map { $0(path) } ?? files.physicalPath(path) }
     func isSame(_ a: String, _ b: String) -> Bool? { files.isSame(a, b) }
     func isReadable(_ path: String) -> Bool { files.isReadable(path) }
     func isFile(_ path: String) -> Bool { files.isFile(path) }
