@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <poll.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -296,7 +297,115 @@ static void close_from_3(int keep) {
     for (long fd = 3; fd < max_fd; fd++) if (fd != keep) close((int)fd);
 }
 
+// The tools that run are told the signals that end this process: in sessions of their own, they get none from a terminal.
+
+static const int forwarded[] = { SIGINT, SIGTERM, SIGHUP };
+#define FORWARDED (sizeof forwarded / sizeof *forwarded)
+static atomic_int is_forwarded[FORWARDED];
+static atomic_int tools[256]; // their pids, which are their process groups; 0: none
+static atomic_int owner;      // the process they are tools of (a forked child has their numbers too)
+static atomic_int starting;   // how many are being started
+static atomic_int deferred;   // the signal that came meanwhile
+
+static void tell_tools(int sig) {
+    for (size_t i = 0; i < sizeof tools / sizeof *tools; i++) {
+        int tool = atomic_load(&tools[i]);
+        if (tool > 0) kill(-tool, sig);
+    }
+}
+
+static void take_default(int sig) {
+    signal(sig, SIG_DFL);
+    sigset_t only;
+    sigemptyset(&only);
+    sigaddset(&only, sig);
+    pthread_sigmask(SIG_UNBLOCK, &only, NULL);
+    raise(sig);
+}
+
+// Async-signal-safe.
+static void forward(int sig) {
+    int e = errno;
+    if (getpid() == atomic_load(&owner)) {
+        tell_tools(sig);
+        // While one is being started nobody knows its number: whoever starts it goes on from here (`tool_started`). In
+        // this order, so that either it or this sees the other.
+        atomic_store(&deferred, sig);
+        if (atomic_load(&starting) > 0) {
+            errno = e;
+            return;
+        }
+    }
+    take_default(sig);
+}
+
+static void forward_on(int sig) {
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = forward;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    for (size_t i = 0; i < FORWARDED; i++) sigaddset(&action.sa_mask, forwarded[i]);
+    sigaction(sig, &action, NULL);
+}
+
+static void tool_starts(void) {
+    atomic_store(&owner, getpid());
+    for (size_t i = 0; i < FORWARDED; i++) {
+        struct sigaction now;
+        if (sigaction(forwarded[i], NULL, &now) != 0 || now.sa_handler == SIG_IGN) continue; // ignored (nohup): neither
+        atomic_store(&is_forwarded[i], 1);
+        if (now.sa_handler == SIG_DFL) forward_on(forwarded[i]);
+    }
+    atomic_fetch_add(&starting, 1);
+}
+
+static void tool_started(int tool) { // 0: it was not
+    for (size_t i = 0; tool > 0 && i < sizeof tools / sizeof *tools; i++) {
+        int none = 0;
+        if (atomic_compare_exchange_strong(&tools[i], &none, tool)) break;
+    }
+    int sig;
+    if (atomic_fetch_sub(&starting, 1) == 1 && (sig = atomic_load(&deferred)) != 0) {
+        tell_tools(sig);
+        take_default(sig);
+    }
+}
+
+static void tool_ended(int tool) {
+    for (size_t i = 0; i < sizeof tools / sizeof *tools; i++) {
+        int it = tool;
+        if (atomic_compare_exchange_strong(&tools[i], &it, 0)) return;
+    }
+}
+
+int xless_tool_runs(int pid) {
+    for (size_t i = 0; pid > 0 && i < sizeof tools / sizeof *tools; i++) {
+        if (atomic_load(&tools[i]) == pid) return 1;
+    }
+    return 0;
+}
+
+void xless_signal_default(int sig) {
+    for (size_t i = 0; i < FORWARDED; i++) {
+        if (forwarded[i] == sig && atomic_load(&is_forwarded[i])) {
+            forward_on(sig);
+            return;
+        }
+    }
+    signal(sig, SIG_DFL);
+}
+
+static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
+
 int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+    tool_starts();
+    int e = spawn_session(path, argv, envp, cwd, out_fd, err_fd, pid);
+    tool_started(e == 0 ? *pid : 0);
+    return e;
+}
+
+static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
 #if defined(__APPLE__)
     posix_spawnattr_t attr;
     posix_spawn_file_actions_t actions;
@@ -310,7 +419,8 @@ int xless_spawn_session(const char *path, char *const argv[], char *const envp[]
     if (!e) e = posix_spawnattr_setsigdefault(&attr, &all);
     if (!e) e = posix_spawnattr_setsigmask(&attr, &none);
     // Descriptors this process does not have open stay closed in the child.
-    // A terminal's input is not the child's (it has no terminal, so nothing would stop it from reading what is typed).
+    // A terminal is not the child's input: it has no controlling terminal, so it would not be stopped (SIGTTIN) as a
+    // background job that reads is. Its output may be one, and the device can be opened by its path.
     if (!e && isatty(0)) e = posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
     else if (!e && fcntl(0, F_GETFD) >= 0) e = posix_spawn_file_actions_addinherit_np(&actions, 0);
     if (!e && (out_fd >= 0 || fcntl(1, F_GETFD) >= 0)) e = posix_spawn_file_actions_adddup2(&actions, out_fd >= 0 ? out_fd : 1, 1);
@@ -347,7 +457,8 @@ int xless_spawn_session(const char *path, char *const argv[], char *const envp[]
         int out = out_fd < 0 ? -1 : fcntl(out_fd, F_DUPFD_CLOEXEC, 3);
         int err = err_fd < 0 ? -1 : fcntl(err_fd, F_DUPFD_CLOEXEC, 3);
         if ((out_fd >= 0 && (out < 0 || dup2(out, 1) < 0)) || (err_fd >= 0 && (err < 0 || dup2(err, 2) < 0))) { e = errno; goto failed; }
-        // A terminal's input is not the child's (it has no terminal, so nothing would stop it from reading what is typed).
+        // A terminal is not the child's input: it has no controlling terminal, so it would not be stopped (SIGTTIN) as a
+        // background job that reads is. Its output may be one, and the device can be opened by its path.
         struct termios unused;
         if (tcgetattr(0, &unused) == 0) {
             int null = open("/dev/null", O_RDONLY);
@@ -379,6 +490,13 @@ int xless_spawn_session(const char *path, char *const argv[], char *const envp[]
 int xless_wait(int pid, int *status) {
     int s = 0;
     pid_t r;
+    if (xless_tool_runs(pid)) {
+        // Off the list while its number is still its own.
+        siginfo_t info;
+        int w;
+        do { w = waitid(P_PID, (id_t)pid, &info, WEXITED | WNOWAIT); } while (w < 0 && errno == EINTR);
+        tool_ended(pid);
+    }
     do { r = waitpid((pid_t)pid, &s, 0); } while (r < 0 && errno == EINTR);
     if (r < 0) return -1;
     *status = WIFEXITED(s) ? WEXITSTATUS(s) : WIFSIGNALED(s) ? WTERMSIG(s) : -1;

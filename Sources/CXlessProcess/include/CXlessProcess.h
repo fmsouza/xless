@@ -73,10 +73,20 @@ int xless_reap(int pid, int nohang, int *code);
 /// Its stdin is this process's, or /dev/null when that is a terminal; stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor
 /// is closed in it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
 /// On Linux the child gets the calling thread's credentials (its session keyring).
+/// SIGINT, SIGTERM and SIGHUP, which its session gets from no terminal, are passed on to its process group from here to
+/// `xless_wait`: this process's handlers (installed where the disposition is the default, not where it is ignored) tell
+/// every tool that runs and then take the signal's default action.
 int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
 
 /// waitpid(2) for `pid`: 1 when it ended (`*status`: its exit status, or the signal that killed it), -1 on error.
 int xless_wait(int pid, int *status);
+
+/// Whether `pid` is a tool that signals are passed on to.
+int xless_tool_runs(int pid);
+
+/// Sets `sig` back to what it does by default: to end this process, and (where it would be passed on) the tools it runs.
+/// Async-signal-safe.
+void xless_signal_default(int sig);
 
 // --- The xless agent (XlessAgent): its clocks, its memory, its sockets and who is at the other end of one ---
 

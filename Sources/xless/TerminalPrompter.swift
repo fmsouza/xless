@@ -1,3 +1,4 @@
+import CXlessProcess
 import Foundation
 import XlessAppleID
 import XlessCore
@@ -146,7 +147,7 @@ private enum EchoGuard {
     }
 
     static func disarm() {
-        for sig in signals { signal(sig, SIG_DFL) }
+        for sig in signals { xless_signal_default(sig) }
         fd = -1
     }
 
@@ -154,11 +155,11 @@ private enum EchoGuard {
         signal(sig) { EchoGuard.handle($0) }
     }
 
-    /// Async-signal-safe: tcsetattr, signal, sigprocmask and raise only.
+    /// Async-signal-safe: tcsetattr, sigaction, sigprocmask and raise only.
     private static func handle(_ sig: Int32) {
         if fd >= 0 { _ = tcsetattr(fd, TCSANOW, &saved) }
         // Take the signal's default action now: the process ends here, or (SIGTSTP) stops until SIGCONT.
-        signal(sig, SIG_DFL)
+        xless_signal_default(sig)
         var set = sigset_t()
         #if os(Linux)
         sigemptyset(&set)
@@ -169,7 +170,7 @@ private enum EchoGuard {
         _ = pthread_sigmask(SIG_UNBLOCK, &set, nil)
         _ = raise(sig)
         // Resumed after a stop, still at the password prompt.
-        if fd >= 0 {
+        if fd >= 0, sig == SIGTSTP {
             _ = tcsetattr(fd, TCSANOW, &quiet)
             install(sig)
         }

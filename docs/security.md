@@ -185,6 +185,10 @@ such code against a real agent, every way of getting away included. Two programs
 no code of the project: the script behind `xless run` (its build step is an `xless ship`, whose tools are not) and a
 [credential helper](#with-a-credential-helper), which may ask something on the terminal and already sees every secret.
 
+A session of its own has no terminal, so Ctrl-C and a closed window do not reach a tool by themselves: xless passes SIGINT,
+SIGTERM and SIGHUP on to the process group of each tool that runs, and ends as it would. (A `kill -9` of xless it cannot
+pass on.)
+
 Containers: xless never mounts the agent's socket. One mounted by hand gives nothing: on Linux a container's process is in
 no granted session; on macOS a socket does not cross into the VM.
 
@@ -320,7 +324,8 @@ stopped after 20 seconds. `xless auth status --json` says beforehand what is hel
   (`$TMPDIR`, else `/tmp`), removed when the call ends: point `TMPDIR` at a tmpfs if that directory is on a disk you
   worry about.
 - **Tools start in a POSIX session of their own and an empty session keyring** (see
-  [below](#the-build-and-your-secrets)), without a file of xless's open and without the terminal as their input, and xless makes itself non-dumpable before it
+  [below](#the-build-and-your-secrets)), without a file of xless's open and with no terminal as their standard input
+  (their output may be one, and code that runs as you can open its device), and xless makes itself non-dumpable before it
   starts one, so the tool cannot attach to xless or read its memory or environment (Linux; on macOS the system's own
   rules on attaching to a process apply).
 - **`--verbose` traces are redacted** so you can paste them into an issue: the `Authorization` header, cookies, any

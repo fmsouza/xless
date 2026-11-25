@@ -98,13 +98,13 @@ let package = Package(
         ]),
         .executableTarget(name: "xless", dependencies: [
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
-            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore",
+            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "CXlessProcess",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
         // Not a product: `--product xless` (image builds) skips it; only `swift run IBDifferential` builds it.
         .executableTarget(name: "IBDifferential", dependencies: ["XlessIB", "XlessCore"]),
-        .testTarget(name: "XlessCoreTests", dependencies: ["XlessCore"]),
+        .testTarget(name: "XlessCoreTests", dependencies: ["XlessCore", "CXlessProcess"]),
         .testTarget(name: "XlessSDKTests", dependencies: ["XlessSDK", "XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
         .testTarget(name: "XlessBuildTests", dependencies: ["XlessBuild", "XlessCore"]),
         .testTarget(name: "XlessAssetsTests", dependencies: [

@@ -1,3 +1,4 @@
+import CXlessProcess
 import Foundation
 import Testing
 @testable import XlessCore
@@ -153,4 +154,26 @@ func aChildStartedDirectlyByChildProcessStartsInAnEmptySessionKeyring() throws {
     try out.fileHandleForWriting.close()
     #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "closed\n")
     _ = tool.wait()
+}
+
+/// Signals are passed on to a tool while it runs (Tests/shell/tool-signals.test.sh), and never to whoever has its number
+/// later.
+@Test func aToolIsToldSignalsAsLongAsItRuns() throws {
+    let tools = try (0..<300).map { i in
+        try ChildProcess.start("/bin/sh", ["-c", "exit \(i % 3)"], environment: ["PATH": "/usr/bin:/bin"], stage: .build)
+    }
+    let running = tools.filter { xless_tool_runs($0.processIdentifier) == 1 }.count
+    #expect(running > 100) // not waited for yet: they all have their numbers still
+    for (i, tool) in tools.enumerated() {
+        #expect(tool.wait() == Int32(i % 3))
+        #expect(xless_tool_runs(tool.processIdentifier) == 0)
+    }
+    #expect(xless_tool_runs(0) == 0)
+    // The list is free again, for as many.
+    let after = try (0..<100).map { _ in try ChildProcess.start("/bin/sh", ["-c", "exit 4"], environment: ["PATH": "/usr/bin:/bin"], stage: .build) }
+    #expect(after.contains { xless_tool_runs($0.processIdentifier) == 1 })
+    for tool in after {
+        #expect(tool.wait() == 4 && tool.wait() == 4)
+        #expect(xless_tool_runs(tool.processIdentifier) == 0)
+    }
 }
