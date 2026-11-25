@@ -27,7 +27,7 @@ struct Context {
     /// With `--config` and a `type: react-native` overlay (`overlay` is nil then).
     var rnOverlay: ReactNativeOverlay? = nil
     var reactNative: ResolvedReactNative? = nil
-    /// `--destination simulator` (React Native overlays only): stages after build are refused.
+    /// `--destination simulator` (React Native overlays, and xless.yml projects on a Mac): stages after build are refused.
     var simulator = false
 
     /// With `--config` and a `type: cargo` overlay (`overlay` is nil then), for either platform.
@@ -113,7 +113,9 @@ struct Context {
                            buildOverride: override, sourceRoot: sourceRoot, workRoot: workRoot, rnOverlay: overlay, reactNative: resolved,
                            simulator: simulator)
         }
-        try StagePolicy.requireReactNativeForSimulator(simulator: opts.destination == .simulator, isReactNative: false)
+        let simulator = opts.destination == .simulator
+        try StagePolicy.requireReactNativeForSimulator(simulator: simulator, isReactNative: false,
+                                                       builds: MacNative.isMac && opts.configURL == nil && opts.platform == .ios)
         if let configURL = opts.configURL, kind == .cargo {
             let (overlay, sourceRoot, workRoot) = try CargoOverlay.load(from: configURL, sourceOverride: opts.source, env: env)
             // The config holds only this platform: a macOS build's dated number is chosen locally (`isMacOnly`).
@@ -144,11 +146,15 @@ struct Context {
         let project = opts.projectURL
         var config = try ProjectConfig.load(from: project.appendingPathComponent("xless.yml"), buildOverride: override)
         _ = try config.platform(opts.platform)
-        try await settleBuild(&config, platform: .ios, override: override, workRoot: project, env: env, fresh: fresh)
+        let paths = simulator ? StagePaths.iosSimulator(project: project) : StagePaths(project: project, platform: opts.platform)
+        if simulator { // never uploaded: no App Store Connect is asked, and no device build's record is touched
+            try await DatedBuildNumber.settle(&config, override: override, file: paths.root.appendingPathComponent("build-number"),
+                                              secrets: Secrets(env: env), fresh: fresh, local: true)
+        } else { try await settleBuild(&config, platform: .ios, override: override, workRoot: project, env: env, fresh: fresh) }
         config = try config.overridingDistribution(distribution, for: opts.platform)
-        return Context(project: project, config: config, platform: opts.platform,
-                       paths: StagePaths(project: project, platform: opts.platform), secrets: Secrets(env: env).preferring(team: config.teamID),
-                       buildOverride: override)
+        return Context(project: project, config: config, platform: opts.platform, paths: paths,
+                       secrets: Secrets(env: env).preferring(team: config.teamID),
+                       buildOverride: override, simulator: simulator)
     }
 
     /// Simulator builds end at `build`: the stages after it (assets copy-through, finalize's App Store metadata and

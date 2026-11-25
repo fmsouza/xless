@@ -15,9 +15,10 @@ struct RunCommand: ParsableCommand {
         Options, anywhere: --platform ios|macos and --destination device|simulator (with --config), --dry-run (print what \
         would run), --allow-disk-secrets. The other arguments go to xless ship, --from and --to among them.
 
-        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native. Natively on Linux it builds \
-        xless.yml projects; Tauri, plain Cargo and React Native overlays (--config) build in the images: add --docker. On \
-        macOS xless setup installs no native build tools yet: build in the images. \
+        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native. Natively it builds xless.yml \
+        projects: on Linux with what xless setup installed, on a Mac with the Xcode that is installed there (DEVELOPER_DIR, \
+        xcode-select or /Applications; XLESS_TOOLS=xless or actool=xless,ibtool=xless: xless's own tools in place of Xcode's). \
+        Tauri, plain Cargo and React Native overlays (--config) build in the images: add --docker. \
         Secrets not set in the environment come from the secret store (`xless secrets`); with --docker they are written to a \
         tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
@@ -30,16 +31,10 @@ struct RunCommand: ParsableCommand {
         let (docker, rest) = Self.split(arguments)
         let env = ProcessInfo.processInfo.environment
         let useDocker = docker ? "1" : env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? (ProjectRunner.isScript(env) ? "auto" : "0")
-        #if os(Linux)
         if useDocker == "0", !ProjectRunner.isScript(env), Self.namesOverlay(rest) {
             throw XlessError(.config, "a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images, not natively",
                              fix: "add --docker (after building the images once: xless setup --docker --xcode <Xcode.xip>)")
         }
-        #elseif os(macOS)
-        if useDocker == "0", !ProjectRunner.isScript(env), !rest.contains("--dry-run"), !Self.isOnPath("xtool", env) {
-            FileHandle.standardError.write(Data("note: xless installs no build tools on macOS yet (and there is no xtool on PATH): to build in Docker, add --docker (after xless setup --docker --xcode <Xcode.xip>, once)\n".utf8))
-        }
-        #endif
         try ProjectRunner.run(rest, useDocker: useDocker)
     }
 
@@ -48,10 +43,6 @@ struct RunCommand: ParsableCommand {
         let end = arguments.firstIndex(of: "--") ?? arguments.endIndex
         let head = arguments[..<end]
         return (head.contains("--docker"), head.filter { $0 != "--docker" } + arguments[end...])
-    }
-
-    static func isOnPath(_ tool: String, _ env: [String: String]) -> Bool {
-        (env["PATH"] ?? "").split(separator: ":").contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(tool)") }
     }
 
     /// The script's arguments name an overlay (`--config`), before any `--`.
@@ -101,7 +92,8 @@ enum ProjectRunner {
         SecretScope.enter()
         let context = RunContext(environment: env, xless: isScript(env) ? env["XLESS_SELF"].flatMap { $0.isEmpty ? nil : $0 } ?? "xless" : exe.path,
                                  again: [exe.path] + PosixRunHost.arguments.dropFirst(), share: share.path, useDocker: useDocker,
-                                 session: XlessSession.agent, unlocked: !(env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty)
+                                 session: XlessSession.agent, unlocked: !(env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty,
+                                 prepareMac: isScript(env) ? nil : MacNative.prepare)
         let code = try ProjectRun(arguments, context: context, host: PosixRunHost()).run()
         if code != 0 { throw ExitCode(code) }
     }

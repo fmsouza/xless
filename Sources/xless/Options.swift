@@ -5,7 +5,7 @@ import XlessCore
 extension Platform: ExpressibleByArgument {}
 extension Distribution: ExpressibleByArgument {}
 
-/// `--destination`: what a React Native overlay is built for.
+/// `--destination`: what a React Native overlay (on a Mac with Xcode: also an xless.yml project) is built for.
 enum Destination: String, ExpressibleByArgument, CaseIterable {
     /// An iOS device: the full pipeline, up to TestFlight.
     case device
@@ -42,7 +42,7 @@ struct ProjectOptions: ParsableArguments {
     @Option(help: "Override the build number from xless.yml (also XLESS_BUILD_NUMBER).")
     var buildNumber: String?
 
-    @Option(help: "React Native overlays: device (default) or simulator (an ad-hoc signed app for the iOS Simulator in .xless/build/ios-simulator/app; build is the last stage).")
+    @Option(help: "React Native overlays, and xless.yml projects on a Mac with Xcode: device (default) or simulator (an ad-hoc signed app for the iOS Simulator in .xless/build/ios-simulator/app; build is the last stage).")
     var destination: Destination = .device
 
     func validate() throws {
