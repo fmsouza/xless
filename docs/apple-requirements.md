@@ -67,8 +67,8 @@ Only for signing and uploading. Building up to `finalize` needs none of this.
 | An Apple ID | downloading Xcode | <https://appleid.apple.com>, free |
 | Apple Developer Program membership | everything below | <https://developer.apple.com/programs/>, paid yearly |
 | App Store Connect API key (`.p8`, Admin role), with its key ID and issuer ID | `sign`, `upload`, macOS notarization, the account commands | `xless auth api-key create` (Apple ID sign-in), or App Store Connect, Users and Access, Integrations ([bootstrap.md](bootstrap.md#2-app-store-connect-api-key)) |
-| Apple Distribution certificate and its private key | iOS `sign` | `xless sign bootstrap --type distribution`, on Linux ([bootstrap.md](bootstrap.md#5b-apple-distribution-key-ios-and-the-mac-app-store-app)) |
-| Developer ID Application certificate and its private key | macOS `sign` | `xless sign bootstrap --type developer-id` ([bootstrap.md](bootstrap.md#5c-developer-id-application-key-a-notarized-mac-app)) |
+| Apple Distribution certificate and its private key | iOS `sign` | `xless provision apply`, `xless certs create --type distribution` ([bootstrap.md](bootstrap.md#5b-apple-distribution-key-ios-and-the-mac-app-store-app)) |
+| Developer ID Application certificate and its private key | macOS `sign` | `xless provision apply`, `xless certs create --type developer-id` ([bootstrap.md](bootstrap.md#5c-developer-id-application-key-a-notarized-mac-app)) |
 | A registered bundle ID | `sign`, the app record | `xless provision apply`, `xless bundle-ids create`, or the first `xless ship` ([bootstrap.md](bootstrap.md#5a-bundle-id)) |
 | An App Store Connect app record | `upload` | `xless apps create` (Apple ID sign-in: the API cannot create it), or App Store Connect by hand ([bootstrap.md](bootstrap.md#5e-app-record)) |
 | Provisioning profiles | `sign` | Created by `xless sign` through the API; nothing to do (other types: [`xless profiles`](apple-account.md#xless-profiles)) |

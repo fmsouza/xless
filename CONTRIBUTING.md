@@ -62,8 +62,7 @@ tests of the xless agent need a session whose leader lives (a terminal's shell; 
 makes one).
 
 Before you push, run what you can locally: `swift test` (in a terminal), `make test-linux` (the tests in Linux, through Docker),
-`bash Tests/shell/<name>.test.sh`, and `python3 -I scripts/check-doc-links.py README.md CONTRIBUTING.md docs/*.md`
-after editing the documentation.
+`bash Tests/shell/<name>.test.sh`, and `bash Tests/shell/check-doc-links.test.sh` after editing the documentation.
 
 The tests pass as root and as a regular user, under any umask and locale, and run in parallel. A test (or code) that
 writes a script or stand-in tool and runs it writes it with `ExecutableFile.write` (XlessCore), never with `Data.write`
@@ -103,8 +102,11 @@ back. Released reverts are listed in the notes under **Reverts**.
 
 ## Documentation
 
-The root README is for a newcomer: what xless is, how to install it and build a first app. Everything else goes under
-`docs/` ([docs/README.md](docs/README.md) is the index). The maintainer's private notes (`docs/superpowers/`,
+xless is one tool for the whole life of an Apple app; a page says which system something is for only where they differ. The root
+README is for a newcomer: what xless is, how to install it and a first app. Everything else goes under `docs/`, a page per task, and
+[docs/README.md](docs/README.md) is the index: every page is reached from it (a test checks that). An instruction is in one place,
+and other pages link to it. A page that moves keeps a pointer at its old path and headings. What is planned is marked so, with its
+issue, or left out. The maintainer's private notes (`docs/superpowers/`,
 `docs/acceptance/`) are git-ignored and stay local; never commit them.
 
 ## Licence

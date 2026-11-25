@@ -14,7 +14,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "shippingbox.fill").font(.system(size: 64)).foregroundStyle(accent)
-            Text("Hello from Linux").font(.title.bold())
+            Text("Hello from xless").font(.title.bold())
             Button("Tapped \(taps) times") { taps += 1 }.buttonStyle(.borderedProminent)
         }
         .padding(40)

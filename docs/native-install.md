@@ -4,7 +4,7 @@ On a Mac there is nothing to install: xless builds with your Xcode ([below](#on-
 commands only ([below](#windows)).
 
 On Linux, `xless setup --xcode <Xcode.xip>` installs what xless builds with straight onto the machine, and `xless run`
-builds with it. This is the default; the Docker images (`--docker`, [README](../README.md#build-in-docker-instead))
+builds with it. This is the default; the Docker images (`--docker`, [build.md](build.md#in-docker))
 are the alternative. This page says what the native install puts where, what it needs, and what it does not cover.
 
 ## What it builds

@@ -79,7 +79,7 @@ bundle ID outside the app's, a duplicate, or `extensions` under `macos` is a `[c
 ```yaml
 testflight:
   groups: ["Internal"]
-  whatToTest: "Launch screen built on Linux"
+  whatToTest: "The new launch screen"
   testers: [ada@example.com, {email: grace@example.com, firstName: Grace, lastName: Hopper}]
   external:
     groups: ["Public Beta"]

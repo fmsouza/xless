@@ -9,7 +9,7 @@ xless run --docker --config ~/ci/my-app.overlay.yml
 ## Try the sample
 
 The source repository has a small Expo app with an app extension, `samples/HelloRN`, and its overlay. With the images
-from `xless setup --docker` ([README](../README.md#build-in-docker-instead)), build it up to `finalize`, unsigned and with no Apple
+from `xless setup --docker` ([build.md](build.md#in-docker)), build it up to `finalize`, unsigned and with no Apple
 account:
 
 ```sh
@@ -47,8 +47,8 @@ while. The app stays in a Docker volume; [Getting the build out](#shipping-three
 ## Requirements
 
 - To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate), and its keys in the secret store (or, in CI, the variables under [One command: TestFlight](signing-and-testflight.md#one-command-testflight)).
-- The xless image of the Xcode (`xless setup --docker`, [README](../README.md#build-in-docker-instead)), which has Swift Build and the Xcode tool shims. The `react-native` kit on top of it (Node, pnpm, Ruby, Bundler and `hermesc`) is built by the first run that needs it, or by `xless setup --docker --with react-native` ([images.md](images.md#what-there-is)). To build with another Xcode's SDK, set that Xcode up ([Pinning the Xcode](#pinning-the-xcode-sdk)).
-- A Linux host of either architecture. The image exists for `linux/arm64` and `linux/amd64` (`xless setup --docker --arch arm64 --arch amd64` builds both; `--arch` replaces the default, this machine's architecture), and the app it builds is the same arm64 iOS app on both; `scripts/arch-compare.sh <app built on arm64> <app built on amd64>` checks that. On an Apple-silicon Mac the amd64 image runs under Rosetta; the Docker VM must have it enabled (`/mnt/lima-rosetta` exists in the VM and `/proc/sys/fs/binfmt_misc/rosetta` is registered). QEMU user-mode emulation is not enough: it crashes gcc and the Swift Build compile at random.
+- The xless image of the Xcode (`xless setup --docker`, [build.md](build.md#in-docker)), which has Swift Build and the Xcode tool shims. The `react-native` kit on top of it (Node, pnpm, Ruby, Bundler and `hermesc`) is built by the first run that needs it, or by `xless setup --docker --with react-native` ([images.md](images.md#what-there-is)). To build with another Xcode's SDK, set that Xcode up ([Pinning the Xcode](#pinning-the-xcode-sdk)).
+- A Linux machine or a Mac with Docker, of either architecture. The image exists for `linux/arm64` and `linux/amd64` (`xless setup --docker --arch arm64 --arch amd64` builds both; `--arch` replaces the default, this machine's architecture), and the app it builds is the same arm64 iOS app on both; `scripts/arch-compare.sh <app built on arm64> <app built on amd64>` checks that. On an Apple-silicon Mac the amd64 image runs under Rosetta; the Docker VM must have it enabled (`/mnt/lima-rosetta` exists in the VM and `/proc/sys/fs/binfmt_misc/rosetta` is registered). QEMU user-mode emulation is not enough: it crashes gcc and the Swift Build compile at random.
 - The app repository is a git checkout. xless copies the **tracked** files of `source:` (and only those) into a work copy; the source is never written to. Commit the lockfiles (`package.json` with its lockfile, `Gemfile` and `Gemfile.lock`) and the files the overlay refers to. Uncommitted edits to tracked files are copied; untracked and ignored files are not.
 - A work copy belongs to one source and is named after the overlay file. The first sync records the source, and a later run of an overlay with the same file name but another source stops at `prepare`.
 - Network access: `prepare` downloads from npm, RubyGems and CocoaPods (specs and pods), and `build` first clones the project's remote Swift packages, if it has any. Swift Build itself runs offline.
@@ -196,7 +196,7 @@ Swift Build runs `dsymutil` for every target whose `DEBUG_INFORMATION_FORMAT` is
 A build that uploads fine can still die at launch: a missing symbol, an Info.plist the OS refuses, a JavaScript error. Launch every build on the iOS Simulator before uploading it:
 
 ```sh
-xless run --docker --config ~/ci/my-app.overlay.yml --destination simulator   # on Linux, in docker: build for the simulator
+xless run --docker --config ~/ci/my-app.overlay.yml --destination simulator   # in Docker: build for the simulator
 # ==> Simulator app: volume:xless-rn-work-my-app-1a2b3c4d:/cache/work/my-app/.xless/build/ios-simulator/app/MyApp.app
 make sim-launch APP=volume:xless-rn-work-my-app-1a2b3c4d:/cache/work/my-app/.xless/build/ios-simulator/app/MyApp.app   # on a Mac, from a source checkout
 ```
