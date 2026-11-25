@@ -26,7 +26,7 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
 
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         let bytes = secret.withUnsafeBytes { Array($0) }
-        if refusing { throw XlessError(.account, "not today", fix: "-") }
+        if refusing || refused == name { throw XlessError(.account, "not today", fix: "-") }
         lock.withLock {
             items[name] = (bytes, clock.now.addingTimeInterval(TimeInterval(hold.seconds)))
             maximums[name] = hold.maximum; timeouts[name] = hold.seconds
@@ -52,6 +52,8 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
     }
     /// The next puts fail.
     var refusing = false
+    /// The puts of this name fail.
+    var refused: String?
 
     func raw(_ name: String) -> [UInt8]? { lock.withLock { items[name]?.bytes } }
     func tamper(_ name: String) { lock.withLock { items[name]?.bytes[20] ^= 0xFF } }
@@ -299,7 +301,20 @@ final class AppleSessionCacheTests: XCTestCase {
             try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800))
             XCTFail("kept")
         } catch {}
-        XCTAssertEqual(store.discarded.count, 2)
+        XCTAssertEqual(store.discarded.count, 1, "nothing of it was held: what is held here is another's")
+        store.refusing = false
+        try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800))
+        for refused in ["xless-apple-session", "xless-apple-session-key"] { // the sealed session goes first
+            store.refused = refused
+            do {
+                try await cache.keep(try await signedInClient(clock: clock), appleID: "other@example.com", hold: hold(1800))
+                XCTFail("kept")
+            } catch {}
+            let isKept = cache.info()?.appleID == "me@example.com"
+            XCTAssertEqual(isKept, refused == "xless-apple-session", "\(refused)")
+            XCTAssertEqual(store.discarded.count, isKept ? 1 : 2)
+        }
+        XCTAssertEqual(store.names, [])
         XCTAssertEqual(store.revoked, [])
         cache.forget()
         XCTAssertEqual(store.revoked, ["xless-apple-session", "xless-apple-session-key"])
