@@ -60,6 +60,8 @@ final class MemoryCache: VaultKeyCache, @unchecked Sendable {
     private var keys: [String: [UInt8]] = [:]
     private(set) var stored: [(String, Int)] = []
     private(set) var typed: [Int] = []
+    /// Of each time it was looked into: whether that was to use what it holds.
+    private(set) var using: [Bool] = []
     /// The seconds since the passphrase of what is held was typed; nil: not known.
     var typedAgo: Int? = 100
     private(set) var places: [String] = []
@@ -67,6 +69,7 @@ final class MemoryCache: VaultKeyCache, @unchecked Sendable {
 
     func load(id: String, using: Bool = true, accept: (SecretBytes) -> Bool = { _ in true }) throws -> SecretBytes? {
         lock.withLock {
+            self.using.append(using)
             guard let key = keys[id].map({ SecretBytes(copying: $0) }) else { return nil }
             if accept(key) { return key }
             keys[id] = nil

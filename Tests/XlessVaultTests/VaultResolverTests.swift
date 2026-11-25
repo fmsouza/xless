@@ -230,3 +230,28 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     #expect(try VaultResolver(secrets: store).lookup("xless-sparkle", stage: .config) == "a key")
     #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup("xless-sparkle", stage: .config) == "a key")
 }
+
+/// A look lets an unlock's idle time go on; the first use after it does not.
+@Test func lookingAtAnUnlockIsNotUsingIt() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, key) = try t.make(entries: [("NOTE", .generic, .init(), "v")])
+    let cache = MemoryCache()
+    try cache.store(id: file.id, key: VaultCrypto.keyBytes(key), seconds: 60)
+    let store = VaultSecretStore(store: t.store, cache: cache, prompter: { nil })
+    for _ in 0..<3 { #expect(store.heldKey(for: file, using: false) != nil) }
+    #expect(cache.using == [false])
+    let catalog = try store.existingCatalog(), entry = try #require(catalog.entry(named: "NOTE"))
+    for _ in 0..<3 { #expect(try store.secret(entry, in: catalog, reason: "test").utf8String() == "v") }
+    #expect(cache.using == [false, true])
+    // Looked at and then written with.
+    let writer = VaultSecretStore(store: t.store, cache: cache, prompter: { nil })
+    #expect(writer.heldKey(for: file, using: false) != nil)
+    #expect(writer.heldKey(for: file) != nil && writer.heldKey(for: file) != nil)
+    #expect(cache.using == [false, true, false, true])
+    // Used at once.
+    let user = VaultSecretStore(store: t.store, cache: cache, prompter: { nil })
+    _ = try user.secret(entry, in: catalog, reason: "test")
+    #expect(user.heldKey(for: file, using: false) != nil)
+    #expect(cache.using == [false, true, false, true, true])
+}

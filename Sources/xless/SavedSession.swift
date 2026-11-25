@@ -61,8 +61,9 @@ struct VaultSavedSession: SavedSession {
     func load(asking: Bool) throws -> SecretBytes? {
         let vault = try vault()
         guard let file = try vault.vault.read(), let catalog = try vault.catalog(), catalog.id == file.id,
-              let entry = catalog.entry(named: SecretEnvironment.savedSession), asking || vault.heldKey(for: file, using: false) != nil else { return nil }
-        return try vault.secret(entry, in: catalog, reason: Self.reason)
+              let entry = Self.entry(in: catalog) else { return nil }
+        if asking { return try vault.secret(entry, in: catalog, reason: Self.reason) }
+        return try vault.heldKey(for: file, using: false).map { try VaultCrypto.open(entry, dataKey: $0) } // a look
     }
 
     /// At the end of its time, or of the longest time the settings allow now.

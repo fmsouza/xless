@@ -141,6 +141,30 @@ private struct NoHold: SessionKeyStore {
     #expect(try f.saved.load(asking: false)?.utf8String() == "COOKIES")
 }
 
+/// `xless auth status` in a loop must not keep an unlock from ending for want of use.
+@Test func whatLooksAtWhatIsHeldDoesNotUseIt() throws {
+    let keyring = FakeKeyring()
+    let f = try Fixture(cache: keyring)
+    defer { f.cleanup() }
+    #expect(SecretStoreCLI.witness(of: f.vault) == nil)
+    try f.saved.save(SecretBytes(utf8: "COOKIES"), expires: Date() + 5000)
+    let file = try #require(try f.vault.vault.read())
+    try keyring.put(file.id, VaultCrypto.keyBytes(try f.vault.key(for: file, remember: nil, reason: "test")), hold: SecretHold(seconds: 60, idle: 60, maximum: 60))
+    let before = keyring.using.count
+    for _ in 0..<3 {
+        f.vault.forget()
+        let witness = try #require(SecretStoreCLI.witness(of: f.vault))
+        #expect(witness.item == HeldSecrets.name(ofVault: file.id))
+        f.vault.forget()
+        #expect(try f.saved.load(asking: false)?.utf8String() == "COOKIES")
+        _ = f.saved.expires
+    }
+    #expect(keyring.using.dropFirst(before).allSatisfy { !$0 } && keyring.using.count == before + 6)
+    f.vault.forget()
+    #expect(try f.saved.load(asking: true)?.utf8String() == "COOKIES") // for use
+    #expect(keyring.using.last == true)
+}
+
 @Test func acrossRebootsNeedsKeep() {
     #expect(throws: (any Error).self) { try AuthLoginCommand.parse(["--across-reboots"]) }
     #expect((try? AuthLoginCommand.parse(["--keep", "2d", "--across-reboots"]))?.acrossReboots == true)

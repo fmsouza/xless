@@ -228,6 +228,11 @@ check(rc == 0 and n == 1, "until it types the passphrase", shown)
 check(len(agents()) == 1, "and the one agent serves both", agents())
 rc, shown, n = b.run("$X secrets export NOTE --out $T/out3")
 check(rc == 0 and n == 0, "then its commands ask nothing", shown)
+left = []
+for _ in range(3):
+    left.append(status(b)["store"]["idleRemainingSeconds"])
+    time.sleep(2)
+check(left[0] - left[1] >= 1 and left[1] - left[2] >= 1, "looking at the status does not count as use", left)
 a.close()
 time.sleep(5)
 rc, shown, n = b.run("$X secrets export NOTE --out $T/out4")

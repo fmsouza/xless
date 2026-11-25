@@ -68,13 +68,15 @@ final class FakeKeyring: VaultKeyCache, SessionKeyStore, @unchecked Sendable {
     private let lock = NSLock()
     private var keys: [String: SecretBytes] = [:]
     private(set) var seconds: [String: Int] = [:]
+    /// Of each time it was looked into: whether that was to use what it holds.
+    private(set) var using: [Bool] = []
     /// The seconds since what is held was typed.
     var typedAgo: Int? = 0
     let isAvailable: Bool
     init(available: Bool = true) { isAvailable = available }
 
     var names: [String] { lock.withLock { keys.keys.sorted() } }
-    func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes? { lock.withLock { keys[id].flatMap { accept($0) ? $0 : nil } } }
+    func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes? { lock.withLock { self.using.append(using); return keys[id].flatMap { accept($0) ? $0 : nil } } }
     func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws { try put(id, key, hold: hold); lock.withLock { self.typedAgo = typedAgo } }
     func forget(id: String) throws -> Bool { try revoke(id) }
     func forget(place: String) throws { lock.withLock { keys = [:] } }

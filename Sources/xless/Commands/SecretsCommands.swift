@@ -54,7 +54,12 @@ enum SecretStoreCLI {
 
     /// That this terminal has the vault unlocked, without asking for anything; nil when it has not.
     static func witness() -> AgentWitness? {
-        guard case .success(.vault(let vault)) = configured, let file = (try? vault.vault.read()) ?? nil, let key = vault.heldKey(for: file) else { return nil }
+        guard case .success(.vault(let vault)) = configured else { return nil }
+        return witness(of: vault)
+    }
+
+    static func witness(of vault: VaultSecretStore) -> AgentWitness? {
+        guard let file = (try? vault.vault.read()) ?? nil, let key = vault.heldKey(for: file, using: false) else { return nil }
         return AgentWitness(item: HeldSecrets.name(ofVault: file.id), key: VaultCrypto.keyBytes(key))
     }
 
