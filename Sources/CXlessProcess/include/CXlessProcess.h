@@ -94,6 +94,19 @@ int xless_run_foreground(const char *path, char *const argv[], char *const envp[
 /// Ends this process as `sig` does by default.
 void xless_end_by_signal(int sig);
 
+/// Starts `path` with `argv` and `envp` (NULL-terminated) as a step of a run (`xless run`): in this process's session and
+/// process group, so that it may ask on the terminal and has what is held for the session; with nothing to read
+/// (/dev/null), SIGINT and SIGQUIT ignored (the run stops its steps itself), every other signal at its default disposition
+/// and none blocked. stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor is closed in
+/// it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
+int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
+
+/// From here on SIGINT, SIGTERM and SIGHUP are noted instead of ending this process (those that are ignored stay ignored):
+/// the descriptor returned gives one byte, the signal's number, for each. -errno on failure.
+int xless_take_stop_signals(void);
+/// The first signal noted since; 0: none.
+int xless_stop_signal(void);
+
 /// Sets `sig` back to what it does by default: to end this process, and (where it would be passed on) the tools it runs.
 /// Async-signal-safe.
 void xless_signal_default(int sig);

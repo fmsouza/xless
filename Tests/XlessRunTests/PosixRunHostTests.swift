@@ -1,0 +1,77 @@
+import Foundation
+import Testing
+@testable import XlessRun
+
+@Suite struct PosixRunHostTests {
+    let host = PosixRunHost()
+    let environment = ["PATH": "/usr/bin:/bin", "ONLY": "this"]
+
+    private func run(_ words: [String], directory: String? = nil, output: RunStep.Output = .captured, quiet: Bool = false) throws -> (code: Int32, output: String) {
+        host.finish(try host.start(RunStep(words, environment: environment, directory: directory, output: output, quiet: quiet)))
+    }
+
+    @Test func aStepsWordsReachItAsTheyAre() throws {
+        let r = try run(["printf", "%s\n", "a b", "$HOME", "'; touch x", ""])
+        #expect(r.code == 0 && r.output == "a b\n$HOME\n'; touch x\n\n")
+    }
+
+    @Test func aStepHasTheGivenEnvironmentAndNothingElse() throws {
+        let names = try run(["env"]).output.split(separator: "\n").map { String($0.prefix { $0 != "=" }) }
+        #expect(Set(names) == ["PATH", "ONLY"])
+    }
+
+    @Test func aStepHasNothingToReadAndNoDescriptorOfTheRuns() throws {
+        let file = try host.temporaryFile()
+        defer { host.removeFile(file) }
+        let descriptor = open(file, O_RDONLY)  // not close-on-exec
+        defer { close(descriptor) }
+        let r = try run(["sh", "-c", "cat; (: <&\(descriptor)) 2>/dev/null && echo open; true"])
+        #expect(r.output.isEmpty && r.code == 0)
+    }
+
+    @Test func aStepIgnoresTheInterruptTheRunStopsItFor() throws {
+        #expect(try run(["sh", "-c", "kill -INT $$; kill -QUIT $$; echo on"]).output == "on\n")
+        #expect(try run(["sh", "-c", "kill -TERM $$; echo on"]) == (143, ""))
+    }
+
+    @Test func exitCodesAreTheSteps() throws {
+        #expect(try run(["sh", "-c", "exit 24"]).code == 24)
+        #expect(throws: (any Error).self) { try run(["no-such-program-here"]) }
+        #expect(throws: (any Error).self) { try run(["true"], directory: "/no/such/directory") }
+    }
+
+    @Test func aStepsDirectoryAndOutput() throws {
+        #expect(try run(["pwd"], directory: "/").output == "/\n")
+        let file = try host.temporaryFile()
+        defer { host.removeFile(file) }
+        #expect(try run(["sh", "-c", "echo kept; echo no >&2"], output: .file(file), quiet: true) == (0, ""))
+        #expect(try String(contentsOfFile: file, encoding: .utf8) == "kept\n")
+        #expect(try FileManager.default.attributesOfItem(atPath: file)[.posixPermissions] as? Int == 0o600)
+    }
+
+    @Test func theProcessTable() throws {
+        let step = try host.start(RunStep(["sleep", "30"], environment: environment))
+        #expect(host.isRunning(step.pid))
+        let started = host.started(step.pid), children = host.children()
+        if !started.isEmpty { // empty where ps cannot run
+            #expect(started == host.started(step.pid) && started.contains(":"))
+            #expect(children[host.processID]?.contains(step.pid) == true)
+            #expect(host.commandLine(step.pid).contains("sleep"))
+        }
+        host.terminate(step.pid)
+        #expect(host.finish(step).code == 143)
+        #expect(!host.isRunning(step.pid) && host.started(step.pid).isEmpty)
+        #expect(!host.isRunning(0) && !host.isRunning(-1))
+    }
+
+    @Test func files() throws {
+        let a = try host.temporaryFile(), b = a + ".b"
+        defer { host.removeFile(a); host.removeFile(b) }
+        #expect(host.link(a, b) && !host.link(a, b) && host.isSame(a, b) && !host.isSame(a, "/"))
+        #expect(host.realPath(a + ".none") == nil && host.realPath("/usr/../") == "/")
+        #expect(host.makeDirectory(a + ".d") && !host.makeDirectory(a + ".d"))
+        host.removeEmptyDirectory(a + ".d")
+        #expect(!FileManager.default.fileExists(atPath: a + ".d"))
+        #expect(host.program("sh", path: "/nowhere:/bin") == "/bin/sh" && host.program("/bin", path: nil) == nil && host.program("no-such", path: "/bin") == nil)
+    }
+}

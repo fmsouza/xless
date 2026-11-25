@@ -588,6 +588,96 @@ int xless_run_foreground(const char *path, char *const argv[], char *const envp[
 
 void xless_end_by_signal(int sig) { take_default(sig); }
 
+// --- The steps of `xless run` ---
+
+static int stop_pipe[2] = { -1, -1 };
+static atomic_int stop_noted;
+
+// Async-signal-safe.
+static void note_stop(int sig) {
+    int e = errno, none = 0;
+    unsigned char byte = (unsigned char)sig;
+    atomic_compare_exchange_strong(&stop_noted, &none, sig);
+    ssize_t n = write(stop_pipe[1], &byte, 1);
+    (void)n; // full: it has said so already
+    errno = e;
+}
+
+int xless_stop_signal(void) { return atomic_load(&stop_noted); }
+
+int xless_take_stop_signals(void) {
+    int e;
+    if (stop_pipe[0] < 0) {
+        if ((e = cloexec_pipe(stop_pipe)) != 0) return -e;
+        fcntl(stop_pipe[1], F_SETFL, fcntl(stop_pipe[1], F_GETFL) | O_NONBLOCK);
+    }
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = note_stop;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    for (size_t i = 0; i < FORWARDED; i++) {
+        struct sigaction now;
+        if (sigaction(forwarded[i], NULL, &now) == 0 && now.sa_handler != SIG_IGN) sigaction(forwarded[i], &action, NULL);
+    }
+    return stop_pipe[0];
+}
+
+int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+    int status[2], e;
+    if ((e = cloexec_pipe(status)) != 0) return e;
+    // Blocked until the child has its own dispositions: a signal must not run this process's handlers in it.
+    sigset_t all, before;
+    sigfillset(&all);
+    pthread_sigmask(SIG_SETMASK, &all, &before);
+    pid_t child = fork();
+    if (child < 0) {
+        e = errno;
+        pthread_sigmask(SIG_SETMASK, &before, NULL);
+        close(status[0]); close(status[1]);
+        return e;
+    }
+    if (child == 0) {
+        // Only async-signal-safe calls from here to execve.
+        int report = status[1];
+        for (int sig = 1; sig < NSIG; sig++) {
+            if (sig == SIGKILL || sig == SIGSTOP) continue;
+            struct sigaction now;
+            if (sig == SIGHUP && sigaction(sig, NULL, &now) == 0 && now.sa_handler == SIG_IGN) continue; // nohup: for the steps too
+            signal(sig, sig == SIGINT || sig == SIGQUIT ? SIG_IGN : SIG_DFL);
+        }
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        if (report < 3 && (report = fcntl(report, F_DUPFD_CLOEXEC, 3)) < 0) _exit(127); // xless started with stdio closed
+        int out = out_fd < 0 ? -1 : fcntl(out_fd, F_DUPFD_CLOEXEC, 3);
+        int err = err_fd < 0 ? -1 : fcntl(err_fd, F_DUPFD_CLOEXEC, 3);
+        if ((out_fd >= 0 && (out < 0 || dup2(out, 1) < 0)) || (err_fd >= 0 && (err < 0 || dup2(err, 2) < 0))) { e = errno; goto failed; }
+        int null = open("/dev/null", O_RDONLY);
+        if (null < 0 || (null != 0 && dup2(null, 0) < 0)) { e = errno; goto failed; }
+        if (cwd != NULL && chdir(cwd) != 0) { e = errno; goto failed; }
+        close_from_3(report);
+        execve(path, argv, envp);
+        e = errno;
+    failed:
+        while (write(report, &e, sizeof e) < 0 && errno == EINTR) {}
+        _exit(127);
+    }
+    pthread_sigmask(SIG_SETMASK, &before, NULL);
+    close(status[1]);
+    int child_errno = 0;
+    ssize_t n;
+    do { n = read(status[0], &child_errno, sizeof child_errno); } while (n < 0 && errno == EINTR);
+    close(status[0]);
+    if (n > 0) {
+        int ignored;
+        xless_wait(child, &ignored);
+        return child_errno ? child_errno : EIO;
+    }
+    *pid = child;
+    return 0;
+}
+
 // --- The xless agent ---
 
 #if defined(__APPLE__)

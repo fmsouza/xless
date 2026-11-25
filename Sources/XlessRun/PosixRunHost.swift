@@ -1,0 +1,216 @@
+#if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
+import CXlessProcess
+import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Musl)
+import Musl
+#else
+import Glibc
+#endif
+
+/// macOS and Linux.
+public final class PosixRunHost: RunHost {
+    struct Failure: Error, CustomStringConvertible {
+        let code: Int32
+        var description: String { String(cString: strerror(code)) }
+    }
+
+    public init() {
+        // Output nobody reads any more must not end the run before it has cleaned up.
+        signal(SIGPIPE, SIG_IGN)
+    }
+
+    public var processID: Int32 { getpid() }
+    public var now: Date { Date() }
+
+    public var isMac: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
+    private func systemName<T>(_ field: (utsname) -> T) -> String {
+        var name = utsname()
+        guard uname(&name) == 0 else { return "" }
+        return withUnsafeBytes(of: field(name)) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+    }
+
+    public var hostName: String { systemName { $0.nodename } }
+    public var architecture: String { ["arm64", "aarch64"].contains(systemName { $0.machine }) ? "arm64" : "amd64" }
+
+    public var currentDirectory: String {
+        let pwd = ProcessInfo.processInfo.environment["PWD"] ?? ""
+        return pwd.hasPrefix("/") && isSame(pwd, ".") ? pwd : FileManager.default.currentDirectoryPath
+    }
+
+    public func show(_ line: String) { write(Array("\(line)\n".utf8), to: 1) }
+    public func say(_ line: String) { write(Array("\(line)\n".utf8), to: 2) }
+
+    private func write(_ bytes: [UInt8], to descriptor: Int32) {
+        var sent = 0
+        while sent < bytes.count {
+            let n = bytes[sent...].withUnsafeBytes { systemWrite(descriptor, $0.baseAddress, $0.count) }
+            if n < 0, errno == EINTR { continue }
+            if n <= 0 { return }
+            sent += n
+        }
+    }
+
+    public func program(_ name: String, path: String?) -> String? {
+        func runs(_ file: String) -> Bool {
+            var info = stat()
+            return stat(file, &info) == 0 && info.st_mode & S_IFMT == S_IFREG && access(file, X_OK) == 0
+        }
+        if name.contains("/") { return runs(name) ? name : nil }
+        for directory in (path ?? "/usr/bin:/bin").split(separator: ":", omittingEmptySubsequences: false) {
+            let file = (directory.isEmpty ? "." : String(directory)) + "/" + name
+            if runs(file) { return file }
+        }
+        return nil
+    }
+
+    public func start(_ step: RunStep) throws -> StartedStep {
+        guard let path = program(step.words[0], path: step.environment["PATH"]) else { throw Failure(code: ENOENT) }
+        var out: Int32 = -1, reading: Int32 = -1, quiet: Int32 = -1
+        defer { for descriptor in [out, quiet] where descriptor >= 0 { close(descriptor) } }
+        var shows = false
+        switch step.output {
+        case .shown: break
+        case .file(let file):
+            out = open(file, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0o600)
+            guard out >= 0 else { throw Failure(code: errno) }
+        case .captured, .both:
+            var ends: [Int32] = [-1, -1]
+            guard pipe(&ends) == 0 else { throw Failure(code: errno) }
+            (reading, out) = (ends[0], ends[1])
+            for descriptor in ends { _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC) }
+            shows = step.output == .both
+        }
+        if step.quiet { quiet = open("/dev/null", O_WRONLY | O_CLOEXEC) }
+        var pid: Int32 = 0
+        let code = withStrings(step.words) { words in
+            withStrings(step.environment.map { "\($0.key)=\($0.value)" }) { environment in
+                xless_spawn_step(path, words, environment, step.directory, out, quiet, &pid)
+            }
+        }
+        guard code == 0 else {
+            if reading >= 0 { close(reading) }
+            throw Failure(code: code)
+        }
+        return StartedStep(pid: pid, reading: reading >= 0 ? reading : nil, shows: shows)
+    }
+
+    public func finish(_ step: StartedStep) -> (code: Int32, output: String) {
+        var output: [UInt8] = []
+        if let reading = step.reading {
+            var buffer = [UInt8](repeating: 0, count: 16384)
+            while true {
+                let n = read(reading, &buffer, buffer.count)
+                if n < 0, errno == EINTR { continue }
+                if n <= 0 { break }
+                if step.shows { write(Array(buffer[..<n]), to: 1) }
+                output += buffer[..<n]
+            }
+            close(reading)
+        }
+        var status: Int32 = 0
+        while waitpid(step.pid, &status, 0) < 0 { if errno != EINTR { return (1, String(decoding: output, as: UTF8.self)) } }
+        let signal = status & 0x7F
+        return (signal == 0 ? (status >> 8) & 0xFF : 128 + signal, String(decoding: output, as: UTF8.self))
+    }
+
+    public func become(_ words: [String], environment: [String: String]) -> String {
+        guard let path = program(words[0], path: environment["PATH"]) else { return String(cString: strerror(ENOENT)) }
+        withStrings(words) { words in
+            withStrings(environment.map { "\($0.key)=\($0.value)" }) { environment in
+                signal(SIGPIPE, SIG_DFL)
+                _ = execve(path, words, environment)
+            }
+        }
+        return String(cString: strerror(errno))
+    }
+
+    private func withStrings<R>(_ strings: [String], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { strdup($0) } + [nil]
+        defer { for pointer in pointers { free(pointer) } }
+        return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
+    }
+
+    public func onStop(_ stop: @escaping @Sendable (Int32) -> Void) throws {
+        let descriptor = xless_take_stop_signals()
+        guard descriptor >= 0 else { throw Failure(code: -descriptor) }
+        Thread.detachNewThread {
+            var signal: UInt8 = 0
+            while true {
+                let n = read(descriptor, &signal, 1)
+                if n == 1 { stop(128 + Int32(signal)) } else if !(n < 0 && errno == EINTR) { return }
+            }
+        }
+    }
+
+    public var stopping: Bool { xless_stop_signal() != 0 }
+    public func end(_ code: Int32) -> Never { _exit(code) }
+
+    public func isRunning(_ pid: Int32) -> Bool { pid > 0 && kill(pid, 0) == 0 && !ps(["-o", "stat=", "-p", "\(pid)"]).hasPrefix("Z") }
+    public func started(_ pid: Int32) -> String { ps(["-o", "lstart=", "-p", "\(pid)"]) }
+    public func commandLine(_ pid: Int32) -> String { ps(["-o", "command=", "-p", "\(pid)"]) }
+
+    public func children() -> [Int32: [Int32]] {
+        var out: [Int32: [Int32]] = [:]
+        for line in ps(["-A", "-o", "pid=,ppid="]).split(separator: "\n") {
+            let ids = line.split(separator: " ").compactMap { Int32($0) }
+            if ids.count == 2 { out[ids[1], default: []].append(ids[0]) }
+        }
+        return out
+    }
+
+    /// Empty where `ps` cannot be run, as when the process is not there.
+    private func ps(_ arguments: [String]) -> String {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        let step = RunStep(["ps"] + arguments, environment: ["PATH": path, "LC_ALL": "C", "TZ": "UTC0"], output: .captured, quiet: true)
+        guard let started = try? start(step) else { return "" }
+        return finish(started).output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func terminate(_ pid: Int32) { if pid > 1 { kill(pid, SIGTERM) } }
+    public func pause(_ seconds: Double) { usleep(UInt32(seconds * 1_000_000)) }
+
+    public func realPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    public func isSame(_ a: String, _ b: String) -> Bool {
+        var x = stat(), y = stat()
+        return stat(a, &x) == 0 && stat(b, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
+    }
+
+    public func isReadable(_ path: String) -> Bool { access(path, R_OK) == 0 }
+
+    public func temporaryFile() throws -> String {
+        let given = ProcessInfo.processInfo.environment["TMPDIR"] ?? ""
+        let directory = given.isEmpty ? "/tmp" : given.hasSuffix("/") && given != "/" ? String(given.dropLast()) : given
+        var template = Array("\(directory)/xless-run.XXXXXXXXXX".utf8CString)
+        let descriptor = mkstemp(&template)
+        guard descriptor >= 0 else { throw Failure(code: errno) }
+        close(descriptor)
+        return String(decoding: template.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    public func link(_ file: String, _ path: String) -> Bool { systemLink(file, path) == 0 }
+    public func rename(_ file: String, _ path: String) -> Bool { systemRename(file, path) == 0 }
+    public func makeDirectory(_ path: String) -> Bool { mkdir(path, 0o777) == 0 }
+    public func removeFile(_ path: String) { unlink(path) }
+    public func removeEmptyDirectory(_ path: String) { rmdir(path) }
+    public func removeTree(_ path: String) { try? FileManager.default.removeItem(atPath: path) }
+}
+
+// The methods above have the names of these.
+private func systemLink(_ a: String, _ b: String) -> Int32 { link(a, b) }
+private func systemRename(_ a: String, _ b: String) -> Int32 { rename(a, b) }
+private func systemWrite(_ descriptor: Int32, _ bytes: UnsafeRawPointer?, _ count: Int) -> Int { write(descriptor, bytes, count) }
+#endif
