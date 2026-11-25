@@ -65,8 +65,9 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
 4. **No secret on a command line, in a log, in an error, in a core dump or in a child's environment.** Secrets come
    from the terminal, the store, `NAME` or `NAME_FILE`; no option takes one (a test walks every command and fails on an
    option named like a secret). A secret under a name of your own (a demo account's `passwordSecret`) is removed from
-   the tools' environment too. `xless run` gives each step the secret variables it uses and no other (the docker client
-   gets the API key's two IDs at most), and starts every program with its arguments as they are, never through a shell.
+   the tools' environment too. `xless run` gives no secret variable to an overlay's build step, to a run that stops before it signs, or to
+   the programs it starts for itself (the docker client gets the API key's two IDs at most), and starts every program with its
+   arguments as they are, never through a shell.
 5. **Least privilege, and a question before anything destructive.** `xless auth api-key create` makes an `APP_MANAGER`
    key unless you ask for more; the commands that revoke, delete, remove or cancel something at Apple ask first, and
    without a terminal they are refused unless `--yes` is given. `xless provision apply` never deletes or revokes
