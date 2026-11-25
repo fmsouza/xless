@@ -64,13 +64,16 @@ public final class PosixRunHost: RunHost {
     public let isWSL: Bool
     /// What a confined step runs under.
     private let filter: Filter?
+    private let root: String
     private struct Filter: @unchecked Sendable { let pointer: UnsafePointer<xless_filter> } // (it points at what never changes)
     /// The children that this process has from before `keepOrphans`.
     private let ownChildren = Children()
 
     public convenience init() { self.init(isWSL: xless_is_wsl_kernel() == 1) }
 
-    init(isWSL: Bool, filter: UnsafePointer<xless_filter> = xless_windows_filter()) {
+    /// - Parameter root: where the system's files that tell of Windows are, in tests.
+    init(isWSL: Bool, filter: UnsafePointer<xless_filter> = xless_windows_filter(), root: String = "") {
+        self.root = root
         self.isWSL = isWSL
         self.filter = isWSL ? Filter(pointer: filter) : nil
         let given = Self.strings(UnsafePointer(CommandLine.unsafeArgv))
@@ -83,7 +86,7 @@ public final class PosixRunHost: RunHost {
         signal(SIGCHLD, SIG_DFL)
     }
 
-    public var windowsInReach: WindowsReach { isWSL ? .look() : WindowsReach() }
+    public var windowsInReach: WindowsReach { isWSL ? .look(root: root) : WindowsReach() }
 
     public var processID: Int32 { getpid() }
     public var now: Date { Date() }
@@ -360,21 +363,21 @@ public final class PosixRunHost: RunHost {
     public func endOrphans(within seconds: Double) -> (ended: [String], left: [String]) {
         defer { _ = xless_keep_orphans(0) }
         let before = ownChildren.known, start = xless_clock_awake_ms()
-        var names: [Int32: String] = [:], order: [Int32] = []
+        var asked: Set<Int32> = [], ended: [String] = []
         while true {
             let late = Double(xless_clock_awake_ms() - start) / 1000
-            guard let children = Self.ownChildren()?.subtracting(before) else { return (order.compactMap { names[$0] }, ["a process that cannot be told"]) }
+            guard let children = Self.ownChildren()?.subtracting(before) else { return (ended, ["a process that cannot be told"]) }
             // Those that the kernel's list has are all there are when it has none but the own ones, and nothing can have been missed.
-            if children.isEmpty, !before.isEmpty || xless_has_children() == 0 { return (order.compactMap { names[$0] }, []) }
-            if late >= seconds { return (order.compactMap { names[$0] }, children.isEmpty ? ["a process that cannot be told"] : children.sorted().map(Self.name)) }
+            if children.isEmpty, !before.isEmpty || xless_has_children() == 0 { return (ended, []) }
+            if late >= seconds { return (ended, children.isEmpty ? ["a process that cannot be told"] : children.sorted().map(Self.name)) }
             for child in children {
-                if names[child] == nil, !Self.isDead(child) {
-                    names[child] = Self.name(child)
-                    order.append(child)
+                if !asked.contains(child), !Self.isDead(child) {
+                    asked.insert(child)
+                    ended.append(Self.name(child))
                     kill(child, SIGTERM)
                 } else if late >= 1 { kill(child, SIGKILL) }
             }
-            for child in children { _ = xless_reap_orphan(child) }
+            for child in children where xless_reap_orphan(child) == 1 { asked.remove(child) } // its number may be another one's now
             pause(0.01)
         }
     }

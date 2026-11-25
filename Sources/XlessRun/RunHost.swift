@@ -64,7 +64,8 @@ public protocol RunHost: AnyObject, Sendable {
     /// a step started can be found, whatever session it is in. False: not here.
     func keepOrphans() -> Bool
     /// Ends every process that this one became the parent of since, those that they leave too, and is none's parent any more: the
-    /// names of what still ran, and of what could not be ended in this time.
+    /// names of what still ran, and of what could not be ended in this time. (What a child from before left meanwhile is ended as
+    /// well: it cannot be told from the steps'.)
     func endOrphans(within seconds: Double) -> (ended: [String], left: [String])
     var now: Date { get }
     /// The directory a relative path starts at, as the user sees it (`$PWD`).

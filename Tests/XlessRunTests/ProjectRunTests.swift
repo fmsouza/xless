@@ -201,6 +201,9 @@ import XlessCore
             let failed = FakeRunHost(isWSL: true, answer: home.answer { $0.line.contains("--to finalize") ? (9, "") : nil })
             failed.orphans = ["node"]
             #expect(try home.run(target, docker: false, host: failed) == 9 && failed.orphanLog.count == 2 && failed.lines.contains { $0.contains("left running: node") })
+            // whose code it is, whatever stays
+            failed.stayingOrphans = ["stuck"]
+            #expect(try home.run(target, docker: false, host: failed) == 9 && failed.lines.contains { $0.contains("note: ") && $0.contains("cannot be ended: stuck") })
             // nothing is built when it could not be found
             let cannot = FakeRunHost(isWSL: true, answer: home.answer())
             cannot.keepsOrphans = false

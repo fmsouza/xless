@@ -503,9 +503,10 @@ Windows machine to try it on):
 What xless does, when the kernel's release says that it is WSL's (`…microsoft…`, in a container too):
 
 - **It looks what of Windows is in reach** of a native `xless run` that builds (interop: the sockets in `/run/WSL` and
-  `/etc/wsl.conf`; a Windows drive that is mounted to be written), starting nothing of Windows, and says it. With that, and with the
-  store unlocked or an Apple ID session kept in this terminal, it does not run: `xless lock` first. Without, it says what is held.
-  It does not look into other terminals.
+  `/etc/wsl.conf`; a Windows drive that is mounted to be written; what of these it cannot read counts as on), starting nothing of
+  Windows, and says it. With that, and with the store unlocked or an Apple ID session kept in this terminal, it does not run:
+  `xless lock` first. Without, it says what is held. Whether something is held that it cannot tell (`xless auth status` fails, or an
+  agent does not answer) does not stop it, with Windows in reach either: at most it says so. It does not look into other terminals.
 - **The build and the signature are two processes** (`xless run <dir>`, natively), as [on a Mac](#the-build-and-your-secrets): the
   first has no secret variable and no store, the second runs after it, in `/`, with the xless.yml that the run read first or not at
   all. The run unlocks nothing before the first has ended: no agent, no keyring. An overlay's run that asks App Store Connect for a
@@ -513,7 +514,8 @@ What xless does, when the kernel's release says that it is WSL's (`…microsoft�
 - **What the build left running is ended** before the second begins, in whatever session it is and however often it was left (the run
   is the child subreaper of its steps): asked first (SIGTERM), for a second, then killed. It says which. If something cannot be ended,
   nothing is signed and nothing is asked. A daemon that a tool of the run started for later (a Gradle daemon, a gpg-agent of
-  a credential helper's) is ended with it.
+  a credential helper's) is ended with it. So is what it cannot tell from that: what a job of the shell that became the run
+  (`job & exec xless run …`) leaves meanwhile, or, where the run is process 1 of a container, what a `docker exec` there leaves.
 - **The price: the passphrase is typed after the code of the build has run**, on the same terminal, once per step that needs
   it. With `--no-input` and a locked store such a run is refused before it builds.
 - **The tools get no socket of Windows'.** Every tool that xless starts, natively and in its containers, and everything that those

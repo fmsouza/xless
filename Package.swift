@@ -192,7 +192,7 @@ let notOnWindows: [String: [String]] = [
         "BuildSDKCheckTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlistBuddyShimTests.swift",
         "SecretScrubTests.swift", "ShellTests.swift", "SwiftToolchainTests.swift", "XcrunShimTests.swift", "XlessShareTests.swift",
         "AppleSignatureTests.swift", "InstalledXcodeTests.swift", "NativeToolsTests.swift", "TrustedPathTests.swift",
-        "PackageResolvedTests.swift",
+        "PackageResolvedTests.swift", "WindowsFilterTests.swift",
     ],
     "XlessASCTests": ["PathOwnersTests.swift", "StreamingTransportTests.swift"],
     "XlessAppleIDTests": ["URLSessionAppleTransportTests.swift"],

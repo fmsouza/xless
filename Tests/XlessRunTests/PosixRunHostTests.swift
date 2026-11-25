@@ -40,7 +40,11 @@ import Testing
 
     @Test func theHostIsOnTheKernelThatItIsOn() {
         #expect(PosixRunHost().isWSL == (xless_is_wsl_kernel() == 1))
-        if !PosixRunHost().isWSL { #expect(PosixRunHost().windowsInReach == WindowsReach()) }
+        // what it says of Windows is what there is to see, on that kernel alone
+        let there = WindowsReach.look(root: "/nonexistent")
+        #expect(there.isThere && PosixRunHost(isWSL: true, root: "/nonexistent").windowsInReach == there)
+        #expect(PosixRunHost(isWSL: false, root: "/nonexistent").windowsInReach == WindowsReach())
+        #expect(PosixRunHost().windowsInReach == (PosixRunHost().isWSL ? .look() : WindowsReach()) && PosixRunHost(isWSL: true).windowsInReach == .look())
     }
 
     /// Fails closed, and says why.

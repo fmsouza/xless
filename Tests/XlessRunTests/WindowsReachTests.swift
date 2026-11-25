@@ -32,7 +32,7 @@ private func makeSocket(_ path: String) -> Bool {
         let path: String
         init() throws {
             path = "/tmp/xless-reach-\(UUID().uuidString.prefix(8))" // (a socket's path is short)
-            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            try write("proc/self/mountinfo", "87 28 8:32 / / rw,relatime - ext4 /dev/sdc rw\n")
         }
         deinit { try? FileManager.default.removeItem(atPath: path) }
         func write(_ file: String, _ text: String) throws {
@@ -73,7 +73,7 @@ private func makeSocket(_ path: String) -> Bool {
 
     /// WSL's first process has its socket also where interop is off; a session has one where it is on.
     @Test func interopThatIsTurnedOffIsOff() throws {
-        for conf in ["[interop]\nenabled=false\n", " [Interop] \r\n# x\n Enabled = FALSE # y\r\n", "[interop]\nenabled=0\n", "[interop]\nenabled = \"false\"\n", "[automount]\nenabled=true\n[interop]\nappendWindowsPath=false\nenabled=false"] {
+        for conf in ["[interop]\nenabled=false\n", " [Interop] \r\n# x\n Enabled = FALSE # y\r\n", "[interop]\nenabled=0\n", "\t[interop] # x\r\n\tenabled\t=\tfalse\t\r\n", "[interop]\nenabled = \"false\"\n", "[automount]\nenabled=true\n[interop]\nappendWindowsPath=false\nenabled=false"] {
             let root = try Root()
             try root.write("etc/wsl.conf", conf)
             try root.socket("1_interop")
@@ -89,16 +89,62 @@ private func makeSocket(_ path: String) -> Bool {
             try systemd.socket("900_interop")
             #expect(systemd.look.interop)
         }
-        for conf in ["", "[interop]\n", "[interop]\nenabled=true\n", "[automount]\nenabled=false\n", "enabled=false\n[interop]\n", "[interop]\nenabled=no\n", "[interop]\n#enabled=false\n", "[interop]\nenabled=false\nenabled=true\n"] {
+        for conf in ["", "[interop]\n", "[interop]\nenabled=true\n", "[automount]\nenabled=false\n", "enabled=false\n[interop]\n", "[interop]\nenabled=no\n", "[interop]\n#enabled=false\n", "[interop]\nenabled=false\nenabled=true\n",
+                     // (of two WSL takes the first; a line that it cannot read is none, the section stays the one before)
+                     "[interop]\nenabled=true\nenabled=false\n", "[ interop ]\nenabled=false\n", "[interop ]\nenabled=false\n", "[automount]\n[ interop]\nenabled=false\n", "[interop]\n[ automount ]\nenabled=false\n",
+                     "[interop] x\nenabled=false\n", "[interop]\n[automount] x\nenabled=false\n", "[interop]\nenabled=\"false\n", "[interop]\nenabled=false\"\n", "[interop]\nenabled=\"false#\"\n", "[interop]\nx=y\u{2028}enabled=false\n", "[interop]\u{2028}enabled=false\n",
+                     "[interop]\n\u{A0}enabled=false\n", "[interop]\nenabled=false\u{A0}\n", "[interop]\nx=y\\\nenabled=false\n", "[interop]\r\nx=y \\\r\nenabled=false\r\n", "[automount]\nx=\\\n[interop]\nenabled=false\n"] {
             let root = try Root()
             try root.write("etc/wsl.conf", conf)
             try root.socket("1_interop")
             #expect(root.look.interop, "\(conf)")
         }
+        // a file that cannot be read turns nothing off, one with bytes that are no text does
+        let text = try Root()
+        try FileManager.default.createDirectory(atPath: "\(text.path)/etc/wsl.conf", withIntermediateDirectories: true)
+        try text.socket("1_interop")
+        #expect(text.look.interop)
+        try FileManager.default.removeItem(atPath: "\(text.path)/etc/wsl.conf")
+        try Data("# \u{E9}".unicodeScalars.map { UInt8(truncatingIfNeeded: $0.value) } + Array("\n[interop]\nenabled=false\n".utf8)).write(to: URL(fileURLWithPath: "\(text.path)/etc/wsl.conf"))
+        #expect(!text.look.interop)
         // a file of that name is none
         let root = try Root()
         try root.write("run/WSL/712_interop", "")
         #expect(!root.look.interop)
+    }
+
+    /// What cannot be looked at is not known to be off.
+    @Test func whatCannotBeReadIsTakenToBeThere() throws {
+        let root = try Root()
+        try root.write("etc/wsl.conf", "[interop]\nenabled=false\n")
+        try root.write("run/WSL", "") // no directory
+        #expect(root.look == WindowsReach(unread: ["/run/WSL"]) && root.look.isThere)
+        let mounts = try Root(), file = "\(mounts.path)/proc/self/mountinfo"
+        try FileManager.default.removeItem(atPath: file)
+        #expect(mounts.look == WindowsReach(unread: ["/proc/self/mountinfo"]))
+        try FileManager.default.createDirectory(atPath: file, withIntermediateDirectories: true)
+        #expect(mounts.look == WindowsReach(unread: ["/proc/self/mountinfo"]))
+        // a directory that may be listed and not entered
+        if getuid() != 0 {
+            let closed = try Root(), directory = "\(closed.path)/run/WSL"
+            try closed.socket("1_interop")
+            for mode in [0o400, 0o000] {
+                try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: directory)
+                #expect(closed.look.isThere, "\(mode)")
+            }
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
+        }
+        // a name that is not UTF-8 hides no drive
+        let name = try Root()
+        try Data([0x38, 0x33, 0x20, 0x32, 0x38, 0x20, 0x30, 0x3A, 0x35, 0x20, 0x2F, 0x20, 0x2F, 0xFF, 0x0A] + Array("84 28 0:51 / /mnt/c rw - 9p C: rw\n".utf8))
+            .write(to: URL(fileURLWithPath: "\(name.path)/proc/self/mountinfo"))
+        #expect(name.look == WindowsReach(drives: ["/mnt/c"]))
+        let note = try #require(WindowsReach(unread: ["/run/WSL", "/proc/self/mountinfo"]).note)
+        #expect(note.contains("Windows may be in reach") && note.contains("/run/WSL, /proc/self/mountinfo cannot be read") && note.contains("[interop] enabled=false and [automount] enabled=false"))
+        #expect(WindowsReach(interop: true, unread: ["/proc/self/mountinfo"]).note?.contains("Windows is in reach") == true)
+        #if os(Linux)
+        #expect(!WindowsReach.look().unread.contains("/proc/self/mountinfo"))
+        #endif
     }
 
     @Test func theLineSaysWhatThereIs() throws {

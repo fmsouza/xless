@@ -228,6 +228,7 @@
 + Tests/XlessCoreTests/UnlockSettingsTests.swift
 + Tests/XlessCoreTests/UserConfigTests.swift
 + Tests/XlessCoreTests/VersionTests.swift
+- Tests/XlessCoreTests/WindowsFilterTests.swift
 + Tests/XlessCoreTests/WindowsSourcesTests.swift
 + Tests/XlessCoreTests/XcodeToolsProfileTests.swift
 - Tests/XlessCoreTests/XcrunShimTests.swift
