@@ -80,6 +80,8 @@ struct ProvisionListingPlan: Sendable, Equatable {
     /// The subjects of the changes held back because they delete something.
     var held: [String]
     var notes: [String]
+    /// The names of the secrets it would send (the demo account's password).
+    var secrets: [String] = []
 }
 
 /// What a push of the listing sent, and what it held back once planned again against what App Store Connect then had
@@ -125,6 +127,15 @@ struct ProvisionVault: @unchecked Sendable {
             try store.unlock(file, remember: nil, reason: reason)
             try store.probeWrites(reason: reason)
         } catch { throw XlessError.wrapping(error, stage: .account) }
+    }
+
+    /// Unlocks the store when it is what will give one of the secrets `names`.
+    func unlock(toRead names: [String], team: String) throws {
+        guard let file = try file() else { return }
+        for name in names where try environmentKey(name) == nil {
+            guard (try? VaultResolver.preferredCandidate(for: name, in: file, team: team)) ?? nil != nil else { continue }
+            do { try store.unlock(file, remember: nil, reason: "reading \(name)") } catch { throw XlessError.wrapping(error, stage: .account) }
+        }
     }
 
     func open(_ entry: VaultEntry, in file: SecretCatalog, reason: String) throws -> SecretBytes {
@@ -214,7 +225,8 @@ struct StorePushListing: ProvisionListing {
         let resources = ASCResources(client: client)
         let app = try await ASCApps(resources: resources).get(id: appID)
         let (plan, _) = try await StorePush(resources: resources, say: say).plan(app: app, manifest: manifest, dir: dir, options: options)
-        return ProvisionListingPlan(changes: plan.changes.map(\.text), held: plan.held.map(\.subject), notes: plan.notes)
+        return ProvisionListingPlan(changes: plan.changes.map(\.text), held: plan.held.map(\.subject), notes: plan.notes,
+                                    secrets: Set(plan.changes.flatMap(\.requests).compactMap(\.secret)).sorted())
     }
 
     func apply(appID: String) async throws -> ProvisionListingApplied {

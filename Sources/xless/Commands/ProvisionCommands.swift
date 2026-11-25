@@ -157,7 +157,7 @@ struct ProvisionApplyCommand: AsyncParsableCommand {
                 if output.json { print(try Self.output(plan: plan, applied: ProvisionApplied(), json: true), terminator: "") }
                 return
             }
-            let question = "Apply these \(plan.steps.count) step\(plan.steps.count == 1 ? "" : "s") to team \(plan.team)'s account? [y/N] "
+            let question = "Apply these \(plan.steps.count) step\(plan.steps.count == 1 ? "" : "s") to team \(plan.team)'s account?"
             guard try AccountConfirm.confirm(question, action: "applying the provisioning plan", yes: confirmation.yes) else {
                 AppleWebCLI.say("cancelled; nothing was sent")
                 return

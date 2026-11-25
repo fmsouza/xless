@@ -263,7 +263,7 @@ struct ReleaseCLI {
         guard s.state != "COMPLETING" else {
             throw XlessError(.account, "review submission \(s.id) of \(t.name) is completing: App Review has answered; nothing was sent", fix: "`xless release status` shows the answer")
         }
-        let question = "Withdraw \(t.name) from App Review (review submission \(s.id), \(VersionState.display(s.state)))? [y/N] "
+        let question = "Withdraw \(t.name) from App Review (review submission \(s.id), \(VersionState.display(s.state)))?"
         guard try AccountConfirm.confirm(question, action: "canceling review submission \(s.id)", yes: yes, terminal: terminal) else {
             say("cancelled; nothing was sent")
             return ""

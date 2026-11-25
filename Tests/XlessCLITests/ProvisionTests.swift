@@ -42,6 +42,7 @@ private final class World: @unchecked Sendable {
     var failing: Set<String> = []
     var counter = 0
 
+    var listingSecrets: [String] = []
     func next(_ prefix: String) -> String { counter += 1; return "\(prefix)\(counter)" }
 
     func write(_ op: String, _ detail: String) throws {
@@ -189,7 +190,7 @@ private struct FakePrivacy: ProvisionPrivacy {
 private struct FakeListing: ProvisionListing {
     let world: World
     func plan(appID: String) async throws -> ProvisionListingPlan {
-        ProvisionListingPlan(changes: world.listingPushed ? [] : ["+ version text en-US"], held: [], notes: [])
+        ProvisionListingPlan(changes: world.listingPushed ? [] : ["+ version text en-US"], held: [], notes: [], secrets: world.listingSecrets)
     }
     func apply(appID: String) async throws -> ProvisionListingApplied {
         try world.write("push", appID)
@@ -404,6 +405,30 @@ private final class TypingPassphrase: PassphrasePrompter {
     s.vault.vault = ProvisionVault(store: VaultSecretStore(store: v.store, cache: nil, prompter: { TypingPassphrase(lines: more) }), env: [:])
     _ = try await s.apply(plan, lines: more)
     #expect(!more.all.contains { ["passphrase", "question", "sign-in"].contains($0) }, "\(more.all)")
+}
+
+@Test func theDemoAccountsPasswordIsReadableBeforeTheFirstStep() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    try v.add("XLESS_DEMO_PASSWORD", kind: .password, secret: "pw", metadata: .init())
+    var s = Setup(vault: v)
+    s.inputs = inputs(ios: true, macDistribution: .appStore)
+    _ = try await s.apply(try await s.plan())
+    func asked(_ secrets: [String], env: [String: String] = [:]) async throws -> Int {
+        let lines = Lines()
+        s.world.listingPushed = false
+        s.world.listingSecrets = secrets
+        let plan = try await s.plan()
+        #expect(plan.steps.map(\.area) == [.listing], "\(plan.text)")
+        s.vault.vault = ProvisionVault(store: VaultSecretStore(store: v.store, cache: nil, prompter: { TypingPassphrase(lines: lines) }), env: env)
+        _ = try await s.apply(plan, lines: lines)
+        #expect(lines.all.first != "passphrase" || lines.all.dropFirst().first?.hasPrefix("1/1") == true)
+        return lines.all.filter { $0 == "passphrase" }.count
+    }
+    #expect(try await asked(["XLESS_DEMO_PASSWORD"]) == 1)
+    #expect(try await asked([]) == 0, "a push that sends no password reads none")
+    #expect(try await asked(["XLESS_DEMO_PASSWORD"], env: ["XLESS_DEMO_PASSWORD": "pw"]) == 0)
+    #expect(try await asked(["NOT_STORED"]) == 0)
 }
 
 @Test func aSignInThatFailsStopsApplyBeforeAnythingIsSent() async throws {

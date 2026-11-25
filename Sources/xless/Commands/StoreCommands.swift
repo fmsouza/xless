@@ -391,7 +391,7 @@ struct StorePushCLI {
         let deletes = plan.deletes
         guard !deletes.isEmpty else { return true }
         let what = deletes.map(\.subject).joined(separator: ", ")
-        return try AccountConfirm.confirm("Delete \(what) on App Store Connect? [y/N] ", action: "deleting \(what)", yes: yes, terminal: terminal)
+        return try AccountConfirm.confirm("Delete \(what) on App Store Connect?", action: "deleting \(what)", yes: yes, terminal: terminal)
     }
 
     func run(manifest: StoreManifest, bundleID: String, dir: URL, options: StorePush.Options, dryRun: Bool, yes: Bool) async throws -> String {
