@@ -358,16 +358,17 @@ SECRET_NAME_RE='(^|_)(KEY|P8|PEM|PASSWORD|PASSPHRASE|TOKEN|SECRET)(_|$)'
 # It prints nothing (start_watch): a person may be typing a passphrase meanwhile.
 watch_processes() {   # OUT
   local out="$1" root="$$" seen=" " p env name comm line
+  set +e   # a process that ends while it is read is no reason to stop
   : > "$out"
   while [[ ! -e "$DIR/watch.stop" ]] && kill -0 "$root"; do
     for p in $(descendants "$root"); do
-      [[ "$seen" != *" $p "* ]] || continue
-      comm="$(proc_name "$p")"
+      comm="$(proc_name "$p" | tr ' ' '_')"   # with the name: a process may exec another program
+      [[ "$seen" != *" $p:$comm "* ]] || continue
       if ! env="$(proc_env "$p")"; then
         [[ "$seen" == *" u$p "* ]] || { seen+="u$p "; echo "unreadable $p $comm" >> "$out"; }
         continue
       fi
-      seen+="$p "
+      seen+="$p:$comm "
       echo "scanned $p ${comm:-?}" >> "$out"
       while IFS= read -r line; do
         name="${line%%=*}"; [[ -n "$name" && "$line" == *=* ]] || continue
@@ -432,6 +433,7 @@ watch_summary() {   # FILE: one line, and FOUND lines in the record
 # variable names (never their values).
 watch_containers() {   # OUT
   local out="$1" seen=" " c
+  set +e
   : > "$out"
   while [[ ! -e "$DIR/watch.stop" ]] && kill -0 "$$"; do
     for c in $(docker ps -q --filter label=xless.run 2>/dev/null || true); do
