@@ -185,8 +185,7 @@ public struct StoreSender: Sendable {
         switch localization {
         case .id(let id): return id
         case .locale(let locale, let versionID):
-            let all = try await ASCResources(client: client).list("/v1/appStoreVersions/\(versionID)/appStoreVersionLocalizations",
-                                                                  as: ASCKeptResource<StoreVersionLocalizationAttributes>.self).items
+            let all = try await StoreASC(resources: ASCResources(client: client)).versionLocalizations(of: versionID)
             guard let found = all.first(where: { $0.attributes.locale == locale }) else {
                 throw XlessError(.account, "App Store Connect has no version text for \(locale), so its screenshots and previews have nowhere to go",
                                  fix: "push the text part too (it creates the locale), then re-run `xless store push`")

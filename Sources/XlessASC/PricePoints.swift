@@ -44,27 +44,29 @@ public struct ASCPricePoints: Sendable {
 
     static let query = ASCQuery(fields: [("territories", ["currency"])], include: ["territory"])
 
-    /// Every price point of `app` (its resource ID) in `territory`, cheapest first.
-    public func list(app: String, territory: String) async throws -> [ASCPricePoint] {
-        try await list(path: "/v1/apps/\(app)/appPricePoints", territory: territory)
-    }
+    /// What has a price: each kind has its own listing of price points, and of what one becomes elsewhere.
+    public enum Product: Sendable, Equatable { case app, inAppPurchase, subscription }
 
-    /// Every price point the listing at `path` has in `territory` (an app's, an in-app purchase's
-    /// `/v2/inAppPurchases/{id}/pricePoints`, a subscription's `/v1/subscriptions/{id}/pricePoints`), cheapest first.
-    public func list(path: String, territory: String) async throws -> [ASCPricePoint] {
+    /// Every price point of the product with resource ID `id` in `territory`, cheapest first.
+    public func list(_ product: Product, _ id: String, territory: String) async throws -> [ASCPricePoint] {
+        let path = switch product {
+        case .app: "/v1/apps/\(id)/appPricePoints"
+        case .inAppPurchase: "/v2/inAppPurchases/\(id)/pricePoints"
+        case .subscription: "/v1/subscriptions/\(id)/pricePoints"
+        }
         var q = Self.query
         q.filters = [("territory", territory)]
         let listing = try await resources.list(path, query: q, as: ASCAnyResource.self)
         return Self.points(listing, territory: territory)
     }
 
-    /// The price point `id` in every other territory, by territory.
-    public func equalizations(of id: String) async throws -> [ASCPricePoint] {
-        try await equalizations(path: "/v3/appPricePoints/\(id)/equalizations")
-    }
-
-    /// The equalizations at `path` (`/v1/subscriptionPricePoints/{id}/equalizations`), by territory.
-    public func equalizations(path: String) async throws -> [ASCPricePoint] {
+    /// The price point `id` of such a product in every other territory, by territory.
+    public func equalizations(_ product: Product, of id: String) async throws -> [ASCPricePoint] {
+        let path = switch product {
+        case .app: "/v3/appPricePoints/\(id)/equalizations"
+        case .inAppPurchase: "/v1/inAppPurchasePricePoints/\(id)/equalizations"
+        case .subscription: "/v1/subscriptionPricePoints/\(id)/equalizations"
+        }
         let listing = try await resources.list(path, query: Self.query, as: ASCAnyResource.self)
         return Self.points(listing, territory: nil).sorted { $0.territory < $1.territory }
     }

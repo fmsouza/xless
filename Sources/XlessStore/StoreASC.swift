@@ -218,7 +218,7 @@ public struct StoreASC: Sendable {
     }
 
     public func versions(of appID: String) async throws -> [ASCKeptResource<StoreVersionAttributes>] {
-        try await all("/v1/apps/\(appID)/appStoreVersions", as: StoreVersionAttributes.self)
+        try await ASCApps(resources: resources).versions(of: appID, as: StoreVersionAttributes.self)
     }
 
     public static let categoryRelationships = ["primaryCategory", "primarySubcategoryOne", "primarySubcategoryTwo",
@@ -226,7 +226,7 @@ public struct StoreASC: Sendable {
 
     /// The app infos, with their category relationships' linkage.
     public func appInfos(of appID: String) async throws -> [ASCKeptResource<StoreAppInfoAttributes>] {
-        try await all("/v1/apps/\(appID)/appInfos", query: ASCQuery(include: Self.categoryRelationships), as: StoreAppInfoAttributes.self)
+        try await ASCApps(resources: resources).infos(of: appID, include: Self.categoryRelationships, as: StoreAppInfoAttributes.self)
     }
 
     public func appInfoLocalizations(of infoID: String) async throws -> [ASCKeptResource<StoreAppInfoLocalizationAttributes>] {
@@ -280,7 +280,7 @@ public struct StoreASC: Sendable {
 
     /// The version's phased release (its ID and state).
     public func phasedReleaseResource(of versionID: String) async throws -> StorePart<ASCAnyResource> {
-        try await optional("phased release") { try await one("/v1/appStoreVersions/\(versionID)/appStoreVersionPhasedRelease").data }
+        try await optional("phased release") { try await ASCRelease(resources: resources).phasedRelease(of: versionID)?.resource }
     }
 
     /// The categories App Store Connect offers for `platform`: each top-level category ID → its subcategory IDs.
@@ -342,8 +342,7 @@ public struct StoreASC: Sendable {
     /// The app's most recent encryption declaration.
     public func encryptionDeclaration(of appID: String) async throws -> StorePart<ASCAnyResource> {
         try await optional("encryption declarations") {
-            let declarations = try await resources.list("/v1/appEncryptionDeclarations", query: ASCQuery(filters: [("app", appID)]), as: ASCAnyResource.self).items
-            return declarations.max { ($0.attributes?["createdDate"]?.string ?? "") < ($1.attributes?["createdDate"]?.string ?? "") }
+            try await ASCBuilds(resources: resources).declarations(appID: appID).first?.resource
         }
     }
 

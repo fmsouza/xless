@@ -198,12 +198,19 @@ public struct ASCApps: Sendable {
         return found
     }
 
-    public func infos(of appID: String) async throws -> [ASCAppInfo] {
-        try await resources.list("\(Self.path)/\(appID)/appInfos", as: ASCAppInfo.self).items
+    public func infos(of appID: String) async throws -> [ASCAppInfo] { try await infos(of: appID, as: ASCAppInfoAttributes.self) }
+
+    /// The app infos with the attributes `A` reads, and the linkage of the relationships in `include`.
+    public func infos<A: ASCAttributes>(of appID: String, include: [String] = [], as: A.Type) async throws -> [ASCKeptResource<A>] {
+        try await resources.list("\(Self.path)/\(appID)/appInfos", query: ASCQuery(include: include), as: ASCKeptResource<A>.self).items
     }
 
-    public func versions(of appID: String) async throws -> [ASCAppStoreVersion] {
-        try await resources.list("\(Self.path)/\(appID)/appStoreVersions", as: ASCAppStoreVersion.self).items
+    public func versions(of appID: String) async throws -> [ASCAppStoreVersion] { try await versions(of: appID, as: ASCAppStoreVersionAttributes.self) }
+
+    /// The App Store versions (of `platform` when given) with the attributes `A` reads.
+    public func versions<A: ASCAttributes>(of appID: String, platform: String? = nil, as: A.Type) async throws -> [ASCKeptResource<A>] {
+        let query = ASCQuery(filters: platform.map { [("platform", $0)] } ?? [])
+        return try await resources.list("\(Self.path)/\(appID)/appStoreVersions", query: query, as: ASCKeptResource<A>.self).items
     }
 
     /// Changes the given attributes that differ from the app's (PATCH /v1/apps/{id}); nil when none differs and nothing

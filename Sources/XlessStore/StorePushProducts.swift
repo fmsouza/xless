@@ -92,7 +92,7 @@ extension PushContext {
                 inspect: "xless api GET /v2/inAppPurchases/\(iapID)/iapPriceSchedule --include manualPrices",
                 path: "/v1/inAppPurchasePriceSchedules", scheduleType: "inAppPurchasePriceSchedules", priceType: "inAppPurchasePrices",
                 pointRelationship: "inAppPurchasePricePoint", pointType: "inAppPurchasePricePoints", holder: ("inAppPurchase", "inAppPurchases", iapID),
-                points: { try await points.list(path: "/v2/inAppPurchases/\(iapID)/pricePoints", territory: $0) },
+                points: { try await points.list(.inAppPurchase, iapID, territory: $0) },
                 priceHolder: ("inAppPurchaseV2", "inAppPurchases", iapID)))
         }
         if let availability = file.availability {
@@ -259,7 +259,7 @@ extension PushContext {
         let points = ASCPricePoints(resources: asc.resources)
         let lister = "xless subscriptions price-points \(id) --app \(target.app.bundleID)"
         func listing(_ territory: String) async throws -> [ASCPricePoint] {
-            try await points.list(path: "/v1/subscriptions/\(subscriptionID)/pricePoints", territory: territory)
+            try await points.list(.subscription, subscriptionID, territory: territory)
         }
 
         // The wanted price point of every territory in scope.
@@ -276,7 +276,7 @@ extension PushContext {
             let point = try await resolve(price, in: base)
             wanted[base] = point
             if scope.contains(where: { $0 != base && manual[$0] == nil }) {
-                for p in try await points.equalizations(path: "/v1/subscriptionPricePoints/\(point.id)/equalizations") where scope.contains(p.territory) {
+                for p in try await points.equalizations(.subscription, of: point.id) where scope.contains(p.territory) {
                     wanted[p.territory] = p
                 }
             }

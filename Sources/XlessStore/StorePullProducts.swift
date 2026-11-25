@@ -119,7 +119,7 @@ extension StorePull {
                                            preserveCurrentPrice: previous?.preserveCurrentPrice)
         var equal: [String: String] = [:]
         if let point = basePrice.pointID, current.count > 1 {
-            for p in try await ASCPricePoints(resources: asc.resources).equalizations(path: "/v1/subscriptionPricePoints/\(point)/equalizations") {
+            for p in try await ASCPricePoints(resources: asc.resources).equalizations(.subscription, of: point) {
                 equal[p.territory] = p.id
             }
         }

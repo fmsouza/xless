@@ -36,7 +36,7 @@ extension PushContext {
             part: .pricing, subject: "price schedule", owner: "the app", prefix: "",
             lister: "xless apps price-points \(target.app.bundleID)", inspect: "xless api GET /v1/apps/\(appID)/appPriceSchedule --include manualPrices",
             path: "/v1/appPriceSchedules", scheduleType: "appPriceSchedules", priceType: "appPrices", pointRelationship: "appPricePoint",
-            pointType: "appPricePoints", holder: ("app", "apps", appID), points: { try await points.list(app: appID, territory: $0) }))
+            pointType: "appPricePoints", holder: ("app", "apps", appID), points: { try await points.list(.app, appID, territory: $0) }))
     }
 
     /// A price schedule (the app's, an in-app purchase's): POST `path` replaces it whole.

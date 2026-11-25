@@ -178,7 +178,7 @@ struct LiveCheck {
         await run.check("api", "GET /v1/apps/{id}/accessibilityDeclarations") { .part(try await store.accessibility(of: app.id)) { .count($0.count, "declaration") } }
         await run.check("api", "GET /v1/apps/{id}/appPriceSchedule") { .part(try await store.priceSchedule(of: app.id)) { .count($0.prices.count, "price") } }
         await run.check("api", "GET /v1/apps/{id}/appAvailabilityV2") { .part(try await store.availability(of: app.id)) { .count($0.entries.count, "territory") } }
-        await run.check("api", "GET /v1/apps/{id}/appPricePoints?filter[territory]=USA") { .count(try await ASCPricePoints(resources: r).list(app: app.id, territory: "USA").count, "price point") }
+        await run.check("api", "GET /v1/apps/{id}/appPricePoints?filter[territory]=USA") { .count(try await ASCPricePoints(resources: r).list(.app, app.id, territory: "USA").count, "price point") }
         var builds: ASCBuildListing?
         await run.check("api", "GET /v1/builds?filter[app]") {
             builds = try await ASCBuilds(resources: r).list(BuildFilter(appID: app.id, expired: nil), limit: 20)

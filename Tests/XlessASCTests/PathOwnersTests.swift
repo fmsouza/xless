@@ -13,6 +13,7 @@ private let exceptions: [String: String] = [
     "XlessStore/StorePlan.swift /v1/{}/{}": "store push's plan holds the updates and deletes it will send, of any resource type",
     "XlessStore/StoreSender.swift /v1/{}/{}": "deletes the items of a screenshot or preview set, whose type the plan has",
     "XlessStore/StoreSender.swift /v1/{}": "compares a planned request's path, to adopt a version text App Store Connect made itself",
+    "XlessStore/StorePushProducts.swift /v2/inAppPurchases/{}": "store push's plan holds the update it will send (InAppPurchases reads the product)",
     "xless/LiveCheck.swift /olympus/v1/session": "the live check lets this one sign-in POST through its read-only transport; it sends nothing itself",
     "XlessAppleID/SignInModels.swift /olympus/v1/session": "the sign-in asks for it once before it has a session, and so before there is an ASCWebClient",
     "xless/LiveCheck.swift v1/bundleIds": "the label of a check; the portal's service sends the request",
@@ -20,11 +21,9 @@ private let exceptions: [String: String] = [
 
 /// Called from several files today, to be made one: the list only gets shorter.
 private let pending: Set<String> = [
-    "/v1/appEncryptionDeclarations", "/v1/appStoreVersions/{}/appStoreVersionLocalizations", "/v1/appStoreVersions/{}/appStoreVersionPhasedRelease",
-    "/v1/apps/{}/appInfos", "/v1/apps/{}/appStoreVersions", "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
+    "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
     "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds/{}/betaBuildLocalizations", "/v1/bundleIds",
     "/v1/certificates", "/v1/profiles", "/v1/profiles/{}", "/v1/profiles/{}/relationships/certificates",
-    "/v1/subscriptionPricePoints/{}/equalizations", "/v1/subscriptions/{}/pricePoints", "/v2/inAppPurchases/{}", "/v2/inAppPurchases/{}/pricePoints",
 ]
 private let pendingCallers: Set<String> = ["XlessSign/CertificateService.swift", "XlessSign/ProfileService.swift"]
 

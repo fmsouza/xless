@@ -182,8 +182,7 @@ public struct ASCRelease: Sendable {
 
     /// The app's App Store versions (of `platform` when given), newest first.
     public func versions(app appID: String, platform: String? = nil) async throws -> [ASCVersion] {
-        let query = ASCQuery(filters: platform.map { [("platform", $0)] } ?? [])
-        let items = try await resources.list("/v1/apps/\(appID)/appStoreVersions", query: query, as: ASCVersion.self).items
+        let items = try await ASCApps(resources: resources).versions(of: appID, platform: platform, as: ASCAppStoreVersionAttributes.self)
         return items.filter { platform == nil || $0.platform == platform }
             .sorted { ($0.attributes.createdDate ?? "", $0.id) > ($1.attributes.createdDate ?? "", $1.id) }
     }
