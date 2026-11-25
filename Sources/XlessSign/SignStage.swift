@@ -55,7 +55,8 @@ public enum SignStage {
         let bundleID = config.bundleID(for: platform)
 
         // What is looked at from here on is what is signed: the build's code may still run where the finalized app is.
-        let app = try Files.copyBundle(input, intoFreshDir: outputDir)
+        let app = outputDir.appendingPathComponent(input.lastPathComponent, isDirectory: true)
+        try BuiltTree.copy(input, to: app, stage: .sign)
         try BuiltTree.check(app, stage: .sign)
 
         // The bundles and their entitlements first: a bad app or a stale manifest is refused before App Store Connect is called.
@@ -93,9 +94,7 @@ public enum SignStage {
         let layout = BundleLayout(platform: platform)
         for p in provisioned {
             // An app extension carries its own profile, as Xcode embeds it: `X.appex/embedded.mobileprovision`.
-            let profileURL = app.appendingPathComponent(p.target.path.isEmpty ? layout.embeddedProfile : "\(p.target.path)/embedded.mobileprovision")
-            try FileManager.default.createDirectory(at: profileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try p.profile.write(to: profileURL)
+            try BuiltTree.write(p.profile, at: p.target.path.isEmpty ? layout.embeddedProfile : "\(p.target.path)/embedded.mobileprovision", in: app, stage: .sign)
         }
 
         // Loose Mach-Os (e.g. a Tauri bundle.resources dylib) and nested code bundles (e.g. an embedded framework) get the

@@ -9,7 +9,9 @@ import Musl
 /// read what they find and take lists of names.
 public enum BuiltTree {
     /// Directories in one another.
-    public static let maxDepth = 256
+    public static let maxDepth = 64
+    /// Links that lead to one another.
+    static let maxLinks = 32
 
     /// Refuses a tree that holds anything but directories, files, and links that stay in it wherever it is copied to (`rsync`, `cpio` or
     /// a signer may go through one), or a name that ends a line or drives a terminal.
@@ -18,13 +20,12 @@ public enum BuiltTree {
         func refused(_ path: String, _ why: String) -> XlessError {
             XlessError(stage, TerminalText.escaped("\(path) in \(root.lastPathComponent) \(why)"), fix: "look at what in the build put it there, then build again")
         }
-        guard type(of: top) == S_IFDIR else { throw XlessError(stage, TerminalText.escaped("\(top) is not a directory"), fix: "look at what put it there, then run the previous stage again") }
-        guard let real = real(top) else { throw refused(".", "cannot be read") }
+        guard type(of: top) == S_IFDIR else { throw notDirectory(top, stage) }
 
         func walk(_ directory: String, _ above: [String]) throws {
             let place = above.joined(separator: "/")
             guard above.count < maxDepth else { throw refused(place, "is nested deeper than \(maxDepth) directories") }
-            guard let names = names(in: directory) else { throw refused(place, "cannot be listed, or holds a name that is not UTF-8") }
+            guard let names = opendir(directory).flatMap(names) else { throw refused(place, "cannot be listed, or holds a name that is not UTF-8") }
             for name in names {
                 let path = "\(directory)/\(name)", parts = above + [name], shown = parts.joined(separator: "/")
                 guard !name.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else { throw refused(shown, "has a control character in its name") }
@@ -32,9 +33,7 @@ public enum BuiltTree {
                 case S_IFDIR: try walk(path, parts)
                 case S_IFREG: continue
                 case S_IFLNK:
-                    guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: path), stays(target, in: above), isBelow(path, real) else {
-                        throw refused(shown, "is a link that leads out of it")
-                    }
+                    guard case .link(let target) = link(at: Array(path.utf8)), stays(target, in: above, of: top) else { throw refused(shown, "is a link that leads out of it") }
                 default: throw refused(shown, "is neither a file, nor a directory, nor a link")
                 }
             }
@@ -42,27 +41,106 @@ public enum BuiltTree {
         try walk(top, [])
     }
 
-    /// By its text.
-    private static func stays(_ target: String, in directory: [String]) -> Bool {
-        guard !target.isEmpty, !target.hasPrefix("/") else { return false }
-        var depth = directory.count
-        for part in target.split(separator: "/") where part != "." {
-            depth += part == ".." ? -1 : 1
-            if depth < 0 { return false }
+    /// Copies a tree that the build may still change meanwhile: by what is open and never by a path, so a directory that becomes a link to
+    /// the user's own is not gone into, and a pipe is not waited for. Modes and dates stay. `to` is not there yet.
+    public static func copy(_ from: URL, to: URL, stage: Stage) throws {
+        func failed(_ name: String, _ why: String) -> XlessError {
+            XlessError(stage, TerminalText.escaped("cannot copy \(name.isEmpty ? from.path : "\(name) in \(from.lastPathComponent)"): \(why)"), fix: "look at what in the build put it there, or still writes there, then build again")
+        }
+        func system(_ name: String) -> XlessError { failed(name, String(cString: strerror(errno))) }
+
+        func directory(_ source: Int32, to target: String, _ above: [String]) throws {
+            defer { close(source) }
+            let place = above.joined(separator: "/")
+            guard above.count < maxDepth else { throw failed(place, "it is nested deeper than \(maxDepth) directories") }
+            var own = stat()
+            guard fstat(source, &own) == 0, mkdir(target, 0o700) == 0 else { throw system(place) }
+            guard let names = fdopendir(dup(source)).flatMap(names) else { throw failed(place, "it cannot be listed, or holds a name that is not UTF-8") }
+            for name in names {
+                let shown = (above + [name]).joined(separator: "/"), to = "\(target)/\(name)"
+                var info = stat()
+                guard fstatat(source, name, &info, AT_SYMLINK_NOFOLLOW) == 0 else { throw system(shown) }
+                switch info.st_mode & S_IFMT {
+                case S_IFLNK:
+                    guard case .link(let path) = link(at: Array(name.utf8), in: source) else { throw system(shown) }
+                    guard symlink(path.map { CChar(bitPattern: $0) } + [0], to) == 0 else { throw system(shown) }
+                case S_IFDIR:
+                    let fd = openat(source, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                    guard fd >= 0 else { throw system(shown) }
+                    try directory(fd, to: to, above + [name])
+                default:
+                    let fd = openat(source, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+                    guard fd >= 0 else { throw system(shown) }
+                    defer { close(fd) }
+                    guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw failed(shown, "it is neither a file, nor a directory, nor a link") }
+                    guard file(fd, to: to, info) else { throw system(shown) }
+                }
+            }
+            guard chmod(target, own.st_mode & 0o777) == 0, utimensat(AT_FDCWD, target, times(own), 0) == 0 else { throw system(place) }
+        }
+        let fd = open(from.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw errno == ENOENT ? system("") : notDirectory(from.path, stage) }
+        try directory(fd, to: to.path, [])
+    }
+
+    /// Writes a new file into a tree of the build's: what is at its place, a link say, goes, and nothing on the way there is a link.
+    public static func write(_ data: Data, at path: String, in root: URL, stage: Stage) throws {
+        var at = root.path
+        let parts = path.utf8.split(separator: UInt8(ascii: "/")).map { String(decoding: $0, as: UTF8.self) }
+        func system(_ place: String) -> XlessError { XlessError(stage, TerminalText.escaped("cannot write \(place): \(String(cString: strerror(errno)))"), fix: "check disk space and permissions") }
+        func refused(_ place: String) -> XlessError { XlessError(stage, TerminalText.escaped("\(place) is in the way of \(path)"), fix: "look at what in the build put it there, then build again") }
+        for part in parts.dropLast() {
+            at += "/\(part)"
+            guard type(of: at) == nil ? mkdir(at, 0o777) == 0 : type(of: at) == S_IFDIR else { throw refused(at) }
+        }
+        guard let name = parts.last else { throw refused(at) }
+        at += "/\(name)"
+        guard type(of: at) != S_IFDIR else { throw refused(at) }
+        guard unlink(at) == 0 || errno == ENOENT else { throw system(at) }
+        let fd = open(at, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o666)
+        guard fd >= 0 else { throw system(at) }
+        let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do { try file.write(contentsOf: data) } catch { throw system(at) }
+    }
+
+    // MARK: -
+
+    private static func notDirectory(_ path: String, _ stage: Stage) -> XlessError {
+        XlessError(stage, TerminalText.escaped("\(path) is not a directory"), fix: "look at what put it there, then run the previous stage again")
+    }
+
+    /// Whether a link in `directory` (names below `top`, none of them a link) leads to a place below `top`, or to `top`: as the system
+    /// goes, through links as well, name by name and by their bytes; and as it would go if what is not there were, for whoever makes it.
+    private static func stays(_ target: [UInt8], in directory: [String], of top: String) -> Bool {
+        let slash = UInt8(ascii: "/"), dot = UInt8(ascii: ".")
+        func ahead(_ path: [UInt8]) -> [[UInt8]] { path.split(separator: slash).reversed().map(Array.init) }
+        guard !target.isEmpty, target.first != slash else { return false }
+        var at = directory.map { Array($0.utf8) }, rest = ahead(target), links = 1
+        while let part = rest.popLast() {
+            if part == [dot] { continue }
+            if part == [dot, dot] {
+                guard at.popLast() != nil else { return false }
+                continue
+            }
+            switch link(at: at.reduce(Array(top.utf8)) { $0 + [slash] + $1 } + [slash] + part) {
+            case .none: at.append(part)
+            case .link(let next):
+                links += 1
+                guard links <= maxLinks, !next.isEmpty, next.first != slash else { return false }
+                rest += ahead(next)
+            case .unknown: return false
+            }
         }
         return true
     }
 
-    /// By where it leads now (a part of its path may be a link as well). What is not there leads nowhere.
-    private static func isBelow(_ link: String, _ root: String) -> Bool {
-        guard let there = real(link) else { return errno == ENOENT }
-        return there == root || there.hasPrefix(root + "/")
-    }
+    private enum Link { case none, link([UInt8]), unknown }
 
-    private static func real(_ path: String) -> String? {
-        guard let real = realpath(path, nil) else { return nil }
-        defer { free(real) }
-        return String(cString: real)
+    private static func link(at path: [UInt8], in directory: Int32 = AT_FDCWD) -> Link {
+        var target = [CChar](repeating: 0, count: 8192)
+        let count = readlinkat(directory, path.map { CChar(bitPattern: $0) } + [0], &target, target.count)
+        if count < 0 { return [EINVAL, ENOENT, ENOTDIR].contains(errno) ? .none : .unknown }
+        return count < target.count ? .link(target.prefix(count).map { UInt8(bitPattern: $0) }) : .unknown
     }
 
     private static func type(of path: String) -> mode_t? {
@@ -71,8 +149,7 @@ public enum BuiltTree {
     }
 
     /// In C: on a Mac, Foundation's crashes on very deep paths. nil: not a list of names.
-    private static func names(in path: String) -> [String]? {
-        guard let directory = opendir(path) else { return nil }
+    private static func names(in directory: Directory) -> [String]? {
         defer { closedir(directory) }
         var names: [String] = []
         while let entry = readdir(directory) {
@@ -82,6 +159,48 @@ public enum BuiltTree {
         }
         return names.sorted()
     }
+
+    private static func times(_ info: stat) -> [timespec] {
+        #if canImport(Darwin)
+        [info.st_mtimespec, info.st_mtimespec]
+        #else
+        [info.st_mtim, info.st_mtim]
+        #endif
+    }
+
+    private static func file(_ source: Int32, to path: String, _ info: stat) -> Bool {
+        #if canImport(Darwin)
+        if fclonefileat(source, AT_FDCWD, path, UInt32(CLONE_NOFOLLOW)) == 0 { return true }
+        #endif
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        #if canImport(Darwin)
+        guard fcopyfile(source, fd, nil, copyfile_flags_t(COPYFILE_ALL)) == 0 else { return false }
+        #else
+        var buffer = [UInt8](repeating: 0, count: 1 << 20)
+        while true {
+            let got = read(source, &buffer, buffer.count)
+            if got < 0, errno == EINTR { continue }
+            guard got >= 0 else { return false }
+            if got == 0 { break }
+            var put = 0
+            while put < got {
+                let n = buffer.withUnsafeBytes { systemWrite(fd, $0.baseAddress! + put, got - put) }
+                if n < 0, errno == EINTR { continue }
+                guard n > 0 else { return false }
+                put += n
+            }
+        }
+        #endif
+        return fchmod(fd, info.st_mode & 0o777) == 0 && futimens(fd, times(info)) == 0
+    }
+
+    #if canImport(Darwin)
+    private typealias Directory = UnsafeMutablePointer<DIR>
+    #else
+    private typealias Directory = OpaquePointer
+    #endif
 }
 
 extension StagePaths {
@@ -99,3 +218,8 @@ extension StagePaths {
         return app
     }
 }
+
+#if !canImport(Darwin)
+/// (`BuiltTree.write` hides it.)
+private func systemWrite(_ descriptor: Int32, _ bytes: UnsafeRawPointer?, _ count: Int) -> Int { write(descriptor, bytes, count) }
+#endif
