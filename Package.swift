@@ -17,7 +17,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "XlessCore", dependencies: ["CXlessProcess", .product(name: "Yams", package: "Yams")]),
-        .target(name: "XlessSDK", dependencies: ["XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
+        // The Docker images: their names and labels, the choice of one, and the derived images built from shipped Dockerfiles.
+        .target(name: "XlessImages", dependencies: ["XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
+        .target(name: "XlessSDK", dependencies: ["XlessCore", "XlessImages", .product(name: "Crypto", package: "swift-crypto")]),
         .target(name: "XlessMachO"),
         .target(name: "XlessBuild", dependencies: ["XlessCore", "XlessMachO"]),
         .target(name: "XlessAssets", dependencies: [
@@ -99,20 +101,21 @@ let package = Package(
         // `xless run`: a project's build, sign and upload as processes of their own (containers, or natively), so that the app's
         // build code never runs next to a secret.
         .target(name: "XlessRun", dependencies: [
-            "XlessCore", "CXlessProcess",
+            "XlessCore", "XlessImages", "CXlessProcess",
             .product(name: "Yams", package: "Yams"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
         .executableTarget(name: "xless", dependencies: [
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
-            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "XlessRun", "CXlessProcess",
+            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "XlessRun", "XlessImages", "CXlessProcess",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
         // Not a product: `--product xless` (image builds) skips it; only `swift run IBDifferential` builds it.
         .executableTarget(name: "IBDifferential", dependencies: ["XlessIB", "XlessCore"]),
         .testTarget(name: "XlessCoreTests", dependencies: ["XlessCore", "CXlessProcess"]),
-        .testTarget(name: "XlessSDKTests", dependencies: ["XlessSDK", "XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
+        .testTarget(name: "XlessImagesTests", dependencies: ["XlessImages", "XlessCore"]),
+        .testTarget(name: "XlessSDKTests", dependencies: ["XlessSDK", "XlessImages", "XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
         .testTarget(name: "XlessBuildTests", dependencies: ["XlessBuild", "XlessCore"]),
         .testTarget(name: "XlessAssetsTests", dependencies: [
             "XlessAssets", "XlessCore", "XlessMachO",
@@ -163,7 +166,7 @@ let package = Package(
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
         .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessAgent", "XlessSign", "XlessRun", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
-        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessCore"]),
+        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessImages", "XlessCore"]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
