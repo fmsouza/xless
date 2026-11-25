@@ -3,6 +3,7 @@
 xless contains no Apple software. To build an app it needs one thing from Apple, the Xcode download, and only the SDK
 files inside it. To sign and upload an app it also needs an Apple developer account. Nothing from Apple runs on your
 Linux machine: Apple's programs are macOS programs, and xless uses open-source replacements for every one of them.
+On a Mac it uses the Xcode that is installed, and takes nothing out of it ([below](#on-a-mac)).
 
 ## How to get Xcode on Linux
 
@@ -61,6 +62,24 @@ What xless does **not** take from Xcode: any program. The Xcode version, its Swi
 and storyboard compilers (`actool`, `ibtool`, `copypng`), `xcrun`, `xcodebuild`, `PlistBuddy`, `lipo`, `otool`,
 `strip`, `ditto` and `codesign` are replaced by xless's own code, by LLVM's tools or by rcodesign; the compilers are
 the open-source Swift and LLVM releases.
+
+## On a Mac
+
+A native build of an `xless.yml` project on a Mac runs these programs, where they are installed, with public options only.
+xless links no framework of Xcode's, calls no private interface, and copies none of its files anywhere else. (The compiler puts
+into an app what it always puts there.)
+
+| Program | For |
+|---|---|
+| `xcode-select -p`, `sw_vers -buildVersion` (macOS) | Which Xcode is selected; the stamp of the machine's system in Info.plist |
+| `codesign --verify` (macOS) | That the Xcode, its `swift`, `clang` and `ld` are signed by Apple |
+| Xcode's `swift` (which runs its compilers, linker, `dsymutil` and SwiftPM) and SDKs | Compiling ([native-install.md](native-install.md#on-a-mac)) |
+| Xcode's `actool`, `ibtool` | Asset catalogs and launch storyboards; `XLESS_TOOLS=xless` uses xless's own |
+| Xcode's `install_name_tool` | Taking this machine's library search paths out of the app's executable |
+| Xcode's `xcodebuild -checkFirstLaunchStatus` | `xless setup` says whether Xcode still has something to install |
+| `codesign --sign -` (macOS) | The ad hoc signature of a simulator build, with no key |
+
+Xcode's metadata (`version.plist`, the SDKs' `SDKSettings.json`) is read, as from an export on Linux.
 
 ## From your Apple account
 
@@ -129,7 +148,8 @@ git grep -n -E 'Contents/Developer|xcrun|xcodebuild|sw_vers|PlistBuddy|xip |\.ap
 ```
 
 Run on 2026-10-19 (at the commit that added this document): 90 hits in 32 files. Each one falls in one of four
-classes:
+classes (the build on a Mac came later: its programs are the [table above](#on-a-mac), in `InstalledXcode.swift`,
+`XcodePackageBuilder.swift`, `XcodeAssets.swift` and `MacNative.swift`, none of which runs on Linux):
 
 - **SDK**: reads a file listed under [From `Xcode.xip`](#from-xcodexip); nothing is executed.
 - **Replacement**: xless's own open-source stand-in for an Apple tool, named after it so that build scripts find it
@@ -177,5 +197,5 @@ classes:
 | `docker/shims/xcodebuild` | 10 | Replacement |
 | `docker/shims/xcrun` | 2 | Replacement |
 
-No hit outside these classes: the user path (install, `xless setup`, `xless run`, every build stage, signing,
+No hit outside these classes: on Linux, the user path (install, `xless setup`, `xless run`, every build stage, signing,
 packaging and upload) runs no Apple program. Line numbers drift as the code changes; run the search again to check.

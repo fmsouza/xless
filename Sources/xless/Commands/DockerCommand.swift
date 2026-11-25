@@ -12,8 +12,9 @@ struct RunCommand: ParsableCommand {
         discussion: """
         Usage: xless run [--docker] [<project-dir> | --config <overlay.yml>] [options …] [-- xless ship args]
 
-        Options, anywhere: --platform ios|macos and --destination device|simulator (with --config), --dry-run (print what \
-        would run), --allow-disk-secrets. The other arguments go to xless ship, --from and --to among them.
+        Options, anywhere: --platform ios|macos and --destination device|simulator (with --config, \
+        or natively on a Mac), --dry-run (print what would run), --allow-disk-secrets. The other arguments go to xless \
+        ship, --from and --to among them.
 
         Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native. Natively it builds xless.yml \
         projects: on Linux with what xless setup installed, on a Mac with the Xcode that is installed there (DEVELOPER_DIR, \

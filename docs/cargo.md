@@ -196,7 +196,7 @@ What differs for cargo:
 - **Mounts.** As for Tauri, plus `~/.cache/xless/inputs` at `/cache/inputs` (the clones of git inputs) and each path input read-only at `/inputs/<name>`, with `XLESS_INPUTS_MOUNTED=1`, in step 2 only. The path inputs are the ones `xless cargo inputs` lists on your machine. Its refusals (exit 2) are in [build inputs](#build-inputs).
 - **Caches.** `~/.cache/xless/work`, `~/.cache/xless/downloads` and the docker volumes `xless-rustup` and `xless-cargo`: the Rust toolchains and the crates survive between runs. The first build downloads Rust and compiles the whole dependency graph, which takes several minutes and several GB.
 - **Stages.** `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios|macos`. Exit codes are the ones in [pipeline.md](pipeline.md#stages): config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
-- **Native.** As for Tauri: `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds are untested in this milestone.
+- **Native.** As for Tauri: `xless run` refuses an overlay without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds are untested in this milestone.
 
 ## macOS
 

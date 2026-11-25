@@ -1,15 +1,27 @@
 # xless
 
-xless builds iOS and macOS apps on Linux, with no Mac. It compiles a Swift package, a React Native (Expo) app, a
+xless builds iOS and macOS apps on Linux, with no Mac, and on a Mac with the Xcode that is installed. It compiles a Swift package, a React Native (Expo) app, a
 Tauri app or a plain Cargo app against Apple's SDK, and can then sign it, package it and upload it to TestFlight. By
 default it installs everything it needs straight onto your Linux machine, from the Xcode download Apple gives you. The
 alternative is a set of Docker images that you build once on your own machine: add `--docker` to the commands. React
 Native, Tauri and plain Cargo apps build in the images only.
 
+## On a Mac
+
+With Xcode installed (and opened once), [install xless](#install) and build a Swift package app. Nothing else is set up:
+
+```sh
+xless run <project-dir> --build-number 1 --to finalize     # builds
+xless run <project-dir>                                    # builds, signs and ships (docs/signing-and-testflight.md)
+```
+
+`xless setup` there only checks what it finds. xless uses Apple's tools where they are, and its own for signing, packaging
+and uploading ([docs/native-install.md](docs/native-install.md#on-a-mac)). React Native, Tauri and plain Cargo apps build
+[in Docker](#build-in-docker-instead) on a Mac too. The rest of this page is about Linux.
+
 ## What you need
 
-- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on. (On macOS 14 or later xless installs
-  too, for its account commands and builds [in Docker](#build-in-docker-instead); it has no native builds there yet.)
+- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on.
 - A few system packages: `curl`, `tar`, `zip`, `unzip`, `git`, `python3` and the libraries of Swift's Linux toolchain.
   `xless setup` checks for the commands and prints the `apt-get install` line that adds whatever is missing. It never
   runs `sudo` itself.

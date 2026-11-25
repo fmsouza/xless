@@ -1,5 +1,7 @@
 # The native install
 
+On a Mac there is nothing to install: xless builds with your Xcode ([below](#on-a-mac)).
+
 On Linux, `xless setup --xcode <Xcode.xip>` installs what xless builds with straight onto the machine, and `xless run`
 builds with it. This is the default; the Docker images (`--docker`, [README](../README.md#build-in-docker-instead))
 are the alternative. This page says what the native install puts where, what it needs, and what it does not cover.
@@ -8,7 +10,7 @@ are the alternative. This page says what the native install puts where, what it 
 
 `xless.yml` projects (Swift packages), for iOS and macOS, through every stage up to TestFlight. React Native, Tauri and
 plain Cargo apps (`--config <overlay.yml>`) need much more than the native install has (Node and CocoaPods, rustup's
-Apple targets, Swift Build, the Xcode tool shims), so `xless run` refuses them on Linux without `--docker`.
+Apple targets, Swift Build, the Xcode tool shims), so `xless run` refuses them without `--docker`.
 
 ## What it needs
 
@@ -52,9 +54,53 @@ the `TARGET_OS_*` definitions Apple's clang has and the open-source one lacks, a
 flags. For Xcode 26.2 (Swift 6.2.3) the SDK also uses that toolchain's clang headers with the Xcode's runtime
 libraries. This changes only xless's own copy of Swift.
 
+## On a Mac
+
+With Xcode installed, and opened once (it asks for its license and adds what it needs), `xless run` builds and ships an
+`xless.yml` project with nothing else set up: no Xcode download, no SDK, no Docker.
+
+```sh
+xless setup      # optional: says which Xcode it is, and whether anything is missing; downloads nothing
+xless run <project-dir> --build-number 1 --to finalize
+xless run <project-dir> --destination simulator        # for the simulator, signed ad hoc
+```
+
+**Which Xcode.** In this order: `DEVELOPER_DIR`, the one that `xcode-select` names, then the others in `/Applications` and
+`~/Applications` (`Xcode*.app`), the newest first. A project that pins one with `xcode: "27.2"` gets the first of them of that
+version; when there is none, the build says which there are. `DEVELOPER_DIR` is never passed over: where it does not fit the
+pin, the build stops. One line at the start says which Xcode is used and from where:
+
+```text
+xless: Xcode 27.2 (27B52) at /Applications/Xcode.app (xcode-select); actool and ibtool: Xcode's
+```
+
+An Xcode that Apple did not sign, or that other users of the Mac can write to, is refused
+([security.md](security.md#with-an-installed-xcode)). The Command Line Tools alone have no iOS SDK, so they are not enough.
+
+**Which tools.** The compiler, linker and SDKs are that Xcode's. Each other tool is Xcode's when xless knows how to use it,
+else xless's own, which is the same as on Linux:
+
+| For | Used | |
+|---|---|---|
+| Compiling | Xcode's `swift` (SwiftPM), without xcodebuild | always |
+| Asset catalogs, launch storyboards | Xcode's `actool` and `ibtool` | `XLESS_TOOLS=xless` uses xless's own, as Linux does; `XLESS_TOOLS=xcode` fails where Xcode's is missing; `XLESS_TOOLS=actool=xless` chooses for one |
+| Signing, notarizing, `.ipa`, `.pkg`, disk images, uploading | rcodesign and xless's own | always ([why](security.md#with-an-installed-xcode)) |
+
+rcodesign (about 9 MB, pinned by SHA-256) is fetched once, by the first command that signs, into
+`~/.local/share/xless-native/tools` (or under `XLESS_NATIVE_HOME`). `xless clean --native` removes it.
+
+**What it builds.** Swift packages (`xless.yml`), for iOS devices, the iOS simulator and macOS. React Native, Tauri and Cargo
+apps build in the images, on a Mac too (`--docker`), except for the React Native simulator builds that
+[react-native.md](react-native.md) describes. A pre-built or dynamic library that the app loads is put in its `Frameworks`;
+where an app's lowest system needs Swift libraries that Apple ships with Xcode for older systems, the build stops and says to
+raise `minimumOS`. A simulator build has no entitlements.
+
+Build products are in the project's `.xless/` (`xcode-pkg-*`, `xcode-build-*`, and `build/` as on Linux). They are deleted with
+it.
+
 ## One Xcode at a time
 
-The native install holds one Xcode's SDK and Swift. `xless setup` with another Xcode replaces them; with the same Xcode
+(Linux.) The native install holds one Xcode's SDK and Swift. `xless setup` with another Xcode replaces them; with the same Xcode
 it does nothing (`--reexport` exports the SDK again). A project that pins another Xcode with `xcode:` is refused at
 `build` with the setup command that fixes it. To keep several Xcodes side by side, use the images
 (`xless setup --docker`), which are tagged per Xcode.

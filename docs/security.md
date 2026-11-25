@@ -495,6 +495,10 @@ An app's build runs code you did not write. What that code can reach depends on 
   names (the store keeps keys sealed on disk), and the environment of your shell, or of any other process of yours
   (`xless run` itself is not one: it is non-dumpable too, and a macOS release hides its environment) that exported a
   secret variable (`/proc/<pid>/environ`; `ps -E` on macOS): keep keys in the store rather than in exported variables.
+- **A project directory on a Mac, natively**, is two `xless ship`: the first builds, without a secret variable and unable to open
+  the store, and the second signs, packages and uploads what it left, in `/`, with the secrets. Between them `xless run` looks at
+  xless.yml: when it is another one than when the run began, or no regular file, nothing is signed. More is in
+  [With an installed Xcode](#with-an-installed-xcode).
 
 **Which image a container runs in.** An image with toolchains of other languages never holds a secret. The table is
 each step of `xless run --docker`:
@@ -538,7 +542,7 @@ whether the account may be changed, and the app that the upload goes to come fro
   fetch what a partial clone lacks before the run (`git ls-files` in it does): without it the listing fails, or an older git leaves
   those files out. This holds natively too.
 - Natively the build runs as you, and can write what you can: the overlay and xless.yml as well. What is above is of the
-  containers.
+  containers (but on a Mac a run stops where xless.yml changed under it).
 
 When you do not fully trust the code of an `xless.yml` project, name an image of your own for its build (the last line of the
 table), or keep the signing in a second run, so no build code runs while a key is in use:
@@ -552,6 +556,37 @@ xless run ~/MyApp --from sign         # sign and upload what it built: no build 
 The second run reads the project's files as the first left them. In containers (`--docker`) the first one's build has xless.yml
 read-only, and the run says when it is another one afterwards; natively nothing keeps a build from changing it. Look at the
 project (`git diff`, `git status`) before the second, if you would not let its build code choose the team and the bundle ID.
+
+### With an installed Xcode
+
+On a Mac, xless builds an `xless.yml` project with the Xcode that is installed
+([native-install.md](native-install.md#on-a-mac)). It runs Apple's command-line programs (`swift`, `actool`, `ibtool`,
+`install_name_tool`, `codesign`…) where they are, as programs. It links no framework of Xcode's, calls no private interface, and
+copies nothing of Xcode's into an image, a cache or a release; an app's own build products stay in the project's `.xless/`.
+
+- **Which Xcode is used.** Only one whose signature is Apple's (the app's, as the App Store or developer.apple.com ship it, and
+  those of its `swift`, `clang` and `ld`), and where the directories from `/` to its programs belong to root or to you and can
+  be written by nobody else but the administrators of the Mac (the groups `wheel` and `admin`). `DEVELOPER_DIR` may choose an
+  Xcode, not go around the checks. They are made by every command that builds. Not checked: the signature of every other file in
+  Xcode (a person who can write there is you, or an administrator), and access control lists.
+- **The build runs as you**, as natively on Linux: its code can read your files. SwiftPM's own sandbox stays on
+  (`sandbox-exec`): a package's manifest, and the plugins and tools that a build runs, write only to the directories of the build and
+  the temporary ones (not into the project, nor into your home directory) and reach no network. It does not keep them from
+  *reading* your files, and the compilers and the linker are not in it, nor what flags make them do (`unsafeFlags`, in a package that
+  may have them).
+- **xless adds no sandbox of its own.** `sandbox-exec` is deprecated and its profile language is not documented. A profile that
+  lets a compiler, Xcode's services and an unknown package work would have to allow reading almost everything, and a sandbox
+  cannot be put into SwiftPM's (it would have to be turned off). What keeps the secrets from a build is that they come after it:
+  the process that builds never has them, and the store stays sealed. Code that runs as you and stays after the build can do
+  later what any program of yours can. When you do not trust a project's code, build it with `--docker`, which shows it
+  nothing of yours but the project.
+- **The signing key never enters a keychain.** `codesign` takes a key from a keychain only: in yours, or in a temporary one, any
+  program of yours can ask to sign with it while it is unlocked. So xless signs with rcodesign on a Mac too, whose key file is
+  readable by you only, is written after the build and is gone seconds later. rcodesign's release is pinned by SHA-256 in
+  `versions.env`; it is fetched by the first command that signs, before that reads a secret, or before the build of a run that
+  will sign. An rcodesign on your `PATH` is not used. The app store's `.pkg`, disk images, notarization and uploads are xless's own
+  as on Linux.
+- A simulator build is signed ad hoc with `/usr/bin/codesign --sign -`: no identity, no key, no keychain.
 
 Where the kernel keyring is unavailable (macOS, a container whose seccomp profile blocks it) there is nothing in it to
 hide; where it is available but a tool cannot be given an empty keyring, xless does not start the tool. Nor does it start
@@ -570,7 +605,7 @@ Every request is HTTPS. xless sends no telemetry.
 | `appstoreconnect.apple.com` (`/olympus/v1`, `/iris/v1`) | App Store Connect's own web interface: session and team, app record creation, API keys, App Privacy, agreements check | Apple ID session cookies | the [web-session commands](#the-apple-id-web-session) |
 | `developer.apple.com` (`/services-account/…`) | The developer portal's web interface: teams, app groups, iCloud containers, assigning them to bundle IDs, auth keys; the Xcode download list | Apple ID session cookies | the [web-session commands](#the-apple-id-web-session), `xless xcode download` |
 | `developerservices2.apple.com`, `download.developer.apple.com` | The `.xip` download | Apple ID session cookies | `xless xcode download` only ([xcode-download.md](xcode-download.md)) |
-| `download.swift.org`, `github.com` | Downloads of pinned tools, checked by SHA-256 | none | `xless setup`, the installer ([native-install.md](native-install.md)) |
+| `download.swift.org`, `github.com` | Downloads of pinned tools, checked by SHA-256 | none | `xless setup`, the installer; on a Mac the first command that signs (rcodesign) ([native-install.md](native-install.md)) |
 
 Cookies are sent only to hosts within the domain that set them, and no other header of a request follows a redirect
 to another host (but `Accept`, `User-Agent` and `Range`). The App Store
