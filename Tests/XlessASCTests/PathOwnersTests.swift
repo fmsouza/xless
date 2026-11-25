@@ -14,19 +14,19 @@ private let exceptions: [String: String] = [
     "XlessStore/StoreSender.swift /v1/{}/{}": "deletes the items of a screenshot or preview set, whose type the plan has",
     "XlessStore/StoreSender.swift /v1/{}": "compares a planned request's path, to adopt a version text App Store Connect made itself",
     "xless/LiveCheck.swift /olympus/v1/session": "the live check lets this one sign-in POST through its read-only transport; it sends nothing itself",
+    "XlessAppleID/SignInModels.swift /olympus/v1/session": "the sign-in asks for it once before it has a session, and so before there is an ASCWebClient",
     "xless/LiveCheck.swift v1/bundleIds": "the label of a check; the portal's service sends the request",
 ]
 
 /// Called from several files today, to be made one: the list only gets shorter.
 private let pending: Set<String> = [
     "/v1/appEncryptionDeclarations", "/v1/appStoreVersions/{}/appStoreVersionLocalizations", "/v1/appStoreVersions/{}/appStoreVersionPhasedRelease",
-    "/v1/apps", "/v1/apps/{}/appInfos", "/v1/apps/{}/appStoreVersions", "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
-    "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds", "/v1/builds/{}", "/v1/builds/{}/betaBuildLocalizations", "/v1/bundleIds",
+    "/v1/apps/{}/appInfos", "/v1/apps/{}/appStoreVersions", "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
+    "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds/{}/betaBuildLocalizations", "/v1/bundleIds",
     "/v1/certificates", "/v1/profiles", "/v1/profiles/{}", "/v1/profiles/{}/relationships/certificates",
     "/v1/subscriptionPricePoints/{}/equalizations", "/v1/subscriptions/{}/pricePoints", "/v2/inAppPurchases/{}", "/v2/inAppPurchases/{}/pricePoints",
 ]
-private let pendingConstants: Set<String> = ["XlessAppleID/AppleWebSession.swift ASCWebClient.sessionPath"]
-private let pendingCallers: Set<String> = ["XlessSign/CertificateService.swift", "XlessSign/ProfileService.swift", "xless/APIKeys.swift"]
+private let pendingCallers: Set<String> = ["XlessSign/CertificateService.swift", "XlessSign/ProfileService.swift"]
 
 /// Files outside XlessASC that send through `ASCClient` themselves: file → why.
 private let clientCallers: [String: String] = [
@@ -149,6 +149,12 @@ struct SourcePaths {
                 constants[String(m.1)] = String(m.2)
                 if let type = types.last(where: { $0.at < m.range.lowerBound }) { out.constants["\(type.name).\(m.1)"] = name }
             }
+            /// Apple's hosts left out, so that a whole URL is the same path.
+            func local(_ path: String) -> String {
+                for host in ["https://api.appstoreconnect.apple.com", "https://appstoreconnect.apple.com", "https://developer.apple.com/services-account/"]
+                where path.hasPrefix(host) { return String(path.dropFirst(host.count)) }
+                return path
+            }
             func resolved(_ l: Scan.Literal) -> String {
                 var parts = l.text.split(separator: "\u{1}", omittingEmptySubsequences: false).map(String.init)
                 var path = parts.removeFirst()
@@ -157,7 +163,7 @@ struct SourcePaths {
                     path += (path.isEmpty ? constant : nil) ?? "{}"
                     path += rest
                 }
-                return String(path.split(separator: "?", maxSplits: 1)[safe: 0] ?? "")
+                return String(local(path).split(separator: "?", maxSplits: 1)[safe: 0] ?? "")
             }
             func line(_ offset: Int) -> Int { scan.code[..<offset].count { $0 == "\n" } + 1 }
             /// The call the text at `offset` is the (first, or after a method) argument of.
@@ -224,7 +230,6 @@ extension Collection {
     for (name, text) in files {
         let code = String(SourcePaths.Scan(text).code)
         for (constant, owner) in paths.constants.sorted(by: { $0.key < $1.key }) where owner != name && code.contains(constant) {
-            if pendingConstants.contains("\(name) \(constant)") { continue }
             Issue.record("\(name) uses \(constant), which \(owner) owns")
         }
     }
@@ -254,6 +259,7 @@ extension Collection {
         func c() { try await resources.addRelationship("\(Things.path)/\(id)", "others", []) }
         func d() { try await client.request("POST", "/v1/others/\(id)", body: nil) }
         /* "/v1/blocked" */
+        let url = URL(string: "https://appstoreconnect.apple.com/olympus/v1/whole?a=b")!
         let raw = #"/v2/raw/\#(id)"#
     }
     """##
@@ -261,5 +267,6 @@ extension Collection {
     #expect(found.constants == ["Things.path": "A.swift"])
     #expect(Set(found.uses.map { "\($0.call) \($0.path)" }) == [
         " /v1/things", "list /v1/things", "get /v1/things/{}", "addRelationship /v1/things/{}/relationships/others", "request POST /v1/others/{}", " /v2/raw/{}",
+        " /olympus/v1/whole",
     ])
 }

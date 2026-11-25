@@ -68,18 +68,13 @@ public enum DatedBuildNumber {
         }
     }
 
-    struct AppAttributes: Codable, Sendable { var bundleId: String? }
-    struct BuildAttributes: Codable, Sendable { var version: String? }
-    struct List<D: Codable & Sendable>: Codable, Sendable { var data: [D] }
-
     /// Every CFBundleVersion App Store Connect holds for this app and version (read-only). No app record yet means no
     /// builds: the first run then registers the bundle ID at `sign` and `upload` reports the missing record.
     public static func existingBuilds(client: ASCClient, bundleID: String, version: String) async throws -> [String] {
-        let apps: List<ASCResource<AppAttributes>> = try await client.get("/v1/apps", query: [("filter[bundleId]", bundleID)])
-        guard let app = apps.data.first(where: { $0.attributes.bundleId == bundleID }) else { return [] }
-        let query = ASCQuery(filters: [("app", app.id), ("preReleaseVersion.version", version)], fields: [("builds", ["version"])])
+        let resources = ASCResources(client: client)
+        guard let app = try await ASCApps(resources: resources).find(bundleID: bundleID) else { return [] }
         do {
-            return try await ASCResources(client: client).list("/v1/builds", query: query, as: ASCResource<BuildAttributes>.self).items.compactMap(\.attributes.version)
+            return try await ASCBuilds(resources: resources).numbers(appID: app.id, version: version)
         } catch ASCPagingError.didNotTerminate {
             // A partial list could let the ordering check pass wrongly, so running out of pages is an error, never a truncation.
             throw XlessError(.config, "too many App Store Connect build pages for \(bundleID) \(version); pagination did not terminate",

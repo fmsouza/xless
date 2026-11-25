@@ -233,7 +233,7 @@ enum APIKeyVerification {
             var left = unauthorizedRetries
             while true {
                 do {
-                    _ = try await client.request("GET", "/v1/apps", query: [("limit", "1")])
+                    try await ASCApps(resources: ASCResources(client: client)).probe()
                     return
                 } catch let e as ASCError where e.status == 401 && left > 0 {
                     left -= 1

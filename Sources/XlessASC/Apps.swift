@@ -180,6 +180,11 @@ public struct ASCApps: Sendable {
         return listing.items.first { $0.bundleID == bundleID }
     }
 
+    /// Whether App Store Connect takes the key at all: the smallest read there is (one app, whichever comes first).
+    public func probe() async throws {
+        _ = try await resources.client.request("GET", Self.path, query: [("limit", "1")])
+    }
+
     /// The app a command names: an app ID or a bundle identifier (looked up).
     public func resolve(_ text: String) async throws -> ASCApp {
         if AppArgument.isAppID(text) { return try await get(id: text) }

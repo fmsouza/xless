@@ -69,7 +69,6 @@ public struct TestFlightPublisher: Sendable {
 
     public init(client: ASCClient) { self.client = client }
 
-    struct Named: Codable, Sendable { var bundleId: String? }
     struct GroupAttributes: Codable, Sendable {
         var name: String?
         var isInternalGroup: Bool?
@@ -95,12 +94,7 @@ public struct TestFlightPublisher: Sendable {
                         secret: (String) throws -> String = { name in throw XlessError(.upload, "missing secret \(name)", fix: "set \(name) or \(name)_FILE") }) async throws -> TestFlightResult {
         let done = "the build is already uploaded and processed (build \(buildNumber)); deliver it by hand in App Store Connect → TestFlight, or fix the cause and ship again with a higher build number"
 
-        let apps: ASCDocument<[ASCResource<Named>]> = try await step("looking up the app record", done: done) {
-            try await client.get("/v1/apps", query: [("filter[bundleId]", bundleID)])
-        }
-        guard let app = apps.data.first(where: { $0.attributes.bundleId == bundleID }) else {
-            throw XlessError(.upload, "no app record for \(bundleID)", fix: "create it with `xless apps create --bundle-id \(bundleID) --name <name> --sku <sku> --locale <locale>` (Apple ID sign-in: the API cannot create app records), or in App Store Connect (Apps → +)")
-        }
+        let app = try await uploadApp(bundleID: bundleID, resources: ASCResources(client: client), fix: "see the App Store Connect error above", suffix: done)
 
         var whatToTestSet = false
         if let text = config.whatToTest {

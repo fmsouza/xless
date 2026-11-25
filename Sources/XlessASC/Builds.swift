@@ -223,6 +223,17 @@ public struct ASCBuilds: Sendable {
         return ASCBuildDetail(build: single.data, included: single.included)
     }
 
+    /// The build on its own, nothing included: what the wait after an upload reads every round.
+    public func alone(id: String) async throws -> ASCBuild {
+        try await resources.get("\(Self.path)/\(id)", as: ASCBuild.self).data
+    }
+
+    /// The build numbers App Store Connect holds for the app's version: every state and platform, expired ones too.
+    public func numbers(appID: String, version: String) async throws -> [String] {
+        let query = ASCQuery(filters: [("app", appID), ("preReleaseVersion.version", version)], fields: [("builds", ["version"])])
+        return try await resources.list(Self.path, query: query, as: ASCBuild.self).items.compactMap(\.attributes.version)
+    }
+
     /// The build with exactly this version and build number (expired or not); nil when there is none. Several matches
     /// (the same numbers in two apps, or on two platforms of one app) are an error naming each.
     public func find(version: String, number: String, appID: String? = nil, platform: BuildPlatform? = nil) async throws -> ASCBuildDetail? {

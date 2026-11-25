@@ -51,7 +51,7 @@ public final class AppleWebSession: Sendable {
     /// Whether Apple no longer takes the session: App Store Connect says so, and the developer portal too (an Apple ID
     /// without App Store Connect is refused there only). A failure to reach Apple says nothing.
     private func isRefused() async -> Bool {
-        guard let answer = try? await asc.send("GET", ASCWebClient.sessionPath), [401, 403].contains(answer.status) else { return false }
+        guard let status = await asc.sessionStatus(), [401, 403].contains(status) else { return false }
         return (try? await portal.teams()) == nil
     }
 
