@@ -96,6 +96,7 @@ bad() {  # what it says, then a command that changes the unpacked package $b/$to
   grep -qF "$want" "$t/err" || fail "refused for something else than '$want': $(cat "$t/err")"
 }
 cd / # the paths below are the package's
+umask 022 # and so are the modes
 bad "too much" touch bin/libswiftCore.dylib
 bad "too much" touch share/xless/docker/.DS_Store
 bad "too much" sh -c 'mkdir -p share/xless/SDKs && echo x > share/xless/SDKs/x.tbd'
