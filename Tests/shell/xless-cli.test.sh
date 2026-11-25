@@ -114,6 +114,8 @@ if [[ "$(uname)" == Linux ]]; then
   [[ "$out" == docker* ]] || fail "run --docker --config: $out"
 fi
 # sign bootstrap: what it is called now, on standard error, and the same outcome as before
-code=0; "${runs[@]}" "$x" sign bootstrap --type distribution --out "$t/none/key.pem" --csr-only >"$t/out" 2>"$t/err" || code=$?
-[[ $code -ne 0 && $(grep -c "^note: xless sign bootstrap is xless certs create now" "$t/err") -eq 1 && ! -s "$t/out" ]] || fail "sign bootstrap's notice ($code): $(cat "$t/err")"
+code=0; "${runs[@]}" "$x" sign bootstrap --type distribution >"$t/out" 2>"$t/err" </dev/null || code=$?
+[[ $code -eq 15 && $(grep -c "^note: xless sign bootstrap is xless certs create now" "$t/err") -eq 1 && ! -s "$t/out" ]] || fail "sign bootstrap's notice ($code): $(cat "$t/err")"
+"${runs[@]}" "$x" sign bootstrap --type distribution --out "$t/key.pem" --csr-only >/dev/null 2>"$t/err" || fail "sign bootstrap --csr-only: $(cat "$t/err")"
+[[ ! -s "$t/err" && -s "$t/key.pem.csr" ]] || fail "sign bootstrap --csr-only: $(cat "$t/err")"
 echo PASS
