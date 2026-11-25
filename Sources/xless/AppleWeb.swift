@@ -3,6 +3,7 @@ import Foundation
 import XlessAgent
 import XlessAppleID
 import XlessCore
+import XlessVault
 
 // What the commands that use the Apple ID web session share (docs/apple-account.md#the-apple-id-web-session): the
 // help text that says so, the terminal, the transport (traced with --verbose) and the opt-in kept session.
@@ -61,17 +62,17 @@ enum AppleWebCLI {
     /// The session of `web`: the kept one, else a sign-in on `terminal`, announced.
     /// - Parameter offering: false when the command itself says how long it is kept.
     /// - Returns: also the terminal it signed in on; nil when it did not have to.
-    static func session(_ web: AppleWebClient, offering: Bool = true,
-                        terminal: () throws -> TerminalPrompter) async throws -> (session: AppleWebSession, signedInOn: TerminalPrompter?) {
-        var signedInOn: TerminalPrompter?
+    static func session<T: SignInPrompter & PassphrasePrompter>(_ web: AppleWebClient, offering: Bool = true, cache: AppleSessionCache = cache, offer: KeepOffer = .shared,
+                                                                terminal: () throws -> T) async throws -> (session: AppleWebSession, signedInOn: T?) {
+        var signedInOn: T?
         let session = try await AppleWebSession.open(web: web, cache: cache, prompter: {
             let opened = try terminal()
-            opened.say(KeepOffer.shared.signInAnnouncement(offering: offering))
+            (opened as any PassphrasePrompter).say(offer.signInAnnouncement(offering: offering))
             signedInOn = opened
             return opened
         }, keep: {
             guard offering, let signedInOn else { return nil }
-            return KeepOffer.shared.session(signedInOn) { SecretStoreCLI.witness() }
+            return offer.session(signedInOn) { SecretStoreCLI.witness() }
         })
         if signedInOn != nil { say("Signed in to Apple as \(session.appleID).") }
         return (session, signedInOn)

@@ -1,6 +1,9 @@
 import ArgumentParser
 import Crypto
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import SwiftASN1
 import Testing
 import X509
@@ -891,4 +894,170 @@ private final class TypingPassphrase: PassphrasePrompter {
     #expect(s.world.linked[.appGroup]?["com.example.app.widget"]?.isEmpty == false)
     let again = try await ProvisionPlanner(inputs: s.inputs, account: s.account, web: s.web, vault: v.vault, store: nil, now: now).plan()
     #expect(again.steps.isEmpty && again.drift.isEmpty, "\(again.text)")
+}
+
+// MARK: - how often a person is asked
+
+/// A terminal somebody sits at: the store starts locked, no Apple ID session is kept. Each command is a process of its own
+/// (its own store, caches and offer), and what one leaves to the next is what its agent holds. Counts what was asked.
+private final class Desk: @unchecked Sendable {
+    /// Types the passphrase, the Apple ID and its password, and `keep` at the offer.
+    final class Typist: PassphrasePrompter, SignInPrompter, @unchecked Sendable {
+        let desk: Desk
+        init(_ desk: Desk) { self.desk = desk }
+        func askSecret(_ prompt: String) throws -> SecretBytes {
+            desk.count(prompt.contains("assphrase") ? "passphrase" : "password")
+            return SecretBytes(utf8: "correct horse battery")
+        }
+        func ask(_ prompt: String) throws -> String {
+            desk.count(prompt.hasSuffix("[y/N] ") ? "offer" : "Apple ID")
+            return prompt.hasSuffix("[y/N] ") ? desk.keep : "me@example.com"
+        }
+        func say(_ line: String) { desk.lines.add(line) }
+    }
+
+    let vault: TestVault
+    let keep: String
+    let agents = FakeAgents()
+    let lines = Lines()
+    private let lock = NSLock()
+    private var asked: [String: Int] = [:]
+
+    init(keep: String, env: [String: String] = [:]) throws { vault = try TestVault(); self.keep = keep }
+    func count(_ what: String) { lock.withLock { asked[what, default: 0] += 1 } }
+
+    /// What `command` asked: the passphrase, Apple ID, password and offer, as often as each.
+    func asked(_ command: () async throws -> Void) async rethrows -> [String: Int] {
+        let before = lock.withLock { asked }
+        try await command()
+        return lock.withLock { asked.merging(before) { $0 - $1 }.filter { $0.value != 0 } }
+    }
+
+    /// One process of xless: what its commands share.
+    struct Process {
+        let desk: Desk
+        let secrets: VaultSecretStore
+        private let offer: KeepOffer
+        private let cache: AppleSessionCache
+
+        init(_ desk: Desk, _ command: String) {
+            let held = HeldKeyCache(agents: desk.agents, keyring: FakeKeyring(available: false), isOff: false, maximum: 7 * 86400, say: { _ in })
+            let offer = KeepOffer(agents: desk.agents, cache: held, settings: UnlockSettings(), isOff: false, command: command)
+            let secrets = VaultSecretStore(store: desk.vault.store, cache: held, manner: offer, prompter: { Typist(desk) })
+            self.desk = desk
+            self.offer = offer
+            self.secrets = secrets
+            cache = AppleSessionCache(store: HeldSessionStore(agents: desk.agents, keyring: FakeKeyring(available: false), isOff: false, witness: { nil }, say: { _ in }))
+        }
+
+        /// The Apple ID session, as the commands open it, with an Apple that takes the typist's password.
+        func web() async throws -> AppleWebSession {
+            try await AppleWebCLI.session(AppleWebClient(transport: SigningIn(), stage: .account), cache: cache, offer: offer) { Typist(desk) }.session
+        }
+
+        /// The API key, as the account commands of a project read it.
+        func account() throws -> AccountSession {
+            try AccountSession.open(team: nil, project: team, verbose: false, env: [:], store: { secrets })
+        }
+    }
+
+    func authAPIKeyCreate() async throws {
+        let p = Process(self, "xless auth api-key create")
+        let keys = try APIKeyWebCLI.unlocked(store: p.secrets, reason: "storing the new API key") { APIKeyStore(store: $0, catalogID: $1.id) }
+        _ = try await p.web()
+        let created = try await APIKeyCreation(web: NewAPIKey(), vault: keys, verify: { _ in })
+            .run(nickname: "xless", roles: ["ADMIN"], appIDs: [], team: team, issuerID: "ISSUER", entry: "ASC_KEY_P8@\(team)")
+        #expect(created.verified)
+    }
+
+    func provisionApply(_ world: Setup) async throws {
+        let p = Process(self, "xless provision apply")
+        _ = try p.account()
+        var s = world
+        s.vault.vault = ProvisionVault(store: p.secrets, env: [:])
+        s.hasWeb = false
+        let web = s.web
+        _ = try await ProvisionApplier(inputs: s.inputs, account: s.account, web: { _ = try await p.web(); return web }, vault: s.vault.vault, store: s.store, now: now)
+            .apply(try await s.plan())
+    }
+
+    /// Each step is a process of its own, inside one `xless session` (Tests/shell/testflight-secrets.test.sh, session.test.sh).
+    func run() throws {
+        let p = Process(self, "xless run")
+        let resolver = VaultResolver(secrets: p.secrets).preferring(team: team)
+        for name in ["ASC_KEY_P8", "ASC_KEY_ID", "ASC_ISSUER_ID", "XLESS_DIST_KEY"] { #expect(try resolver.lookup(name, stage: .sign)?.isEmpty == false, "\(name)") }
+    }
+
+    func releaseSubmit() throws { _ = try Process(self, "xless release submit").account() }
+
+    /// `xless store push` of a listing with a demo account and App Privacy details.
+    func storePush() async throws {
+        let p = Process(self, "xless store push")
+        _ = try p.account()
+        #expect(try VaultResolver(secrets: p.secrets).lookup("XLESS_DEMO_PASSWORD", stage: .account) == "pw")
+        _ = try await p.web()
+    }
+}
+
+private struct NewAPIKey: APIKeyWeb {
+    func create(nickname: String, roles: [String], appIDs: [String]) async throws -> ASCAPIKeyInfo {
+        ASCAPIKeyInfo(id: "2X9R4HXF34", nickname: nickname, roles: roles, isActive: true, allAppsVisible: true, canDownload: true)
+    }
+    func downloadPrivateKey(id: String) async throws -> SecretBytes { SecretBytes(utf8: P256.Signing.PrivateKey().pemRepresentation) }
+}
+
+/// Apple, taking "correct horse battery" without a second factor, and every session it gave.
+private final class SigningIn: AppleTransport, @unchecked Sendable {
+    // Apple's public value; what the client proves with it is not looked at here.
+    private static let salt = Data(0..<16), B = Data(repeating: 0x42, count: 256)
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        var status = 200, headers: [String: String] = [:], body: [String: Any] = [:]
+        switch (request.httpMethod ?? "GET", request.url!.path) {
+        case ("HEAD", "/logout"): (status, headers) = (302, ["Location": "https://idmsa.apple.com/appleauth/auth/signin?widgetKey=WK123&locale=en_US"])
+        case ("GET", "/appleauth/auth/signin"): headers = ["X-Apple-HC-Bits": "1", "X-Apple-HC-Challenge": "chal"]
+        case ("POST", "/appleauth/auth/signin/init"):
+            body = ["iteration": 1000, "salt": Self.salt.base64EncodedString(), "protocol": "s2k", "b": Self.B.base64EncodedString(), "c": "ctoken"]
+        case ("POST", "/appleauth/auth/signin/complete"): headers = ["Set-Cookie": "myacinfo=NEW; Domain=.apple.com; Path=/; Secure"]
+        case ("GET", "/appleauth/auth/2sv/trust"): status = 204
+        case ("GET", "/olympus/v1/session"): break
+        default: throw XlessError(.account, "unexpected \(request)", fix: "-")
+        }
+        headers["Content-Type"] = "application/json"
+        return (try JSONSerialization.data(withJSONObject: body), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!)
+    }
+
+    func download(_ request: URLRequest, to file: URL, progress: @escaping @Sendable (Int64) -> Void) async throws -> (Data, HTTPURLResponse) {
+        throw XlessError(.account, "unexpected download", fix: "-")
+    }
+}
+
+/// The project's account is empty; its demo password is the person's own, imported before.
+private func firstApp(_ desk: Desk) throws -> Setup { Setup(vault: desk.vault) }
+
+@Test func theFirstAppFlowAsksThePassphraseOnceAndSignsInOnce() async throws {
+    let desk = try Desk(keep: "y")
+    defer { desk.vault.cleanup() }
+    let world = try firstApp(desk)
+    // From a locked store and no session, the one offer answered yes: the first command asks, the others nothing.
+    #expect(try await desk.asked { try await desk.authAPIKeyCreate() } == ["passphrase": 1, "Apple ID": 1, "password": 1, "offer": 1])
+    #expect(try await desk.asked { try await desk.provisionApply(world) } == [:])
+    #expect(try await desk.asked { try desk.run() } == [:])
+    #expect(try await desk.asked { try desk.releaseSubmit() } == [:])
+    let said = desk.lines.all.joined(separator: "\n")
+    for part in ["xless auth api-key create opens the secret store (storing the new API key)", "xless auth api-key create signs in to Apple", "8 h"] { #expect(said.contains(part), "\(part)") }
+}
+
+@Test func withNothingKeptEachCompositeCommandAsksThePassphraseOnceAndSignsInAtMostOnce() async throws {
+    let desk = try Desk(keep: "")
+    defer { desk.vault.cleanup() }
+    let world = try firstApp(desk)
+    let once = ["passphrase": 1, "offer": 1], signedIn = once.merging(["Apple ID": 1, "password": 1]) { a, _ in a }
+    #expect(try await desk.asked { try await desk.authAPIKeyCreate() } == signedIn)
+    #expect(try await desk.asked { try await desk.provisionApply(world) } == signedIn)
+    #expect(try await desk.asked { try desk.run() } == once)
+    #expect(try await desk.asked { try desk.releaseSubmit() } == once)
+    try desk.vault.add("XLESS_DEMO_PASSWORD", kind: .password, secret: "pw", metadata: .init())
+    #expect(try await desk.asked { try await desk.storePush() } == signedIn)
+    #expect(desk.agents.names.isEmpty, "nothing is held that nobody asked for: \(desk.agents.names)")
 }
