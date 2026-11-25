@@ -25,6 +25,7 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     private let lock = NSLock()
     /// What this process was answered; nil: nothing yet.
     private var answer: Answer?
+    private var script: String?
 
     private enum Answer { case no, yes(SecretHold) }
 
@@ -51,10 +52,18 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
         return on("CI") || on(InputGate.variable) || on("XLESS_NO_SECRET_STORE") || !(env[XlessSession.variable] ?? "").isEmpty
     }
 
+    /// `xless session`: what is typed is kept while `name` runs, and nothing is offered.
+    func keeps(whileRunning name: String) { lock.withLock { script = name } }
+
+    private var whileRunning: String? { lock.withLock { script } }
+
     // MARK: before
 
     func announcement(reason: String, remember: SecretHold?) -> String? {
         let what = reason == "unlocking" ? "\(command) unlocks the secret store" : "\(command) opens the secret store (\(reason))"
+        if let script = whileRunning {
+            return "\(command) unlocks the secret store for the xless commands of \(script). The passphrase is asked once, and the store stays unlocked for them until \(script) ends (`xless lock` ends it sooner)."
+        }
         if let remember { return "\(what) and keeps it unlocked for the commands of this terminal, \(text(remember)); `xless lock` ends it." }
         return "\(what). The passphrase is asked once for this command, and forgotten when it ends\(canOffer ? " unless you keep it" : "")."
     }
@@ -62,11 +71,14 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// The line before a sign-in.
     /// - Parameter offering: false when the command itself says how long it is kept.
     func signInAnnouncement(offering: Bool) -> String {
+        if let script = whileRunning {
+            return "\(command) signs in to Apple for the xless commands of \(script). Asked once, and kept for them until \(script) ends (`xless lock` ends it sooner)."
+        }
         guard offering else { return "\(command) signs in to Apple." }
         return "\(command) signs in to Apple: Apple's documented API does not cover what it does. Asked once for this command, and forgotten when it ends\(canOffer ? " unless you keep it" : "")."
     }
 
-    private var canOffer: Bool { !off && cache.isAvailable && settings.map { $0.keep != .never } == true }
+    private var canOffer: Bool { !off && whileRunning == nil && cache.isAvailable && settings.map { $0.keep != .never } == true }
 
     /// "for 8 h (2 h without use)", as it can be kept here.
     private func text(_ hold: SecretHold) -> String {

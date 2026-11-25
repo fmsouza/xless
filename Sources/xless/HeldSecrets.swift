@@ -31,10 +31,13 @@ enum HeldSecrets {
     /// The longest anything is held after it was typed.
     static var maximum: Int { ((try? settings.get()) ?? UnlockSettings()).maximum }
 
-    static let agents: AgentClient = {
+    static let agents = AgentClient(terms: terms, session: XlessSession.agent)
+
+    /// What the agents keep to.
+    static var terms: AgentTerms {
         let s = (try? settings.get()) ?? UnlockSettings()
-        return AgentClient(terms: AgentTerms(maximum: s.maximum, lockOnSleep: s.lockOnSleep, lockOnScreenLock: s.lockOnScreenLock))
-    }()
+        return AgentTerms(maximum: s.maximum, lockOnSleep: s.lockOnSleep, lockOnScreenLock: s.lockOnScreenLock)
+    }
 
     static func say(_ line: String) { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
 

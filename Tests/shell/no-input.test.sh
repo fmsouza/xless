@@ -120,7 +120,7 @@ ASKS = {
     "inspect": "--config %T/tauri.yml", "tauri inspect": "--config %T/tauri.yml", "package": "--project %T/app --platform macos",
     "sign bootstrap": "--type developer-id",
     "secrets init": "", "secrets import": "OTHER --file %T/secret", "secrets export": "NOTE --out %T/new", "secrets rm": "NOTE", "secrets passwd": "",
-    "secrets unlock": "--remember 1h", "unlock": "", "secrets materialize": "sign=XLESS_DIST_KEY --allow-disk",
+    "secrets unlock": "--remember 1h", "unlock": "", "session": "-- true", "secrets materialize": "sign=XLESS_DIST_KEY --allow-disk",
     "live-check": "",
     # … or for the App Store Connect key
     "devices list": "", "devices register": "Phone 00008030-001A2B3C4D5E6F70", "devices import": "%T/devices.txt", "devices enable": "D1", "devices disable": "D1",
@@ -184,9 +184,9 @@ LATE = {"auth api-key import"}
 
 def both(command):
     e = {**env, **MORE.get(command, {})}
-    argv = [xless, *command.split(), *shlex.split(ASKS[command].replace("%T", t))]
-    return command, (None, "") if command in LATE else on_a_terminal(argv, environment=e), on_a_terminal([*argv, "--no-input"], environment=e), \
-        on_a_terminal(argv, environment={**e, "XLESS_NO_INPUT": "1"})
+    argv, rest = [xless, *command.split()], shlex.split(ASKS[command].replace("%T", t))
+    return command, (None, "") if command in LATE else on_a_terminal(argv + rest, environment=e), on_a_terminal([*argv, "--no-input", *rest], environment=e), \
+        on_a_terminal(argv + rest, environment={**e, "XLESS_NO_INPUT": "1"})
 with concurrent.futures.ThreadPoolExecutor(min(8, (os.cpu_count() or 2) * 2)) as pool:
     for command, (rc, out), (off, refused), (variable, _) in pool.map(both, ASKS):
         check(rc is None, f"`xless {command}` asks", (rc, out[-400:]))

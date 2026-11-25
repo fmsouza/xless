@@ -12,6 +12,7 @@ enum Main {
         // `--no-input`, of any command: also for the processes it becomes or starts.
         let (arguments, noInput) = InputGate.taking(CommandLine.arguments)
         if noInput { setenv(InputGate.variable, "1", 1) }
+        ScriptProcess.path = ProcessInfo.processInfo.environment["PATH"]
         // A native install's xtool, rcodesign and Swift, first on PATH for this process and every child.
         NativeLayout.activate()
         // A secret missing from the environment comes from the secret store, when it holds one (`xless secrets`).

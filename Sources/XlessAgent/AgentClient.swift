@@ -264,5 +264,8 @@ public final class AgentClient: @unchecked Sendable {
         try AgentLauncher.lease(seeds, directory: directory, terms: terms)
     }
 
+    /// Whether the agent of the `xless session` this runs in is there, and serves this process.
+    public var isInSession: Bool { links().contains { isMySession($0) && $0.isGranted && $0.isSameSession } }
+
     public func statuses() -> [AgentStatus] { links().compactMap { try? $0.status() } }
 }

@@ -19,6 +19,7 @@
 #include <sys/un.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <spawn.h>
 #include <pthread.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -30,7 +31,6 @@
 #include <dlfcn.h>
 #include <libproc.h>
 #include <mach/mach_time.h>
-#include <spawn.h>
 #include <sys/ptrace.h>
 #include <sys/sysctl.h>
 #include <sys/ucred.h>
@@ -506,6 +506,87 @@ int xless_wait(int pid, int *status) {
     *status = WIFEXITED(s) ? WEXITSTATUS(s) : WIFSIGNALED(s) ? WTERMSIG(s) : -1;
     return 1;
 }
+
+// --- A script xless runs for the person (`xless session`) ---
+
+static const int passed_on[] = { SIGTERM, SIGHUP, SIGINT, SIGQUIT };
+#define PASSED_ON (sizeof passed_on / sizeof *passed_on)
+static atomic_int script;                   // its pid; 0: none
+static atomic_int script_waits[PASSED_ON];  // the signals that came before it had one
+
+/// Whether the terminal itself sent `info`'s signal, and so to every process of its foreground group.
+static int from_terminal(const siginfo_t *info) {
+#ifdef __linux__
+    return info->si_code == SI_KERNEL;
+#else
+    // Darwin does not say who sent it: the terminal, where this is its foreground (kill(1) of xless alone is then lost on it).
+    (void)info;
+    int tty = open("/dev/tty", O_RDONLY | O_NOCTTY | O_CLOEXEC | O_NONBLOCK);
+    if (tty < 0) return 0;
+    int foreground = tcgetpgrp(tty) == getpgrp();
+    close(tty);
+    return foreground;
+#endif
+}
+
+// Async-signal-safe.
+static void pass_on(int sig, siginfo_t *info, void *context) {
+    (void)context;
+    int e = errno;
+    if ((sig != SIGINT && sig != SIGQUIT) || !from_terminal(info)) {
+        for (size_t i = 0; i < PASSED_ON; i++) if (passed_on[i] == sig) atomic_store(&script_waits[i], 1);
+        int pid = atomic_load(&script);
+        if (pid > 0) {
+            for (size_t i = 0; i < PASSED_ON; i++) if (atomic_exchange(&script_waits[i], 0)) kill(pid, passed_on[i]);
+        }
+    }
+    errno = e;
+}
+
+int xless_run_foreground(const char *path, char *const argv[], char *const envp[], int *status, int *by_signal) {
+    posix_spawnattr_t attr;
+    int e;
+    if ((e = posix_spawnattr_init(&attr)) != 0) return e;
+    sigset_t none;
+    sigemptyset(&none);
+    e = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK);
+    if (!e) e = posix_spawnattr_setsigmask(&attr, &none);
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_sigaction = pass_on;
+    action.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    for (size_t i = 0; i < PASSED_ON; i++) sigaddset(&action.sa_mask, passed_on[i]);
+    for (size_t i = 0; i < PASSED_ON; i++) {
+        struct sigaction now;
+        atomic_store(&script_waits[i], 0);
+        // Ignored (nohup, a background job): the script ignores it too. What is handled here is the default's in it (exec).
+        if (sigaction(passed_on[i], NULL, &now) == 0 && now.sa_handler != SIG_IGN) sigaction(passed_on[i], &action, NULL);
+    }
+    pid_t child = 0;
+    if (!e) e = posix_spawn(&child, path, NULL, &attr, argv, envp);
+    posix_spawnattr_destroy(&attr);
+    if (e) {
+        for (size_t i = 0; i < PASSED_ON; i++) if (atomic_exchange(&script_waits[i], 0)) xless_end_by_signal(passed_on[i]);
+        return e;
+    }
+    atomic_store(&script, child);
+    // What came while it had no number yet.
+    for (size_t i = 0; i < PASSED_ON; i++) if (atomic_exchange(&script_waits[i], 0)) kill(child, passed_on[i]);
+    siginfo_t info;
+    int w;
+    do { w = waitid(P_PID, (id_t)child, &info, WEXITED | WNOWAIT); } while (w < 0 && errno == EINTR);
+    atomic_store(&script, 0); // while its number is still its own
+    int s = 0;
+    pid_t r;
+    do { r = waitpid(child, &s, 0); } while (r < 0 && errno == EINTR);
+    if (r < 0) return errno;
+    *by_signal = WIFSIGNALED(s) ? 1 : 0;
+    *status = WIFEXITED(s) ? WEXITSTATUS(s) : WIFSIGNALED(s) ? WTERMSIG(s) : 1;
+    return 0;
+}
+
+void xless_end_by_signal(int sig) { take_default(sig); }
 
 // --- The xless agent ---
 
