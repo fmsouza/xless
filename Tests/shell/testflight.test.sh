@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Checks scripts/testflight.sh's command construction in dry-run mode (no docker, no network, no secrets).
 set -euo pipefail
-S="$(cd "$(dirname "$0")/../.." && pwd)/scripts/testflight.sh"
 t=$(mktemp -d)
+. "$(dirname "$0")/run-entry.sh"
 trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 mkdir -p "$t/proj" "$t/bin"
@@ -555,7 +555,7 @@ out=$("${pinned[@]}" "$S" --config "$t/pin/rn.yml" --destination simulator 2>"$t
 grep -q "xless-base" "$t/err" && fail "pinned simulator names the App Store Connect image: $(cat "$t/err")"
 printf '%s\n' "xless-rn:local-$A" "xless-base:local-$A" > "$t/images"
 # versions.env's Xcode: the plain default images serve it when no suffixed image exists
-dx="$(sed -n 's/^XCODE_VERSION=//p' "$(dirname "$S")/../versions.env")"
+dx="$(sed -n 's/^XCODE_VERSION=//p' "$repo/versions.env")"
 printf 'type: react-native\nsource: app\nxcode: %s\n' "$dx" > "$t/pin/def.yml"
 out=$("${pinned[@]}" "$S" --config "$t/pin/def.yml" 2>"$t/err") || fail "default pin: $(cat "$t/err")"
 [[ "$(line "--to finalize")" == *" xless-rn:local-$A xless ship "* && "$(line "--from sign")" == *" xless-base:local-$A xless ship "* ]] || fail "default pin images: $out"

@@ -3,8 +3,8 @@
 # refuses to start while a live run holds it, and stops what a run killed with SIGKILL left behind (its containers,
 # natively its xless) before it starts. A fake docker logs what it is asked; no daemon, no network, no secrets.
 set -euo pipefail
-S="$(cd "$(dirname "$0")/../.." && pwd)/scripts/testflight.sh"
 t=$(mktemp -d)
+. "$(dirname "$0")/run-entry.sh"
 bg=()   # background processes to stop on the way out
 finally() { local p; for p in ${bg[@]+"${bg[@]}"}; do kill "$p" 2>/dev/null || true; done; rm -rf "$t"; }
 trap finally EXIT

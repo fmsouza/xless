@@ -127,14 +127,10 @@ private func testflight(_ demo: String?) throws -> TestFlightConfig {
     #expect(TestFlightConfig(groups: [], external: .init(groups: ["B"], review: .init(demoAccount: .init(name: "d", passwordSecret: "PATH")))).secretNames.isEmpty)
 }
 
-/// Every upper-case global scripts/testflight.sh assigns is a reserved name: it reads the password with `${!NAME}`, so
-/// a passwordSecret naming one of its own variables would read that instead.
-@Test func testflightShGlobalsAreReservedPasswordNames() throws {
-    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    let script = try String(contentsOf: root.appendingPathComponent("scripts/testflight.sh"), encoding: .utf8)
-    let globals = Set(script.matches(of: /(?m)(?:^|[\s;(])([A-Z][A-Z0-9_]{2,})(?:\+)?=/).map { String($0.output.1) })
-    #expect(globals.count > 10)
-    for name in globals.sorted() where name != "XLESS_DEMO_PASSWORD" {
-        #expect(SecretEnvironment.passwordNameProblem(name) != nil, "scripts/testflight.sh sets \(name): add it to SecretEnvironment.reservedVariables")
+/// Names that were refused for a password stay so: the variables of `xless run` (and those of the script that was before it).
+@Test func theVariablesOfARunAreReservedPasswordNames() {
+    for name in ["ALLOW_DISK", "ARGS", "CARGO", "CONFIG", "DESTINATION", "ENV_FILE", "NAME", "OVERLAY", "PLATFORM", "PROJECT", "SIM", "SOURCE", "SOURCE_MOUNT",
+                 "SOURCE_SUB", "TEAM", "XCODE_PIN", "XCODE_TAG", "XCODE_VERSION", "XLESS_IMAGE", "XLESS_SELF", "XLESS_SESSION", "XLESS_BUILD_NUMBER", "XLESS_WORK_ROOT"] {
+        #expect(SecretEnvironment.passwordNameProblem(name) != nil, "\(name): add it to SecretEnvironment.reservedVariables")
     }
 }

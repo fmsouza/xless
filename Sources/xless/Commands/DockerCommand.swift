@@ -1,11 +1,10 @@
 import ArgumentParser
 import Foundation
 import XlessCore
+import XlessRun
 
-/// `xless run`: a project's build, sign and upload by running the share's scripts/testflight.sh, natively (what
-/// `xless setup` installed) or, with `--docker`, in the local images (`xless setup --docker`). The other arguments go
-/// to the script unchanged. The process is replaced (execvp), so the script's exit code is the user's and its
-/// environment (the App Store Connect variables, which `Shell.run` would scrub) reaches it as the user set it.
+/// `xless run`: a project's build, sign and upload, natively (what `xless setup` installed) or, with `--docker`, in the local
+/// images (`xless setup --docker`).
 struct RunCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
@@ -28,14 +27,14 @@ struct RunCommand: ParsableCommand {
     func run() throws {
         let (docker, rest) = Self.split(arguments)
         let env = ProcessInfo.processInfo.environment
-        let useDocker = docker ? "1" : env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? "0"
+        let useDocker = docker ? "1" : env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? (ProjectRunner.isScript(env) ? "auto" : "0")
         #if os(Linux)
-        if useDocker == "0", Self.namesOverlay(rest) {
+        if useDocker == "0", !ProjectRunner.isScript(env), Self.namesOverlay(rest) {
             throw XlessError(.config, "a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images, not natively",
                              fix: "add --docker (after building the images once: xless setup --docker --xcode <Xcode.xip>)")
         }
         #endif
-        try TestflightScript.exec(rest, useDocker: useDocker)
+        try ProjectRunner.run(rest, useDocker: useDocker)
     }
 
     /// `--docker` taken out of the arguments before a `--` (after it, the arguments are `xless ship`'s).
@@ -69,30 +68,30 @@ struct DockerCommand: ParsableCommand {
 
     func run() throws {
         let env = ProcessInfo.processInfo.environment
-        try TestflightScript.exec(arguments, useDocker: env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? "1")
+        try ProjectRunner.run(arguments, useDocker: env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? "1")
     }
 }
 
-enum TestflightScript {
-    /// Replaces this process with `bash <share>/scripts/testflight.sh <arguments>`.
-    static func exec(_ arguments: [String], useDocker: String) throws {
+/// What `xless run` and `xless docker` do: the steps of the run as processes of their own (`XlessRun`), each with nothing secret
+/// that it does not use.
+enum ProjectRunner {
+    /// Set by scripts/testflight.sh, kept for those who call it: the run is in the images unless an SDK is installed natively
+    /// (XLESS_USE_DOCKER unset), and the steps run $XLESS_SELF, as that script's always did.
+    static let asScript = "XLESS_RUN_AS_SCRIPT"
+
+    static func isScript(_ env: [String: String]) -> Bool { env[asScript] == "1" }
+
+    /// Runs it; ends with its exit code.
+    static func run(_ arguments: [String], useDocker: String) throws {
         let env = ProcessInfo.processInfo.environment
         let exe = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
         let share = try XlessShare.root(env: env, executable: exe)
-        let script = share.appendingPathComponent("scripts/testflight.sh").path
-        guard FileManager.default.fileExists(atPath: script) else {
-            throw XlessError(.sdk, "\(script) does not exist", fix: "reinstall xless (see README) or set XLESS_SHARE")
-        }
-        setenv("XLESS_USE_DOCKER", useDocker, 1)
-        setenv("XLESS_SHARE", share.path, 1)
-        // The script runs xless (natively, and host-side helpers like `"$XLESS_SELF" cargo inputs`) as the one that started it.
-        setenv("XLESS_SELF", exe.path, 1)
-        // Which tells the xless it runs, and nothing else.
-        if let agent = XlessSession.agent { setenv(XlessSession.variable, agent, 1) }
-        let argv = ["bash", script] + arguments
-        var cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
-        cArgs.append(nil)
-        execvp("bash", cArgs)
-        throw XlessError(.sdk, "cannot run bash: \(String(cString: strerror(errno)))", fix: "install bash")
+        // It reads no secret's value, but passes some on (from its environment to the step that uses them).
+        SecretScope.enter()
+        let context = RunContext(environment: env, xless: isScript(env) ? env["XLESS_SELF"].flatMap { $0.isEmpty ? nil : $0 } ?? "xless" : exe.path,
+                                 again: [exe.path] + CommandLine.arguments.dropFirst(), share: share.path, useDocker: useDocker,
+                                 session: XlessSession.agent, unlocked: !(env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty)
+        let code = try ProjectRun(arguments, context: context, host: PosixRunHost()).run()
+        if code != 0 { throw ExitCode(code) }
     }
 }
