@@ -437,7 +437,7 @@ What protects xless's memory and what it holds, on each system:
 | Another process of yours attaching to a command or reading its memory | non-dumpable from the first secret, and before the first tool starts | the hardened runtime, always: macOS refuses debuggers | nothing of xless's: a debugger you run may attach |
 | The same, to the agent | non-dumpable from its start | the hardened runtime and `PT_DENY_ATTACH` | `PT_DENY_ATTACH` (no debugger; a program with a debugger's rights to the task port still) |
 | Another process of yours reading a command's environment | non-dumpable: `/proc/<pid>/environ` is refused | the signature's `restrict` flag: macOS hides it (`ps -E`) | nothing: `ps -E` shows it |
-| A library put into xless (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`) | nothing: who sets xless's environment runs code in it | ignored | not ignored |
+| A library put into xless (`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`) | a release is static and loads none; a build of your own does | ignored | not ignored |
 | Held secrets in swap | `mlock`, where the limit allows; never for the Swift heap | the same; macOS encrypts its swap | the same |
 | Held secrets in a forked child | `MADV_DONTFORK` | `VM_INHERIT_NONE` | `VM_INHERIT_NONE` |
 | Held secrets in a core dump | `MADV_DONTDUMP` | no dumps | no dumps |
