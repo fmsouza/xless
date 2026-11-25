@@ -1,6 +1,7 @@
 # The Swift files of the targets that Windows builds: "+" is built there, "-" is not (Package.swift, notOnWindows).
 # A new file gets its line here; WindowsSourcesTests checks both lists.
 - Sources/XlessCore/AppleSignature.swift
+- Sources/XlessCore/BuildPlaces.swift
 - Sources/XlessCore/BuildSDKCheck.swift
 - Sources/XlessCore/BuildSandbox.swift
 - Sources/XlessCore/BuiltTree.swift
@@ -193,6 +194,7 @@
 + Sources/XlessStore/StorePushText.swift
 + Sources/XlessStore/StoreSender.swift
 - Tests/XlessCoreTests/AppleSignatureTests.swift
+- Tests/XlessCoreTests/BuildPlacesTests.swift
 - Tests/XlessCoreTests/BuildSDKCheckTests.swift
 - Tests/XlessCoreTests/BuildSandboxTests.swift
 - Tests/XlessCoreTests/BuiltTreeTests.swift
