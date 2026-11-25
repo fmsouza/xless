@@ -42,9 +42,9 @@ struct AgentProgram: Equatable, Sendable {
     #if os(macOS)
     /// This process's. Told once: the agent's stays what it was when the file is replaced.
     static let current: AgentProgram? = {
-        var token = xless_peer().token
-        guard xless_own_token(&token.0) == 0, let file = AgentExecutable.current,
-              let code = withUnsafeBytes(of: token, { codeHash(token: Data($0)) }) else { return nil }
+        var me = xless_peer()
+        guard xless_own_token(&me) == 0, let file = AgentExecutable.current,
+              let code = withUnsafeBytes(of: me.token, { codeHash(token: Data($0)) }) else { return nil }
         return AgentProgram(file: file, code: code)
     }()
 

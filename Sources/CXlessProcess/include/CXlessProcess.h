@@ -170,8 +170,9 @@ struct xless_peer {
 /// `*out` is of one process. 0, or an errno value (ENOTSUP elsewhere: Linux has the sender's pid on each message, see
 /// xless_unix_recv, and a pidfd to hold it by).
 int xless_peer_of(int fd, struct xless_peer *out);
-/// macOS: this process's own audit token (8 numbers). 0, or an errno value (ENOTSUP elsewhere).
-int xless_own_token(uint32_t *token);
+/// macOS: this process's own audit token, in `out->token` (the rest is 0). 0, or an errno value (ENOTSUP elsewhere).
+/// The whole struct, for Swift: a pointer to the first number of an array in a tuple is one to that number only.
+int xless_own_token(struct xless_peer *out);
 /// Linux: asks for the sender's credentials on each message received on `fd`. Elsewhere nothing. 0, or an errno value.
 int xless_unix_passcred(int fd);
 /// recv(2): the bytes received (0: the other end closed), or -errno. Linux: with the pid and uid of the process that

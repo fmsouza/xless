@@ -942,7 +942,7 @@ int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
 
 int xless_peer_of(int fd, struct xless_peer *out) { (void)fd; memset(out, 0, sizeof *out); return ENOTSUP; }
 
-int xless_own_token(uint32_t *token) { memset(token, 0, 8 * sizeof *token); return ENOTSUP; }
+int xless_own_token(struct xless_peer *out) { memset(out, 0, sizeof *out); return ENOTSUP; }
 
 int xless_unix_passcred(int fd) {
     int one = 1;
@@ -1090,11 +1090,12 @@ int xless_peer_of(int fd, struct xless_peer *out) {
     return 0;
 }
 
-int xless_own_token(uint32_t *token) {
+int xless_own_token(struct xless_peer *out) {
+    memset(out, 0, sizeof *out);
     audit_token_t own;
     mach_msg_type_number_t count = TASK_AUDIT_TOKEN_COUNT;
     if (task_info(mach_task_self(), TASK_AUDIT_TOKEN, (task_info_t)&own, &count) != KERN_SUCCESS) return ESRCH;
-    memcpy(token, &own, sizeof own);
+    memcpy(out->token, &own, sizeof out->token);
     return 0;
 }
 
