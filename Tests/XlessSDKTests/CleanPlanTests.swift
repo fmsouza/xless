@@ -1,4 +1,5 @@
 import Testing
+import XlessImages
 @testable import XlessSDK
 
 private let listing = """
@@ -42,6 +43,24 @@ xless:local-arm64
     ])
     #expect(CleanPlan.old(fromListing: labelled, labelled: labelled) == ["xless-rn:local-arm64"])
     #expect(CleanPlan.old(fromListing: "", labelled: "") == [])
+}
+
+/// Time passes between the listing and the removal.
+@Test func anImageIsRemovedOnlyAsWhatItWasShown() {
+    func image(_ id: String, sdk: String? = nil) -> LocalImage {
+        LocalImage(name: "x", id: id, architecture: "arm64", labels: sdk.map { [ImageLabel.sdk: $0] } ?? [:], layers: [])
+    }
+    #expect(CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: image("sha256:1")))
+    #expect(!CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: image("sha256:2")))
+    #expect(!CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: image("sha256:1", sdk: "27A266a")))
+    #expect(!CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: nil))
+    #expect(CleanPlan.isStillOld("xless-rn:local-arm64", id: "sha256:1", now: image("sha256:1", sdk: "27A266a")), "no xless of now uses it")
+    for other in ["postgres:16", "xless:mine", "registry.example.com/xless:local-arm64", "xless"] { #expect(!CleanPlan.isStillOld(other, id: "sha256:1", now: image("sha256:1")), "\(other)") }
+}
+
+/// An image of a person's own inherits the label, and says otherwise where it is not xless's to remove (docs/images.md).
+@Test func theUntaggedOnesAreXlesssOwn() {
+    #expect(CleanPlan.imageLabel == "\(ImageLabel.image)=true")
 }
 
 @Test func cleanTakesXlessVolumesOnly() {

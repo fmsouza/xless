@@ -16,7 +16,7 @@ struct CleanCommand: AsyncParsableCommand {
         With no option it lists what there is and removes nothing. --images removes every local tag of xless's images \
         (xless:local-…, and xless-base, xless-tauri and xless-rn of xless 0.10 and older), then the older builds that a later \
         xless setup left untagged (label \(CleanPlan.imageLabel)); --old removes only what an upgrade leaves behind: the tags of \
-        xless 0.10 and older, and those older builds. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
+        xless 0.10 and older, which it lists and asks about (--yes answers), and those older builds. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
         and \(CleanPlan.volumePrefix)*). --cache removes $XDG_CACHE_HOME/xless (default ~/.cache/xless): the exported SDKs, \
         Tauri work copies and downloads. --native removes the native install: $XLESS_NATIVE_HOME (default \
         ~/.local/share/xless-native: the Swift toolchain, xtool, rcodesign), the installed Darwin SDK and its \
@@ -30,6 +30,7 @@ struct CleanCommand: AsyncParsableCommand {
     @Flag(help: "Remove the cache directory ($XDG_CACHE_HOME/xless, default ~/.cache/xless).") var cache = false
     @Flag(help: "Remove the native install (toolchain, tools, the installed SDK and its metadata).") var native = false
     @Flag(help: "--images, --volumes, --cache and --native.") var all = false
+    @Flag(help: "With --old: do not ask.") var yes = false
     @Flag(help: "Print what would be removed, and remove nothing.") var dryRun = false
 
     func run() async throws {
@@ -44,16 +45,23 @@ struct CleanCommand: AsyncParsableCommand {
         let layout = NativeLayout(env: env)
         let nativePaths = ([layout.root] + (fm.fileExists(atPath: layout.record.path) ? [DarwinSDKLocator.bundle(env: env), ToolchainMeta.defaultLocation(env: env)] : []))
             .filter { !$0.path.hasPrefix("/opt/xless/") && fm.fileExists(atPath: $0.path) }
-        let removing = !listOnly && !dryRun
+        var removing = !listOnly && !dryRun
 
-        var imageRefs: [String] = [], volumeNames: [String] = []
+        // --old alone: what each tag is now, for the check right before it goes.
+        let asks = old && !doImages
+        var imageRefs: [String] = [], volumeNames: [String] = [], oldIDs: [String: String] = [:]
         if listOnly || doOld || doVolumes {
             do {
                 let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
                 if listOnly || doOld {
                     let all = try Shell.run("docker", ls, stage: .sdk).stdout
-                    imageRefs = listOnly || doImages ? CleanPlan.images(fromListing: all)
-                        : CleanPlan.old(fromListing: all, labelled: try Shell.run("docker", ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout)
+                    if asks {
+                        for ref in CleanPlan.old(fromListing: all, labelled: try Shell.run("docker", ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout) {
+                            guard let image = LocalImages.here.image(ref), CleanPlan.isStillOld(ref, id: image.id, now: image) else { continue }
+                            imageRefs.append(ref)
+                            oldIDs[ref] = image.id
+                        }
+                    } else { imageRefs = CleanPlan.images(fromListing: all) }
                 }
                 if listOnly || doVolumes {
                     volumeNames = CleanPlan.volumes(fromListing: try Shell.run("docker", ["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout)
@@ -68,13 +76,14 @@ struct CleanCommand: AsyncParsableCommand {
         }
         let cacheExists = fm.fileExists(atPath: cacheRoot.path)
 
-        let verb = removing ? "removing" : (dryRun ? "would remove" : "found")
+        let mustAsk = removing && asks && !imageRefs.isEmpty && !yes
+        let verb = removing && !mustAsk ? "removing" : (dryRun || mustAsk ? "would remove" : "found")
         if listOnly || doOld {
             say("\(verb) \(imageRefs.count) image tag\(imageRefs.count == 1 ? "" : "s")" + (imageRefs.isEmpty ? "" : ":"))
             for r in imageRefs { say("  \(r)") }
         }
         if doOld {
-            say("\(removing ? "then removing" : "and") the untagged older builds (docker image prune --filter label=\(CleanPlan.imageLabel))")
+            say("\(removing && !mustAsk ? "then removing" : "and") the untagged older builds (docker image prune --filter label=\(CleanPlan.imageLabel))")
         }
         if listOnly || doVolumes {
             say("\(verb) \(volumeNames.count) volume\(volumeNames.count == 1 ? "" : "s")" + (volumeNames.isEmpty ? "" : ":"))
@@ -91,6 +100,11 @@ struct CleanCommand: AsyncParsableCommand {
             say("nothing removed: pass --images, --old, --volumes, --cache, --native or --all (--dry-run to see what they would remove)")
             return
         }
+        if mustAsk {
+            removing = try AccountConfirm.confirm("Remove \(imageRefs.count == 1 ? "this image tag" : "these \(imageRefs.count) image tags"), and the untagged older builds?",
+                                                  action: "removing the images of an older xless", yes: yes, stage: .sdk)
+            if !removing { say("cancelled; nothing was removed") }
+        }
         guard removing else { return }
 
         var failures: [String] = []
@@ -99,7 +113,17 @@ struct CleanCommand: AsyncParsableCommand {
                 failures.append("some volumes were not removed (one in use by a container? docker ps -a)")
             }
         }
-        if !imageRefs.isEmpty {
+        if asks {
+            for ref in imageRefs {
+                guard CleanPlan.isStillOld(ref, id: oldIDs[ref] ?? "", now: LocalImages.here.image(ref)) else {
+                    say("kept \(ref): it is another image now")
+                    continue
+                }
+                do { try Shell.run("docker", ["image", "rm", ref], stage: .sdk, passthrough: true) } catch {
+                    failures.append("\(ref) was not removed (in use by a container? docker ps -a)")
+                }
+            }
+        } else if !imageRefs.isEmpty {
             do { try Shell.run("docker", ["image", "rm"] + imageRefs, stage: .sdk, passthrough: true) } catch {
                 failures.append("some images were not removed (one in use by a container? docker ps -a)")
             }

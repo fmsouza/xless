@@ -4,9 +4,10 @@ import XlessImages
 /// What `xless clean` removes: the local tags of xless's images, the Docker volumes `xless run --docker` creates, and the cache
 /// directory. Pure: it reads `docker` listings handed to it and returns what to remove, so it is testable without Docker.
 public enum CleanPlan {
-    /// The label of xless's images, which those built on them inherit. An image setup replaced (its tag moved to a newer build)
-    /// keeps it once untagged, so `docker image prune --filter label=…` removes those, and only those.
-    public static let imageLabel = ImageLabel.image
+    /// The label of xless's images. An image setup replaced (its tag moved to a newer build) keeps it once untagged, so
+    /// `docker image prune --filter label=…` removes those. An image of a person's own inherits it; one that gives it another value
+    /// is never removed.
+    public static let imageLabel = "\(ImageLabel.image)=true"
 
     /// The Docker volumes `xless run --docker` creates: Rust toolchains for Tauri, and the React Native
     /// caches. React Native work copies are one volume per overlay, `xless-rn-work-<overlay>-<hash>`.
@@ -26,6 +27,12 @@ public enum CleanPlan {
     public static func old(fromListing listing: String, labelled: String) -> [String] {
         let current = Set(references(labelled) { $0 == ImageName.repository })
         return references(listing) { $0 == ImageName.repository || ImageName.oldRepositories.contains($0) }.filter { !current.contains($0) }
+    }
+
+    /// `reference`, which was an old image with this ID when it was listed, is one now.
+    public static func isStillOld(_ reference: String, id: String, now: LocalImage?) -> Bool {
+        guard let now, now.id == id, images(fromListing: reference) == [reference] else { return false }
+        return now.sdk == nil || !reference.hasPrefix("\(ImageName.repository):")
     }
 
     private static func references(_ listing: String, of isOurs: (String) -> Bool) -> [String] {

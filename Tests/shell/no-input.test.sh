@@ -133,6 +133,8 @@ ASKS = {
     "secrets init": "", "secrets import": "OTHER --file %T/secret", "secrets import-env": "%T/testflight.env", "secrets export": "NOTE --out %T/new", "secrets rm": "NOTE", "secrets passwd": "",
     "secrets unlock": "--remember 1h", "unlock": "", "session": "-- true", "secrets materialize": "sign=XLESS_DIST_KEY --allow-disk",
     "live-check": "",
+    # a confirmation
+    "clean": "--old",
     # … or for the App Store Connect key
     "devices list": "", "devices register": "Phone 00008030-001A2B3C4D5E6F70", "devices import": "%T/devices.txt", "devices enable": "D1", "devices disable": "D1",
     "devices rename": "D1 Other",
@@ -179,15 +181,27 @@ SIGN_IN_FIRST = {"xcode download", "auth login", "auth api-key list", "auth api-
                  *(f"{group} {verb}" for group in ("app-groups", "icloud-containers") for verb in ("list", "create", "assign", "unassign"))}
 def asks_first(shown): return "the Apple ID" if re.search(r"Apple ID[^\r\n]{0,20}: $", shown) else "a new passphrase" if re.search(r"New [^\r\n]*: $", shown) else "the passphrase" if re.search(r"assphrase: $", shown) else "a confirmation" if shown.endswith("[y/N] ") else shown[-200:]
 
+# A docker that has an image of an older xless.
+os.mkdir(t + "/docker", 0o755)
+write(t + "/docker/docker", """#!/bin/sh
+case "$*" in
+  *label=*) ;;
+  "image ls"*) echo xless-base:local-arm64 ;;
+  "image inspect"*) echo '{"Id":"sha256:1","Architecture":"arm64","Config":{"Labels":{}},"RootFS":{"Layers":[]}}' ;;
+esac
+""")
+os.chmod(t + "/docker/docker", 0o755)
+
 # The environment of some: another (empty) store, where the question is about what is not there yet.
 EMPTY = {"XDG_DATA_HOME": t + "/empty"}
 MORE = {"live-check": {"XLESS_LIVE_APPLE": "1"}, "secrets init": {"XDG_DATA_HOME": t + "/none"},
+        "clean": {"PATH": t + "/docker:" + env["PATH"]},
         **{c: EMPTY for c in ("auth api-key create", "auth api-key import")}}
 
 # Those that never ask for anything.
 NEVER = {
     "offline": "sdk meta; sdk export; nib dump; storyboard compile; tauri report; tauri compare; cargo inputs; store validate; secrets status; secrets list; "
-               "secrets named-by; secrets redact; setup; clean; sdk install; lock; secrets lock; auth logout; auth status; team use",
+               "secrets named-by; secrets redact; setup; sdk install; lock; secrets lock; auth logout; auth status; team use",
     "the build: no secret is read, and its tools have no terminal": "prepare; build; assets; finalize; xcode pif; xcode swbuild; xcode packages; shim xcrun; shim actool; shim ibtool; "
         "shim plistbuddy; shim dmg-build; shim xcodebuild; shim strip; shim ld64; shim embedded-binary-validation; shim ditto; shim copypng; shim prepare-clang",
     "asks through the commands above (sign, next-build, secrets materialize), which inherit the variable": "run; docker",
@@ -210,7 +224,7 @@ with concurrent.futures.ThreadPoolExecutor(min(8, (os.cpu_count() or 2) * 2)) as
     for command, (rc, out), (off, refused), (variable, _) in pool.map(both, ASKS):
         check(rc is None, f"`xless {command}` asks", (rc, out[-400:]))
         if command not in LATE:
-            first = "a new passphrase" if command == "secrets init" else "a confirmation" if command == "secrets rm" else "the Apple ID" if command in SIGN_IN_FIRST else "the passphrase"
+            first = "a new passphrase" if command == "secrets init" else "a confirmation" if command in ("secrets rm", "clean") else "the Apple ID" if command in SIGN_IN_FIRST else "the passphrase"
             check(asks_first(out) == first, f"`xless {command}` asks for {first} first", asks_first(out))
         check(off == 23, f"`xless {command} --no-input` ends with exit code 23", (off, refused[-400:]))
         check(variable == 23, f"XLESS_NO_INPUT=1 xless {command} ends with exit code 23", variable)
