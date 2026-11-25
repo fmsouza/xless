@@ -529,9 +529,11 @@ those entitlements need, which signing turns on for the bundle ID on your accoun
 whether the account may be changed, and the app that the upload goes to come from the configuration.
 
 - What it signs and packages is looked at as a tree first, and it is a copy of the app that is looked at and signed: directories,
-  files, and links that stay in it. A link that leads out of the app, a pipe or a device, a name with a control character (a line
-  break), or a path that rcodesign would read as an option, is refused. Of the dSYMs only those of the app's own binaries are packed, and
-  a record of the build that is a link, no file, or huge is not read.
+  files, and links that stay in it. A link that leads out of the app (also to what does not exist yet), a pipe or a device, a name
+  with a control character (a line break), a path that rcodesign would read as an option, or more than 64 directories in one another,
+  is refused. The copy goes through no link, also when something that the build left running changes the app meanwhile, and the
+  provisioning profile that is put into it replaces what is in its place. Of the dSYMs only those of the app's own binaries are
+  packed, from a copy as well, and a record of the build that is a link, no file, or huge is not read.
 - An overlay, and the app's source, are mounted read-only into every container.
 - A project directory is the build's to write. Its containers get the xless.yml that was read when the run began, read-only, from
   a directory of the run's own outside of the project (`~/.cache/xless/run/<random>/`), over the one in the project. (It goes with
