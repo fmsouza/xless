@@ -1,4 +1,8 @@
+#if os(Windows)
+import CXlessWindows
+#else
 import CXlessProcess
+#endif
 import Foundation
 
 /// A secret's bytes (a password, a private key, a cookie value) in one heap buffer that is zeroed when it is released or

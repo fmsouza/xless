@@ -170,3 +170,53 @@ let package = Package(
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
+
+// What Windows builds so far: the libraries that the account commands use, without the files below, which need what Windows does
+// not have (or not yet). Tests/windows/sources.txt says of every file of these targets which of the two it is (WindowsSourcesTests).
+// `swift build -Xmanifest -DXLESS_WINDOWS_TARGETS` builds the same targets and files on another system.
+#if os(Windows) || XLESS_WINDOWS_TARGETS
+let windowsTargets: Set<String> = [
+    "CXlessProcess", "XlessCore", "XlessASC", "XlessSign", "XlessFIDO", "XlessAppleID", "XlessVault", "XlessStore",
+    "XlessCoreTests", "XlessASCTests", "XlessSignTests", "XlessFIDOTests", "XlessAppleIDTests", "XlessVaultTests", "XlessStoreTests",
+]
+let notOnWindows: [String: [String]] = [
+    "XlessCore": [
+        "BuildSDKCheck.swift", "ChildProcess.swift", "DittoShim.swift", "ExecutableFile.swift",
+        "MemoryFileSystem.swift", "NativeLayout.swift", "PlistBuddyShim.swift", "Shell.swift", "SwiftToolchain.swift", "XcrunShim.swift",
+        "XlessShare.swift",
+    ],
+    "XlessSign": ["PrivateFiles.swift", "RCodesign.swift", "SignStage.swift"],
+    "XlessVault": ["CredentialHelper.swift", "VaultMaterialize.swift"],
+    "XlessCoreTests": [
+        "BuildSDKCheckTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlistBuddyShimTests.swift",
+        "SecretScrubTests.swift", "ShellTests.swift", "SwiftToolchainTests.swift", "XcrunShimTests.swift", "XlessShareTests.swift",
+    ],
+    "XlessASCTests": ["PathOwnersTests.swift", "StreamingTransportTests.swift"],
+    "XlessAppleIDTests": ["URLSessionAppleTransportTests.swift"],
+    "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],
+    "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
+]
+package.products = []
+package.targets.removeAll { !windowsTargets.contains($0.name) }
+for target in package.targets {
+    target.exclude += notOnWindows[target.name] ?? []
+    target.dependencies.removeAll { if case .byNameItem(let name, _) = $0 { name.hasPrefix("Xless") && !windowsTargets.contains(name) } else { false } }
+    #if os(Windows)
+    target.dependencies = target.dependencies.map { if case .byNameItem("CXlessProcess", _) = $0 { "CXlessWindows" } else { $0 } }
+    #else
+    target.swiftSettings = (target.swiftSettings ?? []) + [.define("XLESS_WINDOWS_TARGETS")]
+    #endif
+}
+#if os(Windows)
+package.targets.removeAll { $0.name == "CXlessProcess" }
+for target in package.targets where ["XlessCoreTests", "XlessVaultTests", "XlessSignTests"].contains(target.name) {
+    target.dependencies += ["CXlessWindowsTestSupport"]
+}
+package.targets += [
+    .target(name: "CXlessWindows", linkerSettings: ["Advapi32", "Ole32", "Shell32"].map { .linkedLibrary($0) }),
+    .target(name: "CXlessWindowsTestSupport", path: "Tests/CXlessWindowsTestSupport", linkerSettings: [.linkedLibrary("Advapi32")]),
+    // What Tests/windows/no-dump.test.ps1 lets crash.
+    .executableTarget(name: "XlessWindowsProbe", dependencies: ["XlessCore", "CXlessWindowsTestSupport"], path: "Tests/XlessWindowsProbe"),
+]
+#endif
+#endif

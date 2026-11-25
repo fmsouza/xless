@@ -4,6 +4,7 @@ import Testing
 @testable import XlessCore
 @testable import XlessVault
 
+#if !os(Windows) // VaultOnWindowsTests
 @Test func theStoreIsCreatedPrivate() throws {
     let t = try TempStore()
     defer { t.cleanup() }
@@ -12,6 +13,7 @@ import Testing
     #expect(try mode(t.location.file.path) == 0o600)
     #expect(try mode(t.location.lockFile.path) == 0o600)
 }
+#endif
 
 @Test func noStoreReadsAsNil() throws {
     let t = try TempStore()
@@ -27,6 +29,7 @@ import Testing
     do { try t.make(); Issue.record("replaced a store") } catch let e as VaultError { #expect(e.kind == .alreadyInitialized) }
 }
 
+#if !os(Windows)
 @Test func anOpenDirectoryOrFileIsRefused() throws {
     let t = try TempStore()
     defer { t.cleanup() }
@@ -37,6 +40,7 @@ import Testing
     try FileManager.default.setAttributes([.posixPermissions: 0o750], ofItemAtPath: t.location.directory.path)
     do { _ = try t.store.read(); Issue.record("read from a 0750 directory") } catch let e as VaultError { #expect(e.kind == .unsafePath) }
 }
+#endif
 
 @Test func symlinksAreRefused() throws {
     let t = try TempStore()
@@ -54,6 +58,7 @@ import Testing
     do { _ = try other.store.read(); Issue.record("followed a symlinked directory") } catch let e as VaultError { #expect(e.kind == .unsafePath) }
 }
 
+#if !os(Windows)
 /// Only root can give a file away; CI's containers run the tests as root.
 @Test(.enabled(if: geteuid() == 0)) func anotherOwnersStoreIsRefused() throws {
     let t = try TempStore()
@@ -62,6 +67,7 @@ import Testing
     #expect(chown(t.location.file.path, 12345, 12345) == 0)
     do { _ = try t.store.read(); Issue.record("read another user's store") } catch let e as VaultError { #expect(e.kind == .unsafePath) }
 }
+#endif
 
 @Test func concurrentWritersLoseNoUpdate() throws {
     let t = try TempStore()
@@ -101,8 +107,10 @@ import Testing
     #expect(try t.store.read()?.entries.map(\.name) == ["A"])
 }
 
+#if !os(Windows)
 @Test func theStandardLocationFollowsXDG() {
     #expect(VaultLocation.standard(env: ["XDG_DATA_HOME": "/data", "HOME": "/home/u"]).file.path == "/data/xless/vault/secrets.vault")
     #expect(VaultLocation.standard(env: ["XDG_DATA_HOME": "relative", "HOME": "/home/u"]).file.path == "/home/u/.local/share/xless/vault/secrets.vault")
     #expect(VaultLocation.standard(env: ["HOME": "/home/u"]).directory.path == "/home/u/.local/share/xless/vault")
 }
+#endif

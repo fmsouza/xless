@@ -7,7 +7,7 @@ import Musl
 
 /// Reads and writes the store's file. Writers hold an exclusive `flock` on `lock` for the whole read–modify–write, and
 /// replace the file atomically: a temporary file in the same directory (O_EXCL, 0600), `fsync`, `rename`, `fsync` of the
-/// directory. A reader always sees a whole file, old or new.
+/// directory. A reader always sees a whole file, old or new. (Windows: VaultOnWindows.swift; it has no `fsync` of a directory.)
 public struct VaultStore: Sendable {
     public let location: VaultLocation
     /// The most a store file may weigh (it holds keys, not builds).
@@ -15,6 +15,7 @@ public struct VaultStore: Sendable {
 
     public init(location: VaultLocation) { self.location = location }
 
+    #if !os(Windows)
     /// The store, or nil when there is none yet. Its directory and file are checked first.
     public func read() throws -> VaultFile? {
         guard try location.checkDirectory() else { return nil }
@@ -49,6 +50,7 @@ public struct VaultStore: Sendable {
         }
         return try VaultFile.decode(data)
     }
+    #endif
 
     /// Writes a new store; refuses to replace one.
     public func create(_ file: VaultFile) throws {
@@ -80,6 +82,7 @@ public struct VaultStore: Sendable {
         VaultError(.notInitialized, "there is no secret store at \(location.file.path)", fix: "create one with `xless secrets init`")
     }
 
+    #if !os(Windows)
     func withLock<T>(_ body: () throws -> T) throws -> T {
         let path = location.lockFile.path
         let fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -132,8 +135,11 @@ public struct VaultStore: Sendable {
             close(dfd)
         }
     }
+    #endif
 }
 
+#if !os(Windows)
 // `read`/`write` are shadowed by the methods above inside the type.
 @inline(__always) private func Glibc_read(_ fd: Int32, _ buf: UnsafeMutableRawPointer?, _ count: Int) -> Int { read(fd, buf, count) }
 @inline(__always) private func Glibc_write(_ fd: Int32, _ buf: UnsafeRawPointer?, _ count: Int) -> Int { write(fd, buf, count) }
+#endif

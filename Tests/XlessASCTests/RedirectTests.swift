@@ -5,6 +5,7 @@ import FoundationNetworking
 import Testing
 @testable import XlessASC
 
+#if !os(Windows) // URLSession and a server on sockets: Windows gets a transport of its own
 /// A real HTTP server on 127.0.0.1 that records each request (head and body) and answers from `respond`.
 final class RecordingServer: @unchecked Sendable {
     struct Request: Sendable {
@@ -90,6 +91,7 @@ final class RecordingServer: @unchecked Sendable {
 private func readSocket(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int) -> Int {
     Foundation.read(fd, buffer, count)
 }
+#endif
 
 private func request(_ url: String, method: String = "GET", body: Data? = nil) -> URLRequest {
     var r = URLRequest(url: URL(string: url)!)
@@ -101,6 +103,7 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
     return r
 }
 
+#if !os(Windows)
 @Test func aRedirectToAnotherHostDoesNotCarryTheAuthorizationHeader() async throws {
     let target = try RecordingServer { _ in (200, ["Content-Type": "text/plain"], Data("report".utf8)) }
     defer { target.stop() }
@@ -204,6 +207,8 @@ private final class Got: @unchecked Sendable {
     func add(_ data: Data) { lock.withLock { total += data.count } }
     var count: Int { lock.withLock { total } }
 }
+
+#endif
 
 // MARK: the rule itself
 

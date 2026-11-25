@@ -42,9 +42,13 @@ private let record = UploadRecord(buildUploadID: "U1", buildID: "B1", state: "CO
     try Data("\u{1b}[2Jnot json".utf8).write(to: text)
     let directory = root.appendingPathComponent("dir.json")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    var bad = [(link, "is a link"), (large, "is too large"), (text, "cannot be read"), (directory, "is not a file")]
+    #if !os(Windows)
     let fifo = root.appendingPathComponent("fifo.json")
     #expect(mkfifo(fifo.path, 0o600) == 0)
-    for (file, why) in [(link, "is a link"), (large, "is too large"), (text, "cannot be read"), (directory, "is not a file"), (fifo, "is not a file")] {
+    bad.append((fifo, "is not a file"))
+    #endif
+    for (file, why) in bad {
         guard case .ignored(let reason) = UploadRecord.read(file) else { Issue.record("\(file.lastPathComponent) was taken"); continue }
         #expect(reason == "the record of the last upload, \(file.path), \(why): ignored")
     }

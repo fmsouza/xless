@@ -1,4 +1,8 @@
+#if os(Windows)
+import CXlessWindows
+#else
 import CXlessProcess
+#endif
 import Foundation
 
 /// The Linux kernel keyring, for secrets a later command of the same login session may reuse for a bounded time (the

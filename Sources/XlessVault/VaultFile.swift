@@ -32,6 +32,9 @@ public struct VaultKDF: Codable, Sendable, Equatable {
 
     func deriveKey(from passphrase: SecretBytes) throws -> SymmetricKey {
         try validate()
+        #if os(Windows)
+        SecretScope.enter() // whoever asks: no store is opened there before
+        #endif
         return try passphrase.withUnsafeBytes { bytes in
             try KDF.Scrypt.deriveKey(from: bytes, salt: salt, outputByteCount: 32, rounds: rounds, blockSize: blockSize,
                                      parallelism: parallelism)

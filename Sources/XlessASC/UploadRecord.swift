@@ -46,6 +46,20 @@ public struct UploadRecord: Codable, Sendable, Equatable {
     /// Reads the record at `url`: a plain file (no link is followed, nothing is waited for) of at most `maxSize` bytes.
     public static func read(_ url: URL) -> Found {
         func ignored(_ why: String) -> Found { .ignored("the record of the last upload, \(url.path), \(why): ignored") }
+        #if os(Windows)
+        let data: Data
+        do { data = try InputFile.read(url.path, limit: maxSize, throughLinks: false) } catch let refusal as PrivateFile.Refusal {
+            switch refusal.kind {
+            case .missing: return .none
+            case .link: return ignored("is a link")
+            case .notFile: return ignored("is not a file")
+            case .tooLarge: return ignored("is too large")
+            default: return ignored("cannot be read")
+            }
+        } catch { return ignored("cannot be read") }
+        guard let record = try? JSONDecoder().decode(UploadRecord.self, from: data) else { return ignored("cannot be read") }
+        return .found(record)
+        #else
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else {
             switch errno {
@@ -61,5 +75,6 @@ public struct UploadRecord: Codable, Sendable, Equatable {
         guard let data = try? file.read(upToCount: maxSize + 1) ?? Data(), data.count <= maxSize,
               let record = try? JSONDecoder().decode(UploadRecord.self, from: data) else { return ignored("cannot be read") }
         return .found(record)
+        #endif
     }
 }

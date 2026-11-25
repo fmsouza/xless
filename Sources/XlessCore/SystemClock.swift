@@ -1,4 +1,8 @@
+#if os(Windows)
+import CXlessWindows
+#else
 import CXlessProcess
+#endif
 
 /// The system's own clock: it counts while the system sleeps and nobody sets it.
 public enum SystemClock {
