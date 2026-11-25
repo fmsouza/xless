@@ -65,8 +65,9 @@ extension ProjectRun {
                 host.say("==> note: \(name) is set, but docker builds take only \(name)_FILE (a file to mount); using the secret store's \(name)")
             }
         }
-        if needs.uploads { findDemoPassword() }
-        try sortDemoPasswords()
+        // (Natively also for a run that stops earlier, whose build step runs without its variable as any other's.)
+        if needs.uploads || !docker { findDemoPassword() }
+        if needs.uploads { try sortDemoPasswords() }
 
         // The store prefers the project's team (its top-level teamID:).
         func add(_ set: String, _ keys: [String]) {
@@ -120,7 +121,7 @@ extension ProjectRun {
         if answer.code == 0, names.allSatisfy({ $0.wholeMatch(of: /[A-Za-z_][A-Za-z0-9_]*(@[A-Z0-9]{10})?/) != nil }) {
             secrets.demoNames = names
         } else {
-            let end = docker ? "it is given to no container" : "xless reads it itself when it uploads"
+            let end = docker ? "it is given to no container" : secrets.needs.uploads ? "xless reads it itself when it uploads" : "the build step keeps the variable it is in, if any"
             host.say("==> note: \"\(xself)\" secrets named-by could not tell which secret holds the TestFlight demo account's password: \(end) (xless says what is wrong when it reads the configuration)")
         }
     }

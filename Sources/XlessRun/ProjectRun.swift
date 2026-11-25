@@ -326,9 +326,11 @@ public final class ProjectRun {
             try materialize()
             let words = dockerRun + ["--mount", RunText.bind(project, "/work"), "-w", "/work"] + secrets.api + secrets.sign + storeMounts("sign")
                 + origin(project) + ["-e", "XLESS_BUILD_NUMBER", image, "xless"] + ship
-            code = step(words, .identifiers).code
-        } else {
+            code = step(words, signs ? .identifiers : .nothing).code
+        } else if signs {
             code = step([xself] + ship, .everything, told: true, directory: project).code
+        } else {
+            code = step([xself] + ship, .nothing, directory: project, adding: ["XLESS_NO_SECRET_STORE": "1"]).code
         }
         if code == 0, !signs {
             host.say("==> TestFlight: stopped after \(span.to.name) (--to), nothing delivered")

@@ -60,6 +60,24 @@ import XlessCore
         }
     }
 
+    /// Nor one that stops before it signs, which needs none.
+    @Test func nativelyABuildThatStopsIsGivenNone() throws {
+        var secrets = try home.files()
+        secrets["SOME_PASSWORD_FILE"] = "\(home.root)/none" // (which such a run does not read)
+        for arguments in [["--config", home.overlay], [home.project]] {
+            let host = FakeRunHost(answer: home.answer())
+            #expect(try home.run(arguments + ["--to", "finalize", "--build-number", "1"], docker: false, host: host, environment: secrets) == 0)
+            let build = try #require(host.allSteps.first { $0.line.contains("--to finalize") })
+            #expect(secretsIn(build, secrets).isEmpty && build.environment["XLESS_NO_SECRET_STORE"] == "1")
+            let container = FakeRunHost(answer: home.answer())
+            #expect(try home.run(arguments + ["--to", "finalize", "--build-number", "1"], docker: true, host: container, environment: secrets) == 0)
+            for step in container.allSteps { #expect(Set(step.environment.keys).isDisjoint(with: SecretEnvironment.names), "\(step.line)") }
+            let unknown = FakeRunHost(answer: home.answer { $0.words.contains("named-by") ? (10, "") : nil })
+            #expect(try home.run(arguments + ["--to", "finalize", "--build-number", "1"], docker: false, host: unknown, environment: secrets) == 0)
+            #expect(unknown.lines.contains { $0.contains("named-by could not tell") && $0.contains("the build step keeps the variable it is in, if any") })
+        }
+    }
+
     /// Every secret's variable, with its `_FILE` form, and a password's of the user's own name.
     @Test func theDryRunShowsThatTheBuildHasNone() throws {
         let host = FakeRunHost(answer: home.answer())

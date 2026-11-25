@@ -281,7 +281,7 @@ case "$*" in *"--distribution app-store"*) echo "next: submit" >&2; echo "/work/
 exit 0
 X
 : > "$t/xlog"; msg=$("${real[@]}" XLESS_DEVID_KEY_FILE="$t/devid.pem" "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>&1 >/dev/null) || fail "native macos run failed: $msg"
-[[ $(wc -l < "$t/xlog") -eq 2 ]] || fail "native macos: want 2 invocations: $(cat "$t/xlog")"
+[[ $(grep -c "^ship " "$t/xlog") -eq 2 && $(grep -vc "^ship \|^secrets named-by .* | DEVID=unset ASC_KEY_ID=unset$" "$t/xlog") -eq 0 ]] || fail "native macos: want 2 ships, and which variable the password is in: $(cat "$t/xlog")"
 grep -q -- "--platform macos .*--to finalize | DEVID=unset ASC_KEY_ID=unset$" "$t/xlog" || fail "macos step 2 env: $(cat "$t/xlog")"
 grep -q -- "--from sign --to package | DEVID=$t/devid.pem ASC_KEY_ID=KEYID$" "$t/xlog" || fail "macos step 3 env: $(cat "$t/xlog")"
 [[ "$msg" == *"==> DMG: /work/out/App_1.0.0_universal.dmg"* ]] || fail "DMG path not reported: $msg"
