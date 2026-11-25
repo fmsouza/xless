@@ -2,10 +2,12 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if os(Windows)
+import CXlessWindowsTestSupport
+#endif
 import Testing
 @testable import XlessASC
 
-#if !os(Windows) // URLSession and a server on sockets: Windows gets a transport of its own
 /// A real HTTP server on 127.0.0.1 that records each request (head and body) and answers from `respond`.
 final class RecordingServer: @unchecked Sendable {
     struct Request: Sendable {
@@ -16,12 +18,23 @@ final class RecordingServer: @unchecked Sendable {
     }
 
     let port: UInt16
+    #if os(Windows)
+    private let fd: Int
+    #else
     private let fd: Int32
+    #endif
     private let lock = NSLock()
     private var seen: [Request] = []
     var requests: [Request] { lock.withLock { seen } }
 
     init(respond: @escaping @Sendable (Request) -> (Int, [String: String], Data)) throws {
+        #if os(Windows)
+        var free: UInt16 = 0
+        let listener = xless_test_listen(&free)
+        guard listener >= 0 else { throw URLError(.cannotConnectToHost) }
+        fd = listener
+        port = free
+        #else
         #if canImport(Darwin)
         let listener = socket(AF_INET, SOCK_STREAM, 0)
         #else
@@ -38,29 +51,42 @@ final class RecordingServer: @unchecked Sendable {
         _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &length) } }
         fd = listener
         port = UInt16(bigEndian: addr.sin_port)
+        #endif
         Thread.detachNewThread { [self] in
             while true {
+                #if os(Windows)
+                let client = xless_test_accept(listener)
+                #else
                 let client = accept(listener, nil, nil)
+                #endif
                 if client < 0 { return }
-                guard let request = Self.read(client) else { close(client); continue }
+                guard let request = Self.read(client) else { closeSocket(client); continue }
                 lock.withLock { seen.append(request) }
                 let (status, headers, body) = respond(request)
                 var head = "HTTP/1.1 \(status) X\r\nContent-Length: \(body.count)\r\nConnection: close\r\n"
                 for (k, v) in headers { head += "\(k): \(v)\r\n" }
                 let reply = Data((head + "\r\n").utf8) + body
                 _ = reply.withUnsafeBytes { pointer in
-                    #if canImport(Glibc)
+                    #if os(Windows)
+                    xless_test_send(client, pointer.baseAddress, reply.count)
+                    #elseif canImport(Glibc)
                     send(client, pointer.baseAddress, reply.count, Int32(MSG_NOSIGNAL))
                     #else
                     send(client, pointer.baseAddress, reply.count, 0)
                     #endif
                 }
-                close(client)
+                closeSocket(client)
             }
         }
     }
 
-    private static func read(_ client: Int32) -> Request? {
+    #if os(Windows)
+    private typealias Socket = Int
+    #else
+    private typealias Socket = Int32
+    #endif
+
+    private static func read(_ client: Socket) -> Request? {
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 65536)
         while true {
@@ -85,12 +111,21 @@ final class RecordingServer: @unchecked Sendable {
         }
     }
 
+    #if os(Windows)
+    func stop() { xless_test_stop(fd) }
+    #else
     func stop() { shutdown(fd, Int32(SHUT_RDWR)); close(fd) }
+    #endif
 }
 
+#if os(Windows)
+private func readSocket(_ fd: Int, _ buffer: UnsafeMutableRawPointer, _ count: Int) -> Int { Int(xless_test_receive(fd, buffer, count)) }
+private func closeSocket(_ fd: Int) { xless_test_finish(fd) }
+#else
 private func readSocket(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int) -> Int {
     Foundation.read(fd, buffer, count)
 }
+private func closeSocket(_ fd: Int32) { close(fd) }
 #endif
 
 private func request(_ url: String, method: String = "GET", body: Data? = nil) -> URLRequest {
@@ -103,7 +138,6 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
     return r
 }
 
-#if !os(Windows)
 @Test func aRedirectToAnotherHostDoesNotCarryTheAuthorizationHeader() async throws {
     let target = try RecordingServer { _ in (200, ["Content-Type": "text/plain"], Data("report".utf8)) }
     defer { target.stop() }
@@ -189,16 +223,22 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
 }
 
 @Test func aCancelledRequestEnds() async throws {
-    // It answers only at the end of the test, or long after a slow machine would have cancelled it.
+    // It answers only at the end of the test, or long after a slow machine would have cancelled it. No clock is compared:
+    // where every test waits for a processor, a moment of this one may be a minute of the clock.
     let end = DispatchSemaphore(value: 0)
-    let server = try RecordingServer { _ in _ = end.wait(timeout: .now() + 60); return (200, [:], Data()) }
+    let answered = Got()
+    let server = try RecordingServer { _ in
+        if end.wait(timeout: .now() + 600) == .timedOut { answered.add(Data(count: 1)) }
+        return (200, [:], Data())
+    }
     defer { end.signal(); server.stop() }
-    let started = Date()
-    let task = Task { try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/slow")) }
+    var slow = request("http://127.0.0.1:\(server.port)/slow")
+    slow.timeoutInterval = 600
+    let task = Task { [slow] in try await URLSessionTransport().send(slow) }
     try await Task.sleep(for: .milliseconds(300))
     task.cancel()
-    await #expect(throws: (any Error).self) { _ = try await task.value }
-    #expect(Date().timeIntervalSince(started) < 50)
+    await #expect { _ = try await task.value } throws: { $0 is CancellationError || ($0 as? URLError)?.code == .cancelled }
+    #expect(answered.count == 0, "it ended because the server answered")
 }
 
 private final class Got: @unchecked Sendable {
@@ -208,7 +248,6 @@ private final class Got: @unchecked Sendable {
     var count: Int { lock.withLock { total } }
 }
 
-#endif
 
 // MARK: the rule itself
 

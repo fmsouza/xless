@@ -2,6 +2,9 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if os(Windows)
+import XlessCore
+#endif
 
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
@@ -60,8 +63,32 @@ private final class Body: @unchecked Sendable {
     private var stored = Data()
     func append(_ data: Data) { lock.withLock { stored.append(data) } }
     var data: Data { lock.withLock { stored } }
+    var count: Int { lock.withLock { stored.count } }
 }
 
+#if os(Windows)
+/// The one session `URLSessionTransport` uses there.
+enum NoRedirectSession {
+    static let shared = NoRedirectSession.self
+
+    /// Sends `request` without following a redirect: a 2xx body goes to `chunk` as it arrives, any other body (at most
+    /// `errorLimit` bytes) comes back with the response.
+    static func exchange(_ request: URLRequest, errorLimit: Int, chunk: @escaping @Sendable (Data) throws -> Void) async throws -> (HTTPURLResponse, Data) {
+        let success = Success(), errorBody = Body()
+        let response = try await WinHTTPSession.shared.get().exchange(request, response: { success.set((200..<300).contains($0.statusCode)) }) { data in
+            if success.isSet { try chunk(data) } else if errorBody.count < errorLimit { errorBody.append(data.prefix(errorLimit - errorBody.count)) }
+        }
+        return (response, errorBody.data)
+    }
+
+    private final class Success: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set(_ value: Bool) { lock.withLock { self.value = value } }
+        var isSet: Bool { lock.withLock { value } }
+    }
+}
+#else
 /// The one URLSession `URLSessionTransport` uses, and its delegate. Delegate-driven data tasks only: for a task with a
 /// completion handler, swift-corelibs-foundation follows redirects without asking the delegate. One serial delegate
 /// queue for every request: callbacks (a report's `chunk` writes included) run one at a time, which keeps each task's
@@ -160,3 +187,4 @@ private final class Exchange: @unchecked Sendable {
 
     var isSuccess: Bool { (200..<300).contains(response?.statusCode ?? 0) }
 }
+#endif

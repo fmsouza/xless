@@ -1,6 +1,6 @@
 # Vendored third-party notices
 
-Verbatim copies of the upstream licence files for everything that is linked statically into the release `xless` binary
+Verbatim copies of the upstream licence files for everything that a release has in it: what is linked statically into the `xless` binary
 (on Linux a musl build with the Swift static Linux SDK 0.1.0 for Swift 6.4.0) and is not a SwiftPM package of this repository.
 They are shipped in `share/xless/licenses/` by `scripts/third-party-licenses.sh`, which refuses to copy a file whose
 sha256 differs from `SOURCES.tsv`; `Tests/shell/licenses.test.sh` checks the same. Nothing here is hand-written.
@@ -33,6 +33,14 @@ the toolchain reaches the link (`swift build -c release --product xless -Xswiftc
 -Xlinker -map -Xlinker map.txt`: objects of this repository and its packages only, for arm64 and x86_64). A macOS package gets
 the notices of what the compiler puts into those objects (`swift`, `compiler-rt`), of BoringSSL (in swift-crypto) and of
 libyaml.
+A Windows package holds the Swift runtime's DLLs beside `xless.exe` (`scripts/windows-package.py closure`: what the program
+needs, and what that needs). They are `swift` (`swiftCore.dll`, `swift_Concurrency.dll`, ...), `swift-corelibs-libdispatch`
+(`dispatch.dll`, `BlocksRuntime.dll`), `swift-foundation`, `swift-foundation-icu` with ICU, and `swift-corelibs-foundation`, whose
+`FoundationNetworking.dll` has curl 8.9.1 (with Schannel), zlib 1.3.1 and brotli 1.2.0 in it (the versions of the toolchain's
+`utils/update_checkout/update-checkout-config.json`). xless makes no request with that curl (it uses WinHTTP), but the library has it in it.
+The DLLs are changed in one respect, of which `licenses/windows-swift-runtime-CHANGES.txt` is the notice.
+`FoundationXML.dll`, and libxml2 with it, is not there. In `xless.exe` itself is what is in a macOS one. The Visual C++ runtime is
+Microsoft's and not packed.
 libyaml is not in the SDK: SwiftPM's Yams 6.2.2 bundles its source (`Sources/CYaml`), and the notice is libyaml 0.2.5's
 (the bundled copy is a later libyaml revision; the licence text of the 0.2.x line is the same MIT licence).
 The SwiftPM packages in `Package.resolved` (and the in-repo `ThirdParty/AssetKit`, with its CLZFSE) get their notices from
@@ -51,8 +59,10 @@ their own checkouts, in `scripts/third-party-licenses.sh`.
 | `musl-COPYRIGHT.txt` | musl | 1.2.5 | <https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5> | `f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af` |
 | `musl-fts-COPYING.txt` | musl-fts | 1.2.7 | <https://raw.githubusercontent.com/void-linux/musl-fts/v1.2.7/COPYING> | `55af87e4017668f54467a3380e7ebbac5e672d8c763bfe95e6fc882a6fdc4046` |
 | `curl-COPYING.txt` | curl | 8.15.0 | <https://raw.githubusercontent.com/curl/curl/curl-8_15_0/COPYING> | `e18f1989333b70044b2adfb7dc2f905d0119dbdcac3bc9f4bc9d540e3a29de5b` |
+| `curl-8.9.1-COPYING.txt` | curl-windows | 8.9.1 | <https://raw.githubusercontent.com/curl/curl/curl-8_9_1/COPYING> | `adb1fc06547fd136244179809f7b7c2d2ae6c4534f160aa513af9b6a12866a32` |
 | `libxml2-Copyright.txt` | libxml2 | 2.14.5 | <https://raw.githubusercontent.com/GNOME/libxml2/v2.14.5/Copyright> | `5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626` |
 | `zlib-LICENSE.txt` | zlib | 1.3.1 | <https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE> | `845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243` |
+| `brotli-LICENSE.txt` | brotli | 1.2.0 | <https://raw.githubusercontent.com/google/brotli/v1.2.0/LICENSE> | `3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94` |
 | `boringssl-LICENSE.txt` | boringssl | 83687b75b2a8 | <https://raw.githubusercontent.com/google/boringssl/83687b75b2a884c128658f680965705709679576/LICENSE> | `827c8d8fc207c2392794eef9e00fe246f9f61fdcc132556c275be3dd8c3cd97f` |
 | `llvm-libcxx-LICENSE.txt` | libcxx | 6.4.0-RELEASE | <https://raw.githubusercontent.com/swiftlang/llvm-project/swift-6.4.0-RELEASE/libcxx/LICENSE.TXT> | `539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b` |
 | `llvm-libcxxabi-LICENSE.txt` | libcxxabi | 6.4.0-RELEASE | <https://raw.githubusercontent.com/swiftlang/llvm-project/swift-6.4.0-RELEASE/libcxxabi/LICENSE.TXT> | `e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c` |

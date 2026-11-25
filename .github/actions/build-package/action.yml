@@ -1,8 +1,8 @@
 name: Build and package xless
-description: Builds xless for one system and architecture (a static binary on Linux) and packs the release tarball (used by pr.yml and release.yml).
+description: Builds xless for one system and architecture (a static binary on Linux) and packs the release tarball, or zip (used by pr.yml and release.yml).
 inputs:
   os:
-    description: linux, or macos (on a macOS runner; either architecture)
+    description: linux, macos (on a macOS runner; either architecture) or windows (on a Windows runner with the toolchain of scripts/windows-toolchain.ps1)
     required: false
     default: linux
   arch:
@@ -13,10 +13,10 @@ inputs:
     required: false
     default: ''
   version:
-    description: Version for the tarball name (0.0.0-dev for the PR check, x.y.z for a release)
+    description: Version for the package's name (0.0.0-dev for the PR check, x.y.z for a release)
     required: true
   out-dir:
-    description: Directory that receives the tarball and its SHA256SUMS line
+    description: Directory that receives the package and its SHA256SUMS line
     required: true
   stamp:
     description: "'true' stamps the version into the tree before building (releases only; needs x.y.z)"
@@ -64,6 +64,23 @@ runs:
         codesign --verify --strict --verbose "$bin"
         echo "XLESS_BIN=$bin" >> "$GITHUB_ENV"
         echo "XLESS_LINK_MAP=$map" >> "$GITHUB_ENV"
+    # With the toolchain's runtime, whose DLLs package-release.sh takes from XLESS_RUNTIME. The flag is the linker's: xless.exe's own
+    # libraries come from its own directory or System32 (LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32), so this
+    # xless.exe starts only as it is packaged. The symbol is of vcruntime140_1.dll, which xless.exe is to need itself (windows-package.py).
+    # Nothing is cached.
+    - name: Build the Windows program
+      if: inputs.os == 'windows'
+      shell: pwsh
+      run: |
+        git config --global core.autocrlf false
+        swift --version
+        $build = 'build', '--build-system', 'native', '-c', 'release', '--product', 'xless', '-debug-info-format', 'none', '-Xlinker', '/DEPENDENTLOADFLAG:0xA00', '-Xlinker', '/INCLUDE:__CxxFrameHandler4'
+        swift @build
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $bin = swift @build --show-bin-path
+        $runtime = @($env:PATH -split ';' | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ 'swiftCore.dll')) } | ForEach-Object { $_.TrimEnd('\') } | Select-Object -Unique)
+        if ($runtime.Count -ne 1) { throw "one Swift runtime is expected on PATH: $runtime" }
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value "XLESS_BIN=$(Join-Path $bin 'xless.exe')", "XLESS_RUNTIME=$($runtime[0])"
     - name: The binary reports the stamped version
       if: inputs.stamp == 'true'
       shell: bash
@@ -72,7 +89,8 @@ runs:
         OS: ${{ inputs.os }}
         ARCH: ${{ inputs.arch }}
       run: |
-        # The x86_64 binary of an arm64 Mac is first run on an Intel one, by the job that installs it.
+        # The x86_64 binary of an arm64 Mac is first run on an Intel one, by the job that installs it, and a Windows one beside its DLLs.
+        if [ "$OS" = windows ]; then exit 0; fi
         if [ "$OS" = macos ] && [ "$(uname -m)" != "$ARCH" ]; then exit 0; fi
         got=$("$XLESS_BIN" --version)
         [ "$got" = "$VERSION" ] || { echo "::error::xless --version printed '$got', expected '$VERSION'"; exit 1; }

@@ -17,6 +17,12 @@ struct KeyRescue: Sendable {
     /// Asks the terminal (the prompt given) for a path; nil when there is no terminal or it was closed.
     var ask: @Sendable (String) -> String?
 
+    #if os(Windows)
+    private static let yours = "yours alone", emptied = ""
+    #else
+    private static let yours = "mode 0600", emptied = "; $XDG_RUNTIME_DIR is emptied when you log out"
+    #endif
+
     enum Outcome: Equatable {
         /// Written to `path` (absolute); `temporary` when it is in `$XDG_RUNTIME_DIR`.
         case saved(path: String, temporary: Bool)
@@ -51,12 +57,24 @@ struct KeyRescue: Sendable {
             }
             if taken { notes.append("\(dir) already has 50 files \(base)*.p8") }
         }
-        var prompt = "The secret store could not keep the private key of \(keyID), which Apple offers once. Path of a new file to save it to (mode 0600; Enter to give up): "
+        var prompt = "The secret store could not keep the private key of \(keyID), which Apple offers once. Path of a new file to save it to (\(Self.yours); Enter to give up): "
         while let answer = ask(prompt) {
             var path = answer.trimmingCharacters(in: .whitespaces)
             if path.isEmpty { return .notSaved((notes + ["no file was given"]).joined(separator: "; ")) }
+            #if os(Windows)
+            // On a drive, from the current directory or from the user's: not C:x, \x, a share or a device (`PrivateFile` refuses streams).
+            if path.hasPrefix("~/") || path.hasPrefix("~\\"), let home = env.variable("USERPROFILE"), UserPaths.isOnDrive(home) { path = home + path.dropFirst() }
+            if !UserPaths.isOnDrive(path) {
+                guard !path.hasPrefix("/"), !path.hasPrefix("\\"), !path.contains(":") else {
+                    prompt = "\(path) does not name its drive. Another path (Enter to give up): "
+                    continue
+                }
+                path = FileManager.default.currentDirectoryPath + "/" + path
+            }
+            #else
             if path.hasPrefix("~/"), let home = env["HOME"], home.hasPrefix("/") { path = home + path.dropFirst() }
             if !path.hasPrefix("/") { path = FileManager.default.currentDirectoryPath + "/" + path }
+            #endif
             switch Self.create(secret, at: path) {
             case .written: return .saved(path: path, temporary: false)
             case .exists: prompt = "\(path) exists (xless never overwrites a file). Another path (Enter to give up): "
@@ -75,13 +93,24 @@ struct KeyRescue: Sendable {
             return lost("\(why); it could not be saved to a file either (\(reason))")
         case .saved(let path, let temporary):
             let command = (["xless", "secrets", "import", entry, "--file", path] + importOptions).map(ShellWord.quoted).joined(separator: " ")
-            return XlessError(.account, "\(noun) \(keyID) was created, but \(why); its private key is saved in \(path) (mode 0600\(temporary ? "; $XDG_RUNTIME_DIR is emptied when you log out" : ""))",
+            return XlessError(.account, "\(noun) \(keyID) was created, but \(why); its private key is saved in \(path) (\(Self.yours)\(temporary ? Self.emptied : ""))",
                               fix: "put it into the secret store now: `\(command)` (it offers to delete the file afterwards); if you do not want the key, delete the file and revoke it (`\(revoke)`)")
         }
     }
 
     /// `$XDG_RUNTIME_DIR` when it is an absolute path to a real directory of yours that no one else can enter.
     private func runtimeDirectory(_ notes: inout [String]) -> String? {
+        #if os(Windows)
+        guard let dir = env.variable("XDG_RUNTIME_DIR"), !dir.isEmpty else { return nil }
+        guard UserPaths.isOnDrive(dir) else { notes.append("XDG_RUNTIME_DIR is not an absolute path"); return nil }
+        do {
+            guard try PrivateFile.inDirectory(dir, .anyDrive, { true }) == true else { notes.append("XDG_RUNTIME_DIR \(dir) does not exist"); return nil }
+        } catch {
+            notes.append("XDG_RUNTIME_DIR \(dir) is not a private directory of yours (\((error as? PrivateFile.Refusal)?.cause ?? "\(error)"))")
+            return nil
+        }
+        return dir.hasSuffix("/") ? String(dir.dropLast()) : dir
+        #else
         guard let dir = env["XDG_RUNTIME_DIR"], !dir.isEmpty else { return nil }
         guard dir.hasPrefix("/") else { notes.append("XDG_RUNTIME_DIR is not an absolute path"); return nil }
         var st = stat()
@@ -91,12 +120,23 @@ struct KeyRescue: Sendable {
             return nil
         }
         return dir.hasSuffix("/") && dir.count > 1 ? String(dir.dropLast()) : dir
+        #endif
     }
 
     enum Written: Equatable { case written, exists, failed(String) }
 
     /// A new file (O_EXCL, no symlink followed), mode 0600, written whole and synced; removed again when that fails.
     static func create(_ secret: SecretBytes, at path: String) -> Written {
+        #if os(Windows)
+        var data = secret.withUnsafeBytes { Data($0) }
+        defer { data.withUnsafeMutableBytes { SecretBytes.zero($0) } }
+        do { try PrivateFile.create(path, data) } catch let refusal as PrivateFile.Refusal {
+            return refusal.kind == .exists ? .exists : .failed(refusal.cause)
+        } catch {
+            return .failed("\(error)")
+        }
+        return .written
+        #else
         let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard fd >= 0 else { return errno == EEXIST ? .exists : .failed(String(cString: strerror(errno))) }
         var ok = fchmod(fd, 0o600) == 0
@@ -119,5 +159,6 @@ struct KeyRescue: Sendable {
             return .failed(why)
         }
         return .written
+        #endif
     }
 }

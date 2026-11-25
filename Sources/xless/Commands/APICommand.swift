@@ -105,6 +105,12 @@ struct APIRequest {
     /// another host, or climb out of the versioned API (`..`), is refused.
     static func split(_ text: String) throws -> (String, [(String, String)]) {
         let refused = ValidationError("\(text): give a path such as /v1/apps, or a URL on https://\(host)/")
+        #if os(Windows) || XLESS_WINDOWS_TARGETS
+        // Git Bash (MSYS) makes C:/Program Files/Git/v1/apps of /v1/apps.
+        if text.wholeMatch(of: /[A-Za-z]:[\\\/].*[\\\/]v[0-9]+[\\\/].*/) != nil {
+            throw ValidationError("\(text): Git Bash made a path of Windows' of what you gave: give it without the first slash (v1/apps), or put MSYS_NO_PATHCONV=1 before the command")
+        }
+        #endif
         var full: String
         if text.hasPrefix("/") {
             guard !text.hasPrefix("//") else { throw refused }

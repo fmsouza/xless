@@ -1,4 +1,7 @@
 import ArgumentParser
+#if os(Windows)
+import CXlessWindows
+#endif
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -136,6 +139,28 @@ private final class Once: @unchecked Sendable {
     func first() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
 }
 
+#if os(Windows)
+@Test func ctrlCCancelsTheWaitWhichOnlyRead() async throws {
+    let flag = Interrupt.Flag()
+    let once = Once()
+    let t = FakeTransport((0..<1000).map { _ in (200, one(build(idA, number: "42", state: "PROCESSING"))) })
+    do {
+        _ = try await Interrupt.cancelling(flag: flag) {
+            var c = cli(t)
+            c.sleep = { _ in
+                if once.first() { xless_interrupt_raise() } // a real one would be for every process of this console
+                try await Task.sleep(for: .seconds(30))
+            }
+            return try await c.wait(.id(idA), appID: nil, platform: nil, timeout: 3600)
+        }
+        Issue.record("expected the wait to stop")
+    } catch {
+        #expect(error is CancellationError, "\(error)")
+        #expect(flag.interrupted)
+    }
+    #expect(t.requests.count == 1 && t.requests[0].httpMethod == "GET")
+}
+#else
 @Test func aSignalCancelsTheWaitWhichOnlyRead() async throws {
     // What the signal does before the wait it does after it, whole: what passes signals on to the tools blocks the others.
     var mine = sigaction(), before = sigaction(), after = sigaction()
@@ -181,6 +206,7 @@ private extension sigaction {
         }
     }
 }
+#endif
 
 @Test func expireAsksAndNeverExpiresTwice() async throws {
     let t = FakeTransport([(200, one(build(idA, number: "42"))), (200, one(build(idA, number: "42", expired: true)))])

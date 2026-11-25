@@ -99,7 +99,11 @@ private struct NoHold: SessionKeyStore {
     let e = #expect(throws: XlessError.self) { try SecretsImportCommand.parse(["xless-apple-session", "--file", "/nonexistent/secret"]).run() }
     #expect(e?.cause.contains("xless-apple-session is the name of xless's own entry") == true && e?.fix.contains("another name") == true, "\(String(describing: e))")
     let other = #expect(throws: XlessError.self) { try SecretsImportCommand.parse(["xless-sparkle", "--file", "/nonexistent/secret"]).run() }
+    #if os(Windows)
+    #expect(other?.cause == "there is no file /nonexistent/secret", "\(String(describing: other))")
+    #else
     #expect(other?.cause.contains("cannot open /nonexistent/secret") == true, "\(String(describing: other))")
+    #endif
     #expect(throws: (any Error).self) { try CertsCreateCommand.parse(["--type", "distribution", "--name", "xless-apple-session"]) }
     #expect(throws: Never.self) { try CertsCreateCommand.parse(["--type", "distribution", "--name", "xless-sparkle"]) }
 }

@@ -1,8 +1,5 @@
 import Foundation
-import XlessCargo
 import XlessCore
-import XlessReactNative
-import XlessTauri
 
 /// The secrets a run's upload reads under names its configuration gives (`xless secrets named-by`, for
 /// `xless run`): the TestFlight demo account's password, when the configuration's
@@ -27,13 +24,6 @@ enum RunSecretNames {
     /// DMG and React Native (iOS only) have none on macOS; a cargo app's macOS upload is its App-Store lane's.
     static func testFlight(config: URL?, project: URL?, platform: Platform) throws -> TestFlightConfig? {
         if let project { return try ProjectConfig.load(from: project.appendingPathComponent("xless.yml")).testflight }
-        guard let config else { return nil }
-        let text = try OverlayPaths.read(config)
-        let name = OverlayPaths(overlay: config).name
-        switch try OverlayKind.of(config) {
-        case .reactNative: return platform == .ios ? try ReactNativeOverlay.parse(yaml: text, name: name).testflight : nil
-        case .cargo: return try CargoOverlay.parse(yaml: text, name: name).testflight
-        case .tauri: return platform == .ios ? try TauriOverlay.parse(yaml: text, name: name).testflight : nil
-        }
+        return try config.flatMap { try overlay($0, platform: platform) }
     }
 }

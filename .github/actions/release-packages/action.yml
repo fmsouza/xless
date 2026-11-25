@@ -1,0 +1,28 @@
+name: The release's packages
+description: Downloads the five packages into dist/ and refuses any that is not the one its build job made (release.yml's verify and publish jobs).
+inputs:
+  sums:
+    description: What scripts/package-sums.sh all printed (the output of release.yml's job built)
+    required: true
+runs:
+  using: composite
+  steps:
+    # By name, each: what else a job of this run uploaded is not looked at.
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with: { name: tarball-x86_64, path: dist }
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with: { name: tarball-arm64, path: dist }
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with: { name: tarball-macos-x86_64, path: dist }
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with: { name: tarball-macos-arm64, path: dist }
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with: { name: tarball-windows-x86_64, path: dist }
+    # Any job may have replaced an artifact: what is verified and published is what the build jobs' outputs say.
+    - name: They are the packages that were built
+      shell: bash
+      env:
+        SUMS: ${{ inputs.sums }}
+      run: |
+        printf '%s\n' "$SUMS" > "$RUNNER_TEMP/package-sums"
+        scripts/package-sums.sh check "$RUNNER_TEMP/package-sums" dist

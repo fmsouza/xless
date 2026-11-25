@@ -6,6 +6,8 @@ import FoundationNetworking
 import Glibc
 #elseif canImport(Darwin)
 import Darwin
+#elseif os(Windows)
+import CXlessWindowsTestSupport
 #endif
 import Testing
 @testable import XlessASC
@@ -14,8 +16,42 @@ import Testing
 /// written in pieces with pauses, so a client sees it arrive in several reads.
 final class LoopbackServer: @unchecked Sendable {
     let port: UInt16
+    #if os(Windows)
+    private let fd: Int
+    #else
     private let fd: Int32
+    #endif
 
+    #if os(Windows)
+    init(respond: @escaping @Sendable (String) -> (Int, Data)) throws {
+        var free: UInt16 = 0
+        let listener = xless_test_listen(&free)
+        guard listener >= 0 else { throw URLError(.cannotConnectToHost) }
+        fd = listener
+        port = free
+        Thread.detachNewThread {
+            while true {
+                let client = xless_test_accept(listener)
+                if client < 0 { return }
+                var request = [UInt8](repeating: 0, count: 4096)
+                let n = xless_test_receive(client, &request, request.count)
+                let line = String(decoding: request.prefix(max(Int(n), 0)), as: UTF8.self).split(separator: "\r\n").first ?? ""
+                let (status, body) = respond(line.split(separator: " ").dropFirst().first.map(String.init) ?? "/")
+                var reply = Data("HTTP/1.0 \(status) X\r\nContent-Length: \(body.count)\r\nContent-Type: application/a-gzip\r\nConnection: close\r\n\r\n".utf8)
+                var offset = 0
+                repeat {
+                    guard reply.withUnsafeBytes({ xless_test_send(client, $0.baseAddress, $0.count) }) == Int64(reply.count) else { break }
+                    reply = body.subdata(in: offset..<min(offset + 16384, body.count))
+                    offset += reply.count
+                    Thread.sleep(forTimeInterval: 0.002)
+                } while !reply.isEmpty
+                xless_test_finish(client)
+            }
+        }
+    }
+
+    func stop() { xless_test_stop(fd) }
+    #else
     init(respond: @escaping @Sendable (String) -> (Int, Data)) throws {
         #if canImport(Darwin)
         let listener = socket(AF_INET, SOCK_STREAM, 0)
@@ -69,6 +105,7 @@ final class LoopbackServer: @unchecked Sendable {
     }
 
     func stop() { shutdown(fd, Int32(SHUT_RDWR)); close(fd) }
+    #endif
 }
 
 @Test func theURLSessionTransportHandsTheBodyOverAsItArrives() async throws {

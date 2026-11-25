@@ -41,6 +41,15 @@ func whatWindowsTakesForSomethingElseIsRefused(_ name: String) {
     #expect(!ProjectPath.isInsideOnWindows(#"\\?\C:\app-other\x"#, #"\\?\C:\app"#))
     #expect(!ProjectPath.isInsideOnWindows(#"\\?\D:\app\x"#, #"\\?\C:\app"#))
     #expect(!ProjectPath.isInsideOnWindows(#"\\?\C:\"#, #"\\?\C:\app"#))
+    // As NTFS tells names apart, not as Swift does.
+    #expect(!ProjectPath.isInsideOnWindows("\\\\?\\C:\\e\u{301}\\x", "\\\\?\\C:\\\u{e9}"))
+    #expect(!ProjectPath.isInsideOnWindows("\\\\?\\C:\\\u{212A}\\x", "\\\\?\\C:\\k"))
+    #expect(ProjectPath.isInsideOnWindows("\\\\?\\C:\\\u{e9}K\\x", "\\\\?\\C:\\\u{e9}k"))
+    #expect(!ProjectPath.isInsideOnWindows("\\\\?\\C:\\app\\\u{301}x", "\\\\?\\C:\\app\\\u{301}y"))
+    #expect(ProjectPath.isInsideOnWindows("\\\\?\\C:\\app\\\u{301}x", "\\\\?\\C:\\app"))
+    #if os(Windows)
+    #expect(ProjectPath.isInsideOnWindows("\\\\?\\C:\\\u{c9}\\x", "\\\\?\\C:\\\u{e9}"))
+    #endif
 }
 
 private func directory() throws -> URL {

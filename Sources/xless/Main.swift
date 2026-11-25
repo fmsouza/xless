@@ -2,12 +2,21 @@ import ArgumentParser
 import Foundation
 import XlessAgent
 import XlessCore
+#if !os(Windows) && !XLESS_WINDOWS_TARGETS
 import XlessRun
+#endif
 import XlessVault
 
 @main
 enum Main {
     static func main() async {
+        #if os(Windows) || XLESS_WINDOWS_TARGETS
+        let (arguments, noInput) = InputGate.taking(CommandLine.arguments)
+        #if os(Windows)
+        WindowsProcess.start()
+        if noInput { WindowsProcess.setEnvironment(InputGate.variable, "1") }
+        #endif
+        #else
         // `xless __agent`, which xless starts itself (`xless unlock`): before anything else, with nothing of the environment.
         if let status = AgentHost.runIfAsked(CommandLine.arguments) { exit(status) }
         // `--no-input`, of any command: also for the processes it becomes or starts.
@@ -17,6 +26,7 @@ enum Main {
         ScriptProcess.path = ProcessInfo.processInfo.environment["PATH"]
         // A native install's xtool, rcodesign and Swift, first on PATH for this process and every child.
         NativeLayout.activate()
+        #endif
         // A secret missing from the environment comes from the secret store, when it holds one (`xless secrets`).
         // XLESS_NO_SECRET_STORE=1 (the native build step of `xless run`, and every tool an xless runs:
         // `ChildProcess`): xless never opens the store, and it and the build tools leave the session keyring, so a
@@ -56,9 +66,20 @@ enum Main {
             say(refused)
             exit(refused.exitCode)
         }
-        guard let error else { return }
+        guard let error else {
+            #if os(Windows)
+            WindowsOutput.finish()
+            #endif
+            return
+        }
         guard let error = error as? XlessError else { Xless.exit(withError: error) }
         say(error)
         exit(error.exitCode)
     }
 }
+
+#if os(Windows)
+extension FileHandle {
+    func write(_ data: Data) { WindowsOutput.write(data, to: self) }
+}
+#endif

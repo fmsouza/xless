@@ -6,7 +6,7 @@
 # there (XLESS_RELEASE_BASE=file://<dir>) twice, into fresh prefixes: once pinned to <version> (XLESS_VERSION) and once
 # as the latest. Each time `xless --version` and share/xless/VERSION must be <version>. The tarball installed is this
 # machine's architecture (XLESS_UNAME_M / XLESS_UNAME_S pass through to install.sh, for tests). On macOS the installed program is
-# checked again (scripts/check-macos-binary.sh; XLESS_CHECK_BINARY overrides it).
+# checked again (scripts/check-macos-binary.sh; XLESS_CHECK_BINARY overrides it). On Windows: scripts/verify-release.ps1.
 set -euo pipefail
 version="${1:-}" dist="${2:-}"
 die() { echo "verify-release: $*" >&2; exit 1; }

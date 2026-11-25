@@ -59,10 +59,13 @@ public struct Secrets: Sendable {
         return nil
     }
 
+    /// Without the byte order mark that Windows PowerShell puts before UTF-8: it is no part of a password or a key.
+    public static func withoutMark(_ data: Data) -> Data { data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data }
+
     private static func text(of path: String) throws -> String {
         #if os(Windows)
         // A device (`NUL`, `\\.\pipe\…`) is no file of a secret.
-        guard let text = String(validating: try InputFile.read(path, limit: 1 << 20), as: UTF8.self) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
+        guard let text = String(validating: withoutMark(try InputFile.read(path, limit: 1 << 20)), as: UTF8.self) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return text
         #else
         return try String(contentsOfFile: path, encoding: .utf8)

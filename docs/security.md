@@ -85,7 +85,7 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
 
 [secrets.md](secrets.md) has the commands; this is what is in the file.
 
-- **Where.** `$XDG_DATA_HOME/xless/vault/` (`~/.local/share/xless/vault/`): the directory mode 0700, `secrets.vault`
+- **Where.** `$XDG_DATA_HOME/xless/vault/` (`~/.local/share/xless/vault/`; [on Windows](#windows) elsewhere): the directory mode 0700, `secrets.vault`
   and the writers' `lock` mode 0600. A symlink, another owner, or any permission bit for the group or others on any of
   them is refused, never repaired.
 - **Format.** One JSON file (`"format": "xless-vault"`, `"version": 2`, `"minimumReaderVersion": 2`, a random store
@@ -479,6 +479,46 @@ On macOS a path can be spelled in more than one way (upper and lower case, Unico
 is, not how it is written. What the kernel does not tell (a folder that you may not search, on either system) is not taken for
 one that is not there: the run stops.
 
+### Windows
+
+On Windows xless has its account commands only ([what is there](native-install.md#windows)), and less to hide behind:
+
+- **The secret store** is `%LOCALAPPDATA%\xless\vault` (the system's answer, not the variable's). Its directory and files are owned by
+  you and let nobody else in. Anything else found there is refused, never repaired: another owner, an access entry of anybody but you, the
+  system and the administrators, an inherited or missing access list, a link, a junction, a second name of the file, a share, a drive that
+  Windows calls removable, FAT. (A USB disk mostly calls itself fixed, and is taken.) The system and the administrators are root's
+  counterparts: accepted when something else let them in, and never let in by xless.
+- **A key that xless writes** is made and checked so too, but may be on any drive that keeps access lists, a mapped share's as well (a path
+  `\\server\…` is refused).
+- **The directories above.** xless opens the store's directory, looks at what it has opened and keeps it open, and opens each file by its path
+  in it, looking at that too. A junction *above* that directory is followed, and whoever may set one can lead a later file elsewhere: what is
+  not yours is refused there too, but a new store would be written there. The missing directories above a store that `XDG_DATA_HOME` moves
+  are made with the access list that they inherit, as are `XDG_CONFIG_HOME`'s, where `config.yml` (preferences, no secret) is not checked. Point
+  them only to where nobody else may write.
+- **Replacing the store** is one step, flushed before; Windows has no way to flush a directory, so after a power cut the old store may be
+  back. A backup, a shadow copy or a search index may have what is in a file that was written in clear, as on any system.
+- **The passphrase** is read from the console itself, never from standard input, without echo and without the console's line history.
+  Where there is no console (PowerShell ISE, a service, an old terminal that gives a pipe) xless asks nothing and says so.
+- **Memory.** A process that read a secret shows no error dialog, has no heap in an error report, and ends at a fault before Windows' error
+  reporting sees it; a process for which the first two cannot be had reads no secret. Beyond that, as far as it goes: the process's own
+  access list denies other programs of yours to open its memory, its secrets' pages are locked, and no library is loaded from a share, an
+  extension point or a file of low integrity.
+- **That is less than on Linux.** There is no non-dumpable process. An administrator can read any. A program of yours that opened the
+  process before it read a secret, or that started it under a debugger, keeps what it has. Only the process object's access list is narrowed:
+  its threads keep the one your account gives everything it makes, so a program of yours that opens a thread can make it run code of its
+  choice; and the process has no label against reading by one of low integrity, which may read what that list grants you. `__fastfail` (a corrupted stack or heap)
+  goes to Windows' error reporting past the process's own handler: an administrator's `LocalDumps` setting then writes a dump. What the
+  console shows, and what any program of yours can read of it, xless does not control.
+- **Nothing is kept unlocked:** there is no agent, since what tells one program from another is the kernel's word elsewhere and has no
+  counterpart there. Each command asks, and forgets. There are no credential helpers and no security keys.
+- **Requests** go through Windows' own HTTP (WinHTTP) and TLS (Schannel, TLS 1.2 or later), with the certificates that Windows trusts, and
+  through the proxy of `HTTPS_PROXY` (plain `http://` proxies, without a name and a password in the address), else the system's. No cookie is
+  kept by it, no redirect followed, and no sign-in of your Windows account offered to a server or a proxy. Whether a certificate was
+  revoked is not asked.
+- **Programs and libraries.** xless starts no program there. Its libraries are the Swift runtime's, beside `xless.exe` in a directory that only
+  you may write, and System32's: never the current directory's or `PATH`'s. That holds for what those libraries need in turn too: the
+  packaging sets the same load flags in each of them. Without a part of the Visual C++ runtime in System32, xless does not start.
+
 ### In WSL
 
 **On a WSL distribution as it is installed, a build can reach Windows, and be root in the distribution, whatever xless does.** Turn
@@ -794,6 +834,8 @@ rm -rf ~/.local/share/xless/vault        # the secret store itself ($XDG_DATA_HO
                                          # (with a credential helper: xless secrets list, then xless secrets rm each entry)
 rm -f ~/.config/xless/config.yml         # the default team and the unlock times (preferences, not secrets)
 ```
+
+On Windows: `Remove-Item -Recurse $env:LOCALAPPDATA\xless` (the store and the settings).
 
 The agent ends with the terminals it serves; the kernel keyring's keys also go when the login session's keyring is
 released (once no process of that session is left). Neither survives a reboot.

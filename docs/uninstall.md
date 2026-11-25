@@ -1,6 +1,6 @@
 # Uninstall xless and free its disk space
 
-This is the same on Linux and macOS. After `xless setup` and a few builds, xless takes space in these places:
+This is the same on Linux and macOS (on Windows: [native-install.md](native-install.md#windows)). After `xless setup` and a few builds, xless takes space in these places:
 
 | What | Where | Size |
 |---|---|---|

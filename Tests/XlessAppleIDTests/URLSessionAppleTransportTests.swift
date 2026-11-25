@@ -3,12 +3,19 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+#if os(Windows)
+import CXlessWindowsTestSupport
+#endif
 @testable import XlessAppleID
 
 /// A one-request-per-connection HTTP server on 127.0.0.1, answering each request head with raw response bytes.
 final class LoopbackServer: @unchecked Sendable {
     private(set) var port: UInt16 = 0
+    #if os(Windows)
+    private let sock: Int
+    #else
     private let sock: Int32
+    #endif
     private let lock = NSLock()
     private var _heads: [String] = []
     var heads: [String] { lock.withLock { _heads } }
@@ -16,6 +23,12 @@ final class LoopbackServer: @unchecked Sendable {
 
     init(_ respond: @escaping @Sendable (String) -> Data) throws {
         self.respond = respond
+        #if os(Windows)
+        var free: UInt16 = 0
+        sock = xless_test_listen(&free)
+        guard sock >= 0 else { throw URLError(.cannotConnectToHost) }
+        port = free
+        #else
         signal(SIGPIPE, SIG_IGN) // a client that hangs up mid-body must not kill the test process
         #if os(Linux)
         sock = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
@@ -37,11 +50,21 @@ final class LoopbackServer: @unchecked Sendable {
         var len = size
         _ = withUnsafeMutablePointer(to: &bound) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(sock, $0, &len) } }
         port = UInt16(bigEndian: bound.sin_port)
+        #endif
         let thread = Thread { [self] in self.serve() }
         thread.start()
     }
 
+    #if os(Windows)
+    deinit { xless_test_stop(sock) }
+
+    private func accept(_ listener: Int, _: Int?, _: Int?) -> Int { xless_test_accept(listener) }
+    private func read(_ connection: Int, _ byte: UnsafeMutablePointer<UInt8>, _ count: Int) -> Int { Int(xless_test_receive(connection, byte, count)) }
+    private func write(_ connection: Int, _ bytes: UnsafeRawPointer, _ count: Int) -> Int { Int(xless_test_send(connection, bytes, count)) }
+    private func close(_ connection: Int) { xless_test_finish(connection) }
+    #else
     deinit { close(sock) }
+    #endif
 
     func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(port)\(path)")! }
 
@@ -92,6 +115,7 @@ final class URLSessionAppleTransportTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    #if !os(Windows)
     /// swift-corelibs-foundation aborts the process ("_MultiHandle deallocated with non-zero retain count") when a
     /// session's curl multi handle is freed while curl still watches one of its sockets (`xless live-check` died that
     /// way after its last line, on a real account). A session that ends lives on until the process exits instead.
@@ -107,6 +131,7 @@ final class URLSessionAppleTransportTests: XCTestCase {
         try await Task.sleep(nanoseconds: 500_000_000) // the session finishes invalidating on its own queue
         XCTAssertNotNil(ended, "the transport, and so its session, must outlive invalidate() until the process exits")
     }
+    #endif
 
     func testInvalidateCancelsARequestInFlight() async throws {
         let server = try LoopbackServer { _ in Thread.sleep(forTimeInterval: 3); return LoopbackServer.reply("200 OK") }

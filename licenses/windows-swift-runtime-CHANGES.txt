@@ -1,0 +1,3 @@
+The DLLs of the Swift runtime beside xless.exe are those of the Swift toolchain, with one change made by the xless project: the
+DependentLoadFlags of their load configuration are 0xA00 (and, where there is one, their checksum is that of the changed file), so that
+Windows looks for the libraries they need beside xless.exe and in System32 only. Nothing else in them differs.

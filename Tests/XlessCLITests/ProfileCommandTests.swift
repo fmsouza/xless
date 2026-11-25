@@ -234,8 +234,10 @@ private func refused(_ t: FakeTransport, _ request: ProfileRequest, _ cause: Str
     let out = try await cli(t).download("P1", to: path, team: "ABCDE12345")
     #expect(out == "wrote profile xless com.example.app IOS_APP_ADHOC (P1, IOS_APP_ADHOC, expires 2099-01-01) to \(path)\n")
     #expect(FileManager.default.contents(atPath: path) == file)
+    #if !os(Windows)
     let mode = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int
     #expect(mode == 0o644)
+    #endif
     #expect(t.requests[0].url!.query?.contains("profileContent") == true)
 
     // Never overwrites.
