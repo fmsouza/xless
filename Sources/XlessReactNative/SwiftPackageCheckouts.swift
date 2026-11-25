@@ -65,20 +65,43 @@ public enum SwiftPackageCheckouts {
         """
     }
 
-    /// `Package.resolved` (version 2 or 3) pins.
+    /// Writes that root package. The workspace's Package.resolved (where Xcode keeps it) pins the package's dependencies, when there is
+    /// one: SwiftPM takes those it names, and drops what this package does not need.
+    static func writeRoot(_ identity: String, checkout: URL, workspace: Workspace, in directory: URL) throws -> URL {
+        let root = directory.appendingPathComponent(".root-\(identity)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Sources/Root"), withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("Sources/Root/Root.swift"))
+        try Data(rootManifest(checkout: checkout).utf8).write(to: root.appendingPathComponent("Package.swift"), options: .atomic)
+        try PackageResolved.copy(from: workspace.path.appendingPathComponent("xcshareddata/swiftpm"), to: root)
+        return root
+    }
+
+    /// `Package.resolved` pins (of version 1, a project's older file that SwiftPM had no reason to write again).
     static func pins(resolvedFile data: Data) throws -> [Record.Pin] {
         struct File: Decodable {
             struct Pin: Decodable {
                 struct State: Decodable { var revision: String?; var version: String?; var branch: String? }
                 var identity: String; var location: String; var state: State
             }
-            var pins: [Pin]
+            struct Old: Decodable {
+                struct Pin: Decodable { var repositoryURL: String; var state: File.Pin.State }
+                var pins: [Pin]
+            }
+            var pins: [Pin]?
+            var object: Old?
         }
         let file: File
         do { file = try JSONDecoder().decode(File.self, from: data) } catch {
             throw XlessError(.build, "cannot read a Package.resolved SwiftPM wrote: \(error)", fix: "report this as an xless bug")
         }
-        return file.pins.map { Record.Pin(identity: $0.identity, location: $0.location, revision: $0.state.revision, version: $0.state.version, branch: $0.state.branch) }
+        let old = file.object?.pins.map { pin in // an identity is the URL's last component
+            let name = pin.repositoryURL.split(separator: "/").last.map { $0.lowercased() } ?? ""
+            return File.Pin(identity: name.hasSuffix(".git") ? String(name.dropLast(4)) : name, location: pin.repositoryURL, state: pin.state)
+        }
+        guard let pins = file.pins ?? old else {
+            throw XlessError(.build, "cannot read a Package.resolved SwiftPM wrote: it has no pins", fix: "report this as an xless bug")
+        }
+        return pins.map { Record.Pin(identity: $0.identity, location: $0.location, revision: $0.state.revision, version: $0.state.version, branch: $0.state.branch) }
             .sorted { $0.identity < $1.identity }
     }
 
@@ -106,16 +129,12 @@ public enum SwiftPackageCheckouts {
     /// Clones (or reuses) and dumps every package of `workspace` under `directory`; returns them for the PIF writer with
     /// what `packages.json` records. `env` is the environment of `git` and `swift`.
     public static func resolve(_ workspace: Workspace, in directory: URL, env: [String: String]) throws -> (packages: [ResolvedPackage], records: [Record]) {
-        let fm = FileManager.default
         var packages: [ResolvedPackage] = [], records: [Record] = []
         // The build engine's SwiftPM: its PIF is read by the image's swbuild (Ruling R10 keeps both on the image's Swift).
         let swift = SwiftToolchain.engineSwift(try SwiftToolchain.load(env: env))
         for ref in try references(workspace) {
             let checkout = try ref.revision.map { try clone(ref, revision: $0, in: directory, env: env) } ?? URL(fileURLWithPath: ref.location)
-            let root = directory.appendingPathComponent(".root-\(ref.identity)")
-            try fm.createDirectory(at: root.appendingPathComponent("Sources/Root"), withIntermediateDirectories: true)
-            try Data().write(to: root.appendingPathComponent("Sources/Root/Root.swift"))
-            try Data(rootManifest(checkout: checkout).utf8).write(to: root.appendingPathComponent("Package.swift"), options: .atomic)
+            let root = try writeRoot(ref.identity, checkout: checkout, workspace: workspace, in: directory)
             log("Swift package \(ref.identity) at \(ref.revision ?? checkout.path)")
             let pif = try Shell.run(swift, XcodebuildShim.dumpPIFArguments, cwd: root, baseEnvironment: env, stage: .build).stdout
             try Data(pif.utf8).write(to: directory.appendingPathComponent("\(ref.identity).pif.json"), options: .atomic)

@@ -583,6 +583,10 @@ private func jsWorkCopy() throws -> (ctx: ReactNativeBuildContext, outside: URL)
     let resolved = #"{"pins":[{"identity":"swift-crypto","kind":"remoteSourceControl","location":"https://github.com/apple/swift-crypto.git","state":{"revision":"abc","version":"2.6.0"}},{"identity":"a","kind":"remoteSourceControl","location":"https://x/a","state":{"branch":"main","revision":"def"}}],"version":3}"#
     let pins = try SwiftPackageCheckouts.pins(resolvedFile: Data(resolved.utf8))
     #expect(pins.map(\.identity) == ["a", "swift-crypto"] && pins[1].version == "2.6.0" && pins[0].branch == "main" && pins[0].revision == "def")
+    // an older file of the project's, which SwiftPM leaves as it is when it is right
+    let old = #"{"object":{"pins":[{"package":"Crypto","repositoryURL":"https://github.com/apple/Swift-Crypto.git","state":{"branch":null,"revision":"abc","version":"2.6.0"}}]},"version":1}"#
+    #expect(try SwiftPackageCheckouts.pins(resolvedFile: Data(old.utf8)) == [.init(identity: "swift-crypto", location: "https://github.com/apple/Swift-Crypto.git", revision: "abc", version: "2.6.0")])
+    #expect(throws: XlessError.self) { try SwiftPackageCheckouts.pins(resolvedFile: Data("{}".utf8)) }
     let (_, ws) = try helloRN()
     #expect(try SwiftPackageCheckouts.references(ws).isEmpty)
     let ext = try SwiftPackageCheckouts.references(XcodeWorkspace.load(fixture("ExtPkg/ExtPkg.xcworkspace")))
@@ -598,6 +602,23 @@ private func jsWorkCopy() throws -> (ctx: ReactNativeBuildContext, outside: URL)
         let e = #expect(throws: XlessError.self) { try SwiftPackageCheckouts.references(XcodeWorkspace.load(dir.appendingPathComponent("ExtPkg.xcworkspace"))) }
         #expect(e?.stage == .build)
     }
+}
+
+@Test func thePackagesOfAWorkspaceAreBuiltWithItsPackageResolved() throws {
+    let dir = try tmp("extpkg-resolved"), root = dir.appendingPathComponent("packages/.root-kit")
+    try fm.copyItem(at: fixture("ExtPkg"), to: dir.appendingPathComponent("ExtPkg"))
+    let path = dir.appendingPathComponent("ExtPkg/ExtPkg.xcworkspace"), file = path.appendingPathComponent("xcshareddata/swiftpm/Package.resolved")
+    try? fm.removeItem(at: file)
+    func write() throws -> String? {
+        #expect(try SwiftPackageCheckouts.writeRoot("kit", checkout: dir.appendingPathComponent("kit"), workspace: XcodeWorkspace.load(path),
+                                                    in: dir.appendingPathComponent("packages")).path == root.path)
+        return try? String(contentsOf: root.appendingPathComponent("Package.resolved"), encoding: .utf8)
+    }
+    #expect(try write() == nil)
+    try XlessReactNativeTests.write(root.appendingPathComponent("Package.resolved"), "of the last build") // what SwiftPM resolved then
+    #expect(try write() == "of the last build")
+    try XlessReactNativeTests.write(file, "the project's")
+    #expect(try write() == "the project's")
 }
 
 @Test func packageIdentitiesThatCannotNameADirectoryAreRefused() throws {
