@@ -92,9 +92,10 @@ grep -q "libswift.dylib" <<<"$out" || fail "wrong message: $out"
 # what release.yml does: the same action, with the same inputs but the version, on the same runners.
 wf="$repo/.github/workflows"
 job() { awk -v j="  $2:" '$0 == j { on = 1; next } on && /^  [a-z]/ { exit } on { print }' "$wf/$1"; }
-grep -qx '    needs: \[plan, build, build-macos, build-windows, verify, verify-windows\]' <<<"$(job release.yml publish)" || fail "publish does not need every job"
-for j in verify verify-windows; do grep -qx '    needs: \[plan, build, build-macos, build-windows\]' <<<"$(job release.yml $j)" || fail "$j does not need every build"; done
-for j in build build-macos build-windows verify verify-windows publish; do
+grep -qx '    needs: \[plan, built, verify, verify-windows\]' <<<"$(job release.yml publish)" || fail "publish does not need every job"
+grep -qx '    needs: \[plan, build, build-macos, build-windows\]' <<<"$(job release.yml built)" || fail "built does not need every build"
+for j in verify verify-windows; do grep -qx '    needs: \[plan, built\]' <<<"$(job release.yml $j)" || fail "$j does not need every build"; done
+for j in build build-macos build-windows built verify verify-windows publish; do
   [[ "$(job release.yml $j | grep -c "^    if: needs.plan.outputs.version != ''$")" == 1 ]] || fail "$j runs without a version, or after a failure"
   grep -qE 'continue-on-error|always\(\)|!cancelled|failure\(\)' <<<"$(job release.yml $j)" && fail "$j goes on after a failure"
 done

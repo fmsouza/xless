@@ -166,7 +166,10 @@ does it attest the build provenance of the packages, `SHA256SUMS` and both insta
 signed through GitHub's OIDC token with Sigstore and stored on GitHub; only the `publish` job gets `id-token: write` and
 `attestations: write`), tag `v<version>` and publish a GitHub release with those assets and notes from
 `scripts/release-notes.sh`. `gh attestation verify <asset> -R fmsouza/xless` checks one
-([README](../README.md#install)). The source tree stays at version `0.0.0-dev`; only the release build stamps one.
+([README](../README.md#install)). What is verified and published is what the build jobs made: an artifact is the whole run's, and any job may
+replace it, so each build job gives its package's sha256 as an output of the job, and the `verify` and `publish` jobs download the five
+packages by name and refuse one with another sum (`scripts/package-sums.sh`, `.github/actions/release-packages`). The two legs of one
+matrix share their outputs, so between those two the sums decide nothing. The source tree stays at version `0.0.0-dev`; only the release build stamps one.
 
 ### The macOS tarballs
 
