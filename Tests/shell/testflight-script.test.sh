@@ -28,6 +28,19 @@ code=0; "${env[@]}" PATH="$t/bin:/usr/bin:/bin" STUB_EXIT=23 "$script" p >/dev/n
 # which xless: XLESS_SELF, PATH, the one it came with
 out=$("${env[@]}" XLESS_SELF="$t/mine" PATH="$t/bin:/usr/bin:/bin" "$script" p 2>/dev/null) || fail "XLESS_SELF"
 [[ "$out" == "$t/mine as=1 self=$t/mine docker=unset"$'\n[run][p]' ]] || fail "XLESS_SELF: $out"
+# one that is not there is refused at once: no other xless runs with it (its steps would fail later)
+: > "$t/noprogram"
+for self in "$t/none" none -v --help "$t/noprogram"; do
+  code=0; "${env[@]}" XLESS_SELF="$self" PATH="$t/bin:/usr/bin:/bin" "$script" p >"$t/out" 2>"$t/err" || code=$?
+  [[ $code -eq 2 && ! -s "$t/out" ]] && grep -qF "XLESS_SELF ($self) is not a program on this machine" "$t/err" || fail "XLESS_SELF=$self ($code): $(cat "$t/out" "$t/err")"
+done
+out=$("${env[@]}" XLESS_SELF= PATH="$t/bin:/usr/bin:/bin" "$script" p 2>/dev/null) || fail "an empty XLESS_SELF"
+[[ "$out" == *"xless as=1 "*$'\n[run][p]' ]] || fail "an empty XLESS_SELF: $out"
+# where the script is, whatever CDPATH holds and however it is named
+out=$(cd "$t/prefix/share" && mkdir -p "$t/cd/xless/scripts" && "${env[@]}" CDPATH="$t/cd" sh xless/scripts/testflight.sh p 2>/dev/null) || fail "with a CDPATH"
+[[ "$out" == *"$t/prefix/share/xless/scripts/../../../bin/xless as=1 "* ]] || fail "with a CDPATH: $out"
+out=$(cp -R "$t/prefix/share/xless/scripts" "$t/prefix/share/xless/-scripts" && cd "$t/prefix/share/xless" && "${env[@]}" sh -- -scripts/testflight.sh p 2>/dev/null) || fail "in a folder named -scripts"
+[[ "$out" == *"/../../../bin/xless as=1 "* ]] || fail "in a folder named -scripts: $out"
 out=$("${env[@]}" "$script" p 2>/dev/null) || fail "the installed xless"
 [[ "$out" == *"/bin/xless as=1 self="*"/bin/xless docker=unset"$'\n[run][p]' ]] || fail "the installed xless: $out"
 rm "$t/prefix/bin/xless"
