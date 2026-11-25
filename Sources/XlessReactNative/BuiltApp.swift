@@ -72,17 +72,7 @@ public enum BuiltApp {
     @discardableResult
     public static func copyDSYMs(from products: URL, to dir: URL, keepingImagesOf app: URL? = nil) throws -> [String] {
         let fm = FileManager.default
-        var found: [String] = []
-        let base = products.standardizedFileURL.path
-        let shipped = app.map { DSYM.imageUUIDs(in: $0) }
-        if let walk = fm.enumerator(at: products, includingPropertiesForKeys: [.isDirectoryKey]) {
-            for case let url as URL in walk where url.pathExtension == "dSYM" {
-                walk.skipDescendants()
-                guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-                if let shipped, DSYM.uuids(ofDSYM: url).isDisjoint(with: shipped) { continue }
-                found.append(String(url.standardizedFileURL.path.dropFirst(base.count + 1)))
-            }
-        }
+        let found = DSYM.bundles(under: products, ofImages: app.map { DSYM.imageUUIDs(in: $0) })
         try? fm.removeItem(at: dir)
         guard !found.isEmpty else { return [] }
         _ = try Files.atomicOutput(dir) { out in
@@ -93,7 +83,7 @@ public enum BuiltApp {
             }
             return out
         }
-        return found.sorted()
+        return found
     }
 
     /// One `entitlements.json` entry.

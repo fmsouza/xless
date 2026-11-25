@@ -116,7 +116,7 @@ func fatWrappedArchive() -> Data {
 
     // xless's Developer ID arguments, minus --for-notarization (it refuses a self-signed certificate) and with no timestamp
     // server (no network in tests).
-    let nested = RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "Contents/MacOS/X")
+    let nested = try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "Contents/MacOS/X")
     #expect(nested == ["Contents/Resources/lib/lib.dylib"])
     var args = RCodesign.signArguments(bundle: app, keyPEM: keyURL, certPEM: certURL, entitlements: entURL, distribution: .developerID, runtimePaths: nested)
     #expect(args.contains("--for-notarization") && args.contains("runtime"))
@@ -159,7 +159,7 @@ func fatWrappedArchive() -> Data {
         .write(to: certURL, atomically: true, encoding: .utf8)
     try Plist.write([String: Any](), to: entURL, format: .xml, stage: .sign)
 
-    let paths = RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "Contents/MacOS/X")
+    let paths = try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "Contents/MacOS/X")
     #expect(paths == ["Contents/Frameworks/Y.framework/Versions/A/Y"])
     var args = RCodesign.signArguments(bundle: app, keyPEM: keyURL, certPEM: certURL, entitlements: entURL, distribution: .developerID, runtimePaths: paths)
     args.removeAll { $0 == "--for-notarization" }   // needs an Apple-issued certificate

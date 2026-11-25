@@ -26,11 +26,11 @@ public enum DmgBuilder {
         let info = try Plist.read(app.appendingPathComponent("Contents/Info.plist"), stage: .package)
         let name = info["CFBundleExecutable"] as? String ?? app.deletingPathExtension().lastPathComponent
         let exe = app.appendingPathComponent("Contents/MacOS").appendingPathComponent(name)
-        let names = (try? Data(contentsOf: exe)).flatMap { try? MachO.sliceArchitectures(in: $0).map(\.name) } ?? []
+        let names = (name.contains("/") ? nil : try? Data(contentsOf: exe)).flatMap { try? MachO.sliceArchitectures(in: $0).map(\.name) } ?? []
         let found = names.compactMap(MacArchitecture.init(rawValue:))
         guard !found.isEmpty, found.count == names.count else {
             let listed = names.isEmpty ? "" : " (\(names.joined(separator: ", ")))"
-            throw XlessError(.package, "cannot read the architectures of \(app.lastPathComponent)'s executable \(name)\(listed)",
+            throw XlessError(.package, "cannot read the architectures of \(app.lastPathComponent)'s executable \(TerminalText.escaped(name))\(listed)",
                              fix: "re-run from build: the executable must be an arm64 and/or x86_64 Mach-O")
         }
         return MacArchitecture.allCases.filter(found.contains)

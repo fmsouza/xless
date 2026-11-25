@@ -2,6 +2,7 @@
 # A new file gets its line here; WindowsSourcesTests checks both lists.
 - Sources/XlessCore/AppleSignature.swift
 - Sources/XlessCore/BuildSDKCheck.swift
+- Sources/XlessCore/BuiltTree.swift
 + Sources/XlessCore/BundleLayout.swift
 - Sources/XlessCore/ChildProcess.swift
 + Sources/XlessCore/DarwinSDK.swift
@@ -25,6 +26,7 @@
 - Sources/XlessCore/NativeTools.swift
 + Sources/XlessCore/PEM.swift
 - Sources/XlessCore/PackageResolved.swift
++ Sources/XlessCore/PlainFile.swift
 + Sources/XlessCore/Platform.swift
 + Sources/XlessCore/Plist.swift
 - Sources/XlessCore/PlistBuddyShim.swift
@@ -191,6 +193,7 @@
 + Sources/XlessStore/StoreSender.swift
 - Tests/XlessCoreTests/AppleSignatureTests.swift
 - Tests/XlessCoreTests/BuildSDKCheckTests.swift
+- Tests/XlessCoreTests/BuiltTreeTests.swift
 - Tests/XlessCoreTests/ChildProcessTests.swift
 - Tests/XlessCoreTests/DittoShimTests.swift
 + Tests/XlessCoreTests/DottedVersionTests.swift
@@ -207,6 +210,7 @@
 - Tests/XlessCoreTests/NativeToolsTests.swift
 + Tests/XlessCoreTests/PEMTests.swift
 - Tests/XlessCoreTests/PackageResolvedTests.swift
+- Tests/XlessCoreTests/PlainFileTests.swift
 - Tests/XlessCoreTests/PlistBuddyShimTests.swift
 + Tests/XlessCoreTests/PrivateFileTests.swift
 + Tests/XlessCoreTests/ProjectConfigTests.swift

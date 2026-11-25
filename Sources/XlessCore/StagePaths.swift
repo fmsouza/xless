@@ -24,13 +24,4 @@ public struct StagePaths: Sendable {
     /// when its build had debug info (docs/pipeline.md#dsyms). Removed at the start of every `build`.
     public var dSYMs: URL { root.appendingPathComponent("dSYMs", isDirectory: true) }
     public var uploadRecord: URL { root.appendingPathComponent("upload.json") }
-
-    /// The single `.app` inside a stage directory.
-    public func bundle(in dir: URL, stage: Stage) throws -> URL {
-        let items = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        guard let app = items.first(where: { $0.pathExtension == "app" }) else {
-            throw XlessError(stage, "no .app found in \(dir.path)", fix: "run the previous stage first (or `xless ship`)")
-        }
-        return app
-    }
 }

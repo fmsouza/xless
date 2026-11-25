@@ -58,7 +58,7 @@ if [[ "$app" == volume:* ]]; then
   echo "==> copying $inner out of volume $volume" >&2
   alpine="$(sed -n 's/^ALPINE_IMAGE=//p' "$(dirname "$0")/../versions.env")"
   [[ -n "$alpine" ]] || die "versions.env has no ALPINE_IMAGE"
-  "${docker[@]}" run --rm -v "$volume:/cache/work:ro" "$alpine" tar -C "$(dirname "$inner")" -cf - "$(basename "$inner")" | tar -C "$out/app" -xf -
+  "${docker[@]}" run --rm -v "$volume:/cache/work:ro" "$alpine" tar -C "$(dirname "$inner")" -cf - "./$(basename "$inner")" | tar -C "$out/app" -xf -
 else
   [[ -d "$app" ]] || die "$app is not a directory"
   ditto "$app" "$out/app/$name.app"
@@ -67,6 +67,9 @@ bundle="$out/app/$name.app"
 [[ -f "$bundle/Info.plist" ]] || die "no Info.plist in $bundle"
 id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Info.plist")"
 exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Info.plist")"
+# What the build calls itself: no option of simctl, no pattern of find, no part of log's predicate.
+[[ "$id" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die "the bundle identifier of $bundle is none"
+case "$exe" in ''|-*|*[]/\"\'*?[\\[:cntrl:]]*) die "the executable's name in $bundle has a character that no such name has" ;; esac
 platforms="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms' "$bundle/Info.plist" 2>/dev/null || true)"
 [[ "$platforms" == *iPhoneSimulator* ]] || die "$bundle is not a simulator build (CFBundleSupportedPlatforms: ${platforms//$'\n'/ }); build it with --destination simulator"
 codesign --verify --deep --strict "$bundle" 2>"$out/codesign-verify.txt" || die "codesign does not accept the app's signature (see $out/codesign-verify.txt)"

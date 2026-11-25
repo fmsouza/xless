@@ -24,7 +24,7 @@ expect() {   # CODE PREFIX COMMAND...: exit code and the start of the error line
   local want="$1" prefix="$2" code=0; shift 2
   "${base[@]}" "$x" "$@" >/dev/null 2>"$t/err" || code=$?
   [[ $code -eq $want ]] || fail "xless $* exits $code, want $want: $(cat "$t/err")"
-  [[ "$(head -1 "$t/err")" == "$prefix"* ]] || fail "xless $* says: $(head -1 "$t/err"), want $prefix…"
+  [[ "$(head -1 "$t/err")" == "$prefix"* ]] || fail "xless $* says: $(head -1 "$t/err"), want ${prefix}…"
 }
 
 # Each stage after build: its own exit code, refused as the stage's first step.
@@ -125,4 +125,21 @@ code=0; "${runs[@]}" "$x" sign bootstrap --type distribution >"$t/out" 2>"$t/err
 [[ $code -eq 15 && $(grep -c "^note: xless sign bootstrap is xless certs create now" "$t/err") -eq 1 && ! -s "$t/out" ]] || fail "sign bootstrap's notice ($code): $(cat "$t/err")"
 "${runs[@]}" "$x" sign bootstrap --type distribution --out "$t/key.pem" --csr-only >/dev/null 2>"$t/err" || fail "sign bootstrap --csr-only: $(cat "$t/err")"
 [[ ! -s "$t/err" && -s "$t/key.pem.csr" ]] || fail "sign bootstrap --csr-only: $(cat "$t/err")"
+# package: of what a build left in dSYMs, only what is of the app is shipped, and a tree with a pipe or a link out of it is refused
+if command -v zip >/dev/null; then
+  pkg="$t/pkg" ios="$t/pkg/.xless/build/ios"
+  mkdir -p "$ios/signed/App.app" "$ios/dSYMs"
+  printf 'bundleID: com.example.app\nteamID: ABCDE12345\nversion: "1.0"\nbuild: 1\nplatforms:\n  ios: { minimumOS: "17.0", product: App }\n' > "$pkg/xless.yml"
+  echo x > "$ios/signed/App.app/App"; echo x > "$ios/dSYMs/loose"
+  base+=(XLESS_BUILD_NUMBER=1)
+  "${base[@]}" "$x" package --platform ios --project "$pkg" >/dev/null 2>"$t/err" || fail "package: $(cat "$t/err")"
+  [[ -f "$ios/out/App.ipa" && ! -e "$ios/out/App.app.dSYM.zip" ]] || fail "package made: $(ls "$ios/out")"
+  mv "$ios/out/App.ipa" "$t/App.ipa"; ln -s "$t/App.ipa" "$ios/out/App.ipa"
+  expect 17 "error: [upload] App.ipa in " upload --platform ios --project "$pkg"
+  grep -q "is not a file" "$t/err" || fail "a linked .ipa: $(cat "$t/err")"
+  ln -s "$t" "$ios/dSYMs/link"
+  expect 16 "error: [package] link in dSYMs is a link that leads out of it" package --platform ios --project "$pkg"
+  mkfifo "$ios/signed/App.app/pipe"
+  expect 16 "error: [package] pipe in App.app is neither a file" package --platform ios --project "$pkg"
+fi
 echo PASS

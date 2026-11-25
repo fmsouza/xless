@@ -406,6 +406,14 @@ msg=$("${bare[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/rn/app.yml" --destinatio
 # the sim-launch.sh hint is Mac-only
 if [[ "$(uname -s)" == Darwin ]]; then [[ "$msg" == *"sim-launch.sh /w/.xless/build/ios-simulator/app/App.app"* ]] || fail "no launch hint on a Mac: $msg"
 else [[ "$msg" != *"sim-launch.sh"* ]] || fail "launch hint off a Mac: $msg"; fi
+# the name is the build's, and the hint a command to paste: the name is one word of it
+cat > "$t/bin/xless" <<'STUB'
+#!/bin/sh
+printf "/w/it's; touch x/App\033[2J.app\n"
+STUB
+msg=$("${bare[@]}" XLESS_USE_DOCKER=0 "$S" --config "$t/rn/app.yml" --destination simulator 2>&1 >/dev/null) || fail "native simulator run failed"
+[[ "$msg" == *"==> Simulator app: /w/it's; touch x/App\\u{1B}[2J.app"* && "$msg" != *$'\033'* ]] || fail "simulator app not reported as text: $msg"
+if [[ "$(uname -s)" == Darwin ]]; then [[ "$msg" == *"sim-launch.sh '/w/it'\\''s; touch x/App"* ]] || fail "the launch hint does not quote the name: $msg"; fi
 # a source inside a git checkout: the checkout's top is mounted, --source names the app below it
 git init -q "$t/repo"; mkdir -p "$t/repo/apps/one"
 printf 'type: react-native\nsource: %s\n' "$t/repo/apps/one" > "$t/rn/sub.yml"

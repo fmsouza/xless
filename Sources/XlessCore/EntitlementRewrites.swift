@@ -39,7 +39,10 @@ public struct IdentifierReplacement: Sendable, Equatable {
     /// The map finalize recorded in `finalDir` (empty when it recorded none).
     public static func recorded(in finalDir: URL) throws -> IdentifierReplacement {
         let url = finalDir.appendingPathComponent(recordName)
-        guard let data = FileManager.default.contents(atPath: url.path) else { return .none }
+        let data: Data
+        do { data = try PlainFile.read(url) } catch .absent { return .none } catch {
+            throw XlessError(.sign, "\(url.path) \(error.reason)", fix: "run again from finalize (`xless ship --from finalize`)")
+        }
         guard let rec = try? JSONDecoder().decode([String: [String: String]].self, from: data), let m = rec["replace"] else {
             throw XlessError(.sign, "\(url.path) is not a record of identifiers.replace", fix: "run again from finalize (`xless ship --from finalize`)")
         }

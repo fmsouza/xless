@@ -54,6 +54,10 @@ public enum SignStage {
         let key = try SigningKey(pem: secrets.required(kind.secretName, stage: .sign))
         let bundleID = config.bundleID(for: platform)
 
+        // What is looked at from here on is what is signed: the build's code may still run where the finalized app is.
+        let app = try Files.copyBundle(input, intoFreshDir: outputDir)
+        try BuiltTree.check(app, stage: .sign)
+
         // The bundles and their entitlements first: a bad app or a stale manifest is refused before App Store Connect is called.
         // xless.yml paths are project-relative; a Tauri overlay's `macos.entitlements` is already absolute. A manifest
         // (React Native) replaces them.
@@ -65,7 +69,7 @@ public enum SignStage {
         let declared = manifest != nil ? [] : try pc.extensions.map {
             DeclaredExtension(path: $0.path, bundleID: $0.bundleID, entitlements: try $0.entitlements.map(read) ?? [:])
         }
-        let targets = try SignTargets.plan(app: input, platform: platform, appBundleID: bundleID, appEntitlements: user,
+        let targets = try SignTargets.plan(app: app, platform: platform, appBundleID: bundleID, appEntitlements: user,
                                            manifest: manifest, teamID: config.teamID, declared: declared)
         let resources = ASCResources(client: client)
         let cert = try await ASCCertificates(resources: resources).find(for: key, kind: kind)
@@ -86,7 +90,6 @@ public enum SignStage {
             try Entitlements.merge(user: $0.target.entitlements, profile: $0.granted, platform: platform, teamID: config.teamID, bundleID: $0.target.bundleID)
         }
 
-        let app = try Files.copyBundle(input, intoFreshDir: outputDir)
         let layout = BundleLayout(platform: platform)
         for p in provisioned {
             // An app extension carries its own profile, as Xcode embeds it: `X.appex/embedded.mobileprovision`.
@@ -99,7 +102,7 @@ public enum SignStage {
         // hardened runtime like the main executable.
         let info = try Plist.read(app.appendingPathComponent(layout.infoPlist), stage: .sign)
         let main = [layout.executableDir, info["CFBundleExecutable"] as? String ?? pc.product].filter { !$0.isEmpty }.joined(separator: "/")
-        let runtimePaths = distribution == .developerID ? RCodesign.hardenedRuntimePaths(in: app, mainExecutable: main) : []
+        let runtimePaths = distribution == .developerID ? try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: main) : []
 
         try PrivateFiles.with(stage: .sign) { files in
             let signer = try files.signer(key: key, certificate: cert.der)

@@ -359,14 +359,12 @@ func unsafeOrInvalidExtensionsAreRefusedBeforeAppStoreConnect(_ kind: String) as
     let expected: String
     switch kind {
     case "symlinked appex":
-        let real = f.root.appendingPathComponent("Ext.appex")
-        try fm.moveItem(at: f.input.appendingPathComponent(extPath), to: real)
-        try fm.createSymbolicLink(at: f.input.appendingPathComponent(extPath), withDestinationURL: real)
+        try fm.moveItem(at: f.input.appendingPathComponent(extPath), to: f.input.appendingPathComponent("Real"))
+        try fm.createSymbolicLink(atPath: f.input.appendingPathComponent(extPath).path, withDestinationPath: "../Real")
         expected = "app extension \(extPath) is not a directory (a symlink?)"
     case "symlinked PlugIns":
-        let real = f.root.appendingPathComponent("PlugIns")
-        try fm.moveItem(at: f.input.appendingPathComponent("PlugIns"), to: real)
-        try fm.createSymbolicLink(at: f.input.appendingPathComponent("PlugIns"), withDestinationURL: real)
+        try fm.moveItem(at: f.input.appendingPathComponent("PlugIns"), to: f.input.appendingPathComponent("Real"))
+        try fm.createSymbolicLink(atPath: f.input.appendingPathComponent("PlugIns").path, withDestinationPath: "Real")
         expected = "PlugIns in X.app is not a directory (a symlink?)"
     case "colon":
         try f.renameExtension(to: "E:x.appex")
@@ -554,29 +552,29 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
 
 /// The extension's name and bundle ID are the build's: the plan and the errors of `sign` write out what would drive the terminal.
 @Test func whatTheBuildNamedItsExtensionCannotDriveTheTerminal() async throws {
-    let escapes = "\u{1B}[2J\u{1B}[H"
+    let escapes = "\u{1B}[2J\u{1B}[H", hidden = "\u{202E}\u{200B}" // (a control character in a name is refused: BuiltTree)
     let f = try MultiBundleFixture(app: [:], ext: [:])
-    try f.renameExtension(to: "W\(escapes).appex")
+    try f.renameExtension(to: "W\(hidden).appex")
     var said = ""
     _ = try await f.run(say: { said += $0 })
-    #expect(!said.contains("\u{1B}") && said.contains(#"PlugIns/W\u{1B}[2J\u{1B}[H.appex"#))
+    #expect(!said.contains("\u{202E}") && said.contains(#"PlugIns/W\u{202E}\u{200B}.appex"#))
 
     let g = try MultiBundleFixture(app: [:], ext: [:])
-    try g.renameExtension(to: "W\(escapes).appex")
+    try g.renameExtension(to: "W\(hidden).appex")
     try Plist.write(["CFBundleExecutable": "Ext", "CFBundleIdentifier": "org.other.\(escapes)"],
-                    to: g.input.appendingPathComponent("PlugIns/W\(escapes).appex/Info.plist"), stage: .sign)
+                    to: g.input.appendingPathComponent("PlugIns/W\(hidden).appex/Info.plist"), stage: .sign)
     do { _ = try await g.run(); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.stage == .sign && !e.description.contains("\u{1B}") && e.cause.contains(#"org.other.\u{1B}[2J"#)) }
 }
 
 /// A line break in a name starts no line: not in the plan, not in an error, not in the tool's.
 @Test func whatTheBuildNamedItsExtensionStartsNoLine() async throws {
-    let name = "W\n[sign] forged.appex"
+    let name = "W\u{2028}[sign] forged.appex"
     let f = try MultiBundleFixture(app: [:], ext: [:])
     try f.renameExtension(to: name)
     var said = ""
     _ = try await f.run(say: { said += $0 })
-    #expect(said.contains(#"PlugIns/W\u{A}[sign] forged.appex"#) && !said.contains("\n[sign]"))
+    #expect(said.contains(#"PlugIns/W\u{2028}[sign] forged.appex"#) && !said.contains("\u{2028}"))
 
     func cause(_ f: MultiBundleFixture) async throws -> String {
         do { _ = try await f.run(); Issue.record("expected throw"); return "" } catch let e as XlessError { return e.description }
@@ -637,4 +635,16 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
     f.asc.certificate = certJSON(id: "C1", der: try selfSigned(try SigningKey.generate()))
     do { _ = try await f.run(updatesOff: "--no-provisioning-updates"); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.exitCode == 15 && e.cause.contains("no distribution certificate")) }
+}
+
+@Test func theRecordOfEntitlementsIsAPlainFile() throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:]), fm = FileManager.default
+    defer { try? fm.removeItem(at: f.root) }
+    #expect(try SignTargets.recorded(f.manifestURL).count == 2)
+    let link = f.root.appendingPathComponent("link.json"), pipe = f.root.appendingPathComponent("pipe.json")
+    try fm.createSymbolicLink(at: link, withDestinationURL: f.manifestURL)
+    try #require(mkfifo(pipe.path, 0o600) == 0)
+    for (url, reason) in [(link, "is a link"), (pipe, "is not a file"), (f.root.appendingPathComponent("none.json"), "does not exist")] {
+        #expect { try SignTargets.recorded(url) } throws: { "\($0)".contains("\(url.path) \(reason)") }
+    }
 }

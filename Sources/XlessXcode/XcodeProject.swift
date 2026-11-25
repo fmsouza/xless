@@ -201,8 +201,8 @@ extension XcodeProject {
         let path = path.standardizedFileURL
         let file = path.appendingPathComponent("project.pbxproj")
         let data: Data
-        do { data = try Data(contentsOf: file) } catch {
-            throw XlessError(.prepare, "cannot read \(file.path): \(error.localizedDescription)",
+        do { data = try PlainFile.read(file, followsLinks: true) } catch {
+            throw XlessError(.prepare, "cannot read \(file.path): it \(error.reason)",
                              fix: "check that the workspace's projects exist (run expo prebuild and pod install first)")
         }
         let root = try OpenStepPlist.parse(data, file: file.path)

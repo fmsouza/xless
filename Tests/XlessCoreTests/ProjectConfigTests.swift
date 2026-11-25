@@ -330,3 +330,16 @@ func aProvisioningUpdatesWithoutAValueIsRefused(line: String) {
     #expect(e.exitCode == 24 && e.description == "[sign] a — b" && XlessError.wrapping(e, stage: .sign) == e)
     #expect(Stage.allCases.allSatisfy { $0.exitCode != XlessError.provisioningNeeded })
 }
+
+/// It names the package, the volume, the app in it.
+@Test func aProductIsTheNameOfAFile() throws {
+    func config(_ product: String) throws -> ProjectConfig {
+        let config = ProjectConfig(bundleID: "com.example.app", teamID: "ABCDE12345", version: "1.0", build: "1", platforms: [.macos: PlatformConfig(minimumOS: "14.0", product: product)])
+        try config.validate()
+        return config
+    }
+    for product in ["App", "My App", "Größe 2.0", "-x"] { _ = try config(product) }
+    for product in ["", ".", "..", "a/b", "../../a", "a\nb", "a\u{1B}[2J"] {
+        #expect(throws: XlessError.self, "\(product)") { try config(product) }
+    }
+}
