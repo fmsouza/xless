@@ -184,9 +184,16 @@ An agent serves a process only when **all** of these hold, each taken from the k
    **and** start time, so a process ID used again later is not taken for it. Another terminal is granted once the store
    is unlocked there too (`xless unlock` in it): it must show the agent that it knows the store's data key, which takes the
    passphrase, and can add only the session the kernel says it is in.
-3. On macOS, it runs **the same xless executable** as the agent: the file the kernel has mapped as its program, by device
-   and inode, so a moved or renamed `xless` is still the same one and another file put at its path is not. After an
-   upgrade, the new `xless` is another program: it says so, and `xless lock` ends the agent of the old one.
+3. On macOS, it runs **the same xless executable** as the agent: the same file (the one mapped as its program, by device
+   and inode, so a moved or renamed `xless` is still the same one), and the same code: the hash of the code directory that
+   the kernel started it with (`SecCodeCheckValidity` for its audit token), which must also be the hash of the file at its
+   path. A program can have xless's file mapped and at its own path; it cannot have the hash. What is not signed, or cannot
+   be told, is refused, and an agent that cannot tell its own program does not start. After an upgrade, the new `xless` is
+   another program: it says so, and `xless lock` ends the agent of the old one.
+
+   This keeps other programs, and other builds of xless, from speaking to the agent themselves. It keeps out nobody who is
+   in a granted session (they can run xless), and in a build of your own, where macOS takes `DYLD_INSERT_LIBRARIES` and
+   debuggers, the code of another program can be in an xless with the right hash.
 
 Who speaks is taken once, pinned, and looked at again before every answer:
 
@@ -441,7 +448,7 @@ What protects xless's memory and what it holds, on each system:
 | Held secrets in swap | `mlock`, where the limit allows; never for the Swift heap | the same; macOS encrypts its swap | the same |
 | Held secrets in a forked child | `MADV_DONTFORK` | `VM_INHERIT_NONE` | `VM_INHERIT_NONE` |
 | Held secrets in a core dump | `MADV_DONTDUMP` | no dumps | no dumps |
-| A build's tool asking the agent | POSIX session of its own (rule 2) | the same, and the executable (rule 3) | the same |
+| A build's tool asking the agent | POSIX session of its own (rule 2) | the same, and the program, by file and code hash (rule 3) | the same, where rule 3 does not keep out a library put into xless |
 | Who speaks to the agent | pidfd and `SCM_CREDENTIALS` | audit token, at the first message and before each answer | the same |
 | A build's tool reading the kernel keyring | an empty session keyring | there is no keyring | there is no keyring |
 | The machine sleeps | dropped when it wakes | the same | the same |

@@ -219,7 +219,7 @@ private func pair(_ kernel: Kernel) throws -> (AgentChannel, far: Int32) {
     let mine = try #require(AgentExecutable(runBy: getpid()))
     #expect(AgentExecutable.current == mine)
     #if os(macOS)
-    #expect(AgentExecutable(at: try #require(AgentLauncher.executablePath)) == mine)
+    #expect(AgentExecutable(at: try AgentLauncher.executablePath()) == mine)
     let child = Process()
     child.executableURL = URL(fileURLWithPath: "/bin/sleep")
     child.arguments = ["60"]

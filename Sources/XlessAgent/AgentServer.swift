@@ -53,8 +53,8 @@ final class AgentServer: @unchecked Sendable {
     }
 
     struct Options {
-        /// The program a command must run (macOS); nil: not checked.
-        var executable: AgentExecutable?
+        /// The program a command must run. Every agent on macOS has one (`AgentHost.program`); nil: not checked (Linux).
+        var program: AgentProgram?
         var lockOnSleep = true
         var lockOnScreenLock = true
         var screenIsLocked: () -> Bool = { false }
@@ -294,7 +294,7 @@ final class AgentServer: @unchecked Sendable {
     /// The process at the other end, once it has shown it is there now (it answered with what it was sent).
     private func peer(_ c: Connection) -> AgentPeer? {
         guard c.proved, let peer = try? peerCheck(c.channel), peer.uid == geteuid(), peer.session.isUsable else { return nil }
-        if let wanted = options.executable, peer.executable != wanted { return nil }
+        if let wanted = options.program, peer.program != wanted { return nil }
         return peer
     }
 

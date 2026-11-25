@@ -77,3 +77,31 @@ private func refusing(_ why: AgentRefusal) -> String {
         #expect(obstacle.kind == .failed && !obstacle.cause.contains("Linux 5.3"), "\(e)")
     }
 }
+
+#if os(macOS)
+@Test func anAgentThatCannotTellItsOwnProgramDoesNotStart() throws {
+    let mine = try #require(AgentProgram.current)
+    #expect(try AgentHost.program() == mine)
+    do {
+        _ = try AgentHost.program(nil)
+        Issue.record("it starts, and serves any program")
+    } catch let e as AgentError {
+        #expect(e.kind == .unavailable)
+        #expect(AgentHost.refusal(of: e) == .unavailable)
+    }
+}
+
+@Test func whyThisProgramIsNotToldIsSaid() throws {
+    func why(_ mapped: AgentExecutable?, _ program: AgentProgram?) -> AgentError? {
+        do { _ = try AgentLauncher.executablePath(mapped: mapped, program: program); return nil } catch { return error as? AgentError }
+    }
+    let mine = try #require(AgentProgram.current)
+    #expect(why(mine.file, mine) == nil)
+    let replaced = try #require(why(AgentExecutable(device: 1, inode: 1), mine))
+    #expect(replaced.kind == .failed && replaced.cause.contains("replaced or removed"))
+    for e in [why(nil, mine), why(mine.file, nil)] {
+        let untold = try #require(e)
+        #expect(untold.kind == .unavailable && untold.cause.contains("does not say which program") && !untold.cause.contains("replaced"))
+    }
+}
+#endif

@@ -44,20 +44,28 @@ public enum AgentLauncher {
     public static let argument = "__agent"
     static let channel: Int32 = 3
 
-    /// This program's file; nil where it was replaced or removed while it runs, so that what is there now is not this program.
-    static var executablePath: String? {
-        #if os(macOS)
+    #if os(macOS)
+    static let untold = AgentError(.unavailable, "macOS does not say which program xless is (it has no valid code signature, or it runs where processes are hidden, as in a sandbox), so nothing can be told from it",
+                                   fix: "run xless outside the sandbox; a program of your own needs a signature: codesign --sign - <xless>")
+
+    /// This program's file. Throws where it was replaced or removed while it runs (what is there now is not this program), and
+    /// where the system does not say which program it is.
+    static func executablePath(mapped: AgentExecutable? = .current, program: AgentProgram? = .current) throws -> String {
+        guard let mapped else { throw untold }
         // The kernel's path follows a file that was moved, where the one it was started by does not.
         var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
-        guard proc_pidpath(getpid(), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let length = proc_pidpath(getpid(), &buffer, UInt32(buffer.count))
         let path = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        guard let here = AgentExecutable(at: path), here == AgentExecutable.current else { return nil }
+        guard length > 0, AgentExecutable(at: path) == mapped else {
+            throw AgentError(.failed, "xless was replaced or removed while it runs, so it cannot start its agent", fix: "run the command again")
+        }
+        guard program != nil else { throw untold }
         return path
-        #else
-        // What this process runs, even when the file was replaced since.
-        return "/proc/self/exe"
-        #endif
     }
+    #else
+    /// What this process runs, even when the file was replaced since.
+    static func executablePath() throws -> String { "/proc/self/exe" }
+    #endif
 
     /// Why no agent can serve this process's session; nil when one can.
     /// - Parameter lease: for one that ends with this process (`xless session`), which may lead the session.
@@ -106,9 +114,7 @@ public enum AgentLauncher {
     private static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms,
                               lease: (command: String, seconds: Int)?, executable: String?) throws -> (AgentChannel, String) {
         if let obstacle = obstacle(lease: lease != nil) { throw obstacle }
-        guard let program = executable ?? executablePath else {
-            throw AgentError(.failed, "xless was replaced or removed while it runs, so it cannot start its agent", fix: "run the command again")
-        }
+        let program = try executable ?? executablePath()
         try directory.prepare()
         var fds: [Int32] = [-1, -1]
         guard xless_unix_pair(&fds) == 0 else { throw failure("socketpair", errno) }
