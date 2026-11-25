@@ -16,10 +16,11 @@ struct RunCommand: ParsableCommand {
         or natively on a Mac), --dry-run (print what would run), --allow-disk-secrets. The other arguments go to xless \
         ship, --from and --to among them.
 
-        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native. Natively it builds xless.yml \
-        projects: on Linux with what xless setup installed, on a Mac with the Xcode that is installed there (DEVELOPER_DIR, \
+        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native: on Linux, of xless.yml \
+        projects, with what xless setup installed; on a Mac with the Xcode that is installed there (DEVELOPER_DIR, \
         xcode-select or /Applications; XLESS_TOOLS=xless or actool=xless,ibtool=xless: xless's own tools in place of Xcode's). \
-        Tauri, plain Cargo and React Native overlays (--config) build in the images: add --docker. \
+        Tauri, plain Cargo and React Native overlays (--config) build in the images on Linux: add --docker. On a Mac they build \
+        with the Rust, Node and Ruby that are installed there too, in a sandbox. \
         Secrets not set in the environment come from the secret store (`xless secrets`); with --docker they are written to a \
         tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
@@ -32,7 +33,7 @@ struct RunCommand: ParsableCommand {
         let (docker, rest) = Self.split(arguments)
         let env = ProcessInfo.processInfo.environment
         let useDocker = docker ? "1" : env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? (ProjectRunner.isScript(env) ? "auto" : "0")
-        if useDocker == "0", !ProjectRunner.isScript(env), Self.namesOverlay(rest) {
+        if useDocker == "0", !MacNative.isMac, !ProjectRunner.isScript(env), Self.namesOverlay(rest) {
             throw XlessError(.config, "a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images, not natively",
                              fix: "add --docker (after building the images once: xless setup --docker --xcode <Xcode.xip>)")
         }

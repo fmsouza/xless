@@ -8,7 +8,8 @@ import XlessImages
 /// In docker (bind mounts as --mount, so any path works): the source, read-only at /source (the top of the git checkout it is
 /// inside of: xless lists the tracked files with git), and the overlay's folder, read-only at /config (the whole folder, so a
 /// relative `privacyManifest:` or `assets:` resolves). Neither may hold the env file or a secret's file, nor be /, the home
-/// directory or a directory above it.
+/// directory or a directory above it. Natively on a Mac, where the build's xless reads the same of this machine and no more
+/// (docs/security.md), the same holds.
 extension ProjectRun {
     private struct Overlay {
         let path: String
@@ -57,12 +58,17 @@ extension ProjectRun {
         let lane = macos && span.to >= .upload
         try findSecrets(.init(next: next, signs: signs, uploads: span.to >= .upload && !overlay.isSimulator, lane: lane), top: top)
         var inputs: [(name: String, path: String)] = []
-        if docker {
+        if docker || host.isMac {
             findMount(&overlay)
             inputs = try checkMounts(overlay)
+        }
+        if docker {
             try prepareDocker()
             try mountFiles(platform: request.platform)
-        } else { try unlockStore() }
+        } else {
+            if host.isMac, !dryRun { try context.prepareMac?(xcodePin, span.from <= .finalize, signs) }
+            try unlockStore()
+        }
 
         let steps = try docker ? dockerSteps(overlay, inputs, top, next: next) : nativeSteps(overlay)
         try holdWorkCopy(workCopy(overlay, steps))
@@ -96,21 +102,22 @@ extension ProjectRun {
         overlay.below = "/\(below)"
     }
 
-    /// The overlay's directory, the source and the path inputs are mounted into the container that runs the app's build code: no
-    /// secret may live below them. (Natively nothing is mounted: the build runs on the host, without the secret variables.)
+    /// The overlay's directory, the source and the path inputs are mounted into the container that runs the app's build code, or
+    /// readable in its sandbox: no secret may live below them.
     private func checkMounts(_ overlay: Overlay) throws -> [(name: String, path: String)] {
+        let opened = docker ? "mounted into the build container" : "readable to the app's build code"
         let config = try files.real(overlay.directory), source = try files.real(overlay.mounted)
-        // Both are mounted whole: never the file system root, the home directory or a directory above it.
+        // Both are opened whole: never the file system root, the home directory or a directory above it.
         for directory in [config, source] where try files.isBroad(directory) {
-            throw RunStop.usage("\(directory) would be mounted into the build container, and it is / or holds your home directory; keep the overlay in its own directory and point source: at the app's checkout")
+            throw RunStop.usage("\(directory) would be \(opened), and it is / or holds your home directory; keep the overlay in its own directory and point source: at the app's checkout")
         }
         let secretFiles = secretFiles()
         for (name, path) in secretFiles {
             if try files.file(path, isIn: config) {
-                throw RunStop.usage("\(name) (\(path)) is inside the overlay's directory \(config), which is mounted into the build container; keep the overlay in its own directory, away from secrets")
+                throw RunStop.usage("\(name) (\(path)) is inside the overlay's directory \(config), which is \(opened); keep the overlay in its own directory, away from secrets")
             }
             if try files.file(path, isIn: source) {
-                throw RunStop.usage("\(name) (\(path)) is inside the app source \(source), which is mounted into the build container; keep secrets out of the source")
+                throw RunStop.usage("\(name) (\(path)) is inside the app source \(source), which is \(opened); keep secrets out of the source")
             }
         }
         // A cargo overlay's path inputs are mounted into step 2, the container that runs the app's build code: the same rules.
@@ -128,10 +135,10 @@ extension ProjectRun {
             }
             guard RunText.isAbsolute(path), FileManager.default.fileExists(atPath: path) else { throw RunStop.usage("the path input '\(name)' (\(path)) does not exist") }
             guard try !files.isBroad(path) else {
-                throw RunStop.usage("the path input '\(name)' (\(path)) would be mounted into the build container, and it is / or holds your home directory; point it at the folder the build needs")
+                throw RunStop.usage("the path input '\(name)' (\(path)) would be \(opened), and it is / or holds your home directory; point it at the folder the build needs")
             }
             for (variable, file) in secretFiles where try files.file(file, isOrIsIn: path) {
-                throw RunStop.usage("\(variable) (\(file)) is inside the path input '\(name)' (\(path)), which is mounted into the build container; keep secrets out of the path inputs")
+                throw RunStop.usage("\(variable) (\(file)) is inside the path input '\(name)' (\(path)), which is \(opened); keep secrets out of the path inputs")
             }
             inputs.append((name, path))
         }
