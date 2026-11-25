@@ -24,6 +24,9 @@ enum ResourceBundles {
     /// - Parameter products: where the bundles are, or may be.
     static func fresh(scratch: URL, products: () -> [URL], note: (String) -> Void, build: () throws -> Void) throws {
         let fm = FileManager.default, record = scratch.appendingPathComponent("xless-bundles")
+        if let type = (try? fm.attributesOfItem(atPath: scratch.path))?[.type] as? FileAttributeType, type != .typeDirectory {
+            throw XlessError(.build, "\(scratch.path), where it is built, is not a directory of its own", fix: "remove it: xless empties that directory now and then")
+        }
         func names() -> Set<String> { Set(products().flatMap(of).map(\.lastPathComponent)) }
         let before = names().union(recorded(record))
         func write(_ names: Set<String>) throws {

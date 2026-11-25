@@ -176,6 +176,17 @@ func anAppHasEveryBundleOfItsPackagesAndNoOther(blind: Bool) throws {
     #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 2 && swift.notes.count == 1)
 }
 
+@Test func aScratchDirectoryThatIsALinkIsRefusedBeforeAnythingIsBuilt() throws {
+    let fm = FileManager.default, swift = Products(["A_A.bundle"], blind: true)
+    let other = URL(fileURLWithPath: swift.scratch.path + "-other")
+    defer { for url in [swift.scratch, other] { try? fm.removeItem(at: url) } }
+    let kept = other.appendingPathComponent("out/Products/Release/Mine.bundle")
+    try fm.createDirectory(at: kept, withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: swift.scratch, withDestinationURL: other)
+    #expect(throws: XlessError.self) { try swift.app() }
+    #expect(swift.builds == 0 && fm.fileExists(atPath: kept.path))
+}
+
 extension FileManager {
     fileprivate func removeItem(at url: URL, ifThere: Bool) throws { if fileExists(atPath: url.path) { try removeItem(at: url) } }
 }
