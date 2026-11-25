@@ -59,28 +59,36 @@ public enum NativeSetupPlan {
         return v
     }
 
+    private static func pin(_ key: String, table: [String: String], arch: String) throws -> String {
+        guard let v = table[key], !v.isEmpty else {
+            throw XlessError(.sdk, "versions.env has no \(key), which a native setup on \(arch) downloads with",
+                             fix: "reinstall xless (its versions.env is incomplete), or build the images instead: xless setup --docker …")
+        }
+        return v
+    }
+
+    /// rcodesign, which signs: the release for Linux, or for a Mac (the same version, by its own pin).
+    public static func rcodesign(arch: String, mac: Bool, table: [String: String], layout: NativeLayout) throws -> NativeDownload {
+        let a = tableArch(arch), version = try pin("RCODESIGN_VERSION", table: table, arch: arch)
+        let name = "apple-codesign-\(version)-\(a.lowercased())-\(mac ? "apple-darwin" : "unknown-linux-musl").tar.gz"
+        return NativeDownload(kind: .rcodesign, url: URL(string: "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F\(version)/\(name)")!,
+                              sha256: try pin("RCODESIGN_SHA256_\(mac ? "DARWIN_" : "")\(a)", table: table, arch: arch), final: layout.rcodesign(version: version))
+    }
+
     /// `sdkBundle` and `metaDest`: where the SDK install puts them (`DarwinSDKLocator.bundle()`,
     /// `ToolchainMeta.defaultLocation()`), which the fix-ups edit and read.
     public static func make(source: XcodeSource.Identified, arch: String, share: URL, cacheRoot: URL, layout: NativeLayout,
                             sdkBundle: URL, metaDest: URL, table: [String: String], reexport: Bool, installed: Installed?,
                             existing: (URL) -> Bool) throws -> [SetupStep] {
         let x = source.xcode, a = tableArch(arch), lower = a.lowercased()
-        func pin(_ key: String) throws -> String {
-            guard let v = table[key], !v.isEmpty else {
-                throw XlessError(.sdk, "versions.env has no \(key), which a native setup on \(arch) downloads with",
-                                 fix: "reinstall xless (its versions.env is incomplete), or build the images instead: xless setup --docker …")
-            }
-            return v
-        }
+        func pin(_ key: String) throws -> String { try Self.pin(key, table: table, arch: arch) }
         let swift = try swiftVersion(for: x, table: table)
         let swiftKey = "SWIFT_TOOLCHAIN_\(swift.replacingOccurrences(of: ".", with: "_"))"
         let xtoolV = try pin("XTOOL_VERSION"), rcV = try pin("RCODESIGN_VERSION")
-        let rc = "apple-codesign-\(rcV)-\(lower)-unknown-linux-musl"
         let downloads = [
             ("xtool \(xtoolV)", NativeDownload(kind: .appImage, url: URL(string: "https://github.com/xtool-org/xtool/releases/download/\(xtoolV)/xtool-\(lower).AppImage")!,
                                               sha256: try pin("XTOOL_SHA256_\(a)"), final: layout.xtool(version: xtoolV)), layout.bin.appendingPathComponent("xtool"), "~10 s"),
-            ("rcodesign \(rcV)", NativeDownload(kind: .rcodesign, url: URL(string: "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F\(rcV)/\(rc).tar.gz")!,
-                                                sha256: try pin("RCODESIGN_SHA256_\(a)"), final: layout.rcodesign(version: rcV)), layout.bin.appendingPathComponent("rcodesign"), "seconds"),
+            ("rcodesign \(rcV)", try rcodesign(arch: arch, mac: false, table: table, layout: layout), layout.bin.appendingPathComponent("rcodesign"), "seconds"),
             ("the Swift \(swift) toolchain (Xcode \(x.shortVersion)'s Swift, Ruling R10)",
              NativeDownload(kind: .swiftToolchain, url: URL(string: try pin("\(swiftKey)_URL_\(a)"))!, sha256: try pin("\(swiftKey)_SHA256_\(a)"),
                             final: layout.toolchain(version: swift)), layout.toolchain(version: swift).appendingPathComponent("usr/bin/swiftc"), "~2 min; a ~1.1 GB download, ~4 GB unpacked"),
