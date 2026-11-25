@@ -94,7 +94,8 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   secrets all come from files, ask nothing.) The build gets none of it: with `--config` its step runs with
   `XLESS_NO_SECRET_STORE=1` and is not told of the session, and it leaves the session keyring, so the build code it
   runs cannot reach a held unlock. What that means for the store while the build runs, and how to have nothing held then:
-  [security.md](security.md#while-xless-run-builds). Where nothing can be held, a note says why and each step asks by
+  [security.md](security.md#while-xless-run-builds). [In WSL](security.md#in-wsl) a run that builds holds nothing: each step
+  that needs the store asks the passphrase itself, after the build (and an overlay's build number before it). Where nothing can be held, a note says why and each step asks by
   itself. (Every tool any xless runs, in a project directory's single process too,
   starts in a POSIX session of its own and an empty session keyring, with `XLESS_NO_SECRET_STORE=1`:
   [security.md](security.md#the-build-and-your-secrets).) This keeps xless itself from handing out a secret there; it

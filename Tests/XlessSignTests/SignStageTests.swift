@@ -1,5 +1,8 @@
 import Testing
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @testable import XlessSign
 @testable import XlessASC
 @testable import XlessCore
@@ -201,4 +204,42 @@ func refreshSteps(fresh: [String: Any]) throws -> [(Int, String)] {
     #expect(list.contains("filter%5BprofileType%5D=MAC_APP_STORE") && list.contains("filter%5Bname%5D=xless%20a.b%20MAC_APP_STORE"))
     #expect(String(decoding: transport.requests[3].httpBody!, as: UTF8.self).contains("\"profileType\":\"MAC_APP_STORE\""))
     #expect(try Data(contentsOf: app.appendingPathComponent("Contents/embedded.provisionprofile")) == profile)
+}
+
+/// Asks App Store Connect as `inner` answers, and does something before the first answer.
+private final class Meanwhile: HTTPTransport, @unchecked Sendable {
+    let inner: MockTransport, act: () throws -> Void
+    private var done = false
+    init(_ inner: MockTransport, act: @escaping () throws -> Void) { self.inner = inner; self.act = act }
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if !done { done = true; try act() }
+        return try await inner.send(request)
+    }
+}
+
+/// What a build left running still has the finalized app in reach.
+@Test func whatIsSignedIsACopyThatWasLookedAt() async throws {
+    let f = try SignFixture(profileEntitlements: teamProfile())
+    defer { try? FileManager.default.removeItem(at: f.project.deletingLastPathComponent()) }
+    let transport = Meanwhile(f.transport) { try Plist.write(["CFBundleExecutable": "Y"], to: f.input.appendingPathComponent("Info.plist"), stage: .sign) }
+    let signed = try await SignStage.run(input: f.input, outputDir: f.outputDir, platform: .ios, config: f.config, project: f.project,
+                                         secrets: Secrets(env: ["XLESS_DIST_KEY": f.key.pem]), client: ASCClient(credentials: testCreds, transport: transport, sleep: { _ in }),
+                                         manifest: nil, codesign: { _ in })
+    #expect(try Plist.read(signed.appendingPathComponent("Info.plist"), stage: .sign)["CFBundleExecutable"] as? String == "X")
+}
+
+@Test(arguments: ["embedded.mobileprovision", "Frameworks"])
+func anAppThatLeadsOutOfItselfIsNotSigned(_ name: String) async throws {
+    let f = try SignFixture(profileEntitlements: teamProfile())
+    defer { try? FileManager.default.removeItem(at: f.project.deletingLastPathComponent()) }
+    let own = f.project.appendingPathComponent("own")
+    try Data("mine".utf8).write(to: own)
+    try FileManager.default.createSymbolicLink(at: f.input.appendingPathComponent(name), withDestinationURL: own)
+    await #expect(throws: XlessError.self) {
+        try await SignStage.run(input: f.input, outputDir: f.outputDir, platform: .ios, config: f.config, project: f.project,
+                                secrets: Secrets(env: ["XLESS_DIST_KEY": f.key.pem]), client: ASCClient(credentials: testCreds, transport: f.transport, sleep: { _ in }),
+                                manifest: nil, codesign: { _ in })
+    }
+    #expect(try String(contentsOf: own, encoding: .utf8) == "mine")
+    #expect(f.leftApps.isEmpty && f.transport.requests.isEmpty)
 }

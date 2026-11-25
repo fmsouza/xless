@@ -166,7 +166,7 @@ let package = Package(
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
         .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessAgent", "XlessSign", "XlessRun", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
-        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessImages", "XlessCore"]),
+        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessImages", "XlessCore", "CXlessProcess"]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
@@ -181,7 +181,7 @@ let windowsTargets: Set<String> = [
 ]
 let notOnWindows: [String: [String]] = [
     "XlessCore": [
-        "BuildSDKCheck.swift", "ChildProcess.swift", "DittoShim.swift", "ExecutableFile.swift",
+        "BuildSDKCheck.swift", "BuiltTree.swift", "ChildProcess.swift", "DittoShim.swift", "ExecutableFile.swift",
         "MemoryFileSystem.swift", "NativeLayout.swift", "PlistBuddyShim.swift", "Shell.swift", "SwiftToolchain.swift", "XcrunShim.swift",
         "XlessShare.swift", "AppleSignature.swift", "InstalledXcode.swift", "NativeTools.swift", "TrustedPath.swift",
         "PackageResolved.swift",
@@ -201,10 +201,10 @@ let notOnWindows: [String: [String]] = [
         "Commands/XcodeCommands.swift", "Commands/XcodeDownloadCommand.swift",
     ],
     "XlessCoreTests": [
-        "BuildSDKCheckTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlistBuddyShimTests.swift",
+        "BuildSDKCheckTests.swift", "BuiltTreeTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlainFileTests.swift", "PlistBuddyShimTests.swift",
         "SecretScrubTests.swift", "ShellTests.swift", "SwiftToolchainTests.swift", "XcrunShimTests.swift", "XlessShareTests.swift",
         "AppleSignatureTests.swift", "InstalledXcodeTests.swift", "NativeToolsTests.swift", "TrustedPathTests.swift",
-        "PackageResolvedTests.swift",
+        "PackageResolvedTests.swift", "WindowsFilterTests.swift",
     ],
     "XlessASCTests": ["PathOwnersTests.swift"],
     "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],

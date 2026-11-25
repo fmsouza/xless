@@ -162,7 +162,7 @@ struct TargetSettings {
     }
 
     static func xcconfig(_ url: URL, depth: Int) throws -> [String: String] {
-        guard depth < 8, let text = try? String(contentsOf: url, encoding: .utf8) else {
+        guard depth < 8, let text = (try? PlainFile.read(url, followsLinks: true)).flatMap({ String(data: $0, encoding: .utf8) }) else {
             throw XlessError(.build, "cannot read the xcconfig \(url.path)", fix: "run xless prepare (pod install writes the Pods xcconfigs)")
         }
         var out: [String: String] = [:]

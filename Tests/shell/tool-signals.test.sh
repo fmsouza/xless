@@ -158,7 +158,7 @@ int met_raise(int sig) {
 static int start(void) {
     char *const none[] = { NULL };
     int pid;
-    return xless_spawn_session("/nonexistent", none, none, NULL, -1, -1, &pid);
+    return xless_spawn_session("/nonexistent", none, none, NULL, -1, -1, NULL, &pid);
 }
 static void *starts(void *unused) {
     until(&raising);

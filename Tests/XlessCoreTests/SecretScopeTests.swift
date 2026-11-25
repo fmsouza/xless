@@ -6,6 +6,14 @@ import CXlessWindows
 import CXlessWindowsTestSupport
 #endif
 
+/// None, and no program that takes the dump either (Linux: 1; 0 where the tests were started with that, and may not raise it). What a
+/// tool gets is in WindowsFilterTests.
+#if os(Linux)
+let coreFileLimits: [Int64?] = [1, 0]
+#else
+let coreFileLimits: [Int64?] = [0]
+#endif
+
 /// A process holding a secret can neither write a core file nor (on Linux) be read through ptrace or /proc/<pid>/mem by
 /// another process of the same user.
 @Test func secretScopeTurnsOffCoreFilesAndDumpability() {
@@ -31,10 +39,10 @@ private func expectHardened() {
         | XLESS_HARDENED_LOW_LABEL_IMAGES | XLESS_HARDENED_SYSTEM32_FIRST | XLESS_HARDENED_STRICT_HANDLES)
     #expect(SecretScope.hardening & given == given)
     #elseif os(Linux)
-    #expect(SecretScope.coreFileLimit == 0)
+    #expect(coreFileLimits.contains(SecretScope.coreFileLimit))
     #expect(SecretScope.isDumpable == false)
     #else
-    #expect(SecretScope.coreFileLimit == 0)
+    #expect(coreFileLimits.contains(SecretScope.coreFileLimit))
     #expect(SecretScope.isDumpable == nil)
     #endif
 }

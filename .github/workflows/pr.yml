@@ -62,6 +62,13 @@ jobs:
             echo "::endgroup::"
           done
           if [ -n "$failed" ]; then echo "::error::failed shell tests:$failed"; exit 1; fi
+      # No runner has WSL's kernel: here xless takes this one for it, so that every tool it starts in the tests is under the filter
+      # (docs/security.md#in-wsl). Last, as it changes the source.
+      - name: swift test, the kernel taken for WSL's
+        run: |
+          grep -qF 'return uname(&system) == 0 && xless_is_wsl_release(system.release);' Sources/CXlessProcess/CXlessProcess.c
+          sed -i 's/return uname(&system) == 0 && xless_is_wsl_release(system.release);/return uname(\&system) == 0;/' Sources/CXlessProcess/CXlessProcess.c
+          XLESS_TEST_TAKEN_FOR_WSL=1 sh scripts/ci-swift.sh test --filter 'XlessCoreTests|XlessRunTests'
 
   # The same on macOS. Each step runs in a session whose leader lives (scripts/ci-session.sh), which the tests of the xless agent
   # need and a runner may not give. The shell tests run with the macOS tools (bash 3.2 and the BSD ones among them), on the

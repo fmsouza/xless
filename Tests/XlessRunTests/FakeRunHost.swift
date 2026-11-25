@@ -19,6 +19,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     let programs: Swift.Set<String>
     let isMac: Bool
+    let isWSL: Bool
     let directory: String
     /// What a step does, and its answer.
     let answer: @Sendable (FakeRunHost, RunStep) -> Answer
@@ -30,10 +31,11 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     /// Paths of which the system says nothing, as of those below a directory that may not be searched.
     var unseen: Swift.Set<String> = []
 
-    init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
+    init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, isWSL: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
          answer: @escaping @Sendable (FakeRunHost, RunStep) -> Answer = { _, _ in (0, "") }) {
         self.programs = programs
         self.isMac = isMac
+        self.isWSL = isWSL
         self.directory = directory
         self.processes = processes
         self.answer = answer
@@ -52,6 +54,19 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
         Thread.detachNewThread { stop?(code) }
         return hasEnded.wait(timeout: .now() + 30) == .success ? lock.withLock { ended } : nil
     }
+
+    /// What is in reach of a build in WSL; what it leaves running, and what of that cannot be ended.
+    var windowsInReach = WindowsReach()
+    var keepsOrphans = true, orphans: [String] = [], stayingOrphans: [String] = []
+    func keepOrphans() -> Bool {
+        lock.withLock { orphanLog.append("keep after \(steps.count)") }
+        return keepsOrphans
+    }
+    func endOrphans(within seconds: Double) -> (ended: [String], left: [String]) {
+        lock.withLock { orphanLog.append("end after \(steps.count)") }
+        return (orphans, stayingOrphans)
+    }
+    private(set) var orphanLog: [String] = []
 
     var processID: Int32 { 4242 }
     var hostName: String { "here" }
@@ -213,6 +228,7 @@ final class RunHome: Sendable {
             if let answer = images.answer(step.words, share: share) { return answer }
             if step.words.contains("next-build") { return (0, "noise\n42\n") }
             if step.words.contains("named-by") { return (0, "SOME_PASSWORD\n") }
+            if step.words == ["xless", "auth", "status", "--json"] { return (0, #"{"session":{"state":"none"},"store":{"state":"locked"}}"# + "\n") }
             if step.words.contains("materialize"), !step.words.contains("--check") {
                 for set in step.words where set.contains("=") {
                     let parts = set.split(separator: "=")

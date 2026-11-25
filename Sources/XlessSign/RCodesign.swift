@@ -57,12 +57,22 @@ public enum RCodesign {
     /// What gets a path-scoped `runtime` flag for Developer ID: every Mach-O image in the bundle (regular files, by their
     /// real path) except the main executable. That covers loose Mach-Os and the binaries of nested bundles. A bundle scope
     /// is not enough: rcodesign signs a versioned framework's `Versions/A` as its own nested bundle, so
-    /// `X.framework:runtime` does not reach `Versions/A/X`, while the binary's own path does. Sorted.
-    public static func hardenedRuntimePaths(in app: URL, mainExecutable: String) -> [String] {
+    /// `X.framework:runtime` does not reach `Versions/A/X`, while the binary's own path does. Sorted. One that rcodesign would read otherwise is refused.
+    public static func hardenedRuntimePaths(in app: URL, mainExecutable: String) throws -> [String] {
         let root = app.standardizedFileURL.path
-        return Files.regularFiles(under: app).filter(isImage)
+        let paths = Files.regularFiles(under: app).filter(isImage)
             .map { String($0.standardizedFileURL.path.dropFirst(root.count + 1)) }
             .filter { $0 != mainExecutable }.sorted()
+        try requireScopes(paths)
+        return paths
+    }
+
+    /// rcodesign 0.29.0 ends a scope at the first colon, and reads `<path>@<int>` and `<path>@[cpu_type=…]` as a slice; a word that starts
+    /// with a hyphen is an option.
+    static func requireScopes(_ paths: [String]) throws {
+        for path in paths where path.contains(":") || path.hasPrefix("-") || path.hasPrefix("@") || path.firstMatch(of: /@([0-9]+|\[.*)$/) != nil {
+            throw XlessError(.sign, "the path of \(path) is one that rcodesign reads as an option, or as scope syntax", fix: "rename it in the app: no ':' in its path, no '-' or '@' first, no '@<number>' at the end")
+        }
     }
 
     static func isImage(_ file: URL) -> Bool {

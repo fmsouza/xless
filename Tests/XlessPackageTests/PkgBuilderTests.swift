@@ -134,7 +134,7 @@ private func expectedEntries(app: URL) -> [Bom.Entry] {
     // The pipeline: preorder find (never the app name — the cwd holds the app), odc cpio, gzip, junk excluded.
     let pipeline = ran[1].argv
     #expect(pipeline[0] == "sh" && pipeline[1] == "-c")
-    #expect(pipeline[2].contains("find .") && pipeline[2].contains("cpio -o -H odc") && pipeline[2].contains("gzip"))
+    #expect(pipeline[2].contains("find .") && pipeline[2].contains("cpio -0 -o -H odc") && pipeline[2].contains("gzip"))
     #expect(pipeline[2].contains("DS_Store") && pipeline[2].contains("._*"))
     #expect(pipeline[3] == "sh" && pipeline[4].hasSuffix("\(component)/Payload"))
     #expect(ran[1].cwd.lastPathComponent == "payload")
@@ -352,3 +352,18 @@ func realAssemblyIsParsedByAppleTools() throws {
     #expect(FileManager.default.fileExists(atPath: out.appendingPathComponent("Hello Tauri.app.dSYM.zip").path))
 }
 
+
+/// No name is two of them, nor one of another place.
+@Test(.enabled(if: onPath("cpio") && onPath("gzip")))
+func aNameWithALineBreakIsOneNameOfThePayload() throws {
+    let root = scratch(); defer { clean(root: root) }
+    let stage = root.appendingPathComponent("stage"), own = root.appendingPathComponent("own"), payload = root.appendingPathComponent("Payload")
+    try FileManager.default.createDirectory(at: stage.appendingPathComponent("a\n\(root.path)"), withIntermediateDirectories: true)
+    try Data("mine".utf8).write(to: own)
+    try Data("x".utf8).write(to: stage.appendingPathComponent("a\n\(root.path)/own"))
+    try PkgBuilder.shell(["sh", "-c", PkgBuilder.cpioPipeline, "sh", payload.path], cwd: stage)
+    let archive = root.appendingPathComponent("archive")
+    try Shell.run("sh", ["-c", "exec gzip -dc \"$1\" > \"$2\"", "sh", payload.path, archive.path], stage: .package)
+    let text = String(decoding: try Data(contentsOf: archive), as: UTF8.self)
+    #expect(!text.contains("mine") && text.contains("./a\n\0"))
+}

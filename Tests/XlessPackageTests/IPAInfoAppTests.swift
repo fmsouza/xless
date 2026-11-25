@@ -40,3 +40,19 @@ import XlessCore
         #expect(throws: XlessError.self) { try IPAInfo.versions(app: app) }
     }
 }
+/// They go to App Store Connect, and to the terminal: what the build's Info.plist says instead is no version.
+@Test(arguments: ["1.0\u{1B}[2J", "1.0\n[upload] forged", "\u{202E}1", ""])
+func aVersionThatDrivesTheTerminalIsNone(_ text: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("versions-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    for (version, build) in [(text, "1"), ("1", text)] {
+        let mac = root.appendingPathComponent("M.app"), ios = root.appendingPathComponent("I.app")
+        for plist in [mac.appendingPathComponent("Contents/Info.plist"), ios.appendingPathComponent("Info.plist")] {
+            try FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Plist.write(["CFBundleShortVersionString": version, "CFBundleVersion": build], to: plist, stage: .upload)
+        }
+        #expect(throws: XlessError.self) { try IPAInfo.versions(app: mac) }
+        let ipa = try Packager.ipa(signedApp: ios, outputDir: root.appendingPathComponent("out"))
+        #expect(throws: XlessError.self) { try IPAInfo.versions(ipa: ipa) }
+    }
+}

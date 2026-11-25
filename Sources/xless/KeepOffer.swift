@@ -3,6 +3,9 @@ import XlessAgent
 import XlessAppleID
 import XlessCore
 import XlessVault
+#if !os(Windows) && !XLESS_WINDOWS_TARGETS
+import XlessRun
+#endif
 
 /// What is said before the passphrase's question and asked after it, or after a sign-in: one question per command, at
 /// most, whether to keep both the store's unlock and the Apple ID session for this terminal (`xless unlock`,
@@ -47,10 +50,13 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// This process's.
     static let shared = KeepOffer()
 
-    /// CI, `--no-input`, inside `xless session` (which keeps what its script needs, for as long as it runs) and the
-    /// environment of build code.
+    /// CI, `--no-input`, inside `xless session` (which keeps what its script needs, for as long as it runs), the
+    /// environment of build code, and a step of `xless run` before a build that may become root (`RunContext.keepsNothing`).
     static func isOff(env: [String: String], inSession: Bool) -> Bool {
         func on(_ name: String) -> Bool { !["", "0", "false"].contains(env[name] ?? "") }
+        #if !os(Windows) && !XLESS_WINDOWS_TARGETS
+        if on(RunContext.keepsNothing) { return true }
+        #endif
         return on("CI") || on(InputGate.variable) || on("XLESS_NO_SECRET_STORE") || inSession
     }
 

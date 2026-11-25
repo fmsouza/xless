@@ -96,16 +96,16 @@ struct SDKExportCommand: AsyncParsableCommand {
 
         for a in arch {
             let image = baseImage.contains("{arch}") ? baseImage.replacingOccurrences(of: "{arch}", with: a) : "\(baseImage)-\(a)"
-            let probe = try? Shell.run("docker", ["run", "--rm", "--pull=never", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
-                                                  "test", "-d", "/xcode/Contents/Developer"], stage: .sdk)
+            let probe = try? Shell.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
+                                           "test", "-d", "/xcode/Contents/Developer"], stage: .sdk)
             guard probe != nil else {
                 throw XlessError(.sdk, "the Docker VM cannot see \(xcode)",
                                  fix: "Colima: `colima stop && colima start --mount /Applications:r --mount $HOME:w`; Docker Desktop: add /Applications to File Sharing, or clone Xcode.app under $HOME (cp -cR) and pass --xcode")
             }
             let dir = try Files.fresh(outDir.appendingPathComponent(a))
-            try Shell.run("docker", ["run", "--rm", "--pull=never", "--platform", "linux/\(a)",
-                                     "-v", "\(xcode):/xcode:ro", "-v", "\(dir.path):/out", image,
-                                     "xtool", "sdk", "build", "/xcode", "/out"], stage: .sdk, passthrough: true)
+            try Shell.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)",
+                              "-v", "\(xcode):/xcode:ro", "-v", "\(dir.path):/out", image,
+                              "xtool", "sdk", "build", "/xcode", "/out"], stage: .sdk, passthrough: true)
             guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("darwin.xtoolsdk").path) else {
                 throw XlessError(.sdk, "xtool did not produce \(dir.path)/darwin.xtoolsdk", fix: "see xtool output above")
             }
@@ -129,10 +129,10 @@ struct SDKInstallCommand: AsyncParsableCommand {
                 throw XlessError(.sdk, "--image cannot be combined with --xtoolsdk/--meta", fix: "pass either --image, or --xtoolsdk with --meta")
             }
             installed = try SDKInstaller.install { sdkStage, metaStage in
-                let cid = try Shell.run("docker", ["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                defer { _ = try? Shell.run("docker", ["rm", cid], stage: .sdk) }
-                try Shell.run("docker", ["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
-                try Shell.run("docker", ["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
+                let cid = try Shell.docker(["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                defer { _ = try? Shell.docker(["rm", cid], stage: .sdk) }
+                try Shell.docker(["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
+                try Shell.docker(["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
                 return sdkStage
             }
         } else {

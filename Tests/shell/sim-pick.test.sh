@@ -74,4 +74,26 @@ refused "pass --runtime $RT.iOS-26-3" 26.1 BBBB
 want "create${T}$DT.iPhone-16-Pro${T}$RT.iOS-18-5${T}iOS 18.5" 26.1 xless-sim 18.5
 # sim-launch.sh uses it.
 grep -q 'sim-pick.py' "$root/scripts/sim-launch.sh" || fail "sim-launch.sh does not call sim-pick.py"
+# What an app's Info.plist says is no option of simctl, no pattern of find and no predicate of log: refused before any of them runs.
+if [[ "$(uname -s)" == Darwin ]]; then
+  mkdir -p "$t/stubs"
+  for c in xcrun codesign xcode-select; do printf '#!/bin/sh\necho "%s $*" >> "%s"\n' "$c" "$t/ran" > "$t/stubs/$c"; chmod +x "$t/stubs/$c"; done
+  launch() { # ID EXECUTABLE
+    rm -rf "$t/App.app" "$t/ran"; mkdir -p "$t/App.app"; : > "$t/ran"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleSupportedPlatforms array" -c "Add :CFBundleSupportedPlatforms:0 string iPhoneSimulator" "$t/App.app/Info.plist" >/dev/null
+    plutil -replace CFBundleIdentifier -string "$1" "$t/App.app/Info.plist"
+    plutil -replace CFBundleExecutable -string "$2" "$t/App.app/Info.plist"
+    HOME="$t" PATH="$t/stubs:/usr/bin:/bin" bash "$root/scripts/sim-launch.sh" --out "$t/out" "$t/App.app" >/dev/null 2>"$t/err"
+  }
+  for id in --terminate-running-process "com.example x" "com.example\$(id)" ""; do
+    code=0; launch "$id" App || code=$?
+    [[ $code -eq 2 && ! -s "$t/ran" ]] && grep -q "bundle identifier" "$t/err" || fail "identifier '$id' ($code): $(cat "$t/err" "$t/ran")"
+  done
+  for exe in '*' 'a" OR process == "b' 'a?' '../a' 'a[b]' 'a\b' -x; do
+    code=0; launch com.example.app "$exe" || code=$?
+    [[ $code -eq 2 && ! -s "$t/ran" ]] && grep -q "executable" "$t/err" || fail "executable '$exe' ($code): $(cat "$t/err" "$t/ran")"
+  done
+  launch com.example.app "My Größe 2.0" || true
+  grep -q xcrun "$t/ran" || fail "a plain name was refused: $(cat "$t/err")"
+fi
 echo PASS

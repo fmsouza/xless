@@ -266,3 +266,76 @@ private func stapleTicket(_ app: URL) throws { try Data("ticket".utf8).write(to:
         }
     }
 }
+
+// MARK: - What a build may leave
+
+/// Names are a file's, and no pattern of `unzip`.
+@Test(arguments: ["X [beta].app", "X*?.app", "X\\a.app", "-x.app"])
+func theVersionsOfAnIPAAreThoseOfItsAppWhateverItsName(_ name: String) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = root.appendingPathComponent("signed/\(name)")
+    try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+    try Plist.write(["CFBundleShortVersionString": "1.2", "CFBundleVersion": "3"], to: app.appendingPathComponent("Info.plist"), stage: .package)
+    let versions = try IPAInfo.versions(ipa: Packager.ipa(signedApp: app, outputDir: root.appendingPathComponent("out")))
+    #expect(versions.version == "1.2" && versions.build == "3")
+}
+
+/// A thin arm64 Mach-O of `filetype` (MH_EXECUTE 2, MH_DSYM 0xa) whose LC_UUID is 16 bytes of `uuid`.
+private func machO(uuid: UInt8, filetype: UInt32) -> Data {
+    var d = Data()
+    func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+    u32(0xfeedfacf); u32(0x0100000c); u32(0); u32(filetype); u32(1); u32(24); u32(0); u32(0)
+    u32(0x1b); u32(24); d.append(Data(repeating: uuid, count: 16))
+    return d
+}
+
+/// A signed app with one executable, and the directory of its build's dSYMs, with the executable's.
+private func appWithDSYMs() throws -> (root: URL, app: URL, dSYMs: URL) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())"), app = root.appendingPathComponent("signed/X.app"), dSYMs = root.appendingPathComponent("dSYMs")
+    try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+    try machO(uuid: 0x11, filetype: 2).write(to: app.appendingPathComponent("X"))
+    try addDSYM("X.app.dSYM", 0x11, to: dSYMs)
+    return (root, app, dSYMs)
+}
+
+private func addDSYM(_ path: String, _ uuid: UInt8, to dSYMs: URL) throws {
+    let dwarf = dSYMs.appendingPathComponent("\(path)/Contents/Resources/DWARF/X")
+    try FileManager.default.createDirectory(at: dwarf.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try machO(uuid: uuid, filetype: 0xa).write(to: dwarf)
+}
+
+@Test func onlyTheDSYMsOfTheAppAreShipped() throws {
+    let (root, app, dSYMs) = try appWithDSYMs(), fm = FileManager.default
+    defer { try? fm.removeItem(at: root) }
+    try addDSYM("Pods/Y.framework.dSYM", 0x11, to: dSYMs)
+    try addDSYM("Other.app.dSYM", 0x22, to: dSYMs)
+    try Data("x".utf8).write(to: dSYMs.appendingPathComponent("loose"))
+    try Data("x".utf8).write(to: dSYMs.appendingPathComponent("Pods/loose"))
+    let shipped = try #require(try Packager.shippedDSYMs(dSYMs, of: app))
+    defer { try? fm.removeItem(at: shipped) }
+    #expect(try fm.subpathsOfDirectory(atPath: shipped.path).filter { !$0.hasSuffix("/Contents") && !$0.contains("/Contents/") }.sorted() == ["Pods", "Pods/Y.framework.dSYM", "X.app.dSYM"])
+    #expect(try Data(contentsOf: shipped.appendingPathComponent("X.app.dSYM/Contents/Resources/DWARF/X")) == machO(uuid: 0x11, filetype: 0xa))
+    #expect(fm.fileExists(atPath: dSYMs.appendingPathComponent("loose").path)) // the build's own are left as they are
+    #expect(try Packager.shippedDSYMs(root.appendingPathComponent("none"), of: app) == nil)
+    try fm.removeItem(at: dSYMs.appendingPathComponent("X.app.dSYM"))
+    try fm.removeItem(at: dSYMs.appendingPathComponent("Pods"))
+    #expect(try Packager.shippedDSYMs(dSYMs, of: app) == nil)
+}
+
+@Test(arguments: ["link", "linked", "pipe", "newline"])
+func dSYMsThatAreNoPlainTreeAreRefused(_ what: String) throws {
+    let (root, app, dSYMs) = try appWithDSYMs(), fm = FileManager.default
+    defer { try? fm.removeItem(at: root) }
+    try Data("mine".utf8).write(to: root.appendingPathComponent("own"))
+    var given = dSYMs
+    switch what {
+    case "link": try fm.createSymbolicLink(at: dSYMs.appendingPathComponent("X.app.dSYM/Contents/own"), withDestinationURL: root.appendingPathComponent("own"))
+    case "linked":
+        given = root.appendingPathComponent("other")
+        try fm.createSymbolicLink(at: given, withDestinationURL: dSYMs)
+    case "pipe": try #require(mkfifo(dSYMs.appendingPathComponent("X.app.dSYM/Contents/Resources/DWARF/pipe").path, 0o600) == 0)
+    default: try Data().write(to: dSYMs.appendingPathComponent("X.app.dSYM/a\nb"))
+    }
+    #expect(throws: XlessError.self) { try Packager.shippedDSYMs(given, of: app) }
+}

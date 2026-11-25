@@ -360,6 +360,9 @@ extension ProjectConfig {
             if DottedVersion(pc.minimumOS) == nil {
                 throw XlessError(.config, "platforms.\(p.rawValue).minimumOS '\(pc.minimumOS)' is invalid", fix: "use e.g. \"17.0\"")
             }
+            if ["", ".", ".."].contains(pc.product) || pc.product.unicodeScalars.contains(where: { $0 == "/" || $0.properties.generalCategory == .control }) {
+                throw XlessError(.config, "the \(p.rawValue) product '\(TerminalText.escaped(pc.product))' cannot be a file's name", fix: "use the app's name, e.g. MyApp")
+            }
             try ExtensionConfig.validate(pc.extensions, platform: p, appBundleID: bundleID(for: p), key: "platforms.\(p.rawValue).extensions")
         }
         if let sb = launchStoryboard, !sb.hasSuffix(".storyboard") || sb == ".storyboard" || sb.hasSuffix("/.storyboard") {

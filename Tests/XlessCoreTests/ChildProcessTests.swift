@@ -102,7 +102,7 @@ func aChildStartedDirectlyByChildProcessStartsInAnEmptySessionKeyring() throws {
 
 @Test func startingAChildEntersTheSecretScope() throws {
     _ = try Shell.run("true", [], stage: .build)
-    #expect(SecretScope.coreFileLimit == 0)
+    #expect(coreFileLimits.contains(SecretScope.coreFileLimit))
     #if os(Linux)
     #expect(SecretScope.isDumpable == false)
     #endif
