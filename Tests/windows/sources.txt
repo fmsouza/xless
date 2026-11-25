@@ -271,6 +271,7 @@
 - Sources/xless/LiveCheck.swift
 - Sources/xless/MacNative.swift
 + Sources/xless/Main.swift
+- Sources/xless/NativeOverlay.swift
 + Sources/xless/OldName.swift
 + Sources/xless/Options.swift
 - Sources/xless/Overlays.swift
@@ -464,6 +465,7 @@
 + Tests/XlessCLITests/KeyRescueTests.swift
 - Tests/XlessCLITests/LiveCheckTests.swift
 + Tests/XlessCLITests/LockCommandTests.swift
+- Tests/XlessCLITests/NativeOverlayTests.swift
 - Tests/XlessCLITests/NextCommandTests.swift
 + Tests/XlessCLITests/OneUnlockTests.swift
 + Tests/XlessCLITests/ProductCommandTests.swift
