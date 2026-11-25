@@ -7,6 +7,15 @@ public struct ShellResult: Sendable {
 }
 
 public enum Shell {
+    /// The docker client, as `run` does. It is the one tool that is not confined on the kernel of WSL (`ChildProcess`): it runs no
+    /// code of a project, what it starts in a container is the engine's, and its credential helper may be a Windows program
+    /// (Docker Desktop's is), without which it pulls nothing.
+    @discardableResult
+    public static func docker(_ arguments: [String], baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+                              stage: Stage, passthrough: Bool = false) throws -> ShellResult {
+        try run("docker", arguments, baseEnvironment: baseEnvironment, stage: stage, passthrough: passthrough, confined: false)
+    }
+
     /// Secrets never handed to child processes: builds run third-party package code (SwiftPM macros and plugins,
     /// unsandboxed on Linux), and signing/notarization get their keys through 0600 temp files instead. The list is
     /// `SecretEnvironment`'s registry: a new secret is added there.
@@ -17,6 +26,7 @@ public enum Shell {
     /// and an empty session keyring (`ChildProcess`). passthrough: stream output to the terminal instead of capturing it.
     /// captureTo: stream stdout and stderr to the terminal (like passthrough) and also write both, in order, to this file, so a caller
     /// can parse the full output (the error's tail keeps only 20 lines); the run returns once both pipes have ended.
+    /// confined: as of `ChildProcess.start`.
     /// keepErrorLine: which stderr lines may appear in the error's 20-line tail (drops known noise, e.g. a linker
     /// warning repeated per input, so the real error stays visible).
     @discardableResult
@@ -24,7 +34,7 @@ public enum Shell {
         _ executable: String, _ arguments: [String],
         cwd: URL? = nil, env: [String: String?] = [:],
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
-        stage: Stage, passthrough: Bool = false, captureTo: URL? = nil, keepErrorLine: (Substring) -> Bool = { _ in true }
+        stage: Stage, passthrough: Bool = false, captureTo: URL? = nil, confined: Bool = true, keepErrorLine: (Substring) -> Bool = { _ in true }
     ) throws -> ShellResult {
         let environment = ChildProcess.environment(baseEnvironment, extra: env)
 
@@ -50,7 +60,7 @@ public enum Shell {
         let p: ToolProcess
         do {
             p = try ChildProcess.start("/usr/bin/env", [executable] + arguments, environment: environment, cwd: cwd,
-                                       stdout: streams[0]?.fileDescriptor, stderr: streams[1]?.fileDescriptor, stage: stage)
+                                       stdout: streams[0]?.fileDescriptor, stderr: streams[1]?.fileDescriptor, confined: confined, stage: stage)
         } catch let e as XlessError {
             try? log?.close()
             throw e

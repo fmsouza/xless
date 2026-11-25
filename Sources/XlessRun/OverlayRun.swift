@@ -67,7 +67,7 @@ extension ProjectRun {
             try mountFiles(platform: request.platform)
         } else {
             if host.isMac, !dryRun { try context.prepareMac?(xcodePin, span.from <= .finalize, signs) }
-            try unlockStore()
+            try unlockStore(builds: span.from <= .finalize)
         }
 
         let steps = try docker ? dockerSteps(overlay, inputs, top, next: next) : nativeSteps(overlay)
@@ -80,7 +80,11 @@ extension ProjectRun {
         }
         if next { try nextBuild(overlay, steps) }
         sayBuildNumber(overlay)
-        if span.from <= .finalize, let end = build(overlay, steps) { return end }
+        if span.from <= .finalize {
+            let end = build(overlay, steps)
+            try endBuild(goesOn: end == nil && signs)
+            if let end { return end }
+        }
         if signs { return macos ? try shipMac(overlay, steps) : ship(overlay, steps) }
         return stoppedEarly(span)
     }
@@ -94,7 +98,7 @@ extension ProjectRun {
 
     private func findMount(_ overlay: inout Overlay) {
         overlay.mounted = overlay.source
-        let answer = ask(["git", "-C", overlay.source, "rev-parse", "--show-toplevel"], quiet: true)
+        let answer = ask(["git", "-C", overlay.source, "rev-parse", "--show-toplevel"], quiet: true, confined: true)
         let top = answer.output.utf8.last == UInt8(ascii: "\n") ? String(decoding: answer.output.utf8.dropLast(), as: UTF8.self) : answer.output
         guard answer.code == 0, !top.isEmpty, let source = host.realPath(overlay.source), let checkout = host.realPath(top),
               let below = RunText.value(of: "\(checkout)/", in: source) else { return }
@@ -222,7 +226,8 @@ extension ProjectRun {
         host.say("==> TestFlight: step 1/3, next build number (App Store Connect, read-only)")
         let words = docker ? dockerRun + steps.mounts + secrets.api + storeMounts("next") + [steps.images.secrets.reference, "xless"] + command + steps.arguments
             : [xself] + command + steps.arguments
-        let result = step(words, docker ? .identifiers : .everything, told: !docker, output: .captured)
+        // (In WSL what it asks the passphrase for is not kept either: the build comes after it. `unlockStore`)
+        let result = step(words, docker ? .identifiers : .everything, told: !docker, output: .captured, adding: host.isWSL && !docker ? [RunContext.keepsNothing: "1"] : [:])
         if dryRun {
             environment["XLESS_BUILD_NUMBER"] = "<next-build>"
             return
@@ -260,7 +265,7 @@ extension ProjectRun {
             // holds, and with the secret store closed to it
             let names = SecretEnvironment.names + secrets.demoNames.flatMap { [$0, "\($0)_FILE"] } + [ChildProcess.session]
             let command = [xself] + ship
-            result = step(command, .nothing, output: output, shown: ["env"] + names.flatMap { ["-u", $0] } + ["XLESS_NO_SECRET_STORE=1"] + command, adding: ["XLESS_NO_SECRET_STORE": "1"])
+            result = step(command, .nothing, output: output, shown: ["env"] + names.flatMap { ["-u", $0] } + ["XLESS_NO_SECRET_STORE=1"] + command, adding: ["XLESS_NO_SECRET_STORE": "1"], confined: true)
         }
         if result.code != 0 { return finished(result.code) }
         guard simulator else { return nil }

@@ -18,13 +18,18 @@ public struct RunStep: Sendable, Equatable {
     public var output = Output.shown
     /// Its standard error goes nowhere: a question whose answer is its exit code.
     public var quiet = false
+    /// On the kernel of WSL it, and all that it starts, gets no socket of Windows' (docs/security.md#in-wsl): a step that builds, and
+    /// a program that reads the project. Not the docker client, and not an xless that may ask a credential helper, which either may be
+    /// or may start a program of Windows (the tools of every xless are, whatever it is itself).
+    public var confined = false
 
-    public init(_ words: [String], environment: [String: String], directory: String? = nil, output: Output = .shown, quiet: Bool = false) {
+    public init(_ words: [String], environment: [String: String], directory: String? = nil, output: Output = .shown, quiet: Bool = false, confined: Bool = false) {
         self.words = words
         self.environment = environment
         self.directory = directory
         self.output = output
         self.quiet = quiet
+        self.confined = confined
     }
 }
 
@@ -51,6 +56,17 @@ public protocol RunHost: AnyObject, Sendable {
     /// As the images' names have it: arm64 or amd64.
     var architecture: String { get }
     var isMac: Bool { get }
+    /// The kernel is that of WSL, where what a build does natively may become root (docs/security.md#in-wsl).
+    var isWSL: Bool { get }
+    /// What of Windows a native build gets at all the same, in WSL.
+    var windowsInReach: WindowsReach { get }
+    /// From here on this process is the parent of what its descendants leave behind when they end (a Linux child subreaper): all that
+    /// a step started can be found, whatever session it is in. False: not here.
+    func keepOrphans() -> Bool
+    /// Ends every process that this one became the parent of since, those that they leave too, and is none's parent any more: the
+    /// names of what still ran, and of what could not be ended in this time. (What a child from before left meanwhile is ended as
+    /// well: it cannot be told from the steps'.)
+    func endOrphans(within seconds: Double) -> (ended: [String], left: [String])
     var now: Date { get }
     /// The directory a relative path starts at, as the user sees it (`$PWD`).
     var currentDirectory: String { get }
@@ -124,4 +140,9 @@ public protocol RunHost: AnyObject, Sendable {
     func removeEmptyDirectory(_ path: String)
     /// Removes a directory and what is in it, without following a link.
     func removeTree(_ path: String)
+}
+
+extension RunHost {
+    /// A native run of a project is two processes: one that builds, with no secret, and one that signs.
+    var splitsNative: Bool { isMac || isWSL }
 }

@@ -45,6 +45,9 @@ enum RunText {
 
     static func commandLine(_ words: [String]) -> String { words.map { quoted($0) + " " }.joined() }
 
+    /// `text` as a line may show it, whoever wrote it: what is not printable ASCII is "?".
+    static func printable(_ text: String) -> String { String(decoding: text.utf8.map { 32...126 ~= $0 ? $0 : UInt8(ascii: "?") }, as: UTF8.self) }
+
     static func sha256(_ text: String) -> String { sha256(Data(text.utf8)) }
 
     static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
