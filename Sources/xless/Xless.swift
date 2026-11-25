@@ -5,6 +5,10 @@ struct Xless: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "xless",
         abstract: "Build, sign and ship Apple-platform apps from Linux.",
+        discussion: """
+        Every command takes --no-input (or XLESS_NO_INPUT=1): instead of asking for a passphrase, a sign-in or a \
+        confirmation it fails at once, with exit code 21. `xless auth status --json` says what is held, and until when.
+        """,
         version: XlessVersion.current,
         subcommands: [ShipCommand.self, PrepareCommand.self, BuildCommand.self, AssetsCommand.self, FinalizeCommand.self, SignCommand.self,
                       PackageCommand.self, UploadCommand.self, InspectCommand.self, NextBuildCommand.self, SDKCommand.self, NibCommand.self, StoryboardCommand.self, ShimCommand.self, TauriCommand.self, CargoCommand.self, XcodeCommand.self, SetupCommand.self, RunCommand.self, DockerCommand.self, CleanCommand.self, LiveCheckCommand.self],

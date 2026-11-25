@@ -11,8 +11,12 @@ final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sen
     private let lock = NSLock()
     private let stage: Stage
 
-    init(stage: Stage = .sdk, need: String = "signing in to Apple needs an interactive terminal",
+    /// - Parameters:
+    ///   - need: what is wrong without a terminal.
+    ///   - what: what it is for, for the error of `--no-input`.
+    init(stage: Stage = .sdk, what: String = "the Apple ID's password and code", need: String = "signing in to Apple needs an interactive terminal",
          fix: String = "run xless xcode download in a terminal; it never reads the Apple ID, password or code from a pipe, a file or the environment") throws {
+        try InputGate.require(what, fix: fix)
         self.stage = stage
         fd = open("/dev/tty", O_RDWR | O_NOCTTY | O_CLOEXEC)
         guard fd >= 0, isatty(fd) == 1 else {
@@ -23,7 +27,7 @@ final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sen
 
     /// The terminal for the secret store's passphrase.
     static func forSecretStore() throws -> TerminalPrompter {
-        try TerminalPrompter(stage: .config, need: "the secret store's passphrase is read from a terminal, and there is none",
+        try TerminalPrompter(stage: .config, what: "the secret store's passphrase", need: "the secret store's passphrase is read from a terminal, and there is none",
                              fix: "run this in an interactive terminal; the passphrase is never read from a pipe, a file, an argument or the environment")
     }
 

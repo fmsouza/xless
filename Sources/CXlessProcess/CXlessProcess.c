@@ -186,7 +186,7 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
     }
     if (child == 0) {
         // Only async-signal-safe calls from here to execve.
-        setpgid(0, 0);
+        if (tty == -2) { if (setsid() < 0) { e = errno; goto failed; } } else setpgid(0, 0);
         if (tty >= 0) {
             // The terminal's foreground before exec, so a helper that prompts on /dev/tty is not stopped (SIGTTIN).
             signal(SIGTTOU, SIG_IGN);
@@ -216,7 +216,8 @@ int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], 
         while (write(status[1], &e, sizeof e) < 0 && errno == EINTR) {}
         _exit(127);
     }
-    setpgid(child, child); // also in the parent, so the group exists before any kill
+    // Also in the parent, so the group exists before any kill. Not for a session of its own: setsid would fail in a group's leader.
+    if (tty != -2) setpgid(child, child);
     if (tty >= 0) set_foreground(tty, child);
     close(in[0]);
     close(out[1]);

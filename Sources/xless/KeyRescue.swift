@@ -27,7 +27,7 @@ struct KeyRescue: Sendable {
     /// The process's environment and terminal.
     static var standard: KeyRescue {
         KeyRescue(env: ProcessInfo.processInfo.environment, ask: { prompt in
-            guard let terminal = try? TerminalPrompter.forSecretStore() else { return nil }
+            guard !InputGate.isOff, let terminal = try? TerminalPrompter.forSecretStore() else { return nil }
             return try? terminal.ask(prompt)
         })
     }

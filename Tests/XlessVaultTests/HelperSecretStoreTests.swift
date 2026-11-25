@@ -438,3 +438,18 @@ private func probeFiles(_ dir: HelperDir) throws -> [String] {
     try helper.update(reason: "test") { _ in [.add(name: "A", kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "a"))] }
     #expect(FileManager.default.fileExists(atPath: VaultLocation.standard(env: env).lockFile.path))
 }
+
+@Test func withoutInputAHelperHasNoTerminalNoDisplayAndLittleTime() throws {
+    let dir = try HelperDir()
+    defer { dir.cleanup() }
+    _ = try dir.script("ask", "echo \"display ${DISPLAY-none} ${WAYLAND_DISPLAY-none} ${GPG_TTY-none}\" > \"$HOME/saw\"; exec sleep 60")
+    let extra = ["DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0", "GPG_TTY": "/dev/ttys001"]
+    let helper = try CredentialHelper.find(name: "ask", env: dir.env.merging(extra) { $1 }, timeout: 120)
+    let start = Date()
+    let error = #expect(throws: VaultError.self) {
+        try InputGate.$forced.withValue(true) { _ = try helper.run(.get, input: nil, quietTimeout: 1) }
+    }
+    #expect(Date().timeIntervalSince(start) < 30)
+    #expect(error?.kind == .inputNeeded)
+    #expect(try dir.read("saw") == "display none none none\n")
+}

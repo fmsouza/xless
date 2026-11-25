@@ -127,6 +127,10 @@ public enum VaultUnlocker {
             if let remember, let cache { try cache.store(cached, id: file.id, place: place, hold: remember, typed: false) }
             return SymmetricKey(data: cached)
         }
+        if InputGate.isOff {
+            throw VaultError.inputNeeded("the secret store's passphrase (\(reason))",
+                                         fix: "run `xless unlock` in this terminal session first, or provide the secret through the environment")
+        }
         guard let prompter = prompter() else {
             throw VaultError(.locked, "the secret store is locked and there is no terminal to ask its passphrase on (needed for \(reason))",
                              fix: "run `xless unlock` in this terminal session first, or provide it through the environment")

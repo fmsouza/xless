@@ -54,6 +54,7 @@ int xless_is_memory_fs(const char *path);
 /// `*out_fd` (close-on-exec, non-blocking); its stderr is this process's; every other descriptor is closed in it.
 /// `tty`: the controlling terminal, when this process is its foreground, else -1: the child's group becomes the
 /// terminal's foreground (so it can prompt on /dev/tty, and Ctrl-C reaches it) until `xless_terminal_restore`.
+/// -2: the child leads a session of its own instead, with no terminal to ask anything on.
 /// Returns 0, or an errno value (nothing left running: execve's own error, e.g. ETXTBSY, comes back).
 int xless_spawn_piped(const char *path, char *const argv[], char *const envp[], int tty, int *pid, int *in_fd, int *out_fd);
 

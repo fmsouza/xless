@@ -11,6 +11,8 @@ public struct VaultError: Error, StageReportableError, CustomStringConvertible, 
         case unsupportedByBackend
         /// A store or an entry a newer xless wrote, which this one must not change (or cannot open).
         case newerFormat
+        /// Something would have to be typed, and `--no-input` is set (`InputGate`).
+        case inputNeeded
     }
 
     public let kind: Kind
@@ -25,7 +27,13 @@ public struct VaultError: Error, StageReportableError, CustomStringConvertible, 
 
     public var description: String { "\(cause) — \(fix)" }
 
-    public func stageError(_ stage: Stage) -> XlessError { XlessError(stage, cause, fix: fix) }
+    public func stageError(_ stage: Stage) -> XlessError { XlessError(kind == .inputNeeded ? .input : stage, cause, fix: fix) }
+
+    /// What `InputGate` refuses to ask.
+    static func inputNeeded(_ what: String, fix: String) -> VaultError {
+        let refusal = InputGate.refusal(what, fix: fix)
+        return VaultError(.inputNeeded, refusal.cause, fix: refusal.fix)
+    }
 
     static func tampered(_ what: String) -> VaultError {
         VaultError(.tampered, "the secret store failed its integrity check (\(what)): it was altered or is corrupt; nothing was read from it",

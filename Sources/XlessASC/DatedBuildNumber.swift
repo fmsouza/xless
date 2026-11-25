@@ -92,6 +92,7 @@ public enum DatedBuildNumber {
                                makeClient: (ASCCredentials) -> ASCClient = { ASCClient(credentials: $0) }) async throws -> String {
         let creds: ASCCredentials
         do { creds = try ASCCredentials.fromSecrets(secrets, stage: .config) } catch let e as XlessError {
+            if e.stage == .input { throw e }
             throw XlessError(.config, "build: dated needs App Store Connect credentials (\(e.cause))",
                              fix: "set ASC_KEY_ID/ASC_ISSUER_ID/ASC_KEY_P8 (or *_FILE)")
         }

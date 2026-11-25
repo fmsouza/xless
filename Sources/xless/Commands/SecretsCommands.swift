@@ -129,7 +129,7 @@ enum SecretStoreCLI {
 
     /// Once a file's secret is in the store: asks (on a terminal) whether to delete the file; else says it is still there.
     static func offerToDelete(_ file: String) throws {
-        if let terminal = try? TerminalPrompter.forSecretStore(),
+        if !InputGate.isOff, let terminal = try? TerminalPrompter.forSecretStore(),
            try terminal.confirm("The secret is in the store. Delete \(file) now?") {
             if unlink(file) == 0 { print("deleted \(file)") } else {
                 say("warning: could not delete \(file): \(String(cString: strerror(errno)))")

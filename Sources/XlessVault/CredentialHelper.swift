@@ -24,6 +24,8 @@ public struct CredentialHelper: Sendable {
     public static let outputLimit = 4 << 20
     /// Long enough to type a keyring or GPG passphrase into the helper's own prompt.
     public static let defaultTimeout: Double = 120
+    /// With `--no-input`: long enough for an unlocked keyring.
+    public static let quietTimeout: Double = 20
 
     public enum Verb: String, Sendable { case get, store, erase, list }
 
@@ -106,13 +108,18 @@ public struct CredentialHelper: Sendable {
 
     /// Runs `<helper> <verb>` with `input` on its stdin (then closed). Throws when it cannot start, outlives the
     /// timeout or prints too much; otherwise returns its exit status and output, whatever they are.
-    public func run(_ verb: Verb, input: SecretBytes?) throws -> Answer {
+    ///
+    /// With `--no-input` it has no terminal (a POSIX session of its own), no display and little time: a prompt of its own
+    /// is a failure.
+    public func run(_ verb: Verb, input: SecretBytes?, quietTimeout: Double = CredentialHelper.quietTimeout) throws -> Answer {
+        let quiet = InputGate.isOff
+        let timeout = quiet ? min(self.timeout, quietTimeout) : self.timeout
         let argv = [executable, verb.rawValue]
-        let envp = environment.map { "\($0.key)=\($0.value)" }.sorted()
+        let envp = environment.filter { !quiet || !["DISPLAY", "WAYLAND_DISPLAY", "GPG_TTY"].contains($0.key) }.map { "\($0.key)=\($0.value)" }.sorted()
         var pid: Int32 = 0, inFD: Int32 = -1, outFD: Int32 = -1
         // When xless is the terminal's foreground, the helper is for as long as it runs: it can prompt on /dev/tty
         // (a password manager's own prompt) without being stopped, and Ctrl-C reaches it.
-        let tty = Self.foregroundTerminal()
+        let tty = quiet ? -2 : Self.foregroundTerminal()
         defer {
             if tty >= 0 {
                 xless_terminal_restore(tty)
@@ -135,6 +142,13 @@ public struct CredentialHelper: Sendable {
         let inputCount = input?.count ?? 0
         var inOpen = true, outOpen = true
         let deadline = Date().addingTimeInterval(timeout)
+        func late() -> VaultError {
+            let what = "\(command) \(verb.rawValue) did not finish within \(Int(timeout)) s; it was stopped"
+            if quiet {
+                return VaultError.inputNeeded("what \(command) asks (\(what))", fix: "unlock your keyring or agent with its own tools first")
+            }
+            return VaultError(.helper, what, fix: "check that \(command) works on its own (`\(command) list`); a keyring may be waiting to be unlocked")
+        }
         func stop() {
             _ = kill(-pid, SIGKILL)
             var code: Int32 = 0
@@ -147,8 +161,7 @@ public struct CredentialHelper: Sendable {
             let left = deadline.timeIntervalSinceNow
             guard left > 0 else {
                 stop()
-                throw VaultError(.helper, "\(command) \(verb.rawValue) did not finish within \(Int(timeout)) s; it was stopped",
-                                 fix: "check that \(command) works on its own (`\(command) list`); a keyring may be waiting to be unlocked")
+                throw late()
             }
             var fds = [pollfd(fd: outFD, events: Int16(POLLIN), revents: 0)]
             if inOpen { fds.append(pollfd(fd: inFD, events: Int16(POLLOUT), revents: 0)) }
@@ -184,8 +197,7 @@ public struct CredentialHelper: Sendable {
             if r < 0 { throw VaultError(.helper, "cannot wait for \(command): \(String(cString: strerror(errno)))", fix: "re-run") }
             if deadline.timeIntervalSinceNow <= 0 {
                 stop()
-                throw VaultError(.helper, "\(command) \(verb.rawValue) did not finish within \(Int(timeout)) s; it was stopped",
-                                 fix: "check that \(command) works on its own (`\(command) list`)")
+                throw late()
             }
             usleep(5_000)
         }

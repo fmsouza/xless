@@ -172,3 +172,22 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     #expect(try secrets.preferring(team: "TEAMA12345").required("XLESS_DIST_KEY", stage: .sign) == "ENV")
     #expect(try Secrets(env: [:], fallback: nil).preferring(team: "").optional("XLESS_DIST_KEY") == nil)
 }
+
+@Test func withoutInputALockedStoreIsAnErrorOfItsOwnAndNothingIsAsked() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, key) = try t.make()
+    let error = #expect(throws: VaultError.self) {
+        try InputGate.$forced.withValue(true) {
+            try VaultUnlocker.dataKey(for: file, cache: nil, prompter: { Issue.record("the terminal was opened"); return nil }, reason: "exporting NOTE")
+        }
+    }
+    #expect(error?.kind == .inputNeeded)
+    #expect(error?.stageError(.upload).stage == .input)
+    #expect(error?.cause.contains("exporting NOTE") == true)
+    #expect(error?.fix.contains("xless unlock") == true)
+    // Held: nothing is needed.
+    let cache = MemoryCache()
+    try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: "", hold: SecretHold(seconds: 60, idle: 60, maximum: 60), typed: true)
+    _ = try InputGate.$forced.withValue(true) { try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test") }
+}

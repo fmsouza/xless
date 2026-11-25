@@ -6,7 +6,7 @@ import FoundationNetworking
 #endif
 import Testing
 import XlessASC
-import XlessCore
+@testable import XlessCore
 @testable import xless
 
 /// Scripted App Store Connect responses; records the requests.
@@ -38,6 +38,26 @@ let fakeKeyEnv = ["ASC_KEY_ID": "KEY123", "ASC_ISSUER_ID": "iss-1", "ASC_KEY_P8"
         #expect(e.stage == .account)
         #expect(e.cause == "deleting device D1 needs a confirmation and there is no terminal")
         #expect(e.fix == "re-run with --yes")
+    }
+}
+
+@Test func withoutInputAConfirmationIsRefusedWithItsOwnExitCodeUnlessYesIsGiven() throws {
+    let error = #expect(throws: XlessError.self) {
+        try InputGate.$forced.withValue(true) {
+            try AccountConfirm.confirm("Delete?", action: "deleting device D1", yes: false, terminal: { Issue.record("asked"); return nil })
+        }
+    }
+    #expect(error?.stage == .input)
+    #expect(error?.cause.contains("deleting device D1") == true)
+    #expect(error?.fix == "re-run with --yes")
+    #expect(try InputGate.$forced.withValue(true) { try AccountConfirm.confirm("Delete?", action: "x", yes: true, terminal: { nil }) })
+}
+
+@Test func withoutInputNoTerminalIsOpened() throws {
+    for open in [{ _ = try TerminalPrompter() }, { _ = try TerminalPrompter.forSecretStore() }, { _ = try TerminalPrompter.forAccount() },
+                 { _ = try AppleWebCLI.prompter() }] as [() throws -> Void] {
+        let error = #expect(throws: XlessError.self) { try InputGate.$forced.withValue(true) { try open() } }
+        #expect(error?.stage == .input)
     }
 }
 

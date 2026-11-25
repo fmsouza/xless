@@ -60,6 +60,9 @@ enum AppleWebCLI {
 
     /// Asks which provider, when several App Store Connect teams share the portal team's name; nil without a terminal.
     static func chooser() -> (([OlympusProvider]) async throws -> OlympusProvider)? {
+        if InputGate.isOff {
+            return { _ in throw InputGate.refusal("which App Store Connect team to use (several have that name)", fix: "run it without --no-input, in a terminal") }
+        }
         guard let terminal = try? prompter() else { return nil }
         return { providers in
             terminal.say("App Store Connect has several teams with that name:")

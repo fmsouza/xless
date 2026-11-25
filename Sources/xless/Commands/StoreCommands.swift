@@ -318,7 +318,7 @@ struct StorePushCommand: AsyncParsableCommand {
             // App Privacy has no API: it goes through the Apple ID web session, opened only when app.yml has answers.
             var web: (session: AppleWebSession, transport: URLSessionAppleTransport)?
             if try StorePrivacyCLI.storePushNeedsWeb(manifest: manifest, parts: options.parts, explicit: !only.isEmpty,
-                                                     kept: AppleWebCLI.cache.info() != nil, terminal: (try? AppleWebCLI.prompter()) != nil) {
+                                                     kept: AppleWebCLI.cache.info() != nil, terminal: !InputGate.isOff && (try? AppleWebCLI.prompter()) != nil) {
                 web = try await StorePrivacyCLI.webForStorePush(explicit: !only.isEmpty, say: StorePushCLI.standardError) {
                     let (s, t, _) = try await APIKeyWebCLI.open(team: session.team, verbose: trace.verbose)
                     return (session: s, transport: t)
