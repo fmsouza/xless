@@ -81,14 +81,29 @@ private func refusing(_ why: AgentRefusal) -> String {
 #if os(macOS)
 @Test func anAgentThatCannotTellItsOwnProgramDoesNotStart() throws {
     let mine = try #require(AgentProgram.current)
-    #expect(try AgentHost.program() == mine)
+    #expect(try AgentHost.program(mine) == mine)
+    try #require(AgentSession.current.isUsable)
+    var fds: [Int32] = [-1, -1]
+    try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+    defer { close(fds[1]) }
+    let scratch = ScratchBox(), directory = AgentDirectory(path: scratch.path + "/xless-agent"), channel = try AgentChannel(fd: fds[0])
+    var w = WireWriter()
+    w.put(directory.path)
+    w.put(Int64(AgentSession.current.id))
+    w.put(false)
+    AgentTerms().write(&w)
+    w.put(UInt32(0))
+    let frame = w.frame(code: .configure)
+    let message = AgentMessage(header: try #require(frame.withUnsafeBytes { try? AgentFrame.header($0) }), pages: frame)
     do {
-        _ = try AgentHost.program(nil)
+        _ = try AgentHost.configure(message, channel, own: nil)
         Issue.record("it starts, and serves any program")
     } catch let e as AgentError {
         #expect(e.kind == .unavailable)
         #expect(AgentHost.refusal(of: e) == .unavailable)
     }
+    #expect(!FileManager.default.fileExists(atPath: directory.path)) // nothing to ask
+    #expect(try AgentHost.configure(message, channel).options.program == mine)
 }
 
 @Test func whyThisProgramIsNotToldIsSaid() throws {

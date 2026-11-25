@@ -369,6 +369,15 @@ final class Flag: @unchecked Sendable {
     #expect(throws: AgentError.self) { try link.get("a") }
 }
 
+@Test func aProgramThatCannotBeToldIsRefused() throws {
+    var options = AgentServer.Options()
+    options.program = AgentProgram.current
+    let agent = try TestAgent(options: options) { _ in AgentPeer(pid: getpid(), uid: geteuid(), session: .current, program: nil) }
+    let link = try agent.link()
+    #expect(!link.isGranted)
+    #expect(throws: AgentError.self) { try link.get("a") }
+}
+
 @Test func theProgramThatStartedTheAgentIsServed() throws {
     var options = AgentServer.Options()
     options.program = AgentProgram.current
