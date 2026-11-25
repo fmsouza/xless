@@ -347,7 +347,7 @@ extension ProjectRun {
     /// own, outside of the project. (One container for all, with a project that holds that directory: there is nothing to keep apart.)
     private func keepConfiguration(of project: String, _ images: RunImages) throws -> [String] {
         func words(_ directory: String) -> [String] { ["--mount", RunText.bind("\(directory)/xless.yml", "/work/xless.yml", readOnly: true)] }
-        let base = "\(files.home)/.cache/xless/run"
+        let base = RunText.configurations(home: files.home)
         var here = base
         while !FileManager.default.fileExists(atPath: here), here != "/" { here = RunFiles.parent(here) }
         guard try !files.directory(here, isIn: project) else {
@@ -363,6 +363,7 @@ extension ProjectRun {
                 host.removeOnFault(directory, isDirectory: true)
                 host.removeOnFault(file, isDirectory: false)
                 try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        lock?.note("configuration=\(directory)")
                 // Not Foundation's, which makes the directory open and then sets its mode.
                 guard mkdir(directory, 0o700) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
                 try pinned.write(to: URL(fileURLWithPath: file))

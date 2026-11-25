@@ -476,9 +476,10 @@ whether the account may be changed, and the app that the upload goes to come fro
 
 - An overlay, and the app's source, are mounted read-only into every container.
 - A project directory is the build's to write. Its containers get the xless.yml that was read when the run began, read-only, from
-  a directory of the run's own outside of the project (`~/.cache/xless/run/<random>/`), over the one in the project. The
-  container that signs runs in `/`, not in the project. When xless.yml in the project is another one after the build, the run
-  says so (on a Mac's file system a build can write it under another spelling of its name).
+  a directory of the run's own outside of the project (`~/.cache/xless/run/<random>/`), over the one in the project. (It goes with
+  the run. Of a run that was killed outright, the next run on that project removes it; it holds no secret.) The container that
+  signs runs in `/`, not in the project. When xless.yml in the project has another text after the build, the run says so (on a
+  Mac's file system a build can write it under another spelling of its name).
 - Signing tools read no configuration of the directory they run in: rcodesign is started with `-C /dev/null`, in `/`. Where the
   steps with the secrets list the files of an overlay's source (a Cargo or React Native one), git reads the index and starts none
   of the programs that the repository's configuration may name for that: the file system monitor is off (`core.fsmonitor`), and

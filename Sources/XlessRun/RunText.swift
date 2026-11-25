@@ -63,10 +63,20 @@ enum RunText {
     static func isSecretsDirectory(_ path: String) -> Bool {
         guard isAbsolute(path) else { return false }
         var parts = Array(cut(path, at: "/", keepingEmpty: true).dropFirst())
-        guard !parts.contains(where: { ["", ".", ".."].contains($0) }), let id = parts.popLast(), id.utf8.count == 32,
-              id.utf8.allSatisfy({ UInt8(ascii: "0")...UInt8(ascii: "9") ~= $0 || UInt8(ascii: "a")...UInt8(ascii: "f") ~= $0 }) else { return false }
+        guard !parts.contains(where: { ["", ".", ".."].contains($0) }), let id = parts.popLast(), isRunID(id) else { return false }
         if parts.last == "secrets" { parts.removeLast() }
         return parts.last == "xless"
+    }
+
+    /// Where a run in containers keeps a project's xless.yml, as it names it: <home>/.cache/xless/run/<32 hex digits>.
+    static func isConfigurationDirectory(_ path: String, home: String) -> Bool {
+        isAbsolute(path) && value(of: "\(configurations(home: home))/", in: path).map(isRunID) == true
+    }
+
+    static func configurations(home: String) -> String { "\(home)/.cache/xless/run" }
+
+    private static func isRunID(_ id: String) -> Bool {
+        id.utf8.count == 32 && id.utf8.allSatisfy { UInt8(ascii: "0")...UInt8(ascii: "9") ~= $0 || UInt8(ascii: "a")...UInt8(ascii: "f") ~= $0 }
     }
 
     // MARK: - Bytes
