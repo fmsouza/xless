@@ -383,6 +383,15 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
+    /// How many testers the group has.
+    public func testerCount(group groupID: String) async throws -> Int {
+        struct Probe: Decodable { struct Meta: Decodable { struct Paging: Decodable { var total: Int? }; var paging: Paging? }; var meta: Meta? }
+        let path = "/v1/betaGroups/\(groupID)/betaTesters"
+        let probe: Probe = try await resources.client.get(path, query: [("limit", "1")])
+        if let total = probe.meta?.paging?.total { return total }
+        return try await resources.list(path, as: ASCRef.self).items.count
+    }
+
     /// Adds someone to the group: nothing when they are among `members` already; a tester of the app is linked; a new
     /// one is created with the group (sent once; a 409 is settled by looking the address up and linking it).
     /// - Parameters:
@@ -450,9 +459,33 @@ public struct ASCTestFlight: Sendable {
         return Set(items.map(\.id))
     }
 
-    public func addBuild(_ buildID: String, to groups: [ASCBetaGroup]) async throws {
-        guard !groups.isEmpty else { return }
-        try await resources.addRelationship("/v1/builds/\(buildID)", "betaGroups", groups.map { ASCRef(type: "betaGroups", id: $0.id) })
+    public enum BuildAddition: Sendable {
+        case added
+        /// The group has the build already: nothing was sent, or it got the build by itself meanwhile.
+        case alreadyInGroup
+        /// A group with automatic distribution refused the add and does not list the build (yet): it gets it by itself.
+        case automatic(ASCError)
+
+        /// What to tell about `.automatic`.
+        public func note(build buildID: String, group name: String) -> String? {
+            guard case .automatic(let e) = self else { return nil }
+            return "warning: could not confirm that build \(buildID) is in group \(name) (adding the build to group \(name): \(e.description)); the group has automatic distribution, so the build will appear via automatic distribution — check App Store Connect → TestFlight"
+        }
+    }
+
+    /// Adds the build to the group, unless the group has it. A group with automatic distribution may refuse an add
+    /// (409, 422) of a build it has or gets by itself: that is settled by reading, else it is `.automatic`. Any other
+    /// group's refusal is the error.
+    /// - Parameter current: the groups that have the build (`groupIDs(with:app:)`), read once for several groups.
+    public func addBuild(_ buildID: String, to group: ASCBetaGroup, app appID: String, current: Set<String>) async throws -> BuildAddition {
+        if current.contains(group.id) { return .alreadyInGroup }
+        do {
+            try await resources.addRelationship("/v1/betaGroups/\(group.id)", "builds", [ASCRef(type: "builds", id: buildID)])
+            return .added
+        } catch let e as ASCError where group.attributes.hasAccessToAllBuilds == true && (e.status == 409 || e.status == 422) {
+            if let now = try? await groupIDs(with: buildID, app: appID), now.contains(group.id) { return .alreadyInGroup }
+            return .automatic(e)
+        }
     }
 
     public func removeBuild(_ buildID: String, from groups: [ASCBetaGroup]) async throws {

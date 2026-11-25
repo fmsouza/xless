@@ -10,8 +10,8 @@ https://developer.apple.com/sample-code/app-store-connect/app-store-connect-open
 | Find the app | `GET /v1/apps?filter[bundleId]=<id>` | Same call as the upload stage. |
 | List an app's groups | `GET /v1/betaGroups?filter[app]=<id>&limit=200` | Follows `links.next`. xless does not use `filter[name]`: it is an array filter that ASC splits on commas, so a name like "QA, iOS" would never match. Names are compared client-side, exactly (case-sensitive). |
 | Create a group | `POST /v1/betaGroups` | `201` with a single BetaGroup; `409` on conflict. |
-| Add a build to a group | `POST /v1/betaGroups/{id}/relationships/builds` | Body is `{ "data": [ { "type": "builds", "id": "<build>" } ] }`; `204` with no body; `409` possible. |
-| Confirm a build is in a group | `GET /v1/betaGroups?filter[id]=<group>&filter[builds]=<build>&limit=1` | Bounded membership check after a `409`/`422` from the add; a non-empty `data` means the build is in the group. |
+| Add a build to a group | `POST /v1/betaGroups/{id}/relationships/builds` | What `xless ship` and `xless testflight builds add` send, one group at a time (the request the deliveries of `xless ship` have proven; `POST /v1/builds/{id}/relationships/betaGroups` is not used). Sent only for a group that does not list the build. Body is `{ "data": [ { "type": "builds", "id": "<build>" } ] }`; `204` with no body; `409` possible. |
+| Groups that have a build | `GET /v1/betaGroups?filter[app]=<app>&filter[builds]=<build>` | Read once before the first add, and again after a `409`/`422` from an automatic-distribution group. |
 | Count a group's testers | `GET /v1/betaGroups/{id}/betaTesters` | Params: `fields[betaTesters]`, `limit`. The response carries `meta.paging.total` (`PagingInformation`), so `limit=1` is enough. |
 | Read a build's What to Test | `GET /v1/builds/{id}/betaBuildLocalizations` | Params: `fields[betaBuildLocalizations]`, `limit`. |
 | Create What to Test | `POST /v1/betaBuildLocalizations` | |
@@ -29,8 +29,7 @@ https://developer.apple.com/sample-code/app-store-connect/app-store-connect-open
 | Add / remove testers of a group | `POST` / `DELETE /v1/betaGroups/{id}/relationships/betaTesters` | `[ {type: betaTesters, id} ]`. |
 | Remove testers from an app | `DELETE /v1/apps/{id}/relationships/betaTesters` | Every group and build of the app. |
 | Send an invitation again | `POST /v1/betaTesterInvitations` | Relationships `app*`, `betaTester`; no attributes. |
-| Groups that have a build | `GET /v1/betaGroups?filter[app]=<app>&filter[builds]=<build>` | |
-| Add / remove a build to groups | `POST` / `DELETE /v1/builds/{id}/relationships/betaGroups` | |
+| Remove a build from groups | `DELETE /v1/builds/{id}/relationships/betaGroups` | Adding: see above. |
 | Beta texts | `GET /v1/apps/{id}/betaAppLocalizations`, `POST /v1/betaAppLocalizations`, `PATCH /v1/betaAppLocalizations/{id}` | `feedbackEmail`, `marketingUrl`, `privacyPolicyUrl`, `description`, `locale` (create only). |
 | Beta App Review details | `GET /v1/apps/{id}/betaAppReviewDetail`, `PATCH /v1/betaAppReviewDetails/{id}` | Read with `fields[betaAppReviewDetails]` without `demoAccountPassword`; no create (one per app). |
 | Beta license agreement | `GET /v1/apps/{id}/betaLicenseAgreement`, `PATCH /v1/betaLicenseAgreements/{id}` | `agreementText`. |
@@ -64,7 +63,7 @@ external group therefore cannot be turned into an internal one, and xless refuse
 - Response attributes: `whatsNew`, `locale`.
 
 xless looks the build's localizations up first and updates the one whose `locale` equals `testflight.locale` (default `en-US`);
-otherwise it creates one. The first call is needed because App Store Connect may already hold a localization for the build.
+otherwise it creates one; the text it already has sends nothing. The first call is needed because App Store Connect may already hold a localization for the build.
 
 ## Error mapping
 All calls run inside the upload stage's error wrapper, so every failure prints `[upload] <step>: <cause> — <fix>` and exits 17.
@@ -73,6 +72,6 @@ leave a duplicate group). The fix text always says the build itself is already u
 
 ## Not verifiable from the spec
 - Whether `POST .../relationships/builds` on a group with `hasAccessToAllBuilds: true` is accepted or answers `409` because the
-  build is already there. For automatic-distribution groups xless treats `409` and `422` as "check membership" (bounded query above) and, if still unconfirmed, warns that the build will appear via automatic distribution. Other groups keep the error.
+  build is already there. For automatic-distribution groups xless treats `409` and `422` as "check membership" (the groups that have the build) and, if still unconfirmed, warns that the build will appear via automatic distribution. Other groups keep the error.
 - Internal testers are App Store Connect users of the team: xless checks the address against `/v1/users` (Admin key)
   before it adds one to an internal group, and otherwise lets Apple decide.

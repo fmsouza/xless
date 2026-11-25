@@ -809,8 +809,9 @@ by its ID or `<version>+<build number>`, as in [`xless builds`](#xless-builds) (
   note says so and Apple decides. `--first-name` and `--last-name` name a new tester (one address at a time).
   `remove` takes testers out of a group, or without `--group` out of every group and build of the app; it asks first.
   `invite` has Apple email testers of the app their invitation again. Addresses are compared without regard to case.
-- **Builds.** `builds add` adds the build to the groups that lack it (groups that have it are left alone); an external
-  group's testers get it once Apple approves it. `builds remove` asks first. `whats-new set` sets the build's What to
+- **Builds.** `builds add` adds the build to the groups that lack it (groups that have it are left alone), as
+  the delivery after an upload does: when a group with automatic distribution refuses the add, a note says the build
+  reaches it by itself. An external group's testers get it once Apple approves it. `builds remove` asks first. `whats-new set` sets the build's What to
   Test for `--locale` (default `en-US`, at most 4000 characters, `--text` or `--file`); the same text sends nothing.
   `whats-new show` prints every locale's.
 - **Beta information.** `beta-info set` sets, with only what differs: the texts of `--locale` (`--description` or

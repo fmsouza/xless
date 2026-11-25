@@ -19,13 +19,6 @@ private let exceptions: [String: String] = [
     "xless/LiveCheck.swift v1/bundleIds": "the label of a check; the portal's service sends the request",
 ]
 
-/// Called from several files today, to be made one: the list only gets shorter.
-private let pending: Set<String> = [
-    "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
-    "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds/{}/betaBuildLocalizations",
-]
-private let pendingCallers: Set<String> = []
-
 /// Files outside XlessASC that send through `ASCClient` themselves: file → why.
 private let clientCallers: [String: String] = [
     "XlessStore/StoreSender.swift": "sends the requests of store push's plan as the plan showed them, whatever their resource type",
@@ -213,7 +206,7 @@ extension Collection {
     for (path, uses) in Dictionary(grouping: paths.uses, by: \.path).sorted(by: { $0.key < $1.key }) where Set(uses.map(\.file)).count > 1 {
         needed.formUnion(uses.map { "\($0.file) \(path)" }.filter { exceptions[$0] != nil })
         let left = uses.filter { exceptions["\($0.file) \(path)"] == nil }
-        if Set(left.map(\.file)).count > 1, !pending.contains(path) {
+        if Set(left.map(\.file)).count > 1 {
             Issue.record("\(path) is called from several files: \(Set(left.map { "\($0.file):\($0.line)" }).sorted().joined(separator: ", "))")
         }
     }
@@ -239,7 +232,6 @@ extension Collection {
     for (name, text) in try SourcePaths.files() where !name.hasPrefix("XlessASC/") && !name.hasPrefix("XlessAppleID/") {
         let code = String(SourcePaths.Scan(text).code)
         guard code.contains(/[cC]lient\.(get|post|postOnce|patch|delete|request|download)\(/) else { continue }
-        if pendingCallers.contains(name) { continue }
         if clientCallers[name] != nil { needed.insert(name) } else { Issue.record("\(name) calls ASCClient itself") }
     }
     #expect(needed == Set(clientCallers.keys), "an exception nothing needs any more")
