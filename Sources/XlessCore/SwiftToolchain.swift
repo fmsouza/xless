@@ -145,3 +145,8 @@ public struct BuildSwiftRecord: Codable, Sendable, Equatable {
         return "Swift \(version)\(release) from \(root == "/" ? "/usr" : root)" + (xcodeSwiftVersion.map { ", Xcode's Swift \($0)" } ?? "")
     }
 }
+
+extension DarwinSDK {
+    /// Xcode's `clang` (or `clang++`), else that of the image's Swift, else the one on PATH.
+    public func compiler(_ name: String, swift: SwiftToolchain?) -> String { isXcode ? tool(name).path : swift?.tool(name) ?? name }
+}

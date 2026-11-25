@@ -24,12 +24,13 @@ public enum NativeLink {
         public var swiftLibPaths: [String]
         public var minOS: String
         public var sdk: URL
-        public var ld64: URL
+        /// nil: the compiler's own linker (Xcode's).
+        public var ld64: URL?
         public var output: String
 
         public init(objects: [String], libraryPaths: [String], libraries: [String], archives: [String], frameworkPaths: [String],
                     frameworks: [String], linkFlags: [String], sdkFrameworks: [String], clangRuntime: String, swiftLibPaths: [String],
-                    minOS: String, sdk: URL, ld64: URL, output: String) {
+                    minOS: String, sdk: URL, ld64: URL?, output: String) {
             self.objects = objects; self.libraryPaths = libraryPaths; self.libraries = libraries; self.archives = archives
             self.frameworkPaths = frameworkPaths; self.frameworks = frameworks; self.linkFlags = linkFlags
             self.sdkFrameworks = sdkFrameworks; self.clangRuntime = clangRuntime; self.swiftLibPaths = swiftLibPaths
@@ -59,7 +60,7 @@ public enum NativeLink {
     /// `libclang_rt.ios.a` (the Linux clang's resource dir has none), the Swift aggregate by path, ld64 bookkeeping
     /// flags dropped, and no `-lc++` beyond the driver's.
     public static func linkArguments(_ i: LinkInputs) -> [String] {
-        var args = ["-target", "arm64-apple-ios\(i.minOS)", "-isysroot", i.sdk.path, "-Os", "-fuse-ld=\(i.ld64.path)", "-mlinker-version=907"]
+        var args = ["-target", "arm64-apple-ios\(i.minOS)", "-isysroot", i.sdk.path, "-Os"] + (i.ld64.map { ["-fuse-ld=\($0.path)", "-mlinker-version=907"] } ?? [])
         for p in i.libraryPaths + i.swiftLibPaths.filter({ !i.libraryPaths.contains($0) }) { args += ["-L", p] }
         for p in i.frameworkPaths { args += ["-F", p] }
         args += i.objects

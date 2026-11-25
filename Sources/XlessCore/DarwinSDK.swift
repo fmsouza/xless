@@ -1,9 +1,12 @@
 import Foundation
 
-/// Paths inside the installed Darwin Swift SDK bundle (`xtool sdk install`; layout of darwin.xtoolsdk).
+/// Paths inside the installed Darwin Swift SDK bundle (`xtool sdk install`; layout of darwin.xtoolsdk); on a Mac those of the Xcode
+/// that is installed, which has the SDKs and the toolchain in the same places and linker, dsymutil and ar in the toolchain.
 public struct DarwinSDK: Sendable {
     public let bundle: URL
-    public init(bundle: URL = DarwinSDKLocator.bundle()) { self.bundle = bundle }
+    public let isXcode: Bool
+    public init(bundle: URL = DarwinSDKLocator.bundle()) { self.init(bundle: bundle, isXcode: false) }
+    init(bundle: URL, isXcode: Bool) { self.bundle = bundle; self.isXcode = isXcode }
 
     static let platformDir = ["iphoneos": "iPhoneOS", "iphonesimulator": "iPhoneSimulator", "macosx": "MacOSX"]
 
@@ -28,10 +31,14 @@ public struct DarwinSDK: Sendable {
     }
 
     public var toolchain: URL { bundle.appendingPathComponent("Developer/Toolchains/XcodeDefault.xctoolchain") }
-    public var ld64: URL { bundle.appendingPathComponent("toolset/bin/ld64.lld") }
+    public var ld64: URL { isXcode ? tool("ld") : bundle.appendingPathComponent("toolset/bin/ld64.lld") }
     /// xtool's toolset (darwin-tools-linux-llvm, the LLVM of `ld64.lld`) ships dsymutil next to the linker; Swift Build
     /// finds it there through PATH.
-    public var dsymutil: URL { bundle.appendingPathComponent("toolset/bin/dsymutil") }
+    public var dsymutil: URL { isXcode ? tool("dsymutil") : bundle.appendingPathComponent("toolset/bin/dsymutil") }
+    /// The archiver of cc's and cargo's C code.
+    public var ar: String { isXcode ? tool("ar").path : "llvm-ar" }
+
+    func tool(_ name: String) -> URL { toolchain.appendingPathComponent("usr/bin/\(name)") }
 
     /// `libclang_rt.<platform>.a` from the toolchain's clang resource dir (platform "ios" → libclang_rt.ios.a).
     public func clangRuntime(platform: String) throws -> URL {
