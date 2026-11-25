@@ -157,6 +157,102 @@ run -p '(version 1)(allow default)' "$sandboxed" ship --config "$t/ov/demo.yml" 
 x="$sandboxed"
 [[ "$code" != 0 && ! -e "$work/report" ]] || fail "the build code ran where it cannot have its sandbox ($code)"
 
+# React Native: xcodebuild, with a Swift package that has a plugin (from a repository that XLESS_BUILD_READ opens), and a build phase.
+mkdir -p "$t/rn/ios/A.xcodeproj" "$t/rn/ios/A.xcworkspace" "$t/rn/ios/A.xcodeproj/xcshareddata/xcschemes" "$t/dep/Sources/Dep" "$t/dep/Sources/gen" "$t/dep/Plugins/Gen"
+commit() { git -C "$1" init -q; git -C "$1" add .; git -C "$1" -c user.name=x -c user.email=x@example.com -c commit.gpgsign=false commit -qm one; }
+cat >"$t/dep/Package.swift" <<'S'
+// swift-tools-version: 5.9
+import PackageDescription
+let package = Package(name: "dep", platforms: [.iOS(.v17), .macOS(.v13)], products: [.library(name: "Dep", targets: ["Dep"])],
+                      targets: [.executableTarget(name: "gen"), .plugin(name: "Gen", capability: .buildTool(), dependencies: ["gen"]), .target(name: "Dep", plugins: ["Gen"])])
+S
+cat >"$t/dep/Sources/gen/main.swift" <<'S'
+import Foundation
+let key = (try? String(contentsOfFile: "/etc/hosts", encoding: .utf8)) == nil ? "closed" : "open"
+try "public let generated = \"\(key) \(CommandLine.arguments[2])\"\n".write(toFile: CommandLine.arguments[1], atomically: true, encoding: .utf8)
+S
+cat >"$t/dep/Plugins/Gen/p.swift" <<'S'
+import Foundation
+import PackagePlugin
+@main struct Gen: BuildToolPlugin {
+    func createBuildCommands(context: PluginContext, target: Target) async throws -> [Command] {
+        let out = context.pluginWorkDirectory.appending("g.swift")
+        let seen = FileManager.default.contents(atPath: "@T@/elsewhere/file") == nil ? "unseen" : "seen"
+        return [.buildCommand(displayName: "gen", executable: try context.tool(named: "gen").path, arguments: [out.string, seen], outputFiles: [out])]
+    }
+}
+S
+sed -i '' "s|@T@|$t|" "$t/dep/Plugins/Gen/p.swift"
+echo 'public let dep = generated' >"$t/dep/Sources/Dep/d.swift"
+commit "$t/dep"
+printf '%s\n' 'import Dep' 'import SwiftUI' '@main struct A: App { var body: some Scene { WindowGroup { Text(dep) } } }' >"$t/rn/ios/a.swift"
+cat >"$t/rn/ios/A.xcodeproj/project.pbxproj" <<S
+// !\$*UTF8*\$!
+{ archiveVersion = 1; classes = { }; objectVersion = 60; rootObject = 01; objects = {
+  01 = { isa = PBXProject; buildConfigurationList = 02; mainGroup = 03; targets = (04); packageReferences = (05); projectDirPath = ""; projectRoot = ""; };
+  02 = { isa = XCConfigurationList; buildConfigurations = (06); };
+  06 = { isa = XCBuildConfiguration; name = Release; buildSettings = { SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; };
+  03 = { isa = PBXGroup; children = (07, 08); sourceTree = "<group>"; };
+  07 = { isa = PBXFileReference; path = a.swift; lastKnownFileType = sourcecode.swift; sourceTree = "<group>"; };
+  08 = { isa = PBXFileReference; path = A.app; explicitFileType = wrapper.application; sourceTree = BUILT_PRODUCTS_DIR; };
+  04 = { isa = PBXNativeTarget; name = A; productName = A; productType = "com.apple.product-type.application"; productReference = 08; buildConfigurationList = 09;
+         buildPhases = (10, 11, 12); buildRules = (); dependencies = (); packageProductDependencies = (13); };
+  09 = { isa = XCConfigurationList; buildConfigurations = (14); };
+  14 = { isa = XCBuildConfiguration; name = Release; buildSettings = { PRODUCT_NAME = A; PRODUCT_BUNDLE_IDENTIFIER = com.example.other; GENERATE_INFOPLIST_FILE = YES;
+         CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.0; INFOPLIST_KEY_UILaunchScreen_Generation = YES; }; };
+  10 = { isa = PBXSourcesBuildPhase; files = (15); };
+  15 = { isa = PBXBuildFile; fileRef = 07; };
+  11 = { isa = PBXFrameworksBuildPhase; files = (16); };
+  16 = { isa = PBXBuildFile; productRef = 13; };
+  12 = { isa = PBXShellScriptBuildPhase; files = (); alwaysOutOfDate = 1; shellPath = /bin/sh;
+         shellScript = "{ cat '$t/home/.ssh/id_test' || echo no key; touch '$t/rn/x' || echo no source; env | grep s3cret || echo no token; xcrun --find actool | grep -o '[.]xless/.*'; } 2>/dev/null >\"\$SRCROOT/report\"\n"; };
+  05 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "file://$t/dep"; requirement = { kind = revision; revision = $(git -C "$t/dep" rev-parse HEAD); }; };
+  13 = { isa = XCSwiftPackageProductDependency; package = 05; productName = Dep; };
+}; }
+S
+echo '<Workspace version="1.0"><FileRef location="group:A.xcodeproj"/></Workspace>' >"$t/rn/ios/A.xcworkspace/contents.xcworkspacedata"
+cat >"$t/rn/ios/A.xcodeproj/xcshareddata/xcschemes/A.xcscheme" <<'S'
+<Scheme version="1.7"><BuildAction><BuildActionEntries><BuildActionEntry buildForRunning="YES" buildForArchiving="YES">
+<BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="04" BuildableName="A.app" BlueprintName="A" ReferencedContainer="container:A.xcodeproj"/>
+</BuildActionEntry></BuildActionEntries></BuildAction></Scheme>
+S
+printf '%s\n' GEM '  specs:' '    cocoapods (1.15.2)' '' 'BUNDLED WITH' '   2.7.2' >"$t/rn/Gemfile.lock"
+echo '{"name":"a","version":"1.0.0"}' >"$t/rn/package.json"
+echo '{"lockfileVersion":3}' >"$t/rn/package-lock.json"
+echo 'target "A"' >"$t/rn/ios/Podfile"
+commit "$t/rn"
+cat >"$t/tools/bin/npm" <<'S'
+#!/bin/sh
+[ "$1" != --version ] || { echo 10; exit; }
+mkdir -p node_modules/react-native node_modules/expo
+echo '{"version":"0.86.1"}' >node_modules/react-native/package.json
+echo '{"version":"57.0.1"}' >node_modules/expo/package.json
+S
+cp "$t/tools/bin/npm" "$t/tools/bin/node"
+cat >"$t/tools/bin/bundle" <<'S'
+#!/bin/sh
+[ "$1" != -v ] || { echo "Bundler version 2.7.2"; exit; }
+[ "$1" != exec ] || { mkdir -p Pods; echo a >Podfile.lock; echo a >Pods/Manifest.lock; }
+S
+chmod +x "$t/tools/bin/npm" "$t/tools/bin/node" "$t/tools/bin/bundle"
+printf '%s\n' 'type: react-native' 'source: ../rn' 'teamID: ABCDE12345' 'version: "3.2.1"' 'build: "7"' 'bundleIDs: { A: com.example.rn }' 'usesNonExemptEncryption: false' 'scheme: A' \
+  'configuration: Release' 'privacyManifest: p.xcprivacy' >"$t/ov/rn.yml"
+echo '<plist version="1.0"><dict><key>NSPrivacyTracking</key><false/></dict></plist>' >"$t/ov/p.xcprivacy"
+work="$t/home/.cache/xless/work/rn"
+for destination in device simulator; do
+  more=(XLESS_BUILD_READ="$t/dep")
+  if [[ "$destination" == device ]]; then run ship --config "$t/ov/rn.yml" --platform ios --to finalize; else run ship --config "$t/ov/rn.yml" --platform ios --destination simulator --from build; fi
+  [[ "$code" == 0 ]] || fail "the React Native app for the $destination exited $code"
+  [[ "$(cat "$work/ios/report")" == "no key
+no source
+no token
+.xless/bin/actool" ]] || fail "a build phase got something else: $(cat "$work/ios/report")"
+  app=$(tail -1 "$t/out")
+  [[ "$app" == */A.app && "$(plutil -extract CFBundleIdentifier raw "$app/Info.plist") $(plutil -extract CFBundleVersion raw "$app/Info.plist")" == "com.example.rn 7" ]] || fail "$app is not the app"
+  strings -a "$app/A" | grep -q '^open unseen$' || fail "the package's plugin got something else"
+done
+more=()
+
 # The build's failure is xless's, once.
 printf '%s\n' '#!/bin/sh' 'echo it broke >&2' 'exit 3' >"$t/tools/bin/cargo"
 run build --config "$t/ov/demo.yml" --platform macos
