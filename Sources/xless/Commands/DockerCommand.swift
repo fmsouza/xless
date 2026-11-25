@@ -36,7 +36,7 @@ struct RunCommand: ParsableCommand {
                              fix: "add --docker (after building the images once: xless setup --docker --xcode <Xcode.xip>)")
         }
         #elseif os(macOS)
-        if useDocker == "0", !ProjectRunner.isScript(env), !Self.isOnPath("xtool", env) {
+        if useDocker == "0", !ProjectRunner.isScript(env), !rest.contains("--dry-run"), !Self.isOnPath("xtool", env) {
             FileHandle.standardError.write(Data("note: xless installs no build tools on macOS yet (and there is no xtool on PATH): to build in Docker, add --docker (after xless setup --docker --xcode <Xcode.xip>, once)\n".utf8))
         }
         #endif

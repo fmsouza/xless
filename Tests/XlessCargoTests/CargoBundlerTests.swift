@@ -277,7 +277,12 @@ private let macTemplate = """
         try put(work, "x.txt", "x")
         let exe = out.appendingPathComponent("hello-bin")
         try Data([1]).write(to: exe)
-        for to in ["Info.plist", "Hello", "."] {
+        #if os(macOS)
+        let others = ["INFO.PLIST", "hello"] // the same files there
+        #else
+        let others: [String] = []
+        #endif
+        for to in ["Info.plist", "Hello", "."] + others {
             let r = try resolved(.ios, iosExtra: "  resources:\n    - { from: x.txt, to: \"\(to)\" }")
             expectBuildError(containing: ["would overwrite"]) {
                 _ = try CargoBundler.assemble(resolved: r, platform: .ios, work: work, inputs: [:], vars: vars, executable: exe, privacyManifest: nil, into: out)

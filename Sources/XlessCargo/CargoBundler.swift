@@ -85,7 +85,7 @@ public enum CargoBundler {
         do {
             try? fm.removeItem(at: app)
             for dir in [at(layout.executableDir), resourcesRoot] { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
-            try copyResources(block.resources, to: resourcesRoot, reserved: reserved, work: work, inputs: inputs, platform: platform)
+            try copyResources(block.resources, to: resourcesRoot, reserved: Set(reserved.map(fileKey)), work: work, inputs: inputs, platform: platform)
             try fm.copyItem(at: executable, to: executablePath)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executablePath.path)
             try Plist.write(info, to: at(layout.infoPlist), format: .xml, stage: .build)
@@ -126,6 +126,16 @@ public enum CargoBundler {
 
     // MARK: resources
 
+    /// Two paths with the same key name the same file: macOS file systems take no notice of case (nor of how a letter is composed,
+    /// which Swift's strings do not tell apart either).
+    private static func fileKey(_ path: String) -> String {
+        #if os(macOS)
+        path.lowercased()
+        #else
+        path
+        #endif
+    }
+
     private static func copyResources(_ resources: [CargoResource], to resourcesRoot: URL, reserved: Set<String>, work: URL, inputs: [String: URL],
                                       platform: Platform) throws {
         let fm = FileManager.default
@@ -155,10 +165,10 @@ public enum CargoBundler {
             var seen = Set<String>()
             for (source, name) in sources {
                 let dest = (keepsName ? resourcesRoot.appendingPathComponent(resource.to).appendingPathComponent(name) : resourcesRoot.appendingPathComponent(resource.to)).standardizedFileURL
-                guard dest.path.hasPrefix(root + "/"), !reserved.contains(dest.path) else {
+                guard dest.path.hasPrefix(root + "/"), !reserved.contains(fileKey(dest.path)) else {
                     throw XlessError(.build, "\(key).to '\(resource.to)' would overwrite the bundle's own files or leave the bundle", fix: "name a location inside the bundle's resources, e.g. Licenses/")
                 }
-                guard seen.insert(dest.path).inserted else {
+                guard seen.insert(fileKey(dest.path)).inserted else {
                     throw XlessError(.build, "\(key).from '\(resource.from)' has two matches that land on \(dest.lastPathComponent)", fix: "narrow the pattern")
                 }
                 try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)

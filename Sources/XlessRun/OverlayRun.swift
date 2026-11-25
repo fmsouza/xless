@@ -200,7 +200,9 @@ extension ProjectRun {
         if !dryRun {
             do { try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true) } catch { throw RunStop.usage("cannot create the work root \(root)") }
         }
-        return "\(host.realPath(root) ?? root)/\(overlay.stem)" // created as xless would, its links resolved: one spelling only
+        let copy = "\(host.realPath(root) ?? root)/\(overlay.stem)" // created as xless would, its links resolved: one spelling only
+        guard host.isMac, let there = host.realPath(copy) else { return copy }
+        return there // also where the name is written in another case than the directory's
     }
 
     // MARK: - The steps
