@@ -715,6 +715,12 @@ The second run reads the project's files as the first left them. In containers (
 read-only, and the run says when it is another one afterwards; natively nothing keeps a build from changing it. Look at the
 project (`git diff`, `git status`) before the second, if you would not let its build code choose the team and the bundle ID.
 
+In CI, make the two runs two steps, with the secrets in the environment of the second alone ([ci.md](ci.md#build-without-the-secrets)).
+A build step still reaches the later steps of its machine. On GitHub Actions it can write `$GITHUB_ENV` and `$GITHUB_PATH`, which set
+their environment and their programs, and what it leaves running there can read the environment of a later step of the same user. A
+second job on another machine, which gets the built app as an artifact and takes xless.yml and the entitlements from the commit, is the
+stronger form ([ci.md](ci.md#in-two-jobs)). What is in the app is the build's in either.
+
 ### With an installed Xcode
 
 On a Mac, xless builds an `xless.yml` project with the Xcode that is installed
