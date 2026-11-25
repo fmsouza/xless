@@ -68,9 +68,10 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
         lock.withLock {
             guard !items.isEmpty else { return [] }
             let list = items.values.map { AgentItemStatus(name: $0.seed.name, label: $0.seed.label, remaining: $0.seed.hold.seconds - aged, idle: $0.seed.hold.idle, idleRemaining: $0.seed.hold.idle) }
-            return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name })]
+            return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name }, isSameSession: true)]
         }
     }
+    func leases() -> [AgentStatus] { [] }
 }
 
 /// The kernel keyring, in memory.

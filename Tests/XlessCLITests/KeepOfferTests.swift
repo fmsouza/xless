@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import XlessAgent
+import XlessASC
 import XlessCore
 @testable import XlessAppleID
 @testable import XlessVault
@@ -145,6 +146,25 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
         #expect(r.text.contains("until \(AuthStatusReport.iso(until))") && r.text.contains("as you agreed"))
         let none = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, now: now)
         #expect(none.keepUntil == nil && !none.text.contains("as you agreed"))
+    }
+
+    @Test func authStatusShowsTheSessionsThatRun() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func lease(_ command: String, _ names: [String], remaining: Int, here: Bool) -> AgentStatus {
+            let items = names.map { AgentItemStatus(name: $0, label: "", remaining: remaining, idle: 1, idleRemaining: 1) }
+            return AgentStatus(isGranted: here, count: names.count, remaining: remaining, sessions: 1, items: items, isSameSession: here,
+                               lease: AgentLeaseStatus(command: command, remaining: remaining))
+        }
+        let leases = [lease("xless session (release.sh)", ["xless-vault:1", "xless-apple-session", "xless-apple-session-key"], remaining: 3600, here: true),
+                      lease("xless run", ["xless-vault"], remaining: 60, here: false)]
+        let r = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, leases: leases, now: now)
+        #expect(r.sessions == [.init(command: "xless session (release.sh)", holds: ["store", "session"], expires: AuthStatusReport.iso(now + 3600), remainingSeconds: 3600, thisTerminal: true),
+                               .init(command: "xless run", holds: ["store"], expires: AuthStatusReport.iso(now + 60), remainingSeconds: 60, thisTerminal: false)])
+        #expect(r.text.contains("xless session (release.sh) in this terminal: the secret store's unlock and an Apple ID session, until it ends, \(AuthStatusReport.iso(now + 3600)) at the latest (1 h left)"), "\(r.text)")
+        #expect(r.text.contains("xless run in another terminal: the secret store's unlock, until it ends"), "\(r.text)")
+        #expect(try ASCOutput.json(r).contains("\"holds\""))
+        let none = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, now: now)
+        #expect(none.sessions.isEmpty && !none.text.contains("at the latest"))
     }
 
     @Test func aYesCanBeWithdrawn() {

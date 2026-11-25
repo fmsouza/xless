@@ -13,11 +13,12 @@ private let hold = SecretHold(seconds: 500, idle: 400, maximum: 5000)
 private let witness = AgentWitness(item: "xless-vault:1", key: key)
 
 /// A lease's two ends: the agent's, and the one its holder closes.
-private func lease(_ items: [(String, String)] = [("xless-vault:1", keyText)], grant: [AgentSession]? = nil, in directory: AgentDirectory? = nil) throws -> (agent: TestAgent, holder: Int32) {
+private func lease(_ items: [(String, String)] = [("xless-vault:1", keyText)], grant: [AgentSession]? = nil, command: String = "xless session (release.sh)",
+                   seconds: Int = 1800, in directory: AgentDirectory? = nil) throws -> (agent: TestAgent, holder: Int32) {
     var fds: [Int32] = [-1, -1]
     try #require(xless_unix_pair(&fds) == 0)
     var options = AgentServer.Options()
-    options.lease = try AgentChannel(fd: fds[1])
+    options.lease = .init(channel: try AgentChannel(fd: fds[1]), command: command, seconds: seconds)
     return (try TestAgent(grant: grant, items: items, options: options, in: directory), fds[0])
 }
 
@@ -49,6 +50,41 @@ private func client(_ directory: AgentDirectory, session: String? = nil, starts:
     try c.put([AgentSeed(name: "a", label: "", secret: key, hold: hold)])
     #expect(c.drop(prefix: "a").count == 1)
     #expect(agent.waitForExit(0.3) == nil)
+}
+
+@Test func aLeasedAgentEndsAfterItsTimeWhateverItWasGivenMeanwhile() throws {
+    let (agent, holder) = try lease()
+    defer { close(holder) }
+    let c = client(agent.directory, session: agent.path)
+    agent.clock.advance(1700)
+    try c.put([AgentSeed(name: "a", label: "", secret: key, hold: SecretHold(seconds: 5000, idle: 5000, maximum: 5000))])
+    #expect(c.statuses().first?.items.map(\.remaining) == [100]) // not what was asked for
+    agent.clock.advance(99)
+    #expect(c.get("a") { $0 == key } == key)
+    agent.clock.advance(1)
+    #expect(c.get("a") { $0 == key } == nil)
+    #expect(agent.waitForExit() == .leaseEnded)
+    #expect(agent.state.isEmpty)
+}
+
+@Test func everyTerminalOfTheUserSeesWhatALeaseHoldsWhoseItIsAndUntilWhen() throws {
+    let box = ScratchBox(), directory = AgentDirectory(path: box.path + "/xless-agent")
+    let (near, a) = try lease([("xless-vault:1", keyText), ("xless-apple-session", "c")], in: directory)
+    let (other, b) = try lease(grant: [AgentSession(id: 77, leaderStart: 7)], command: "xless run\u{1B}[2J", seconds: 60, in: directory)
+    let (empty, c) = try lease([], in: directory)
+    let usual = try TestAgent(in: directory)
+    defer { [a, b, c].forEach { close($0) } }
+    near.clock.advance(300)
+    let all = client(directory).leases().sorted { $0.remaining > $1.remaining }
+    #expect(all.map(\.lease) == [AgentLeaseStatus(command: "xless session (release.sh)", remaining: 1500), AgentLeaseStatus(command: "xless run?[2J", remaining: 60)])
+    #expect(all.first?.items.map(\.name) == ["xless-apple-session", "xless-vault:1"] && all.first?.isGranted == true && all.first?.isSameSession == true)
+    // Another session is told the kinds: not which store, nor where it is.
+    #expect(all.last?.items.map(\.name) == ["xless-vault"] && all.last?.items.map(\.label) == [""] && all.last?.isGranted == false)
+    // It is looked at, not used, and counts for nothing else.
+    #expect(client(directory).statuses().flatMap(\.items).map(\.name) == ["a"])
+    #expect(near.state.status(of: "xless-vault:1")?.idleRemaining == 300)
+    #expect(client(directory, session: near.path).leases().count == 2)
+    _ = (other, empty, usual)
 }
 
 @Test func lockEndsALeasedAgentToo() throws {

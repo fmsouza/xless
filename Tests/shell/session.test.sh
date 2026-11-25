@@ -227,6 +227,12 @@ a.type("$X session -- sh -c 'echo started > $T/up; while [ ! -e $T/stop ]; do sl
 a.answer(PASS)
 check(wait_for(t + "/up") and len(agents()) == 1, "a session that runs", agents())
 b = Terminal()
+rc, shown, n = b.run("$X auth status --json")
+s = status(shown)["sessions"]
+check(len(s) == 1 and s[0]["command"] == "xless session (sh)" and s[0]["holds"] == ["store"] and not s[0]["thisTerminal"] and 28000 < s[0]["remainingSeconds"] <= 28800,
+      "auth status in another terminal shows it: what it holds, whose it is, until when", shown)
+rc, shown, n = b.run("$X auth status")
+check("xless session (sh) in another terminal: the secret store's unlock" in shown and "(`xless lock` ends it sooner)" in shown, "and so in text", shown)
 rc, shown, n = b.run(f"XLESS_SESSION=$(ls $T/run/xless-agent/*.sock) $X auth status --json")
 check(status(shown)["store"]["state"] == "locked", "another terminal is not served, told of it or not", shown)
 rc, shown, n = b.run("XLESS_SESSION=$(ls $T/run/xless-agent/*.sock) $X secrets export NOTE --out $T/b.out", PASS)
@@ -234,6 +240,26 @@ check(rc == 0 and n == 1 and len(agents()) == 1, "nor does its passphrase join i
 open(t + "/stop", "w").close()
 rc, shown = a.done()
 check(rc == 0 and not agents(), "and it ends", (rc, agents()))
+
+a.type("$X session -- sh -c 'echo started > $T/up2; while [ ! -e $T/stop2 ]; do sleep 0.2; done'")
+a.answer(PASS)
+check(wait_for(t + "/up2"), "a session that is stopped")
+os.write(a.fd, b"\x1a")
+a.until(rb"__DONE:\d+:")
+rc, shown, n = a.run("$X auth status --json")
+check(status(shown)["store"]["state"] == "locked" and [s["thisTerminal"] for s in status(shown)["sessions"]] == [True], "its own terminal does not use it outside the script, and sees it", shown)
+open(t + "/stop2", "w").close()
+a.run("fg >/dev/null")
+check(gone(), "and it ends", agents())
+
+# ---- for how long ------------------------------------------------------------------------------------------------------------
+os.makedirs(t + "/config/xless")
+with open(t + "/config/xless/config.yml", "w") as f: f.write("unlock: { duration: 8s, idle: 8s }\n")
+script("long.sh", '#!/bin/sh\n$X secrets export NOTE --out "$T/early" || exit 1\nsleep 11\n$X --no-input secrets export NOTE --out "$T/late"\nexit $?\n')
+rc, shown, n = a.run("$X session -- $T/bin/long.sh", PASS)
+check("for 8 s at most" in shown and os.path.exists(t + "/early"), "a session is for the time of `unlock.duration` at most, and says so", shown)
+check(rc == 23 and not os.path.exists(t + "/late"), "after it what was held is dropped, and the script's next command is asked again", (rc, shown))
+os.unlink(t + "/config/xless/config.yml")
 
 # ---- what is kept inside, and what was held before --------------------------------------------------------------------------
 rc, shown, n = a.run("$X session -- sh -c '$X unlock && $X secrets export NOTE --out $T/kept'", PASS)

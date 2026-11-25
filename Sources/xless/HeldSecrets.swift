@@ -16,6 +16,7 @@ protocol AgentHolding: Sendable {
     func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws
     func drop(prefix: String, label: String) -> AgentDropped
     func statuses() -> [AgentStatus]
+    func leases() -> [AgentStatus]
 }
 
 extension AgentClient: AgentHolding {}

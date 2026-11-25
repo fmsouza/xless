@@ -13,14 +13,30 @@ public struct AgentStatus: Sendable, Equatable {
     /// How many terminal sessions it serves.
     public let sessions: Int
     public let items: [AgentItemStatus]
+    /// It is a process of this very session, by the kernel's word.
+    public let isSameSession: Bool
+    /// When it is on a lease; its items are then named for every process of the user, by kind.
+    public let lease: AgentLeaseStatus?
 
-    public init(isGranted: Bool, count: Int, remaining: Int, sessions: Int, items: [AgentItemStatus]) {
+    public init(isGranted: Bool, count: Int, remaining: Int, sessions: Int, items: [AgentItemStatus], isSameSession: Bool, lease: AgentLeaseStatus? = nil) {
+        self.isSameSession = isSameSession
+        self.lease = lease
         self.isGranted = isGranted
         self.count = count
         self.remaining = remaining
         self.sessions = sessions
         self.items = items
     }
+}
+
+/// Of an agent on a lease (`xless session`).
+public struct AgentLeaseStatus: Sendable, Equatable {
+    /// The command it is for.
+    public let command: String
+    /// The seconds it has left at most.
+    public let remaining: Int
+
+    public init(command: String, remaining: Int) { self.command = command; self.remaining = remaining }
 }
 
 public struct AgentHeld: Sendable {
@@ -153,7 +169,7 @@ final class AgentLink {
     }
 
     /// Text of unknown origin, fit for a terminal.
-    private static func printable(_ text: String) -> String {
+    static func printable(_ text: String) -> String {
         String(text.unicodeScalars.prefix(200).map { $0.value < 0x20 || $0.value == 0x7F || (0x80...0x9F).contains($0.value) ? "?" : Character($0) })
     }
 
@@ -283,13 +299,15 @@ final class AgentLink {
     func status() throws -> AgentStatus? {
         try request(.status).body { r in
             let granted = try r.bool(), count = Int(try r.uint32()), remaining = try r.int(), sessions = Int(try r.uint32())
+            let lease = try r.bool() ? AgentLeaseStatus(command: Self.printable(try r.string(max: AgentLimits.labelBytes)), remaining: try r.int()) : nil
             let named = Int(try r.uint32())
             guard named <= AgentLimits.items else { throw AgentError.malformed("\(named) items") }
             let items = try (0..<named).map { _ in
                 AgentItemStatus(name: try r.string(max: AgentLimits.nameBytes), label: try r.string(max: AgentLimits.labelBytes),
                                 remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int(), typedAgo: try r.int())
             }
-            return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items)
+            return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items,
+                               isSameSession: isSameSession, lease: lease)
         }
     }
 

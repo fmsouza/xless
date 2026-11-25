@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import XlessAgent
 import XlessAppleID
 import XlessASC
 import XlessCore
@@ -119,7 +120,7 @@ struct AuthStatusCommand: ParsableCommand {
         let report = AuthStatusReport.build(env: ProcessInfo.processInfo.environment, storeKey: storeKey, teamFlag: team.team, savedTeam: saved,
                                             canKeep: held.isAvailable, session: session, sessionHeld: session == nil ? nil : held.held(), savedUntil: AppleWebCLI.cache.savedUntil,
                                             store: AuthStatusReport.Store.current(), neededBy: AppleWebHelp.commands,
-                                            agreedUntil: KeepOffer.shared.agreedUntil(), now: Date())
+                                            agreedUntil: KeepOffer.shared.agreedUntil(), leases: held.agents.leases(), now: Date())
         print(output.json ? try ASCOutput.json(report) : report.text, terminator: "")
     }
 }
@@ -205,6 +206,18 @@ struct AuthStatusReport: Encodable, Equatable {
     let keyRole: String?
     let session: Session
     let store: Store
+    /// The scripts that run with something held for them (`xless session`, `xless run`), of every terminal of the user.
+    struct Running: Encodable, Equatable {
+        let command: String
+        /// store (its unlock), session (an Apple ID session).
+        let holds: [String]
+        /// At the latest: it ends with the command.
+        let expires: String
+        let remainingSeconds: Int
+        let thisTerminal: Bool
+    }
+
+    var sessions: [Running] = []
     /// Until when what is typed in this terminal is kept without a question, as the person agreed; nil: it is asked.
     var keepUntil: String? = nil
 
@@ -212,7 +225,7 @@ struct AuthStatusReport: Encodable, Equatable {
 
     static func build(env: [String: String], storeKey: Result<StoreKey?, any Error>, teamFlag: String?, savedTeam: String?,
                       canKeep: Bool, session info: KeptSessionInfo?, sessionHeld: HeldUnlock? = nil, savedUntil: Date? = nil, store: Store = Store(state: "missing"),
-                      neededBy: [String] = [], agreedUntil: Date? = nil, now: Date) -> AuthStatusReport {
+                      neededBy: [String] = [], agreedUntil: Date? = nil, leases: [AgentStatus] = [], now: Date) -> AuthStatusReport {
         var keyTeam: String?
         var keyRole: String?
         let credentials = names.map { name -> Credential in
@@ -241,9 +254,16 @@ struct AuthStatusReport: Encodable, Equatable {
             session = Session(state: savedUntil != nil ? "saved" : canKeep ? "none" : "unavailable", appleID: nil, expires: nil, remainingSeconds: nil, neededBy: neededBy)
         }
         session.savedUntil = savedUntil.map(iso)
+        let sessions = leases.compactMap { status in
+            status.lease.map { lease in
+                Running(command: lease.command, holds: [(HeldSecrets.vaultPrefix.dropLast(), "store"), (AppleSessionCache.prefix[...], "session")].filter { kind in
+                    status.items.contains { $0.name.hasPrefix(kind.0) }
+                }.map(\.1), expires: iso(now.addingTimeInterval(TimeInterval(lease.remaining))), remainingSeconds: lease.remaining, thisTerminal: status.isSameSession)
+            }
+        }
         let team = teamFlag ?? savedTeam
         return AuthStatusReport(team: team, teamSource: teamFlag != nil ? "flag" : (savedTeam != nil ? "saved" : "none"),
-                                apiKey: credentials, keyTeam: keyTeam, keyRole: keyRole, session: session, store: store, keepUntil: agreedUntil.map(iso))
+                                apiKey: credentials, keyTeam: keyTeam, keyRole: keyRole, session: session, store: store, sessions: sessions, keepUntil: agreedUntil.map(iso))
     }
 
     var text: String {
@@ -285,6 +305,13 @@ struct AuthStatusReport: Encodable, Equatable {
             lines.append("  none kept: each command that needs it signs in (`xless auth login --keep` keeps one for this terminal)")
         }
         if !session.neededBy.isEmpty { lines.append("  needed by: \(session.neededBy.joined(separator: ", ")); the other commands use the API key") }
+        if !sessions.isEmpty {
+            lines.append("Held while a command runs (`xless lock` ends it sooner):")
+            for s in sessions {
+                let what = s.holds.compactMap { ["store": "the secret store's unlock", "session": "an Apple ID session"][$0] }.joined(separator: " and ")
+                lines.append("  \(s.command) in \(s.thisTerminal ? "this" : "another") terminal: \(what.isEmpty ? "nothing known" : what), until it ends, \(s.expires) at the latest (\(Self.duration(TimeInterval(s.remainingSeconds))) left)")
+            }
+        }
         if let keepUntil { lines.append("A passphrase or sign-in this terminal asks for next is kept for it, as you agreed, until \(keepUntil); `xless lock` ends it") }
         return lines.joined(separator: "\n") + "\n"
     }

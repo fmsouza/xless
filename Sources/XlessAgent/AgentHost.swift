@@ -66,7 +66,7 @@ public enum AgentHost {
             // It serves the session it is in: anything else would be a session it cannot vouch for.
             guard session.isUsable, Int64(session.id) == wanted else { throw AgentError.limit("a session it is not in") }
             state.grant(session)
-            if try r.bool() { options.lease = channel }
+            if try r.bool() { options.lease = .init(channel: channel, command: try r.string(max: AgentLimits.labelBytes), seconds: try r.int()) }
             let terms = try AgentTerms(&r)
             options.lockOnSleep = terms.lockOnSleep
             options.lockOnScreenLock = terms.lockOnScreenLock

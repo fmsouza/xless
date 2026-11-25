@@ -269,13 +269,20 @@ public final class AgentClient: @unchecked Sendable {
     /// Why no lease can be started here.
     public var leaseObstacle: AgentError? { AgentLauncher.obstacle(lease: true) ?? directory.obstacle() }
 
-    /// Starts an agent for this process alone to keep: it ends with it, or with `end()`.
-    public func lease(_ seeds: [AgentSeed]) throws -> AgentLease {
-        try AgentLauncher.lease(seeds, directory: directory, terms: terms)
+    /// Starts an agent for this process alone to keep: it ends with it, with `end()`, or after `seconds`.
+    /// - Parameter command: whose it is, for `leases`.
+    public func lease(_ seeds: [AgentSeed], command: String, seconds: Int) throws -> AgentLease {
+        try AgentLauncher.lease(seeds, command: command, seconds: seconds, directory: directory, terms: terms)
     }
 
     /// Whether the agent of the `xless session` this runs in is there, and serves this process.
     public var isInSession: Bool { links().contains { isMySession($0) && $0.isGranted && $0.isSameSession } }
+
+    /// The leases that hold something, of every session of the user: looked at, not used.
+    public func leases() -> [AgentStatus] {
+        let all = (try? batches()) ?? []
+        return all.flatMap { paths in links { paths }.0.filter(\.isLease).compactMap { try? $0.status() } }.filter { $0.lease != nil && $0.count > 0 }
+    }
 
     public func statuses() -> [AgentStatus] { links().compactMap { try? $0.status() } }
 }

@@ -60,9 +60,16 @@ final class AgentServer: @unchecked Sendable {
         var screenIsLocked: () -> Bool = { false }
         var isAlive: (AgentSession) -> Bool = { $0.isAlive }
         var tickMilliseconds = 2000
-        /// The channel of the process this agent is for (`xless session`): it ends when that one does, whatever ends it, and
-        /// not before for holding nothing; and no other session joins it.
-        var lease: AgentChannel?
+        var lease: Lease?
+    }
+
+    /// An agent for one process (`xless session`): it ends when that one does, whatever ends it, or after `seconds`, and not
+    /// before for holding nothing; and no other session joins it.
+    struct Lease {
+        let channel: AgentChannel
+        /// The command it is for, as a person is told.
+        let command: String
+        let seconds: Int
     }
 
     private final class Connection {
@@ -94,6 +101,7 @@ final class AgentServer: @unchecked Sendable {
     private var asleep: Int64 = 0
     private var screenWasLocked = false
     private var touched: Int64 = 0
+    private let leaseEnds: AgentDeadline?
 
     init(bound: AgentDirectory.Bound, directory: AgentDirectory, state: AgentState, clock: AgentClock, options: Options) {
         self.bound = bound
@@ -101,6 +109,7 @@ final class AgentServer: @unchecked Sendable {
         self.state = state
         self.clock = clock
         self.options = options
+        leaseEnds = options.lease.map { AgentDeadline(clock.now, in: min($0.seconds, AgentLimits.seconds)) }
     }
 
     /// Its socket.
@@ -132,7 +141,7 @@ final class AgentServer: @unchecked Sendable {
             var polled = [pollfd(fd: bound.fd, events: Int16(POLLIN), revents: 0)]
             polled += connections.map { pollfd(fd: $0.channel.fd, events: Int16(POLLIN) | ($0.channel.hasOutput ? Int16(POLLOUT) : 0), revents: 0) }
             // Nothing is said there after the start: whatever comes, the end of the process first, is the end.
-            if let lease = options.lease { polled.append(pollfd(fd: lease.fd, events: Int16(POLLIN), revents: 0)) }
+            if let lease = options.lease { polled.append(pollfd(fd: lease.channel.fd, events: Int16(POLLIN), revents: 0)) }
             let ready = poll(&polled, nfds_t(polled.count), Int32(max(1, nextTick - xless_clock_awake_ms())))
             guard ready > 0 else { continue }
             checkTriggers() // a sleep or an expiry between two ticks counts before anything is answered
@@ -168,6 +177,7 @@ final class AgentServer: @unchecked Sendable {
         let slept = now.continuous - now.awake
         if options.lockOnSleep, slept - asleep > 2000 { exit = .slept; return }
         asleep = slept
+        if leaseEnds?.passed(now) == true { exit = .leaseEnded; return }
         state.pruneSessions(options.isAlive)
         if state.sessions == 0 { exit = .noSessions } else if state.isEmpty, options.lease == nil { exit = .empty }
     }
@@ -178,7 +188,7 @@ final class AgentServer: @unchecked Sendable {
         connections = []
         if directory.identity(of: bound.path) == bound.identity { unlink(bound.path) }
         close(bound.fd)
-        options.lease?.end()
+        options.lease?.channel.end()
     }
 
     private func accept() {
@@ -302,25 +312,40 @@ final class AgentServer: @unchecked Sendable {
 
     private func status(_ message: AgentMessage, _ c: Connection) throws {
         try message.body { _ in }
-        let items = state.statuses()
+        let items = state.statuses().map(clipped)
         let granted = isGranted(c)
         var w = WireWriter()
         w.put(granted)
         w.put(UInt32(items.count))
         w.put(items.map(\.remaining).max() ?? 0)
         w.put(UInt32(state.sessions))
-        w.put(UInt32(granted ? items.count : 0))
-        for item in items where granted {
+        w.put(options.lease != nil)
+        if let lease = options.lease {
+            w.put(lease.command)
+            w.put(leaseEnds?.remaining(clock.now) ?? 0)
+        }
+        // Who is not served is told of a lease what kinds of things it holds (`xless auth status`): not whose, nor where.
+        let named = granted ? items : options.lease == nil ? [] : items.map { item in
+            AgentItemStatus(name: String(item.name.prefix { $0 != ":" }), label: "", remaining: item.remaining, idle: 0, idleRemaining: 0)
+        }
+        w.put(UInt32(named.count))
+        for item in named {
             w.put(item.name); w.put(item.label); w.put(item.remaining); w.put(item.idle); w.put(item.idleRemaining); w.put(item.typedAgo)
         }
         c.channel.send(w.frame(code: .ok))
+    }
+
+    /// Nothing is held for longer than the lease.
+    private func clipped(_ s: AgentItemStatus) -> AgentItemStatus {
+        guard let left = leaseEnds?.remaining(clock.now) else { return s }
+        return AgentItemStatus(name: s.name, label: s.label, remaining: min(s.remaining, left), idle: s.idle, idleRemaining: min(s.idleRemaining, left), typedAgo: s.typedAgo)
     }
 
     private func get(_ message: AgentMessage, _ c: Connection) throws {
         let (name, nonce, using) = try message.body { (try $0.string(max: AgentLimits.nameBytes), try $0.bytes(max: 16), try $0.bool()) }
         guard requireGranted(c) else { return }
         var w = WireWriter()
-        if let secret = state.get(name, using: using), let status = state.status(of: name) {
+        if let secret = state.get(name, using: using), let status = state.status(of: name).map(clipped) {
             w.put(true)
             w.put(secret: secret)
             w.put(status.label); w.put(status.remaining); w.put(status.idle); w.put(status.idleRemaining); w.put(status.typedAgo)

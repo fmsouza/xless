@@ -92,18 +92,19 @@ public enum AgentLauncher {
 
     /// Starts an agent that holds `seeds` for this session. Returns once it listens.
     static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, executable: String? = nil) throws {
-        _ = try start(seeds, directory: directory, terms: terms, lease: false, executable: executable)
+        _ = try start(seeds, directory: directory, terms: terms, lease: nil, executable: executable)
     }
 
-    /// Starts one that ends with this process.
-    static func lease(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, executable: String? = nil) throws -> AgentLease {
-        let (channel, path) = try start(seeds, directory: directory, terms: terms, lease: true, executable: executable)
+    /// Starts one that ends with this process, or after `seconds`.
+    /// - Parameter command: whose it is, for `xless auth status`.
+    static func lease(_ seeds: [AgentSeed], command: String, seconds: Int, directory: AgentDirectory, terms: AgentTerms, executable: String? = nil) throws -> AgentLease {
+        let (channel, path) = try start(seeds, directory: directory, terms: terms, lease: (AgentLink.printable(command), seconds), executable: executable)
         return AgentLease(channel: channel, path: path)
     }
 
-    private static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, lease: Bool,
-                              executable: String?) throws -> (AgentChannel, String) {
-        if let obstacle = obstacle(lease: lease) { throw obstacle }
+    private static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms,
+                              lease: (command: String, seconds: Int)?, executable: String?) throws -> (AgentChannel, String) {
+        if let obstacle = obstacle(lease: lease != nil) { throw obstacle }
         guard let program = executable ?? executablePath else {
             throw AgentError(.unavailable, "xless does not find its own program file to start its agent", fix: "run it by its full path")
         }
@@ -117,7 +118,8 @@ public enum AgentLauncher {
         var w = WireWriter()
         w.put(directory.path)
         w.put(Int64(AgentSession.current.id))
-        w.put(lease)
+        w.put(lease != nil)
+        if let lease { w.put(lease.command); w.put(lease.seconds) }
         terms.write(&w)
         w.put(UInt32(seeds.count))
         for seed in seeds {

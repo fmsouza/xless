@@ -62,7 +62,7 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     func announcement(reason: String, remember: SecretHold?) -> String? {
         let what = reason == "unlocking" ? "\(command) unlocks the secret store" : "\(command) opens the secret store (\(reason))"
         if let script = whileRunning {
-            return "\(command) unlocks the secret store for the xless commands of \(script). The passphrase is asked once, and the store stays unlocked for them until \(script) ends (`xless lock` ends it sooner)."
+            return "\(command) unlocks the secret store for the xless commands of \(script). The passphrase is asked once, and the store stays unlocked for them until \(script) ends\(atMost) (`xless lock` ends it sooner)."
         }
         if let remember { return "\(what) and keeps it unlocked for the commands of this terminal, \(text(remember)); `xless lock` ends it." }
         return "\(what). The passphrase is asked once for this command, and forgotten when it ends\(canOffer ? " unless you keep it" : "")."
@@ -72,11 +72,14 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// - Parameter offering: false when the command itself says how long it is kept.
     func signInAnnouncement(offering: Bool) -> String {
         if let script = whileRunning {
-            return "\(command) signs in to Apple for the xless commands of \(script). Asked once, and kept for them until \(script) ends (`xless lock` ends it sooner)."
+            return "\(command) signs in to Apple for the xless commands of \(script). Asked once, and kept for them until \(script) ends\(atMost) (`xless lock` ends it sooner)."
         }
         guard offering else { return "\(command) signs in to Apple." }
         return "\(command) signs in to Apple: Apple's documented API does not cover what it does. Asked once for this command, and forgotten when it ends\(canOffer ? " unless you keep it" : "")."
     }
+
+    /// The longest a script has it.
+    private var atMost: String { settings.map { ", for \(HoldDuration.text($0.duration)) at most" } ?? "" }
 
     private var canOffer: Bool { !off && whileRunning == nil && cache.isAvailable && settings.map { $0.keep != .never } == true }
 

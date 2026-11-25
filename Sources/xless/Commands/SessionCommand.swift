@@ -75,8 +75,8 @@ struct SessionCommand: AsyncParsableCommand {
         SecretScope.enter()
         let settings = try HeldSecrets.settings.get()
         if let purpose { RunningCommand.set(purpose) } else { KeepOffer.shared.keeps(whileRunning: name) }
-        // For as long as the script runs, and no longer than anything is held.
-        let hold = SecretHold(seconds: settings.maximum, idle: settings.maximum, maximum: settings.maximum)
+        // For as long as the script runs, and no longer than a hold is by default.
+        let hold = SecretHold(seconds: settings.duration, idle: settings.duration, maximum: settings.maximum)
         let outer = XlessSession.agent != nil && HeldSecrets.agents.isInSession
         let client = outer ? HeldSecrets.agents : AgentClient(terms: HeldSecrets.terms)
         let store = try SecretStoreCLI.run { try store() }
@@ -86,7 +86,7 @@ struct SessionCommand: AsyncParsableCommand {
         do {
             if !outer {
                 if let obstacle = client.leaseObstacle { throw obstacle }
-                lease = try client.lease([])
+                lease = try client.lease([], command: purpose ?? "xless session (\(name))", seconds: hold.seconds)
             }
             let session = lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path) } ?? client
             if let (vault, file) = store { try session.put([try SecretStoreCLI.run { try seed(vault, file, hold) }]) }
