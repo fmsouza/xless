@@ -81,6 +81,8 @@ public enum MacBuilder {
         guard FileManager.default.fileExists(atPath: toolset.path) else {
             throw XlessError(.build, "Darwin SDK not installed at \(sdk.path)", fix: "use the xless SDK image or run `xless sdk install`")
         }
+        let lock = try BuildLock(project: project, note: note)
+        defer { lock.release() }
         let wrapper = project.appendingPathComponent(".xless/macos-pkg", isDirectory: true)
         try? FileManager.default.removeItem(at: wrapper)
         let srcDir = wrapper.appendingPathComponent("Sources/\(mac.product)Mac", isDirectory: true)
@@ -107,7 +109,8 @@ public enum MacBuilder {
                     ?? (own == nil ? nil : builtExecutable(named: "\(mac.product)Mac", under: scratch))
             }
             func products() -> [URL] {
-                let there = (try? FileManager.default.contentsOfDirectory(at: scratch.appendingPathComponent("out/Products"), includingPropertiesForKeys: nil)) ?? []
+                let there = own == nil ? (try? FileManager.default.contentsOfDirectory(at: scratch.appendingPathComponent("out/Products"), includingPropertiesForKeys: nil)) ?? []
+                    : ResourceBundles.directories(in: scratch)
                 return Set(there + [executable()?.deletingLastPathComponent()].compactMap { $0 }).sorted { $0.path < $1.path }
             }
             try ResourceBundles.fresh(scratch: scratch, products: products, note: note) {

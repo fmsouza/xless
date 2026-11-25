@@ -187,6 +187,32 @@ func anAppHasEveryBundleOfItsPackagesAndNoOther(blind: Bool) throws {
     #expect(swift.builds == 0 && fm.fileExists(atPath: kept.path))
 }
 
+@Test func theBundlesOfAFailedBuildAreFoundWhereverItsSwiftPMLeftThem() throws {
+    let fm = FileManager.default, swift = Products([], blind: false)
+    defer { try? fm.removeItem(at: swift.scratch) }
+    for path in ["arm64-apple-macosx/release/A_A.bundle/nested.bundle", "checkouts/dep/Tests/fixture.bundle"] {
+        try fm.createDirectory(at: swift.scratch.appendingPathComponent(path), withIntermediateDirectories: true)
+    }
+    #expect(ResourceBundles.directories(in: swift.scratch).map(\.lastPathComponent) == ["release"])
+    #expect(ResourceBundles.directories(in: swift.scratch.appendingPathComponent("none")).isEmpty)
+}
+
+@Test func oneBuildOfAProjectWaitsForAnother() throws {
+    let project = FileManager.default.temporaryDirectory.appendingPathComponent("xless-lock-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: project) }
+    let first = try BuildLock(project: project, note: { _ in Issue.record("nobody else builds it") })
+    let said = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+        let second = try? BuildLock(project: project, note: { _ in said.signal() })
+        second?.release()
+        if second != nil { done.signal() }
+    }
+    said.wait()
+    #expect(done.wait(timeout: .now() + 0.05) == .timedOut)
+    first.release()
+    done.wait()
+}
+
 extension FileManager {
     fileprivate func removeItem(at url: URL, ifThere: Bool) throws { if fileExists(atPath: url.path) { try removeItem(at: url) } }
 }

@@ -60,6 +60,8 @@ public enum XcodePackageBuilder {
                              env: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
         let platform = destination.platform, pc = try config.platform(platform)
         let name = destination == .mac ? "macos" : destination == .device ? "ios" : "ios-simulator"
+        let lock = try BuildLock(project: project, note: MacBuilder.note)
+        defer { lock.release() }
         let wrapper = project.appendingPathComponent(".xless/xcode-pkg-\(name)", isDirectory: true)
         try writeWrapper(wrapper, project: project, product: pc.product, minimumOS: pc.minimumOS, platform: platform)
         // Another Xcode builds in a directory of its own, and reuses nothing of this one's.
