@@ -1,4 +1,5 @@
 # The Apple setup, one step at a time
+<a id="one-time-apple-setup"></a>
 
 What an app needs from Apple before its first upload: an App Store Connect API key, the bundle ID and its capabilities, the signing
 certificates with their private keys, the provisioning profiles and the app record. The short way is one command, [`xless provision
@@ -36,7 +37,7 @@ first.
 
 ## 3. The project
 
-[Get started, steps 2 and 3](get-started.md#2-the-project).
+[Get started, steps 2 and 3](get-started.md#2-the-project): the sample's `teamID` and `bundleID` are placeholders.
 
 ## 4. Provision the account
 

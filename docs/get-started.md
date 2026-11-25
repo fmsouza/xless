@@ -46,13 +46,13 @@ the default ([roles](apple-account.md#xless-auth-api-key)).
 
 A Swift app is a Swift package with an `xless.yml`; a Tauri, Cargo or React Native app has an overlay
 ([tauri.md](tauri.md), [cargo.md](cargo.md), [react-native.md](react-native.md)). With no app yet, start from the sample that
-xless installs:
+xless installs on Linux and macOS, an iOS app (`~/.local` is the default place; on Windows there is no sample, as nothing builds there):
 
 ```sh
 cp -r ~/.local/share/xless/samples/HelloShip ~/MyApp && cd ~/MyApp
 ```
 
-In `xless.yml` (or the overlay), set `teamID` to that team and `bundleID` to the app's identifier
+In `xless.yml` (or the overlay), set `teamID` to that team and `bundleID` to the app's identifier (the sample's are placeholders)
 ([xless-yml.md](xless-yml.md)). The entitlements you list there (push notifications, app groups, iCloud, Sign in with
 Apple…) are what `provision` reads to decide the capabilities, groups, containers and keys. An iOS app that embeds
 app extensions declares each one, with its bundle ID and entitlements, under `platforms.ios.extensions`
@@ -80,6 +80,8 @@ appstore/
   en-US/
     name.txt       Example
 ```
+
+The `version` is the one of `xless.yml` (the sample's is 1.0): App Review gets a build of that version only.
 
 Add what you already have (the description, keywords, support and privacy URLs, screenshots, price, App Privacy
 answers): [appstore-manifest.md](appstore-manifest.md) has every file and key, and
@@ -147,8 +149,11 @@ release: [release.md](release.md).
 
    ```sh
    xless secrets init                      # asks a new passphrase, twice; it cannot be recovered
-   xless auth api-key import --p8-file AuthKey_<KEY_ID>.p8 --issuer-id <ISSUER_ID>
+   xless auth api-key import --p8-file AuthKey_<KEY_ID>.p8 --issuer-id <ISSUER_ID> --team ABCDE12345
    ```
+
+   `--team` is the team of the key. For step 5 its role has to be Admin; for listings and releases App Manager is enough
+   ([roles](apple-account.md#xless-auth-api-key)).
 
 3. In the project's directory, pull the listing into `appstore/` and commit it:
 
@@ -179,7 +184,8 @@ release: [release.md](release.md).
 1. [Install xless](../README.md#install).
 2. Follow [build.md](build.md): [on a Mac](build.md#on-a-mac), [on Linux](build.md#on-linux), or [in Docker](build.md#in-docker)
    for a React Native, Expo, Tauri or Cargo app.
-3. The project: a Swift package with an [`xless.yml`](xless-yml.md), or an overlay. `teamID` may stay a placeholder.
+3. The project: a Swift package with an [`xless.yml`](xless-yml.md), or an overlay. `teamID` may stay a placeholder that looks like one
+   (10 characters, `A-Z` and `0-9`), as the sample's.
 
 It ends with an unsigned `.app`, and needs no Apple account.
 

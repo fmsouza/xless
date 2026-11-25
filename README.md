@@ -13,7 +13,7 @@ on a Mac, or on Linux with no Mac. The account half also runs on Windows.
 | **Configure the listing** | the texts in every language, screenshots, App Privacy, age rating, price, in-app purchases, as files in your repository | `xless store pull`, `xless store push` ([listing](docs/appstore-manifest.md)) |
 | **Build and sign** | an `.ipa`, a notarized macOS app, a Mac App Store package | `xless run <project-dir>` ([build](docs/build.md), [sign and ship](docs/signing-and-testflight.md)) |
 | **TestFlight** | upload, groups, internal and external testers, beta review | `xless testflight …` ([testers](docs/testflight.md)) |
-| **Release** | a check of everything App Review needs, the submission, phased releases | `xless release submit` ([release](docs/release.md)) |
+| **Release** | a check of what App Review asks for, the submission, phased releases | `xless release submit` ([release](docs/release.md)) |
 | **Automate** | several apps, checks, JSON output, runs that nobody answers, CI | `xless session -- ./script.sh` ([automate](docs/automate.md), [CI](docs/ci.md)) |
 
 Your keys go into an encrypted store on your own machine. [What xless keeps and sends](docs/security.md), to which host, and what that
@@ -76,6 +76,7 @@ xless release publish                    # once approved, when you choose
 
 <a id="what-you-need"></a>
 <a id="on-a-mac"></a>
+<a id="build-the-sample-app"></a>
 ## Build
 
 To build only, with no Apple account: `xless run <project-dir> --build-number 1 --to finalize`. It ends with an unsigned app.
@@ -88,6 +89,7 @@ To build only, with no Apple account: `xless run <project-dir> --build-number 1 
 - **In WSL 2**, as on Linux, but read [what a build can reach there](docs/security.md#in-wsl) first.
 - <a id="get-xcode"></a>**The Xcode download** that Linux and Docker need: [the versions, and how to get one](docs/xcode-versions.md).
 
+<a id="next"></a>
 ## Documentation
 
 - [Get started](docs/get-started.md): five paths, each to the end

@@ -8,7 +8,7 @@ the release) is the same on every system. The **build** half needs Apple's SDK: 
 |---|---|---|---|---|
 | Versions | x86_64, arm64; Debian and Ubuntu are tested | 14 or later; Intel, Apple silicon | 10 (1809 or later), 11, Server 2019 or later; x64, on ARM64 under Windows 11's emulation | as Linux |
 | Account commands | yes | yes | yes ([but](#windows)) | yes |
-| Sign in with a USB security key | yes | yes, not tried with a real key ([#199](https://github.com/fmsouza/xless/issues/199)) | no: use a code | as Linux |
+| Sign in with a USB security key | yes | yes, not tried with a real key ([#199](https://github.com/fmsouza/xless/issues/199)) | no: use a code | not tried: use a code |
 | Keep the store or a sign-in unlocked (`unlock`, `session`, `--keep`) | yes | yes | no: each command asks | yes |
 | Download Xcode (`xless xcode download`) | yes | yes | no | yes |
 | Swift package apps, for iOS and macOS | yes, after `xless setup` | yes, with the installed Xcode | no | yes, as Linux ([read first](security.md#in-wsl)) |
@@ -23,8 +23,9 @@ simulator app that Docker built is launched on a Mac ([react-native.md](react-na
 
 ## Linux
 
-Everything, natively for Swift packages and in Docker for the rest. A session or an unlock is held in an agent in memory (Linux
-5.3 or later), else in the kernel's keyring where that works ([secrets.md](secrets.md#staying-unlocked)).
+All of the table but a Swift app for the simulator: natively for Swift packages, and in Docker for the rest. A session or an unlock
+is held in an agent in memory (Linux 5.3 or later), else in the kernel's keyring where that works
+([secrets.md](secrets.md#staying-unlocked)).
 
 A whole run against a real Apple account, for a new app, from the first API key to a TestFlight build on a device and a submission
 to App Review, was made on Linux arm64 on 2026-11-24: [acceptance-m7.md](acceptance-m7.md). The approval, the release to the App Store

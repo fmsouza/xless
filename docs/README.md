@@ -2,6 +2,7 @@
 
 The [README](../README.md) says what xless is and how to install it. These are the pages by task.
 
+<a id="using-xless"></a>
 ## Get started
 
 - [get-started.md](get-started.md): five paths, each to the end: nothing yet, an app on App Store Connect, only building, only the
@@ -23,6 +24,7 @@ The [README](../README.md) says what xless is and how to install it. These are t
 - [testflight.md](testflight.md): invite internal and external testers.
 - [release.md](release.md): the submission to App Review, and the release.
 
+<a id="installing-and-images"></a>
 ## Build
 
 - [build.md](build.md): build an app on a Mac, on Linux, in Docker and in WSL 2.
