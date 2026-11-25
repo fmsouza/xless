@@ -4,8 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/// Sets RLIMIT_CORE to 0 and, on Linux, marks the process non-dumpable (PR_SET_DUMPABLE 0: no core file, no same-user
-/// ptrace or /proc/<pid>/mem). Returns 0 when both took effect. prctl is variadic, so Swift cannot call it directly.
+/// No core dump of this process nor of what it starts: RLIMIT_CORE 0, and on Linux 1, which makes no file either (the kernel
+/// wants room for a page at least) and is the one value with which a core_pattern that is a program (`|…`) is not started: the
+/// kernel gives such a program the dump whatever other limit there is, 0 too. A hard limit of 0 that this process may not raise
+/// stays 0. On Linux this process is not dumpable either (PR_SET_DUMPABLE 0: no core dump at all, no same-user ptrace or
+/// /proc/<pid>/mem), which what it starts does not inherit. Returns 0 when both took effect. prctl is variadic, so Swift cannot
+/// call it directly.
 int xless_disable_core_dumps(void);
 
 /// The soft RLIMIT_CORE, or -1 for unlimited or on error.

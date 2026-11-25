@@ -407,8 +407,14 @@ stopped after 20 seconds. `xless auth status --json` says beforehand what is hel
 ## Process hardening
 
 - **Core dumps off.** Once a command reads a secret (a sign-in, an API key, a signing key; any value `Secrets` hands
-  out), its core file limit is set to zero for the rest of the command and the tools it runs, and on Linux the process
-  is marked non-dumpable, so another process of yours cannot attach to it (ptrace) or read `/proc/<pid>/mem`.
+  out), or starts a tool, its core file limit is set to zero (on Linux to 1 byte) for the rest of the command and the tools it
+  runs, and on Linux the process is marked non-dumpable: the kernel dumps it nowhere, and another process of yours cannot attach
+  to it (ptrace) or read `/proc/<pid>/mem`. Why 1 on Linux: a tool is dumpable (rcodesign has keys), and where
+  `/proc/sys/kernel/core_pattern` is a program (`|…`: systemd-coredump, apport, WSL's handler), the kernel gives that the dump
+  whatever the limit is, zero too. 1 is the one value with which it does not start it, and no file comes of it either: less than a
+  page is none. What is left: a hard limit of 0 that xless was started with stays 0, as only root may raise it (so the program gets
+  the dump of a tool that crashes there; systemd-coredump then stores none); a tool that sets its own limit to 0 is back there; and
+  a `core_pattern` that is a socket (`@…`, in newer kernels) takes every dumpable process's, whatever its limit.
 - **Zeroed buffers where Swift allows.** The Apple ID password, downloaded `.p8` keys and store entries are held in a
   buffer that is zeroed when released and never prints. Copies that Swift and Foundation make on their own (PEM text
   handed to the crypto library, HTTP headers, JSON bodies, environment variables) cannot be zeroed; they are kept short
@@ -442,7 +448,7 @@ What protects xless's memory and what it holds, on each system:
 
 | Against | Linux | macOS, a release | macOS, a build of your own |
 |---|---|---|---|
-| A core dump on disk | core limit 0, non-dumpable | core limit 0 | core limit 0 |
+| A core dump on disk | core limit 1 (no file, and no program gets it), xless non-dumpable | core limit 0 | core limit 0 |
 | Another process of yours attaching to a command or reading its memory | non-dumpable from the first secret, and before the first tool starts | the hardened runtime, always: macOS refuses debuggers | nothing of xless's: a debugger you run may attach |
 | The same, to the agent | non-dumpable from its start | the hardened runtime and `PT_DENY_ATTACH` | `PT_DENY_ATTACH` (no debugger; a program with a debugger's rights to the task port still) |
 | Another process of yours reading a command's environment | non-dumpable: `/proc/<pid>/environ` is refused | the signature's `restrict` flag: macOS hides it (`ps -E`) | nothing: `ps -E` shows it |

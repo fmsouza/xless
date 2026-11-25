@@ -49,9 +49,13 @@
 
 int xless_disable_core_dumps(void) {
     struct rlimit none = { 0, 0 };
-    int result = setrlimit(RLIMIT_CORE, &none);
 #ifdef __linux__
+    struct rlimit no_handler = { 1, 1 };
+    int result = setrlimit(RLIMIT_CORE, &no_handler);
+    if (result != 0) result = setrlimit(RLIMIT_CORE, &none); // the hard limit is 0 already, and raising it is not allowed
     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) result = -1;
+#else
+    int result = setrlimit(RLIMIT_CORE, &none);
 #endif
     return result;
 }
