@@ -126,7 +126,7 @@ public enum XcodePackageBuilder {
         var found: [String: (item: URL, library: String)] = [:], open = [executable]
         while let image = open.popLast() {
             for library in try rpathLibraries(of: image) {
-                let parts = library.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+                let parts = library.unicodeScalars.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
                 guard !parts.contains(where: { ["", ".", ".."].contains($0) }) else {
                     throw XlessError(.build, "\(image.lastPathComponent) loads @rpath/\(library), which is no place in the app", fix: "fix the install name of that library, or ask who made it")
                 }
@@ -195,7 +195,7 @@ public enum XcodePackageBuilder {
         if let mode { try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: executable.path) } // (Foundation on Linux does not keep it)
     }
 
-    static func isForeign(_ path: String) -> Bool { path.hasPrefix("/") && path != "/usr/lib/swift" }
+    static func isForeign(_ path: String) -> Bool { path.utf8.first == UInt8(ascii: "/") && path != "/usr/lib/swift" }
 
     /// (The cryptex is where macOS has the libraries of its newest Swift.)
     static func isOfXcode(_ path: String, _ xcode: InstalledXcode) -> Bool {

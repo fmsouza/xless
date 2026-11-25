@@ -56,10 +56,9 @@ enum ResourceBundles {
 
     /// What the last build had, of a small file that is one: the project's directory may hold anything by that name.
     private static func recorded(_ record: URL) -> [String] {
-        guard let about = try? FileManager.default.attributesOfItem(atPath: record.path), about[.type] as? FileAttributeType == .typeRegular,
-              (about[.size] as? NSNumber)?.intValue ?? .max <= 1 << 20, let text = try? String(contentsOf: record, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").map(String.init).filter { name in
-            name.hasSuffix(".bundle") && !name.contains("/") && TerminalText.escaped(name) == name
+        guard let text = (try? PlainFile.read(record, maxSize: 1 << 20)).flatMap({ String(data: $0, encoding: .utf8) }) else { return [] }
+        return text.unicodeScalars.split(separator: "\n").map(String.init).filter { name in
+            name.hasSuffix(".bundle") && !name.contains(scalar: "/") && TerminalText.escaped(name) == name
         }
     }
 

@@ -8,7 +8,7 @@ private func xcode(_ root: URL) -> XcodeBuild {
     let app = root.appendingPathComponent("Xcode 27.app")
     return XcodeBuild(sdk: DarwinSDK(xcode: InstalledXcode(app: app, version: "27.2", build: "27B52", source: "-")),
                       meta: ToolchainMeta(xcodeVersion: "27.2", xcodeBuild: "27B52", buildMachineOSBuild: "26B1", compiler: ToolchainMeta.clangCompiler, platforms: [:]),
-                      executable: root.appendingPathComponent("an xless"))
+                      executable: root.appendingPathComponent("an '\u{301}xless"))
 }
 
 private func temporary() throws -> URL {
@@ -33,7 +33,7 @@ private func temporary() throws -> URL {
 }
 
 @Test func whatAnXcconfigCannotSayIsRefused() {
-    for (targets, value) in [(["A B", "A-B"], "1"), (["Café"], "1"), (["A"], "$(X)"), (["A"], "a//b"), (["A"], "a\nOTHER = 1")] {
+    for (targets, value) in [(["A B", "A-B"], "1"), (["Café"], "1"), (["A"], "$(X)"), (["A"], "$\u{301}(X)"), (["A"], "a//b"), (["A"], "a//\u{301}b"), (["A"], "a\nOTHER = 1")] {
         #expect(throws: XlessError.self) { try XcodeBuild.configuration(targets.map { ("P", $0, ["V": value]) }) }
     }
 }

@@ -37,7 +37,7 @@ public struct BuildSandbox: Sendable, Equatable {
     /// The home directories, the other volumes, and the directories for temporary files, which xless's own are in too.
     public static let privatePlaces = ["/Users", "/Volumes", "/private/tmp", "/private/var/tmp", "/private/var/folders", "/private/var/root"]
 
-    /// The services of the system that build tools look for; every other is refused: the keychain, launchd's jobs, Apple events, the
+    /// The services of the system that build tools look for; every other is refused: the keychain, Apple events, the
     /// pasteboard, the simulators and the window server are services. So are two that answer where the user's directories for temporary
     /// files and for caches are: without them Foundation, Xcode and the compilers, which do not look at TMPDIR otherwise, use TMPDIR and
     /// the home directory that they are given.
@@ -125,7 +125,7 @@ public struct BuildSandbox: Sendable, Equatable {
 
     /// The directories that `path` is in, but for /.
     static func above(_ path: String) -> [String] {
-        path.split(separator: "/").dropLast().reduce(into: []) { all, name in all.append("\(all.last ?? "")/\(name)") }
+        names(path).dropLast().reduce(into: []) { all, name in all.append("\(all.last ?? "")/\(name)") }
     }
 
     /// Of this user, whatever the environment says.
@@ -142,15 +142,16 @@ public struct BuildSandbox: Sendable, Equatable {
         #endif
     }
 
-    /// Whether `path` is `directory` or below it.
-    public static func isBelow(_ path: String, _ directory: String) -> Bool {
-        directory == "/" || path == directory || path.hasPrefix(directory + "/")
-    }
+    /// As the system divides a path: by bytes. (To Swift a "/" with a combining mark after it is none.)
+    static func names(_ path: String) -> [String] { path.utf8.split(separator: UInt8(ascii: "/")).map { String(decoding: $0, as: UTF8.self) } }
+
+    /// Whether `path` is `directory` or below it, however their letters are composed.
+    public static func isBelow(_ path: String, _ directory: String) -> Bool { names(path).starts(with: names(directory)) }
 
     static func quoted(_ path: String) throws -> String {
-        guard path.hasPrefix("/"), path != "/", !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else {
+        guard path.utf8.first == UInt8(ascii: "/"), path != "/", !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }) else {
             throw XlessError(.prepare, "the build's sandbox cannot have \(TerminalText.escaped(path)) in its rules", fix: "use a directory with a plain path, or build in Docker: add --docker")
         }
-        return "\"" + path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        return "\"" + path.replacing(scalar: "\\", with: "\\\\").replacing(scalar: "\"", with: "\\\"") + "\""
     }
 }

@@ -88,7 +88,7 @@ public enum BuildPlaces {
     /// Whether opening `path` would open a home directory, or more.
     public static func isBroad(_ path: String, home: String) -> Bool {
         BuildSandbox.isBelow(BuildSandbox.real(home), path) || BuildSandbox.privatePlaces.contains { BuildSandbox.isBelow($0, path) }
-            || (path.hasPrefix("/Users/") && path.split(separator: "/").count == 2) || (path.hasPrefix("/Volumes/") && path.split(separator: "/").count == 2)
+            || ["/Users", "/Volumes"].contains { BuildSandbox.isBelow(path, $0) && BuildSandbox.names(path).count == 2 }
     }
 
     /// What is never opened, wherever it is: xless's own and the usual places of keys, and the files that secret variables name.

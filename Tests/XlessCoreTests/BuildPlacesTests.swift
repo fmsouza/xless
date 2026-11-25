@@ -40,7 +40,7 @@ import Testing
 }
 
 @Test func aHomeAndWhatIsAboveItIsBroad() {
-    for path in ["/", "/Users", "/Users/me", "/Users/other", "/Volumes", "/Volumes/Disk", "/private", "/private/tmp", "/private/var/folders"] { #expect(BuildPlaces.isBroad(path, home: "/Users/me"), "\(path)") }
+    for path in ["/", "/Users", "/Users/me", "/Users/other", "/Users/\u{301}other", "/Volumes", "/Volumes/Disk", "/private", "/private/tmp", "/private/var/folders"] { #expect(BuildPlaces.isBroad(path, home: "/Users/me"), "\(path)") }
     for path in ["/Users/me/app", "/Users/other/app", "/Volumes/Disk/app", "/private/tmp/app", "/opt/app"] { #expect(!BuildPlaces.isBroad(path, home: "/Users/me"), "\(path)") }
     #expect(BuildPlaces.isBroad("/srv", home: "/srv/me"))
 }

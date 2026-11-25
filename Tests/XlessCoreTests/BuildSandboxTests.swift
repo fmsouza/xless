@@ -12,6 +12,10 @@ import Testing
     #expect(try BuildSandbox.quoted(#"/a "b"\c"#) == #""/a \"b\"\\c""#)
     for bad in ["relative", "/", "/a\nb", "/a\u{7f}"] { #expect(throws: XlessError.self) { try BuildSandbox.quoted(bad) } }
     #expect(BuildSandbox.above("/a/b/c") == ["/a", "/a/b"] && BuildSandbox.above("/a") == [])
+    // (what Swift takes for other characters, the system does not)
+    #expect(Array(try BuildSandbox.quoted("/a\"\u{301}\\\u{301}").unicodeScalars) == Array("\"/a\\\"\u{301}\\\\\u{301}\"".unicodeScalars))
+    #expect(BuildSandbox.above("/a/\u{301}b/c") == ["/a", "/a/\u{301}b"] && BuildSandbox.isBelow("/a/\u{301}b", "/a") && BuildSandbox.isBelow("/e\u{301}/b", "/\u{e9}"))
+    #expect(try BuildSandbox.quoted("/\u{301}a") == "\"/\u{301}a\"")
     #expect(BuildSandbox.isBelow("/a/b", "/a") && BuildSandbox.isBelow("/a", "/a") && !BuildSandbox.isBelow("/ab", "/a") && BuildSandbox.isBelow("/a", "/"))
 }
 

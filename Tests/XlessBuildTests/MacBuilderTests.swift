@@ -161,7 +161,7 @@ func anAppHasEveryBundleOfItsPackagesAndNoOther(blind: Bool) throws {
     let record = swift.scratch.appendingPathComponent("xless-bundles"), other = swift.scratch.appendingPathComponent("other")
     _ = try swift.app()
     // what is no bundle's name
-    try Data("secret\nup/Gone.bundle\n\u{1B}[2J.bundle\n\u{9B}2J.bundle\r\n".utf8).write(to: record)
+    try Data("secret\nup/Gone.bundle\nup/\u{301}Gone.bundle\n\u{1B}[2J.bundle\n\u{9B}2J.bundle\r\n".utf8).write(to: record)
     #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
     // a link, also to a good one; a directory is told by the write that does not work
     try Data("Gone.bundle\n".utf8).write(to: other)

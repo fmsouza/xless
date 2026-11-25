@@ -59,7 +59,7 @@ public struct XcodeBuild: Sendable {
     /// compiler would look for a directory for temporary files that the sandbox does not give it.
     static func compiler(work: URL) -> URL { RustApple.wrapperDirectory(workRoot: work).appendingPathComponent("xcodebuild-swiftc") }
 
-    private func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    private func quote(_ s: String) -> String { ShellWord.inQuotes(s) }
 
     // MARK: - Settings
 
@@ -74,7 +74,7 @@ public struct XcodeBuild: Sendable {
                 throw XlessError(.build, "two targets have names that Xcode's settings cannot tell apart: \(target) is one of them", fix: "rename it, or build in Docker: add --docker")
             }
             for (name, value) in values.sorted(by: { $0.key < $1.key }) {
-                guard !value.contains(where: { $0.isNewline }), !value.contains("//"), !value.contains("$") else {
+                guard !value.contains(where: { $0.isNewline }), !value.contains(scalar: "$"), !value.utf8.contains("//".utf8) else {
                     throw XlessError(.build, "\(name) of \(target) is \(value), which an xcconfig cannot hold", fix: "build in Docker: add --docker")
                 }
                 lines.append("XLESS_\(name)__\(own) = \(value)")
