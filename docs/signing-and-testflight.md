@@ -142,8 +142,8 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   network stays the same one. On Linux copies of a virtual machine may share an ID: a machine whose name changed is the same one
   only until it is started again. A container is known by the system it runs on and its name, and its processes are its own: the
   lock of a run in another container, or of one that was started again, says nothing to see from here. Of the secrets only a
-  directory that nobody else may use is removed, by the path that the lock names, without a symbolic link in it; another one is
-  named and left.
+  directory that nobody else may use is removed, and only while the path that the lock names leads where it did (a link on the way,
+  as of a cache moved to another disk, is fine); another one is named, with how to remove it, and left.
 - **Testers.** Internal testers must be App Store Connect users of the team: invite them with
   [`xless users invite`](apple-account.md#xless-users) (an Admin API key). List them in `testflight.testers` of
   [xless.yml](xless-yml.md#testflight) and every run adds the missing ones to the groups, or add them once with

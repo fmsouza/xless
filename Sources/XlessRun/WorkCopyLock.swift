@@ -64,10 +64,11 @@ final class WorkCopyLock {
         func isJob(_ job: (pid: Int32, started: String)) -> Bool { isProcess(job.pid, job.started, jobMark) }
         // The secrets it wrote from the store: where they are, or in the file it recorded before they were (the first line). Nothing
         // else has them once the lock is gone.
-        let out = field("secrets").isEmpty ? field("secrets_out") : ""
-        let named = isHere && !out.isEmpty ? host.ownFile(out).map(RunCleanup.firstLine(of:)) ?? "" : field("secrets")
-        let secrets = RunText.isSecretsDirectory(named) && (!isHere || Self.isThere(named)) ? named : nil
-        let areSure = secrets.map { !isHere || host.isPrivateDirectory($0) } ?? false
+        let out = field("secrets").isEmpty ? field("secrets_out") : "", real = field("secrets_real")
+        let printed = out.isEmpty ? field("secrets") : isHere ? host.ownFile(out).map(RunCleanup.firstLine(of:)) : nil
+        let secrets = printed.map { isHere ? self.secrets($0, real: real, follows: !out.isEmpty) : [Secrets(path: real.isEmpty ? $0 : real)] } ?? []
+        let unread = "the directory \u{2026}/xless/<32 hex digits> that the first line of \(RunText.quoted(out)) "
+            + (isHere ? "named, which cannot be read; they are made in xless in $XDG_RUNTIME_DIR, or in xless/secrets in $XDG_CACHE_HOME or ~/.cache" : "names")
         switch state(Int32(pid) ?? 0, in: place, namespace: field("namespace"), started: started, mark: mark, program: field("program")) {
         case .gone: break
         case .live: throw RunStop.usage("the work copy \(key) is in use by \(who); wait for it to end, or stop it: kill \(pid)")
@@ -75,12 +76,17 @@ final class WorkCopyLock {
             let there = isHere ? "" : field("host") == host.hostName ? "where it runs: " : "on \(field("host")): "
             var first = ""
             if let job, !isHere || isJob(job) { first += "stop its step, if it still runs (\(there)kill \(job.pid)\(isHere || job.started.isEmpty ? "" : ", the process that started \(job.started)")), then " }
-            if let secrets, areSure {
-                first += "remove the secrets that it may have left (\(there)rm -rf \(RunText.quoted(secrets))), then "
-            } else if let secrets {
-                first += "look whether it left secrets in \(RunText.quoted(secrets)), then "
-            } else if !isHere, !out.isEmpty {
-                first += "remove the secrets that it may have left (\(there)the directory \u{2026}/xless/<32 hex digits> that the first line of \(RunText.quoted(out)) names), then "
+            for left in secrets where RunText.isAbsolute(left.path) {
+                let path = RunText.quoted(left.path), remove = RunText.isNamedAsSecrets(left.path) ? "rm -rf \(path)" : nil
+                if left.doubt == nil, let remove {
+                    first += "remove the secrets that it may have left (\(there)\(remove)), then "
+                } else {
+                    let how = [there.isEmpty ? nil : String(there.dropLast(2)), remove.map { "if so: \($0)" }].compactMap { $0 }.joined(separator: ", ")
+                    first += "look whether it left secrets in \(path)\(how.isEmpty ? "" : " (\(how))"), then "
+                }
+            }
+            if printed == nil {
+                first += "\(isHere ? "look for" : "remove") the secrets that it may have left (\(there)\(unread)), then "
             }
             throw RunStop.usage("the work copy \(key) may be in use by \(who): \(why); wait for it to end, or stop it; when no run works there any more, \(first)remove \(path) and run again")
         }
@@ -97,21 +103,73 @@ final class WorkCopyLock {
         }
         guard taken else { throw RunStop.usage("another run is taking over the work copy \(key); run again (if none is, remove \(takeover))") }
         host.say("==> work copy \(key): the run that held it (pid \(pid)) is gone without cleaning up; stopping what it left")
+        var failures: [String] = []
         if let job, isJob(job) {
             host.say("==> stopping its step (pid \(job.pid))")
             RunCleanup.stopTree(job.pid, host)
             for _ in 0..<50 where isJob(job) { host.pause(0.1) }
-            guard !isJob(job) else { throw RunStop.usage("the step of the run that held the work copy \(key) (pid \(job.pid)) does not stop; stop it: kill -9 \(job.pid)") }
+            if isJob(job) { failures.append("the step of the run that held the work copy \(key) (pid \(job.pid)) does not stop; stop it: kill -9 \(job.pid)") }
         }
-        if let secrets, areSure {
-            host.removeTree(secrets)
-            guard !Self.isThere(secrets) else {
-                throw RunStop.usage("could not remove the secrets that the run that held the work copy \(key) left in \(secrets); remove them with: rm -rf \(RunText.quoted(secrets))")
+        // Removed or named, whatever else fails: the lock does not say them any more.
+        for left in secrets {
+            let path = RunText.quoted(left.path)
+            if let doubt = left.doubt {
+                let remove = RunText.isNamedAsSecrets(left.path) ? ", and if that is what it left: rm -rf \(path)" : ""
+                host.say("==> note: \(left.path), where it may have left secrets, is not removed: \(doubt); look what is in it\(remove)")
+                continue
             }
-            host.say("==> removed the secrets it left in \(secrets)")
-        } else if let secrets {
-            host.say("==> note: \(secrets), where it may have left secrets, is not removed: it is no directory that only you may use, or there is a link in its path")
+            host.removeTree(left.path)
+            if Self.isThere(left.path) {
+                failures.insert("could not remove the secrets that the run that held the work copy \(key) left in \(left.path); remove them with: rm -rf \(path)", at: 0)
+            } else {
+                host.say("==> removed the secrets it left in \(left.path)")
+            }
         }
+        if printed == nil { host.say("==> note: secrets that it may have left are not removed: look for \(unread)") }
+        for failure in failures.dropLast() { host.say("testflight: \(failure)") }
+        if let failure = failures.last { throw RunStop.usage(failure) }
+    }
+
+    /// Secrets that a run may have left, and why they are not removed unseen; nil: they are.
+    private struct Secrets {
+        var path: String
+        var doubt: String?
+    }
+
+    /// What is there of the secrets that a run on this machine wrote to `printed`, as `materialize` said it, which is the directory
+    /// `real` (empty: it was not recorded; then, if `follows`, the one that `printed` leads to now). Only a directory of a run's
+    /// form that still leads there, and is this user's alone there, is removed.
+    private func secrets(_ printed: String, real: String, follows: Bool) -> [Secrets] {
+        guard RunText.isAbsolute(printed) else { return [] }
+        let now = host.realPath(printed), target = !real.isEmpty ? real : follows ? now ?? printed : printed
+        let isSame = now?.utf8.elementsEqual(target.utf8) == true
+        let doubt: String? = if !RunText.isSecretsDirectory(printed) {
+            "its name is not that of a run's secrets"
+        } else if !isSame, !real.isEmpty {
+            "\(printed) does not lead there as it did"
+        } else if !isSame || !Self.isDirectory(printed) || !host.isPrivateDirectory(target) {
+            "it is no directory that only you may use, or there is a link in its path"
+        } else { nil }
+        if doubt == nil { return [Secrets(path: target)] }
+        var there: [Secrets] = []
+        for path in [target, now ?? printed] where Self.isThere(path) && !there.contains(where: { host.isSame($0.path, path) ?? ($0.path == path) }) {
+            there.append(Secrets(path: path, doubt: doubt))
+        }
+        // Not there: gone with the run, or behind a link to what is not there now (a disk).
+        if there.isEmpty, let link = Self.deadLink(printed) ?? Self.deadLink(target) { there = [Secrets(path: target, doubt: "\(link) leads nowhere now")] }
+        return there
+    }
+
+    /// The first part of a path that is a link which leads nowhere; nil: there is none.
+    private static func deadLink(_ path: String) -> String? {
+        var path = path
+        while path.utf8.count > 1, !isThere(path) { path = RunFiles.parent(path) }
+        return isThere(path) && !FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
+    /// A directory, and no link to one.
+    private static func isDirectory(_ path: String) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType == .typeDirectory
     }
 
     /// `job=`: a PID and when it started. Never the process that all others are under, nor this one.

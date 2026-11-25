@@ -26,6 +26,13 @@ import Testing
         return path
     }
 
+    /// The same where the place of a run's secrets is a link to a directory of another name; by that path, and where they are.
+    private func makeLinkedSecrets() throws -> (printed: String, real: String) {
+        let id = String(repeating: "0b", count: 16), real = try makeSecrets("\(home.root)/big/cache-x/\(id)")
+        try FileManager.default.createSymbolicLink(atPath: "\(home.root)/run/xless", withDestinationPath: "\(home.root)/big/cache-x")
+        return ("\(home.root)/run/xless/\(id)", real)
+    }
+
     private func run(_ host: FakeRunHost, docker: Bool = false) throws -> Int32 {
         try home.run([home.project, "--to", "finalize"], docker: docker, host: host)
     }
@@ -65,7 +72,21 @@ import Testing
             return answer(host, step)
         }
         #expect(try home.run([home.project], docker: true, host: host) == 0, "\(host.lines)")
-        #expect(locks.lines.count == 1 && locks.lines[0].contains("\nsecrets_out=/") && locks.lines[0].contains("\nsecrets=\(home.secrets)\n"), "\(locks.lines)")
+        #expect(locks.lines.count == 1 && locks.lines[0].contains("\nsecrets_out=/") && locks.lines[0].contains("\nsecrets=\(home.secrets)\nsecrets_real=\(home.secrets)\n"), "\(locks.lines)")
+    }
+
+    /// Both what it was told, whose form says that it is a run's, and where that is, which is what is removed.
+    @Test func aRunNotesWhereItsSecretsReallyAre() throws {
+        let (printed, real) = try makeLinkedSecrets()
+        let path = path, locks = Notes()
+        let host = FakeRunHost { _, step in
+            if step.isContainer { locks.add((try? String(contentsOfFile: path, encoding: .utf8)) ?? "") }
+            if step.words.contains("materialize"), !step.words.contains("--check") { return (0, "\(printed)\n") }
+            if step.words.contains("sha256sum") { return (0, String(repeating: "ab", count: 32) + "  /usr/local/bin/xless\n") }
+            return (0, step.words.contains("next-build") ? "42\n" : "")
+        }
+        #expect(try home.run([home.project], docker: true, host: host) == 0, "\(host.lines)")
+        #expect(locks.lines.first?.contains("\nsecrets=\(printed)\nsecrets_real=\(real)\n") == true, "\(locks.lines)")
     }
 
     /// Where the system does not say which process it is, its start time alone does not say that a run is gone (a clock steps), nor
@@ -117,14 +138,18 @@ import Testing
         try leave(pid: 77, started: old, on: "there", more: "secrets_out=/tmp/of there\n")
         try refused(FakeRunHost(), "it is on there", first: "remove the secrets that it may have left (on there: the directory \u{2026}/xless/<32 hex digits> that the first line of '/tmp/of there' names), then ")
         // on this machine, what is not there (any more) is not named
-        for lines in ["secrets=\(home.root)/xless/\(String(repeating: "1b", count: 16))\n", "secrets_out=\(home.root)/none\n", "secrets=\(home.root)\n", "job=99 then\n", "job=88 before\n"] {
+        for lines in ["secrets=\(home.root)/xless/\(String(repeating: "1b", count: 16))\n", "secrets_out=\(try home.write("none", ""))\n", "job=99 then\n", "job=88 before\n"] {
             try leave(pid: 77, started: old, more: lines)
             try refused(FakeRunHost(processes: sure), "pid 77 runs", lines)
         }
         // one that is not as a run's secrets are is nothing to remove unseen
         chmod(secrets, 0o755)
         try leave(pid: 77, started: old, more: "secrets=\(secrets)\n")
-        try refused(FakeRunHost(processes: sure), "pid 77 runs", first: "look whether it left secrets in \(secrets), then ")
+        try refused(FakeRunHost(processes: sure), "pid 77 runs", first: "look whether it left secrets in \(secrets) (if so: rm -rf \(secrets)), then ")
+        try leave(pid: 77, started: old, more: "secrets=\(home.root)\n")
+        try refused(FakeRunHost(processes: sure), "pid 77 runs", first: "look whether it left secrets in \(home.root), then ")
+        try leave(pid: 77, started: old, more: "secrets_out=\(home.root)/gone\n")
+        try refused(FakeRunHost(processes: sure), "pid 77 runs", first: "look for the secrets that it may have left (the directory \u{2026}/xless/<32 hex digits> that the first line of \(home.root)/gone named, which cannot be read; they are made in xless in $XDG_RUNTIME_DIR, or in xless/secrets in $XDG_CACHE_HOME or ~/.cache), then ")
         chmod(secrets, 0o700)
         // a name that a shell would take apart
         let odd = "\(home.root)/it's $x/xless/\(String(repeating: "0a", count: 16))"
@@ -271,7 +296,10 @@ import Testing
             let host = FakeRunHost()
             #expect(try run(host) == 0, "\(host.lines)")
             #expect(home.exists(path) && !host.lines.contains { $0.contains("removed the secrets") }, "\(lines)")
-            #expect(host.lines.contains { $0.contains("is not removed: it is no directory that only you may use") } == says, "\(host.lines)")
+            #expect(host.lines.contains { $0.contains("is not removed: it is no directory that only you may use") && $0.contains("; look what is in it, and if that is what it left: rm -rf \(home.root)/") } == says, "\(host.lines)")
+            for out in ["outlink", "fifo", "run", "none"] where lines == "secrets_out=\(home.root)/\(out)\n" {
+                #expect(host.lines.contains { $0.hasPrefix("==> note: secrets that it may have left are not removed: look for the directory ") && $0.contains("\(home.root)/\(out) named, which cannot be read") }, "\(host.lines)")
+            }
         }
         // a link in the path, and as its last part
         try FileManager.default.createDirectory(atPath: "\(home.root)/d", withIntermediateDirectories: true)
@@ -312,9 +340,71 @@ import Testing
     @Test func nothingElseIsRemovedAsSecrets() throws {
         let precious = "\(home.root)/precious"
         try FileManager.default.createDirectory(atPath: precious, withIntermediateDirectories: true)
-        try leave(pid: 77, more: "secrets_out=\(try home.write("out", precious))\n")
-        #expect(try run(FakeRunHost()) == 0)
-        #expect(home.exists(precious))
+        for line in ["secrets_out=\(try home.write("out", precious))\n", "secrets=\(precious)\n", "secrets=\(precious)\nsecrets_real=\(precious)\n"] {
+            try leave(pid: 77, more: line)
+            let host = FakeRunHost()
+            #expect(try run(host) == 0)
+            #expect(home.exists(precious) && host.lines.contains("==> note: \(precious), where it may have left secrets, is not removed: its name is not that of a run's secrets; look what is in it"), "\(host.lines)")
+        }
+        // what it names there, and what it named before, is nowhere; one that no path is
+        for line in ["secrets=\(home.root)/none\n", "secrets_out=\(try home.write("out", "error: no"))\n", "secrets_out=\(try home.write("out", ""))\n"] {
+            try leave(pid: 77, more: line)
+            let host = FakeRunHost()
+            #expect(try run(host) == 0 && !host.lines.contains { $0.contains("secrets") }, "\(host.lines)")
+        }
+    }
+
+    /// A cache that was moved to another disk: ~/.cache/xless, or the runtime directory, is a link to a directory of any name.
+    @Test func secretsBehindALinkAreRemoved() throws {
+        let (printed, real) = try makeLinkedSecrets(), out = try home.write("out", "\(printed)\n")
+        for lines in ["secrets_out=\(out)\nsecrets=\(printed)\nsecrets_real=\(real)\n", "secrets_out=\(out)\n"] {
+            _ = try makeSecrets(real)
+            try leave(pid: 77, more: lines)
+            let busy = FakeRunHost(processes: [77: .init(command: "xless run")])
+            try refused(busy, "pid 77 runs", first: "remove the secrets that it may have left (rm -rf \(real)), then ")
+            try leave(pid: 77, on: "there", more: lines)
+            if lines.contains("secrets_real") { try refused(FakeRunHost(), "it is on there", first: "remove the secrets that it may have left (on there: rm -rf \(real)), then ") }
+            try leave(pid: 77, more: lines)
+            let host = FakeRunHost()
+            #expect(try run(host) == 0, "\(host.lines)")
+            #expect(!home.exists(real) && home.exists("\(home.root)/run/xless") && host.lines.contains("==> removed the secrets it left in \(real)"), "\(lines): \(host.lines)")
+        }
+        // a lock that has the real path alone
+        _ = try makeSecrets(real)
+        try leave(pid: 77, more: "secrets=\(real)\n")
+        let host = FakeRunHost()
+        #expect(try run(host) == 0)
+        #expect(home.exists(real) && host.lines.contains { $0.contains("\(real), where it may have left secrets, is not removed") && $0.hasSuffix(": rm -rf \(real)") }, "\(host.lines)")
+        try leave(pid: 77, on: "there", more: "secrets=\(real)\n")
+        try refused(FakeRunHost(), "it is on there", first: "remove the secrets that it may have left (on there: rm -rf \(real)), then ")
+    }
+
+    /// The link leads elsewhere by now: what is where it led is named, and so is what is where it leads; nothing is removed.
+    @Test func secretsBehindALinkThatChangedAreNamed() throws {
+        let (printed, real) = try makeLinkedSecrets(), link = "\(home.root)/run/xless"
+        let other = try makeSecrets("\(home.root)/other/\(RunFiles.name(real))")
+        func named(_ paths: [String], _ why: String) throws {
+            try leave(pid: 77, more: "secrets=\(printed)\nsecrets_real=\(real)\n")
+            let host = FakeRunHost()
+            #expect(try run(host) == 0, "\(host.lines)")
+            let notes = host.lines.filter { $0.contains("where it may have left secrets") }
+            #expect(notes == paths.map { "==> note: \($0), where it may have left secrets, is not removed: \(why); look what is in it, and if that is what it left: rm -rf \($0)" }, "\(host.lines)")
+            #expect(home.exists(other) && !host.lines.contains { $0.contains("removed the secrets") })
+            try leave(pid: 77, more: "secrets=\(printed)\nsecrets_real=\(real)\n")
+            try refused(FakeRunHost(processes: [77: .init(command: "xless run")]), "pid 77 runs", first: paths.map { "look whether it left secrets in \($0) (if so: rm -rf \($0)), then " }.joined())
+        }
+        let changed = "\(printed) does not lead there as it did"
+        try FileManager.default.removeItem(atPath: link)
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: "\(home.root)/other")
+        try named([real, other], changed)
+        // no link any more
+        try FileManager.default.removeItem(atPath: link)
+        try named([real], changed)
+        // the disk is not there: the link leads nowhere
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: "\(home.root)/big/cache-x")
+        try FileManager.default.moveItem(atPath: "\(home.root)/big", toPath: "\(home.root)/away")
+        try named([real], "\(link) leads nowhere now")
+        #expect(home.exists("\(home.root)/away/cache-x/\(RunFiles.name(real))"))
     }
 
     @Test func aStepThatDoesNotStopIsNotBuiltOver() throws {
@@ -322,6 +412,16 @@ import Testing
         let host = FakeRunHost(processes: [88: .init(started: "then", stubborn: true)])
         #expect(try run(host) == 2)
         #expect(host.lines.last?.contains("does not stop; stop it: kill -9 88") == true && !host.allSteps.contains { $0.words.contains("ship") })
+        // its lock goes with this run: the secrets are removed all the same, or named
+        for keeps in [false, true] {
+            let secrets = try makeSecrets()
+            try leave(pid: 77, more: "job=88 then\nsecrets=\(secrets)\n")
+            let host = FakeRunHost(processes: [88: .init(started: "then", stubborn: true)])
+            host.keepsTrees = keeps
+            #expect(try run(host) == 2)
+            #expect(host.lines.last?.contains("does not stop; stop it: kill -9 88") == true && home.exists(secrets) == keeps)
+            #expect(host.lines.contains { $0.hasSuffix("remove them with: rm -rf \(secrets)") } == keeps, "\(host.lines)")
+        }
     }
 
     @Test func oneRunTakesOverAtATime() throws {
