@@ -48,6 +48,7 @@ public struct HIDDescriptor: Equatable, Sendable {
     }
 }
 
+#if os(Linux)
 /// The FIDO devices among the Linux hidraw devices: /sys/class/hidraw/hidrawN (report descriptor and name, readable by
 /// anyone) and /dev/hidrawN (opened read-write, which needs a udev rule on some systems).
 public struct HIDRawDevices {
@@ -56,17 +57,12 @@ public struct HIDRawDevices {
         public let path: String
         public let reportSize: Int
         public func open() throws -> HIDConnection {
-            #if os(Linux)
             try HIDRawConnection(path: path, reportSize: reportSize)
-            #else
-            throw SecurityKeyError.notLinux
-            #endif
         }
     }
 
     /// The FIDO devices, sorted by path. `sysfs` and `dev` are for tests.
     public static func list(sysfs: String = "/sys/class/hidraw", dev: String = "/dev") throws -> [any SecurityKeyDevice] {
-        #if os(Linux)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: sysfs)) ?? []
         var found: [Device] = []
         let numbered = names.filter { $0.hasPrefix("hidraw") }.sorted { (Int($0.dropFirst(6)) ?? .max, $0) < (Int($1.dropFirst(6)) ?? .max, $1) }
@@ -80,9 +76,6 @@ public struct HIDRawDevices {
             found.append(Device(name: name(uevent: "\(base)/uevent") ?? entry, path: "\(dev)/\(entry)", reportSize: parsed.inputSize))
         }
         return found
-        #else
-        throw SecurityKeyError.notLinux
-        #endif
     }
 
     /// HID_NAME from a uevent file.
@@ -96,7 +89,6 @@ public struct HIDRawDevices {
     }
 }
 
-#if os(Linux)
 /// /dev/hidrawN: one write per output report (with report ID 0 in front, as hidraw wants for devices without report
 /// IDs), one read per input report.
 final class HIDRawConnection: HIDConnection {

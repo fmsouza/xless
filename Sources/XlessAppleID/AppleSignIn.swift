@@ -19,7 +19,7 @@ public struct AppleSignIn {
     let srpPrivateKey: BigUInt?
     /// The stage its errors report: `.sdk` for `xless xcode download`, `.account` for the Apple account commands.
     let stage: Stage
-    /// Where a security key's assertion comes from: the USB keys plugged in (Linux), or a fake in tests.
+    /// Where a security key's assertion comes from: the USB keys plugged in, or a fake in tests.
     let securityKeys: any SecurityKeySource
 
     public init(client: AppleWebClient, prompter: SignInPrompter, stage: Stage = .sdk,

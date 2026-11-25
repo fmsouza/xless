@@ -83,6 +83,7 @@ final class SecurityKeysTests: XCTestCase {
         XCTAssertEqual(never.keyWaits, 3)
     }
 
+    #if os(Linux)
     func testPermissionDeniedNamesTheDeviceAndTheUdevRule() async {
         var dev = device(SimulatedKey(credentials: [registered]), 3)
         dev.openError = .permissionDenied("/dev/hidraw3")
@@ -96,6 +97,7 @@ final class SecurityKeysTests: XCTestCase {
             XCTAssertTrue(e.fix.contains("docs/apple-account.md#signing-in-with-a-security-key"), e.fix)
         } catch { XCTFail("\(error)") }
     }
+    #endif
 
     func testAKeyNobodyMayOpenIsSkippedWhenAnotherWorks() async throws {
         var locked = device(SimulatedKey(credentials: [registered]), 0)

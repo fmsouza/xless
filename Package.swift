@@ -63,13 +63,13 @@ let package = Package(
         // keyring's add_key/keyctl syscalls (KernelKeyring) without libkeyutils, so the static musl build keeps working.
         // libbsm (macOS): audit tokens, the identity of a process at the other end of a socket.
         .target(name: "CXlessProcess", linkerSettings: [.linkedLibrary("bsm", .when(platforms: [.macOS]))]),
-        // FIDO security keys spoken to directly (CBOR, CTAPHID, CTAP2 and U2F over Linux /dev/hidraw), with no libfido2
-        // so the static musl build keeps working: the Apple ID sign-in's security-key second factor.
+        // FIDO security keys spoken to directly (CBOR, CTAPHID, CTAP2 and U2F, over Linux /dev/hidraw or macOS's IOKit),
+        // with no libfido2 so the static musl build keeps working: the Apple ID sign-in's security-key second factor.
         .target(name: "XlessFIDO", dependencies: [
             "XlessCore",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
-        ]),
+        ], linkerSettings: [.linkedFramework("IOKit", .when(platforms: [.macOS]))]),
         // Apple ID sign-in (SRP, 2FA) and Xcode .xip downloads from developer.apple.com (`xless xcode download`).
         .target(name: "XlessAppleID", dependencies: [
             "CXlessProcess",

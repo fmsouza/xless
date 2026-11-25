@@ -92,10 +92,17 @@ public struct SecurityKeyError: Error, Equatable, CustomStringConvertible {
         "no security key is connected",
         fix: "plug in a USB security key registered with this Apple ID, then re-run (NFC and Bluetooth keys are not supported)")
 
-    static func permission(_ paths: [String]) -> SecurityKeyError {
+    /// `devices`: their paths (Linux), or their names.
+    static func permission(_ devices: [String]) -> SecurityKeyError {
+        #if os(macOS)
         SecurityKeyError(
-            "xless may not open the security key (\(paths.joined(separator: ", ")): permission denied)",
+            "macOS does not let xless open the security key (\(devices.joined(separator: ", ")))",
+            fix: "allow your terminal under System Settings > Privacy & Security > Input Monitoring, open it again and re-run; or sign in with an Apple ID that uses two-factor codes (docs/apple-account.md#signing-in-with-a-security-key)")
+        #else
+        SecurityKeyError(
+            "xless may not open the security key (\(devices.joined(separator: ", ")): permission denied)",
             fix: "give your user access to security keys with a udev rule (docs/apple-account.md#signing-in-with-a-security-key), unplug and plug the key in again, then re-run")
+        #endif
     }
 
     static let notRegistered = SecurityKeyError(
@@ -126,6 +133,7 @@ public struct SecurityKeyError: Error, Equatable, CustomStringConvertible {
         SecurityKeyError("the security key answered something xless cannot use (\(error))", fix: replug)
     }
     static let badAnswer = SecurityKeyError("the security key's answer does not match what was asked", fix: replug)
-    static let notLinux = SecurityKeyError(
-        "xless talks to security keys only on Linux", fix: "sign in on Linux, or with an Apple ID that uses two-factor codes")
+    static let unsupportedSystem = SecurityKeyError(
+        "xless does not talk to security keys on this system",
+        fix: "sign in on Linux or macOS, or with an Apple ID that uses two-factor codes")
 }

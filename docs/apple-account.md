@@ -83,7 +83,7 @@ fails, the error says which interface it was and which page to use in a browser 
 
 When the Apple ID is protected by security keys, xless asks for one instead of a code: plug in a USB key registered
 with the Apple ID and touch it when asked. xless talks to the key itself (FIDO2/CTAP2, or U2F for older keys) through
-Linux's `/dev/hidraw*`, with nothing to install. With several keys plugged in, it uses the one registered with the
+Linux's `/dev/hidraw*` or macOS's IOKit, with nothing to install. With several keys plugged in, it uses the one registered with the
 Apple ID without asking the others for a touch.
 
 ```text
@@ -94,9 +94,11 @@ Touch your security key (Yubico YubiKey OTP+FIDO+CCID) to sign in.
 - **PIN:** Apple does not ask for the key's PIN, so most keys sign without one. A key configured to always check it
   asks for it (read with echo off, like the password), and the prompt shows how many tries the key has left; xless
   stops after three wrong PINs, before the key locks itself. The PIN goes to the key only, encrypted as FIDO2 specifies; never to Apple, never to disk.
-- **No key plugged in:** xless asks you to plug one in and press Enter. NFC and Bluetooth keys are not supported, and on
-  macOS xless does not read security keys.
-- **Permission:** on desktop Linux the person at the screen may open their security keys (systemd 244 or later marks
+- **No key plugged in:** xless asks you to plug one in and press Enter. NFC and Bluetooth keys are not supported.
+- **Permission on macOS:** macOS normally lets a program open a security key with no question. Should it refuse, xless
+  says so and names the setting: allow your terminal under System Settings > Privacy & Security > Input Monitoring,
+  open it again and re-run. (xless on macOS is tested with a simulated key only, not yet with a real one.)
+- **Permission on Linux:** on desktop Linux the person at the screen may open their security keys (systemd 244 or later marks
   them for `uaccess`). Over SSH, on a server, or on an older system, `/dev/hidraw*` may be root's only, and xless says
   `permission denied`. Give your user the keys with a udev rule, then unplug the key and plug it in again:
 
