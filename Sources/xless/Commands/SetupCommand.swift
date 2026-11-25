@@ -619,7 +619,7 @@ struct SetupCommand: AsyncParsableCommand {
 
     static func quote(_ s: String) -> String {
         s.allSatisfy({ $0.isLetter || $0.isNumber || "-_./:=@,+%{}".contains($0) }) && !s.isEmpty
-            ? s : "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+            ? s : ShellWord.inQuotes(s)
     }
 
     static func minutes(since t: Date) -> String {

@@ -6,7 +6,7 @@ public enum IPAInfo {
     /// CFBundleShortVersionString and CFBundleVersion of the app's top-level Info.plist inside `ipa`.
     public static func versions(ipa: URL) throws -> (version: String, build: String) {
         let entries = try Shell.run("unzip", ["-Z1", ipa.path], stage: .upload).stdout.split(separator: "\n").map(String.init)
-        guard let entry = entries.first(where: { $0.wholeMatch(of: /Payload\/[^\/]+\.app\/Info\.plist/) != nil }) else {
+        guard let entry = entries.first(where: { $0.wholeMatch(of: /Payload\/[^\/]+\.app\/Info\.plist/.matchingSemantics(.unicodeScalar)) != nil }) else {
             throw XlessError(.upload, "\(ipa.lastPathComponent) has no Payload/<App>.app/Info.plist", fix: "run `xless package --platform ios` again")
         }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-ipa-\(UUID().uuidString).plist")
@@ -28,7 +28,7 @@ public enum IPAInfo {
     }
 
     /// What `unzip` takes for this one entry: it takes patterns, and an app's name may look like one.
-    private static func pattern(of entry: String) -> String { entry.replacing(/[\\*?\[\]]/) { "\\" + $0.output } }
+    private static func pattern(of entry: String) -> String { ["\\", "*", "?", "[", "]"].reduce(entry) { $0.replacing(scalar: $1, with: "\\\($1)") } }
 
     /// The versions to declare to App Store Connect: always the ipa's. An explicit build-number override
     /// (`--build-number` / `XLESS_BUILD_NUMBER`) must agree with the ipa, because it is re-resolved on every run.

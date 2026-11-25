@@ -275,6 +275,7 @@ private func expectedEntries(app: URL) -> [Bom.Entry] {
 /// The XML the installer reads is escaped: a title, id or version with `<` must not break the distribution.
 @Test func distributionEscapesXMLSpecials() {
     #expect(PkgBuilder.escape("A & B < C > D \" E") == "A &amp; B &lt; C &gt; D &quot; E")
+    #expect(Array(PkgBuilder.escape("<\u{200C}a b=\"\u{200C}").utf8) == Array("&lt;\u{200C}a b=&quot;\u{200C}".utf8)) // (with a ZWNJ it is another Character)
 }
 
 /// A hostile (or accidental) runaway nesting is refused, never walked to a stack overflow.

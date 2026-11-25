@@ -78,6 +78,9 @@ private func macApp(_ root: URL, executable: Data) throws -> URL {
     let elsewhere = try macApp(root.appendingPathComponent("e"), executable: fat) // of another app
     try Plist.write(["CFBundleExecutable": "../../../../u/Hello.app/Contents/MacOS/Hello"], to: elsewhere.appendingPathComponent("Contents/Info.plist"), stage: .package)
     #expect(throws: XlessError.self) { try DmgBuilder.architectures(ofApp: elsewhere) }
+    try fat.write(to: URL(fileURLWithPath: "\(elsewhere.path)/Contents/MacOS/\u{301}d")) // after a / that is another Character
+    try Plist.write(["CFBundleExecutable": "./\u{301}d"], to: elsewhere.appendingPathComponent("Contents/Info.plist"), stage: .package)
+    #expect(throws: XlessError.self) { try DmgBuilder.architectures(ofApp: elsewhere) }
     try Plist.write(["CFBundleExecutable": "a\u{1B}[2J"], to: elsewhere.appendingPathComponent("Contents/Info.plist"), stage: .package)
     #expect { try DmgBuilder.architectures(ofApp: elsewhere) } throws: { !"\($0)".contains("\u{1B}") }
     do { _ = try DmgBuilder.architectures(ofApp: macApp(root.appendingPathComponent("n"), executable: Data("bin".utf8))); Issue.record("accepted") }

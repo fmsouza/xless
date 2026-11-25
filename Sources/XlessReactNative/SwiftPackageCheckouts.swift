@@ -55,7 +55,7 @@ public enum SwiftPackageCheckouts {
     /// dependency: its library products are then `packageProduct`s, linked from the package's objects as Xcode does
     /// (dumped as the root itself, SwiftPM would materialize them as static archives).
     static func rootManifest(checkout: URL) -> String {
-        let escaped = checkout.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let escaped = checkout.path.replacing(scalar: "\\", with: "\\\\").replacing(scalar: "\"", with: "\\\"")
         return """
         // swift-tools-version: 5.9
         // Written by xless: the empty root package whose dependency is \(checkout.lastPathComponent), for `swift package dump-pif`.

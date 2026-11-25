@@ -85,7 +85,7 @@ public enum XlessShare {
         let home = URL(fileURLWithPath: env["HOME"] ?? NSHomeDirectory()).appendingPathComponent(".local")
         if prefix.resolvingSymlinksInPath().path == home.resolvingSymlinksInPath().path { return "" }
         let p = prefix.path
-        let quoted = p.contains(where: { " \t'\"$`\\;&|()<>*?".contains($0) }) ? "'\(p.replacingOccurrences(of: "'", with: "'\\''"))'" : p
+        let quoted = p.unicodeScalars.contains(where: { " \t'\"$`\\;&|()<>*?".unicodeScalars.contains($0) }) ? ShellWord.inQuotes(p) : p
         return " XLESS_PREFIX=\(quoted)"
     }
 }

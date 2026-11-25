@@ -56,7 +56,7 @@ public enum DSYM {
             walk.skipDescendants()
             guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
             if let images, uuids(ofDSYM: url).isDisjoint(with: images) { continue }
-            found.append(String(url.standardizedFileURL.path.dropFirst(base.count + 1)))
+            found.append(String(decoding: url.standardizedFileURL.path.utf8.dropFirst(base.utf8.count + 1), as: UTF8.self))
         }
         return found.sorted()
     }
@@ -175,7 +175,7 @@ public enum DSYM {
         for plist in ["Contents/Info.plist", "Info.plist"] {
             if let data = FileManager.default.contents(atPath: app.appendingPathComponent(plist).path),
                let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-               let name = info["CFBundleExecutable"] as? String, !name.isEmpty, !name.contains("/") {
+               let name = info["CFBundleExecutable"] as? String, !name.isEmpty, !name.utf8.contains(UInt8(ascii: "/")) {
                 return name
             }
         }

@@ -140,7 +140,7 @@ public struct BundleReport: Codable, Equatable, Sendable {
     }
 
     static func quote(_ s: String) -> String {
-        "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        "\"" + s.replacing(scalar: "\\", with: "\\\\").replacing(scalar: "\"", with: "\\\"") + "\""
     }
 
     /// Deterministic JSON (sorted keys, pretty printed).

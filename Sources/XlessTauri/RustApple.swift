@@ -231,7 +231,7 @@ public enum RustApple {
             """
     }
 
-    private static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    private static func quote(_ s: String) -> String { ShellWord.inQuotes(s) }
 
     /// The wrappers run as soon as cargo links (ExecutableFile: never "Text file busy" while other threads start tools).
     private static func write(_ text: String, to url: URL) throws {

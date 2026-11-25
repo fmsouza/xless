@@ -42,7 +42,7 @@ public enum EntitlementsEncoding {
     }
 
     private static func escape(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        s.replacing(scalar: "&", with: "&amp;").replacing(scalar: "<", with: "&lt;").replacing(scalar: ">", with: "&gt;")
     }
 
     /// The DER form `codesign --generate-entitlement-der` writes: `[APPLICATION 16] { INTEGER 1, dict }`, where a
