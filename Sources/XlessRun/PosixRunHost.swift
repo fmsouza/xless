@@ -19,6 +19,8 @@ public final class PosixRunHost: RunHost {
     public init() {
         // Output nobody reads any more must not end the run before it has cleaned up.
         signal(SIGPIPE, SIG_IGN)
+        // Ignored (xless may have been started so), the system would keep no step's exit code.
+        signal(SIGCHLD, SIG_DFL)
     }
 
     public var processID: Int32 { getpid() }

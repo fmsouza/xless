@@ -73,6 +73,20 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: file) != cleansUp)
     }
 
+    /// Started with SIGCHLD ignored (some supervisors do), where the system keeps no process's end.
+    @Test func anIgnoredSIGCHLDLosesNoExitCode() async {
+        await #expect(processExitsWith: .success) {
+            signal(SIGCHLD, SIG_IGN)
+            let host = PosixRunHost()
+            let environment = ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"]
+            for code: Int32 in [0, 3] {
+                let step = try host.start(RunStep(["sh", "-c", "exit \(code)"], environment: environment))
+                let end = host.finish(step).code
+                guard end == code else { exit(100 + end) }
+            }
+        }
+    }
+
     @Test func aStepIsWaitedForSoLong() throws {
         func start(_ script: String) throws -> StartedStep { try host.start(RunStep(["sh", "-c", script], environment: environment, output: .captured)) }
         let quick = try #require(try host.finish(start("echo a; sleep 0.1; echo b; exit 3"), within: 20) { false })
