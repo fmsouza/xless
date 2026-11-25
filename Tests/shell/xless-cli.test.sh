@@ -65,6 +65,9 @@ xr="$(cd "$(dirname "$x")" && pwd -P)/$(basename "$x")"
 "${base[@]}" "$x" docker --help >/dev/null 2>"$t/err" || fail "xless docker --help failed: $(cat "$t/err")"
 "${runs[@]}" "$x" docker "$t/p" --build-number 1 --to finalize -- --verbose >/dev/null 2>"$t/err" || fail "xless docker failed: $(cat "$t/err")"
 [[ "$(grep -c " run .* xless $ship --verbose$" "$t/dlog")" -eq 1 ]] || fail "xless docker runs: $(cat "$t/dlog")"
+[[ $(grep -c "^note: xless docker is xless run --docker now" "$t/err") -eq 1 ]] || fail "xless docker's notice: $(cat "$t/err")"
+"${runs[@]}" XLESS_RUN_UNLOCKED=1 "$x" docker "$t/p" --to finalize >/dev/null 2>"$t/err" || fail "xless docker, started again: $(cat "$t/err")"
+! grep -q "^note: " "$t/err" || fail "the notice again: $(cat "$t/err")"
 out=$("${runs[@]}" XLESS_USE_DOCKER=0 "$x" docker "$t/p" --dry-run --to finalize 2>/dev/null) || fail "xless docker with XLESS_USE_DOCKER=0 failed"
 [[ "$out" == "$xr ship --platform ios --to finalize " ]] || fail "XLESS_USE_DOCKER=0 overridden: $out"
 code=0; "${runs[@]}" STUB_EXIT=23 "$x" docker "$t/p" --to finalize >/dev/null 2>&1 || code=$?
@@ -86,6 +89,7 @@ echo "$v" > "$t/share/VERSION"
 "${base[@]}" "$x" run --help >/dev/null 2>"$t/err" || fail "xless run --help failed: $(cat "$t/err")"
 out=$("${runs[@]}" XLESS_SELF=/bin/false "$x" run "$t/p" --dry-run --build-number 1 --to finalize 2>"$t/err") || fail "xless run failed: $(cat "$t/err")"
 [[ "$out" == "$xr $ship " ]] || fail "xless run runs: $out"
+! grep -q "^note: " "$t/err" || fail "xless run has a notice: $(cat "$t/err")"
 out=$("${runs[@]}" "$x" run --docker "$t/p" --dry-run --to finalize -- --docker 2>"$t/err") || fail "xless run --docker failed: $(cat "$t/err")"
 [[ "$out" == "docker --context stub run "*" xless ship --platform ios --to finalize --docker " ]] || fail "xless run --docker runs: $out"
 out=$("${runs[@]}" "$x" run "$t/p" --dry-run --to finalize --docker 2>/dev/null) || fail "xless run p --docker failed"
@@ -109,4 +113,7 @@ if [[ "$(uname)" == Linux ]]; then
   out=$("${runs[@]}" "$x" run --docker --config "$t/tauri.yml" --dry-run --build-number 1 --to finalize 2>"$t/err") || fail "xless run --docker --config failed: $(cat "$t/err")"
   [[ "$out" == docker* ]] || fail "run --docker --config: $out"
 fi
+# sign bootstrap: what it is called now, on standard error, and the same outcome as before
+code=0; "${runs[@]}" "$x" sign bootstrap --type distribution --out "$t/none/key.pem" --csr-only >"$t/out" 2>"$t/err" || code=$?
+[[ $code -ne 0 && $(grep -c "^note: xless sign bootstrap is xless certs create now" "$t/err") -eq 1 && ! -s "$t/out" ]] || fail "sign bootstrap's notice ($code): $(cat "$t/err")"
 echo PASS

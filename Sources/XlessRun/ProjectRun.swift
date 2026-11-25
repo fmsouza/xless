@@ -135,6 +135,10 @@ public final class ProjectRun {
             } catch let problem as EnvFile.Problem {
                 throw RunStop.usage("\(environmentFile), line \(problem.line) \(problem.what): the file is read as NAME=value lines, and nothing in it is run")
             }
+            // Once per run: not again in its start inside a session.
+            if !context.unlocked {
+                host.say("note: \(environmentFile) still works, but xless.yml (teamID) and the secret store hold all of it now: move it with `xless secrets import-env`")
+            }
         }
         xself = setting("XLESS_SELF") ?? "xless"
         dryRun = request.dryRun || environment["XLESS_TESTFLIGHT_DRY_RUN"] == "1"

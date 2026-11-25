@@ -68,6 +68,7 @@ struct DockerCommand: ParsableCommand {
 
     func run() throws {
         let env = ProcessInfo.processInfo.environment
+        if (env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty { OldName.say("xless docker", now: "xless run --docker") } // once, also when it starts again
         try ProjectRunner.run(arguments, useDocker: env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? "1")
     }
 }

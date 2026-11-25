@@ -183,6 +183,20 @@ import XlessCore
         #expect(refused.lines.last?.contains("testflight.env, line 2 ") == true && !home.exists(marker) && refused.allSteps.isEmpty)
     }
 
+    /// Once per run: not again when it starts anew inside a session.
+    @Test func theEnvFileIsNamedAsTheOldWay() throws {
+        let file = try home.write("testflight.env", "XLESS_IMAGE=x\n")
+        for (unlocked, count) in [(false, 1), (true, 0)] {
+            let host = FakeRunHost(answer: home.answer())
+            #expect(try home.run([home.project, "--to", "finalize"], docker: false, host: host, environment: ["XLESS_TESTFLIGHT_ENV": file], unlocked: unlocked) == 0)
+            #expect(host.lines.filter { $0.hasPrefix("note: ") && $0.contains(file) && $0.contains("xless secrets import-env") }.count == count)
+            #expect(host.output.isEmpty)
+        }
+        let none = FakeRunHost(answer: home.answer())
+        #expect(try home.run([home.project, "--to", "finalize"], docker: false, host: none) == 0)
+        #expect(!none.lines.contains { $0.hasPrefix("note: ") })
+    }
+
     @Test func aRunThatStopsBeforeSigningNeedsNoSecret() throws {
         for (arguments, docker) in [(["--config", home.overlay, "--build-number", "3", "--to", "finalize"], true), ([home.project, "--to", "finalize"], false)] {
             let host = FakeRunHost(answer: home.answer())
