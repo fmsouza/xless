@@ -7,6 +7,7 @@
 #   XLESS_TEST_XCODE=1: nothing may be skipped, and the signer is fetched (pinned in versions.env). Without it the test ends early
 #   where there is no Xcode, and before the signing.
 set -euo pipefail
+has() { grep "$@" > /dev/null; }   # which reads to the end: with pipefail, what a `grep -q` stopped early would count
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 all="${XLESS_TEST_XCODE:-}"
 if [[ "$(uname -s)" != Darwin ]]; then
@@ -50,19 +51,19 @@ build="$t/p/.xless/build"
 ok run "$t/p" --platform ios --build-number 7 --to finalize
 app="$build/ios/final/HelloShip.app"
 [[ "$(lipo -archs "$app/HelloShip")" == arm64 ]] || fail "the iOS app is of $(lipo -archs "$app/HelloShip")"
-xcrun vtool -show-build "$app/HelloShip" | grep -q 'platform IOS$' || fail "the iOS app is not one"
+xcrun vtool -show-build "$app/HelloShip" | has 'platform IOS$' || fail "the iOS app is not one"
 [[ "$(plist "$app/Info.plist" CFBundleIdentifier)" == com.example.helloship ]] || fail "the bundle ID"
 [[ "$(plist "$app/Info.plist" CFBundleVersion)" == 7 ]] || fail "the build number"
 [[ "$(plist "$app/Info.plist" DTPlatformName)" == iphoneos ]] || fail "the platform stamp"
 [[ "$(plist "$app/Info.plist" DTSDKBuild)" == "$(xcrun --sdk iphoneos --show-sdk-build-version)" ]] || fail "the SDK stamp"
 [[ -f "$app/Assets.car" ]] || fail "no Assets.car"
 [[ -n "$(find "$build/ios" -name 'HelloShip.app.dSYM' -type d)" ]] || fail "no dSYM"
-! xcrun otool -l "$app/HelloShip" | grep -A2 LC_RPATH | grep -q "path $t\|Xcode" || fail "the iOS app names a path of this Mac"
+! xcrun otool -l "$app/HelloShip" | grep -A2 LC_RPATH | has "path $t\|Xcode" || fail "the iOS app names a path of this Mac"
 
 # The simulator: signed ad hoc, as the simulator asks.
 ok ship --project "$t/p" --platform ios --destination simulator
 app="$build/ios-simulator/app/HelloShip.app"
-xcrun vtool -show-build "$app/HelloShip" | grep -q 'platform IOSSIMULATOR' || fail "the simulator app is not one"
+xcrun vtool -show-build "$app/HelloShip" | has 'platform IOSSIMULATOR' || fail "the simulator app is not one"
 codesign --verify --strict "$app" || fail "the simulator app's signature"
 
 # macOS: universal.
@@ -83,7 +84,7 @@ printf '%s\n' 'bundleID: com.example.demo' 'teamID: ABCDE12345' 'version: 1.0.0'
 ok build --project "$t/l" --platform macos
 dylib="$t/l/.xless/build/macos/app/Demo.app/Contents/Frameworks/libDyn.dylib"
 [[ -f "$dylib" ]] || fail "no libDyn.dylib in the app"
-! xcrun otool -l "$dylib" | grep -A2 LC_RPATH | grep -q 'path .*\(Xcode\|cryptexd\)' || fail "libDyn.dylib names a path of this Mac's Xcode"
+! xcrun otool -l "$dylib" | grep -A2 LC_RPATH | has 'path .*\(Xcode\|cryptexd\)' || fail "libDyn.dylib names a path of this Mac's Xcode"
 [[ -d "$t/l/.xless/build/macos/dSYMs/libDyn.dylib.dSYM" ]] || fail "no dSYM of libDyn.dylib: $(find "$t/l/.xless/build/macos/dSYMs" -maxdepth 1)"
 
 # A package that the app no longer has leaves nothing in it.
@@ -123,7 +124,7 @@ if [[ -n "$all" ]]; then
   cp "$t/q/Package.resolved" "$t/kept"
   manifest ".package(url: \"$t/dep\", from: \"1.0.0\")" '.product(name: "Dep", package: "dep")'; app 'import Dep' 'word()'
   ok build --project "$t/q" --platform macos
-  ! strings "$app/Contents/MacOS/Demo" | grep -qx second || fail "built with 1.1.0, not the 1.0.0 of Package.resolved"
+  ! strings "$app/Contents/MacOS/Demo" | has -x second || fail "built with 1.1.0, not the 1.0.0 of Package.resolved"
   cmp "$t/kept" "$t/q/Package.resolved" || fail "the project's Package.resolved was changed"
   ! grep -q 'note: .*Package.resolved' "$t/err" || fail "a note of $(grep Package.resolved "$t/err")"
   rm "$t/q/Package.resolved"
@@ -153,9 +154,10 @@ app="$build/ios/signed/HelloShip.app"
 cp -R "$build/ios/final/HelloShip.app" "$app"
 "$signer" sign -C /dev/null --pem-file "$t/throwaway.pem" --timestamp-url none --entitlements-xml-file "$t/p/ios.entitlements" "$app" \
   >"$t/out" 2>"$t/err" || fail "not signed"
-codesign -dvv "$app" 2>&1 | grep 'Authority=' | grep -q 'xless test' || fail "$(codesign -dvv "$app" 2>&1)"
-codesign --verify --strict --verbose=2 "$app" 2>&1 | grep -q 'valid on disk' || fail "$(codesign --verify --strict --verbose=2 "$app" 2>&1)"
+codesign -dvv "$app" 2>&1 | grep 'Authority=' | has 'xless test' || fail "$(codesign -dvv "$app" 2>&1)"
+codesign --verify --strict --verbose=2 "$app" 2>&1 | has 'valid on disk' || fail "$(codesign --verify --strict --verbose=2 "$app" 2>&1)"
 ok package --project "$t/p" --platform ios
 ipa="$(find "$build/ios/out" -name '*.ipa')"
-unzip -l "$ipa" | grep -q 'Payload/HelloShip.app/_CodeSignature/CodeResources' || fail "the ipa: $(unzip -l "$ipa")"
+names="$(unzip -l "$ipa")"
+grep -q 'Payload/HelloShip.app/_CodeSignature/CodeResources' <<<"$names" || fail "the ipa: $names"
 echo "OK: the installed Xcode builds for a device, the simulator and macOS; xless's signer signs, and it packages"
