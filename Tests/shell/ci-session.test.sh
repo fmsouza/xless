@@ -65,7 +65,8 @@ cat > "$t/slow/python3" <<P
 #!$(command -v bash)
 [[ "\$1 \$2" == "-I -c" && "\$3" == *"    os.setsid()"* ]] || exec $(command -v python3) "\$@"
 code="\$3"; shift 3
-exec $(command -v python3) -I -c "\${code/    os.setsid()/    os.setsid(); import time; open(sys.argv[-1] + '/leads', 'w').close(); time.sleep(1.5)}" "\$@"
+slow='    os.setsid(); import time; open(sys.argv[-1] + "/leads", "w").close(); time.sleep(1.5)'   # not in the expansion: bashes differ on quotes there
+exec $(command -v python3) -I -c "\${code/    os.setsid()/\$slow}" "\$@"
 P
 rm "$t/pid"
 PATH="$t/slow:$PATH" "$s" sh -c 'echo $$ > "$0/pid"; exec sleep 100' "$t" & p=$!
