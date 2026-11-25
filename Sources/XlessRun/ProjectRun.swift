@@ -283,6 +283,9 @@ public final class ProjectRun {
         let span = try RunSpan.project(request)
         let signs = span.to >= .sign
         try chooseDocker()
+        if docker, kindOfConfiguration() == .typeSymbolicLink {
+            throw RunStop.usage("\(pinFile) is a link, and the containers get the xless.yml of a project as a file of its own: put the file itself there")
+        }
         try findSecrets(RunSecrets.Needs(next: false, signs: signs, uploads: span.to >= .upload), top: top)
         if setting("XLESS_BUILD_NUMBER") == nil { environment["XLESS_BUILD_NUMBER"] = "\(Int(host.now.timeIntervalSince1970) / 60)" }
         var images = RunImages.none, split = span
@@ -307,7 +310,11 @@ public final class ProjectRun {
                 func stages(_ from: RunStage, _ to: RunStage) -> [String] { ["--from", from.name, "--to", to.name] + split.extra }
                 if split.from <= .finalize {
                     code = step(run + ["-w", "/work"] + number + [images.build.reference, "xless", "ship"] + platform + stages(split.from, min(split.to, .finalize)), .nothing).code
-                    if !configuration.isEmpty { sayChangedConfiguration() }
+                    // (docker mounts over what a link names, in the container with the secrets)
+                    if code == 0, signs, !dryRun, kindOfConfiguration() != .typeRegular {
+                        throw RunStop.usage("\(pinFile) is not a file any more: the build replaced it, so nothing is signed. Look at what did that before you run this project again")
+                    }
+                    sayChangedConfiguration()
                 }
                 // in no directory that the build can write, and so with none of its files as a tool's configuration
                 if code == 0, signs {
@@ -356,6 +363,7 @@ extension ProjectRun {
         }
         if dryRun { return words("\(base)/<run>") }
         let directory = "\(base)/\((0..<16).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined())"
+        lock?.note("configuration=\(directory)")
         do {
             try cleanup.change { state in
                 state.trees.append(directory)
@@ -363,7 +371,6 @@ extension ProjectRun {
                 host.removeOnFault(directory, isDirectory: true)
                 host.removeOnFault(file, isDirectory: false)
                 try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        lock?.note("configuration=\(directory)")
                 // Not Foundation's, which makes the directory open and then sets its mode.
                 guard mkdir(directory, 0o700) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
                 try pinned.write(to: URL(fileURLWithPath: file))
@@ -374,8 +381,13 @@ extension ProjectRun {
         return words(directory)
     }
 
+    /// Of the project's xless.yml itself, not of what a link names; nil: it is not there.
+    private func kindOfConfiguration() -> FileAttributeType? {
+        (try? FileManager.default.attributesOfItem(atPath: pinFile))?[.type] as? FileAttributeType
+    }
+
     private func sayChangedConfiguration() {
-        guard !dryRun, (try? Data(contentsOf: URL(fileURLWithPath: pinFile))) != pinned else { return }
+        guard !dryRun, kindOfConfiguration() != .typeRegular || (try? Data(contentsOf: URL(fileURLWithPath: pinFile))) != pinned else { return }
         host.say("==> warning: \(pinFile) is not what it was when this run began. The run keeps to what it was; look at what changed it before you run this project again")
     }
 }

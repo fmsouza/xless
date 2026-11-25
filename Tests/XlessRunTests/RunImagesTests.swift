@@ -337,6 +337,66 @@ import XlessImages
         #expect(names(host) == ["mine:1", Self.base] && seen.lines == [text, text])
     }
 
+    /// Docker mounts over what a link names in the container, which may be a file of the image: an xless.yml that is a link is refused
+    /// before anything is done.
+    @Test func aConfigurationThatIsALinkIsRefused() throws {
+        mine()
+        let pin = "\(home.project)/xless.yml"
+        try FileManager.default.removeItem(atPath: pin)
+        try FileManager.default.createSymbolicLink(atPath: pin, withDestinationPath: "shared.yml")
+        for text in ["name: App\n", "name: App\nimage: mine:1\n"] {
+            try home.write("proj/shared.yml", text)
+            for span in [[], ["--to", "finalize"], ["--from", "sign"], ["--dry-run"]] {
+                let host = FakeRunHost(answer: home.answer())
+                #expect(try home.run([home.project] + span, docker: true, host: host, environment: home.files()) == 2)
+                #expect(host.allSteps.allSatisfy { $0.words[0] != "docker" }, "\(host.allSteps.map(\.line))")
+                #expect(host.lines.last == "testflight: \(pin) is a link, and the containers get the xless.yml of a project as a file of its own: put the file itself there", "\(host.lines)")
+            }
+        }
+        // natively nothing is mounted
+        #expect(try home.run([home.project, "--to", "finalize"], docker: false, host: FakeRunHost()) == 0)
+    }
+
+    /// So is one that the build put in its place (on a Mac, under another spelling of its name), before there is a container with a secret.
+    @Test(arguments: ["a link", "a directory", "a pipe", "nothing"])
+    func aConfigurationThatTheBuildReplacedIsNotMountedWithTheSecrets(by what: String) throws {
+        mine()
+        let pin = try home.write("proj/xless.yml", "name: App\nimage: mine:1\n")
+        let host = FakeRunHost(answer: home.answer { step in
+            guard step.isContainer else { return nil }
+            try? FileManager.default.removeItem(atPath: pin)
+            switch what {
+            case "a link": try? FileManager.default.createSymbolicLink(atPath: pin, withDestinationPath: "/usr/local/bin/xless")
+            case "a directory": try? FileManager.default.createDirectory(atPath: pin, withIntermediateDirectories: true)
+            case "a pipe": mkfifo(pin, 0o600)
+            default: break
+            }
+            return nil
+        })
+        #expect(try home.run([home.project], docker: true, host: host, environment: home.files()) == 2)
+        #expect(names(host) == ["mine:1"], "no container with the secrets")
+        #expect(host.lines.last == "testflight: \(pin) is not a file any more: the build replaced it, so nothing is signed. Look at what did that before you run this project again", "\(host.lines)")
+        #expect(!home.exists(home.secrets))
+    }
+
+    /// Where no container comes after the build, it is said.
+    @Test func aConfigurationThatABuildReplacedIsSaid() throws {
+        let pin = "\(home.project)/xless.yml"
+        for (image, code) in [("", Int32(0)), ("image: mine:1\n", 0), ("image: mine:1\n", 5)] {
+            mine()
+            try? FileManager.default.removeItem(atPath: pin)
+            try home.write("proj/xless.yml", "name: App\n\(image)")
+            let host = FakeRunHost(answer: home.answer { step in
+                guard step.isContainer else { return nil }
+                try? FileManager.default.removeItem(atPath: pin)
+                mkfifo(pin, 0o600)
+                return code == 0 ? nil : (code, "")
+            })
+            #expect(try home.run([home.project] + (code == 0 ? ["--to", "finalize"] : []), docker: true, host: host, environment: home.files()) == code)
+            #expect(host.lines.contains { $0.hasPrefix("==> warning: \(pin) is not what it was when this run began.") }, "\(host.lines)")
+        }
+    }
+
     /// Also where the build is all there is to the run, and in the one container of a project without an image of its own: what the
     /// build leaves in the project is what the next run reads.
     @Test func everyContainerOfAProjectHasItsConfigurationReadOnly() throws {

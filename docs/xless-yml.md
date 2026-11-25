@@ -1,6 +1,6 @@
 # xless.yml reference
 
-`xless.yml` lives in the project directory next to `Package.swift`. Example (the HelloShip sample):
+`xless.yml` lives in the project directory next to `Package.swift` (as a file: `xless run` in containers refuses a link). Example (the HelloShip sample):
 
 ```yaml
 bundleID: com.example.helloship
