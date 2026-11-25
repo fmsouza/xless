@@ -200,7 +200,7 @@ grep -q 'needs --docker' "$t/err" || fail "native --arch refusal: $(cat "$t/err"
 if [[ "$(uname)" != Linux ]]; then
   run ok --xcode "$xip" --dry-run
   [[ $code == 11 ]] || fail "native setup off Linux exits $code, want 11: $(cat "$t/err")"
-  grep -q 'runs on Linux only' "$t/err" && grep -q 'xless setup --docker' "$t/err" || fail "off-Linux refusal: $(cat "$t/err")"
+  grep -q 'runs on Linux only' "$t/err" && grep -q 'xless setup --docker' "$t/err" && grep -q 'account commands .* need no setup' "$t/err" || fail "off-Linux refusal: $(cat "$t/err")"
 else
   extra=(XLESS_NATIVE_HOME="$t/native")
   run ok --xcode "$xip" --dry-run

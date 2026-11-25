@@ -86,6 +86,19 @@ struct RunFiles {
         }
     }
 
+    /// Something is at `path` (a link itself). Throws where that cannot be told: what is not seen is not taken for not there.
+    func isThere(_ path: String) throws -> Bool {
+        guard let there = host.isThere(path, followed: false) else { throw unknown(path) }
+        return there
+    }
+
+    /// `path`, or its nearest parent that is there.
+    func nearest(_ path: String) throws -> String {
+        var here = path
+        while try here != "/" && !isThere(here) { here = Self.parent(here) }
+        return here
+    }
+
     /// The file is somewhere below `directory`, wherever a link to it is.
     func file(_ path: String, isIn other: String) throws -> Bool { try directory(Self.parent(real(path)), isIn: other) }
 

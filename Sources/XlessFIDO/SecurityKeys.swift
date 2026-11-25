@@ -38,9 +38,24 @@ public protocol SecurityKeyDevice {
     func open() throws -> HIDConnection
 }
 
+/// The FIDO devices of this system.
+public enum SecurityKeyDevices {
+    public static func list() throws -> [any SecurityKeyDevice] {
+        #if os(Linux)
+        try HIDRawDevices.list()
+        #elseif os(macOS)
+        try IOKitHIDDevices.list()
+        #else
+        throw SecurityKeyError.unsupportedSystem
+        #endif
+    }
+}
+
 /// Opening a device failed.
 public enum HIDOpenError: Error, Equatable, Sendable {
     case permissionDenied(String)
+    /// Another program has it for itself.
+    case busy
     case failed(String, String)
 }
 
@@ -50,7 +65,7 @@ public struct USBSecurityKeys: SecurityKeySource {
     let touchTimeout: Double
     let sleep: @Sendable (Double) async throws -> Void
 
-    public init(devices: @escaping @Sendable () throws -> [any SecurityKeyDevice] = { try HIDRawDevices.list() },
+    public init(devices: @escaping @Sendable () throws -> [any SecurityKeyDevice] = { try SecurityKeyDevices.list() },
                 touchTimeout: Double = 60,
                 sleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64($0 * 1e9)) }) {
         self.devices = devices; self.touchTimeout = touchTimeout; self.sleep = sleep
@@ -59,7 +74,7 @@ public struct USBSecurityKeys: SecurityKeySource {
     static let maxKeyPrompts = 3
     static let maxPINAttempts = 3
 
-    /// The device I/O blocks (poll(2), up to `touchTimeout` while the key waits for a touch) on the calling task's
+    /// The device I/O blocks (up to `touchTimeout` while the key waits for a touch) on the calling task's
     /// thread: one sign-in at a time in a command-line process, so no thread pool is starved that matters.
     public func assertion(for request: AssertionRequest, ui: any SecurityKeyUI) async throws -> Assertion {
         guard !request.credentials.isEmpty else { throw SecurityKeyError.notRegistered }
@@ -273,6 +288,7 @@ public struct USBSecurityKeys: SecurityKeySource {
         case FIDOError.hid(0x06): return busy
         case FIDOError.u2f(Authenticator.U2FStatus.wrongData): return .notRegistered
         case FIDOError.io(let why): return SecurityKeyError("lost the security key (\(why))", fix: SecurityKeyError.replug)
+        case HIDOpenError.busy: return busy
         case HIDOpenError.permissionDenied(let path): return .permission([path])
         case HIDOpenError.failed(let path, let why):
             return SecurityKeyError("cannot open the security key (\(path): \(why))", fix: SecurityKeyError.replug)

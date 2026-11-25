@@ -55,7 +55,12 @@ enum HeldSecrets {
     /// Why nothing can be kept.
     static func reason(_ agents: any AgentHolding) -> String {
         if let obstacle = agents.obstacle, obstacle.kind != .unavailable { return obstacle.cause }
-        return "there is no kernel keyring here (macOS, or a container that blocks it), and \(agents.obstacle?.cause ?? "the xless agent cannot be used")"
+        let agent = agents.obstacle?.cause ?? "the xless agent cannot be used"
+        #if os(macOS)
+        return agent
+        #else
+        return "there is no kernel keyring here (a container that blocks it), and \(agent)"
+        #endif
     }
 
     /// What the kernel keyring holds instead of the agent, and what does not end it there.

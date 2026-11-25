@@ -226,12 +226,18 @@ final class AgentLink {
         let peer = try channel.peer()
         let mine = AgentSession.current
         isSameSession = mine.isUsable && peer.session == mine && peer.uid == geteuid()
-        if isSameSession, let theirs = peer.executable, let me = AgentExecutable.current, theirs != me {
-            throw AgentError.versionMismatch(theirs: printableVersion(version) + ", another program file")
-        }
+        #if os(macOS)
+        if isSameSession { try Self.compare(peer.program, with: .current, version: version) }
+        #endif
     }
 
-    private func printableVersion(_ text: String) -> String { Self.printable(text) }
+    #if os(macOS)
+    /// - Parameter theirs: nil: its file was replaced or removed, or it is not the code of that file, or the system does not tell.
+    static func compare(_ theirs: AgentProgram?, with mine: AgentProgram?, version: String) throws {
+        guard let mine else { throw AgentLauncher.untold() }
+        guard theirs == mine else { throw AgentError.versionMismatch(theirs: printable(version) + ", another program file") }
+    }
+    #endif
 
     /// For tests: this connection as a command of another terminal sees it.
     func pretendAnotherSession() { isSameSession = false }
@@ -329,16 +335,17 @@ final class AgentLink {
 
     /// Whether ending `peer` ends the agent that made the socket, and nothing else: the kernel's word on the peer is of
     /// whoever has the pid it kept, so that must be the process `owner` that the socket's name says, still running.
-    static func maySafelyEnd(_ peer: xless_peer, owner: AgentDirectory.Owner?, program: AgentExecutable, isRunning: (AgentDirectory.Owner) -> Bool = \.isRunning) -> Bool {
+    static func maySafelyEnd(_ peer: xless_peer, owner: AgentDirectory.Owner?, program: AgentProgram, isRunning: (AgentDirectory.Owner) -> Bool = \.isRunning,
+                             programOf: (xless_peer) -> AgentProgram? = { AgentProgram(of: $0) }) -> Bool {
         guard let owner, owner.pid == peer.pid, isRunning(owner) else { return false }
-        return peer.uid == geteuid() && peer.pid != getpid() && AgentExecutable(device: peer.exe_device, inode: peer.exe_inode) == program
+        return peer.uid == geteuid() && peer.pid != getpid() && programOf(peer) == program
     }
 
     /// Ends the process at the other end, which does not answer, when it is the agent that made the socket and the kernel
     /// says that it is this very program run by this user (macOS); whether it did.
     func kill() -> Bool {
         #if os(macOS)
-        guard var peer = AgentChannel.kernelPeer(channel.fd), let me = AgentExecutable.current,
+        guard var peer = AgentChannel.kernelPeer(channel.fd), let me = AgentProgram.current,
               Self.maySafelyEnd(peer, owner: AgentDirectory.Owner(of: path), program: me), xless_peer_kill(&peer) == 0 else { return false }
         var p = pollfd(fd: channel.fd, events: Int16(POLLIN), revents: 0)
         return poll(&p, 1, 2000) > 0 // closed with the process

@@ -15,7 +15,7 @@ if [[ -z "$x" ]]; then
 fi
 
 python3 -I - "$x" "$t" <<'PY'
-import fcntl, json, os, pty, re, select, signal, subprocess, sys, termios, time
+import atexit, fcntl, json, os, pty, re, select, shutil, signal, subprocess, sys, termios, time
 
 xless, t = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
 PROMPT = rb"(assphrase|again): |\[y/N\] "
@@ -41,6 +41,7 @@ class Terminal:
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.execve("/bin/bash", ["bash", "--noprofile", "--norc", "--noediting"], {**env, "PS1": "", "PS2": ""})
+        os.set_inheritable(self.fd, False) # the next terminal's shell would keep this one open
         self.seen = b""
         os.write(self.fd, b"stty -echo; PS1=; PS2=; echo READY$((1))\n")
         self.until(b"READY1")
@@ -268,9 +269,16 @@ check(gone(12), "ends by itself", agents())
 
 # ---- an agent that does not answer ----------------------------------------------------------------------------------------
 mac = os.uname().sysname == "Darwin"
+were_stopped = []
+def end_stopped(): # a stopped agent ends by nothing that ends others: not with its terminal, its directory or this test
+    for pid in were_stopped:
+        if any(p[0] == pid for p in agent_pids()): os.kill(pid, signal.SIGKILL)
+atexit.register(end_stopped)
+for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM): signal.signal(number, lambda number, frame: sys.exit(128 + number))
 def stopped():
     b.run("$X unlock --for 2h", PASS)
     pid = next(p[0] for p in agent_pids() if os.getsid(p[0]) == b.pid)
+    were_stopped.append(pid)
     os.kill(pid, signal.SIGSTOP)
     return pid
 def alive(pid):
@@ -333,6 +341,36 @@ rc, shown, n = c.run("$X unlock --for 2h")
 check(rc != 0 and n == 0 and "xless-agent" in shown, "a directory others can enter is refused, before anything is asked", shown)
 os.rmdir(t + "/run/xless-agent")
 check(status(c)["store"]["state"] == "locked", "nothing is held at the end")
+
+# ---- the program file moved, replaced (an upgrade) or removed while an agent runs ---------------------------------------------
+os.mkdir(t + "/p")
+def install():   # as install.sh does: a new file, renamed into place
+    shutil.copy2(xless, t + "/p/.new"); os.rename(t + "/p/.new", t + "/p/xless")
+install()
+rc, shown, n = c.run("$T/p/xless unlock --for 2h", PASS)
+check(rc == 0 and len(agents()) == 1, "an unlock by a copy of xless", shown)
+os.rename(t + "/p/xless", t + "/p/moved")
+rc, shown, n = c.run("$T/p/moved secrets export xless-own --out $T/out7a")
+check(n == 0, "the moved program is still served by its agent", shown)
+os.rename(t + "/p/moved", t + "/p/xless")
+install()
+rc, shown, n = c.run("$T/p/xless auth status")
+if mac:
+    check("another xless" in shown and "unlocked in" not in shown, "a replaced program says that the agent is another xless's", shown)
+    rc, shown, n = c.run("$T/p/xless unlock --for 2h", PASS)
+    check(rc == 0 and n == 1 and len(agents()) == 2, "unlock holds it anew, in an agent of its own", (rc, shown, agents()))
+    rc, shown, n = c.run("$T/p/xless auth status")
+    check("unlocked in the xless agent" in shown, "which serves it", shown)
+else:
+    check("unlocked in the xless agent" in shown, "a replaced program of the same version is served", shown)
+rc, shown, n = c.run("$T/p/xless lock")
+check(rc == 0 and gone(), "and xless lock ends the agent of the program that was replaced too", (shown, agents()))
+rc, shown, n = c.run("$T/p/xless unlock --for 2h", PASS)
+os.unlink(t + "/p/xless")
+rc, shown, n = c.run("$X auth status")
+check(not mac or "unlocked in" not in shown, "an agent whose program is gone is not taken for this one's", shown)
+rc, shown, n = c.run("$X lock")
+check(rc == 0 and gone(), "xless lock ends it", (shown, agents()))
 c.run("$X lock")
 c.close()
 for root, _, files in os.walk(t):

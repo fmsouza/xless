@@ -54,6 +54,14 @@ public enum AgentHost {
         return 0
     }
 
+    #if os(macOS)
+    /// The program that commands must run. An agent that cannot tell its own would have to take any.
+    static func program(_ current: AgentProgram? = .current) throws -> AgentProgram {
+        guard let current else { throw AgentLauncher.untold() }
+        return current
+    }
+    #endif
+
     static func refusal(of error: any Error) -> AgentRefusal { (error as? AgentError)?.kind == .unavailable ? .unavailable : .limit }
 
     private static func configure(_ message: AgentMessage, _ channel: AgentChannel) throws -> AgentServer {
@@ -82,7 +90,7 @@ public enum AgentHost {
             return directory
         }
         #if os(macOS)
-        options.executable = AgentExecutable.current
+        options.program = try program()
         #endif
         options.screenIsLocked = ScreenLock.isLocked
         return AgentServer(bound: try directory.bind(), directory: directory, state: state, clock: .system, options: options)

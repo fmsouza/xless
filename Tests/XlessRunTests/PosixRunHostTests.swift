@@ -243,6 +243,27 @@ import Testing
         if geteuid() != 0 { #expect(host.ownFile("/etc/passwd") == nil && !host.isPrivateDirectory("/root")) }
     }
 
+    /// "It is not there" is said of what is known not to be there only.
+    @Test func whatIsThere() throws {
+        let file = try host.temporaryFile(), root = try #require(host.realPath(FileManager.default.temporaryDirectory.path)) + "/xless-there-\(UUID().uuidString)"
+        defer { chmod(root + "/closed", 0o700); host.removeFile(file); host.removeTree(root) }
+        try FileManager.default.createDirectory(atPath: root + "/closed/in", withIntermediateDirectories: true)
+        for (link, to) in [("/link", "closed"), ("/dead", "none"), ("/hidden", "closed/in")] { try FileManager.default.createSymbolicLink(atPath: root + link, withDestinationPath: to) }
+        for followed in [false, true] {
+            #expect(host.isThere(file, followed: followed) == true && host.isThere(root + "/closed", followed: followed) == true && host.isThere(root + "/link", followed: followed) == true)
+            #expect(host.isThere(root + "/none", followed: followed) == false && host.isThere(root + "/none/in", followed: followed) == false)
+            #expect(host.isThere(file + "/in", followed: followed) == nil) // (below a file)
+            #expect(host.isThere(root + "/dead", followed: followed) == !followed)
+        }
+        chmod(root + "/closed", 0)
+        guard geteuid() != 0 else { return } // root sees all
+        for followed in [false, true] {
+            #expect(host.isThere(root + "/closed", followed: followed) == true)
+            for name in ["/closed/in", "/closed/none", "/link/in"] { #expect(host.isThere(root + name, followed: followed) == nil, "\(name)") }
+        }
+        #expect(host.isThere(root + "/hidden", followed: false) == true && host.isThere(root + "/hidden", followed: true) == nil)
+    }
+
     @Test func files() throws {
         let a = try host.temporaryFile(), b = a + ".b"
         defer { host.removeFile(a); host.removeFile(b) }

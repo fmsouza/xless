@@ -63,13 +63,13 @@ let package = Package(
         // keyring's add_key/keyctl syscalls (KernelKeyring) without libkeyutils, so the static musl build keeps working.
         // libbsm (macOS): audit tokens, the identity of a process at the other end of a socket.
         .target(name: "CXlessProcess", linkerSettings: [.linkedLibrary("bsm", .when(platforms: [.macOS]))]),
-        // FIDO security keys spoken to directly (CBOR, CTAPHID, CTAP2 and U2F over Linux /dev/hidraw), with no libfido2
-        // so the static musl build keeps working: the Apple ID sign-in's security-key second factor.
+        // FIDO security keys spoken to directly (CBOR, CTAPHID, CTAP2 and U2F, over Linux /dev/hidraw or macOS's IOKit),
+        // with no libfido2 so the static musl build keeps working: the Apple ID sign-in's security-key second factor.
         .target(name: "XlessFIDO", dependencies: [
             "XlessCore",
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
-        ]),
+        ], linkerSettings: [.linkedFramework("IOKit", .when(platforms: [.macOS]))]),
         // Apple ID sign-in (SRP, 2FA) and Xcode .xip downloads from developer.apple.com (`xless xcode download`).
         .target(name: "XlessAppleID", dependencies: [
             "CXlessProcess",
@@ -109,7 +109,7 @@ let package = Package(
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
             "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "XlessRun", "XlessImages", "CXlessProcess",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        ]),
+        ], linkerSettings: [.unsafeFlags(["-Xlinker", "-adhoc_codesign"], .when(platforms: [.macOS]))]), // the agent knows it by its signature; for Intel the linker makes none by itself
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
         // Not a product: `--product xless` (image builds) skips it; only `swift run IBDifferential` builds it.
         .executableTarget(name: "IBDifferential", dependencies: ["XlessIB", "XlessCore"]),

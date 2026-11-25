@@ -31,19 +31,34 @@ Check a title locally with `scripts/check-commit-title.sh "feat(setup): accept a
 
 ## Checks on every pull request
 
-All six are required. `title` is `.github/workflows/title.yml`, the only check that editing a pull request's title or
+The six of the first table are required. `title` is `.github/workflows/title.yml`, the only check that editing a pull request's title or
 description re-runs; the others are `.github/workflows/pr.yml`, which runs when commits are pushed:
 
 | Check | What it runs |
 |---|---|
 | `title` | The pull request title against the regular expression above |
 | `linux-tests (x86_64)`, `linux-tests (arm64)` | `swift test`, AssetKit's tests and every `Tests/shell/*.test.sh`, in `swift:6.4.0-jammy`, pinned by digest (`SWIFT_IMAGE` in `versions.env`) |
-| `package (x86_64)`, `package (arm64)` | The release tarball built as a release would build it, installed with `scripts/install.sh` from a local release, and run |
+| `package (x86_64)`, `package (arm64)` | The release tarball built as a release would build it, installed with `scripts/install.sh` from a local release, and run, the agent included |
 | `shellcheck` | shellcheck on the shipped scripts |
 
-CI never touches an Xcode, an SDK or an image, and uses no Apple secret.
+These run on every pull request too, and a red one is to be fixed like any other. The nightly does not release a commit whose
+`pr.yml` run failed or has not ended, for any system: while GitHub has no macOS runner for it, a Linux release waits too, and
+the release run says so in a warning.
 
-Before you push, run what you can locally: `swift test`, `make test-linux` (the tests in Linux, through Docker),
+| Check | What it runs |
+|---|---|
+| `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner |
+| `package (macos-arm64)`, `package (macos-x86_64)` | The macOS tarballs built as a release would build them (the x86_64 one cross-compiled) and checked: nothing of Apple's in them, only the system's libraries needed |
+| `install (macos-arm64)`, `install (macos-x86_64)` | Each one installed with `scripts/install.sh` and run on a Mac of its architecture, the agent and the prompts included |
+
+Linux CI never touches an Xcode, an SDK or an image. The macOS jobs compile with the runner's Xcode, as any Swift program
+on a Mac is; nothing of it goes into an archive, an artifact or a cache. CI uses no Apple secret.
+
+A shell test that cannot run on a system starts with a guard that prints `SKIP` and the reason; the CI logs list them. The
+tests of the xless agent need a session whose leader lives (a terminal's shell; on the runners `scripts/ci-session.sh`
+makes one).
+
+Before you push, run what you can locally: `swift test` (in a terminal), `make test-linux` (the tests in Linux, through Docker),
 `bash Tests/shell/<name>.test.sh`, and `python3 -I scripts/check-doc-links.py README.md CONTRIBUTING.md docs/*.md`
 after editing the documentation.
 

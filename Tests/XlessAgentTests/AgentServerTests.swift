@@ -122,7 +122,7 @@ final class RawPeer {
 
 private let other = AgentSession(id: 2, leaderStart: 5)
 private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck {
-    { _ in AgentPeer(pid: 999_999, uid: geteuid(), session: session, executable: nil) }
+    { _ in AgentPeer(pid: 999_999, uid: geteuid(), session: session, program: nil) }
 }
 
 // MARK: use
@@ -362,7 +362,7 @@ final class Flag: @unchecked Sendable {
 #if os(macOS)
 @Test func anotherProgramOfTheSameSessionIsRefused() throws {
     var options = AgentServer.Options()
-    options.executable = AgentExecutable(device: 1, inode: 1) // not this one
+    options.program = AgentProgram(file: AgentExecutable(device: 1, inode: 1), code: Array(repeating: 1, count: 20)) // not this one
     let agent = try TestAgent(options: options)
     let link = try agent.link()
     #expect(!link.isGranted)
@@ -371,7 +371,7 @@ final class Flag: @unchecked Sendable {
 
 @Test func theProgramThatStartedTheAgentIsServed() throws {
     var options = AgentServer.Options()
-    options.executable = AgentExecutable.current
+    options.program = AgentProgram.current
     #expect(try TestAgent(options: options).link().get("a") != nil)
 }
 #endif

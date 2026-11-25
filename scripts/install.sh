@@ -5,6 +5,7 @@
 # XLESS_VERSION    release to install, x.y.z or vx.y.z (default: the latest)
 # XLESS_RELEASE_BASE   where releases live (default https://github.com/fmsouza/xless/releases)
 # XLESS_UNAME_M, XLESS_UNAME_S   override `uname -m` / `uname -s` (tests only)
+# For Linux (x86_64, arm64) and macOS 14 or later (Intel, Apple silicon).
 # The tarball is checked against the release's SHA256SUMS before anything is replaced.
 set -eu
 main() {
@@ -13,6 +14,7 @@ main() {
   home="${HOME:-}"
   prefix="${XLESS_PREFIX:-}"
   version="${XLESS_VERSION:-}"
+  homeprefix=0
 
   die() { echo "install.sh: $*" >&2; exit 1; }
 
@@ -27,16 +29,35 @@ main() {
   if [ -z "$prefix" ]; then
     [ -n "$home" ] || die "HOME is unset: set XLESS_PREFIX or pass --prefix"
     prefix="$home/.local"
+    homeprefix=1
   fi
   case "$prefix" in /*) ;; *) prefix="$(pwd)/$prefix" ;; esac
   while [ "$prefix" != / ] && [ "${prefix%/}" != "$prefix" ]; do prefix="${prefix%/}"; done
 
-  os="${XLESS_UNAME_S:-$(uname -s)}"
-  [ "$os" = Linux ] || die "unsupported OS $os: xless installs on Linux (x86_64 or arm64); on a Mac use a Linux VM or container"
-  case "${XLESS_UNAME_M:-$(uname -m)}" in
+  machine="${XLESS_UNAME_M:-$(uname -m)}"
+  case "${XLESS_UNAME_S:-$(uname -s)}" in
+    Linux) os=linux ;;
+    Darwin)
+      os=macos
+      macos="$(sw_vers -productVersion 2>/dev/null)" || macos=""
+      case "${macos%%.*}" in
+        ''|*[!0-9]*) ;;  # not told: the program itself says which macOS it needs
+        *) [ "${macos%%.*}" -ge 14 ] || die "xless needs macOS 14 or later (this is macOS $macos)" ;;
+      esac
+      # macOS's sudo keeps the person's HOME: root's files would be in it, where a later install without sudo could not replace them.
+      # shellcheck disable=SC2012  # POSIX has no stat; the owner's number is the third word whatever the name is
+      if [ "$homeprefix" = 1 ] && [ "$(id -u 2>/dev/null)" = 0 ] && [ "$(ls -ldn "$home/" 2>/dev/null | awk 'NR == 1 { print $3 }')" != 0 ]; then
+        die "this runs as root, and $home is another user's: run it without sudo (it needs none), or set XLESS_PREFIX"
+      fi
+      # A shell that Rosetta translates says x86_64 on a Mac with Apple silicon.
+      if [ "$machine" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then machine=arm64; fi
+      ;;
+    *) die "unsupported OS ${XLESS_UNAME_S:-$(uname -s)}: xless releases are for Linux and macOS 14 or later (x86_64 and arm64)" ;;
+  esac
+  case "$machine" in
     x86_64|amd64) arch=x86_64 ;;
     aarch64|arm64) arch=arm64 ;;
-    *) die "unsupported architecture ${XLESS_UNAME_M:-$(uname -m)}: xless releases are for x86_64 and arm64" ;;
+    *) die "unsupported architecture $machine: xless releases are for x86_64 and arm64" ;;
   esac
 
   fetch() {  # url dest
@@ -95,14 +116,14 @@ main() {
 
   fetch "$dl/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download $dl/SHA256SUMS"
   if [ -z "$version" ]; then
-    name="$(awk -v a="-linux-$arch.tar.gz" '{ n = $2; sub(/^\*/, "", n) } n ~ /^xless-.*-linux-/ && substr(n, length(n) - length(a) + 1) == a { print n; exit }' "$tmp/SHA256SUMS")"
-    [ -n "$name" ] || die "the latest release lists no $arch tarball"
-    version="${name#xless-}"; version="${version%-linux-"$arch".tar.gz}"
+    name="$(awk -v a="-$os-$arch.tar.gz" '{ n = $2; sub(/^\*/, "", n) } n ~ /^xless-[0-9]/ && substr(n, length(n) - length(a) + 1) == a { print n; exit }' "$tmp/SHA256SUMS")"
+    [ -n "$name" ] || die "the latest release lists no $os $arch tarball"
+    version="${name#xless-}"; version="${version%-"$os"-"$arch".tar.gz}"
     # Pin to that release from here on: a release published meanwhile must not mix its files with this one's checksums.
     dl="$base/download/v$version"
     fetch "$dl/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download $dl/SHA256SUMS"
   else
-    name="xless-$version-linux-$arch.tar.gz"
+    name="xless-$version-$os-$arch.tar.gz"
   fi
   want="$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1; exit }' "$tmp/SHA256SUMS")"
   [ -n "$want" ] || die "SHA256SUMS does not list $name"
@@ -114,7 +135,7 @@ main() {
 
   mkdir -p "$prefix/bin" "$prefix/share"
   stage="$(mktemp -d "$prefix/share/.xless-install.XXXXXX")"
-  top="xless-$version-linux-$arch"
+  top="xless-$version-$os-$arch"
   tar -xzf "$tmp/$name" -C "$stage" || die "could not unpack $name"
   if [ ! -f "$stage/$top/bin/xless" ] || [ ! -d "$stage/$top/share/xless" ]; then die "$name does not have the expected layout"; fi
 
@@ -141,7 +162,9 @@ main() {
     *":$prefix/bin:"*) ;;
     *)
       case "${SHELL:-}" in */zsh) profile="$home/.zshrc" ;; */bash) profile="$home/.bashrc" ;; *) profile="$home/.profile" ;; esac
-      if [ "$prefix" = "$home/.local" ]; then
+      # A terminal on macOS starts login shells, and bash reads ~/.bashrc in others only.
+      if [ "$os-$profile" = "macos-$home/.bashrc" ]; then profile="$home/.bash_profile"; fi
+      if [ "$os" = linux ] && [ "$prefix" = "$home/.local" ]; then
         # Many systems (Ubuntu's ~/.profile among them) put ~/.local/bin on PATH at login once it exists.
         echo "$prefix/bin is not on PATH in this shell. Open a new terminal (many systems add ~/.local/bin to PATH at login"
         echo "once it exists), or run:"
@@ -155,8 +178,13 @@ main() {
       ;;
   esac
 
-  # Docker is optional: `xless setup` installs natively; only `--docker` (the images) needs it.
-  echo "next: xless setup --xcode ~/Downloads/Xcode_27.xip"
+  if [ "$os" = macos ]; then
+    echo "next: the account commands work now (xless auth login, xless provision, xless store, ...); to build apps, in Docker"
+    echo "(Docker Desktop or colima): xless setup --docker --xcode ~/Downloads/Xcode_27.xip"
+  else
+    # Docker is optional: `xless setup` installs natively; only `--docker` (the images) needs it.
+    echo "next: xless setup --xcode ~/Downloads/Xcode_27.xip"
+  fi
 }
 
 # Everything is defined above and nothing runs until here, so a truncated `curl | sh` download runs nothing.

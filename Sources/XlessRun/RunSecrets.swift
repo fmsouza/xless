@@ -145,11 +145,12 @@ extension ProjectRun {
         }
     }
 
-    /// The files of secrets, as variables name them: none may be in what a build container mounts.
+    /// The files of secrets, as variables name them: none may be in what a build container mounts. (Those that are not there are
+    /// in nothing; those that are not seen may be.)
     func secretFiles() -> [(variable: String, path: String)] {
         let variables = ["ASC_KEY_P8_FILE", "XLESS_DIST_KEY_FILE", "XLESS_DEVID_KEY_FILE", "XLESS_INSTALLER_KEY_FILE", "ASC_ISSUER_ID_FILE"] + secrets.demoFiles.map { "\($0)_FILE" }
         return ([("ENV_FILE", environmentFile)] + variables.compactMap { name in setting(name).map { (name, $0) } })
-            .filter { FileManager.default.fileExists(atPath: $0.1) }
+            .filter { host.isThere($0.1, followed: true) != false }
     }
 
     /// Docker: the mounts of the secret files. By path or by name: values never appear on a command line.
@@ -289,9 +290,8 @@ extension ProjectRun {
 
     /// Neither `path` (or, while it does not exist, its nearest parent) nor a parent of it is mounted into the build.
     private func refuseInBuildMounts(_ path: String) throws {
-        var here = path
-        while !FileManager.default.fileExists(atPath: here), here != "/" { here = RunFiles.parent(here) }
-        for mount in buildMounts where try FileManager.default.fileExists(atPath: mount) && files.directory(here, isIn: mount) {
+        let here = try files.nearest(path)
+        for mount in buildMounts where try files.isThere(mount) && files.directory(here, isIn: mount) {
             throw RunStop.usage("the secret store's files (\(path)) would be inside \(mount), which is mounted into the build container; point XDG_RUNTIME_DIR elsewhere")
         }
     }

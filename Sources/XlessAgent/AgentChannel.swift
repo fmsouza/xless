@@ -8,21 +8,7 @@ struct AgentPeer: Equatable, Sendable {
     let uid: uid_t
     let session: AgentSession
     /// The program it runs (macOS; nil on Linux, where a command that holds secrets hides its /proc entry).
-    let executable: AgentExecutable?
-}
-
-/// A program, as the file it is.
-struct AgentExecutable: Equatable, Sendable {
-    let device: UInt64
-    let inode: UInt64
-
-    /// This process's.
-    static var current: AgentExecutable? {
-        guard let path = AgentLauncher.executablePath else { return nil }
-        var st = stat()
-        guard stat(path, &st) == 0 else { return nil }
-        return AgentExecutable(device: UInt64(truncatingIfNeeded: st.st_dev), inode: UInt64(st.st_ino))
-    }
+    let program: AgentProgram?
 }
 
 extension AgentSession {
@@ -167,7 +153,7 @@ final class AgentChannel {
         guard pidfd >= 0 else { throw AgentError.gone }
         let session = AgentSession(of: getsid(pid))
         guard xless_pidfd_alive(pidfd) == 1 else { throw AgentError.gone }
-        return AgentPeer(pid: pid, uid: geteuid(), session: session, executable: nil)
+        return AgentPeer(pid: pid, uid: geteuid(), session: session, program: nil)
         #else
         guard let token else { throw AgentError.gone }
         guard let peer = readPeer(fd), Self.token(peer) == token else {
@@ -175,8 +161,7 @@ final class AgentChannel {
             throw AgentError.malformed("another process speaks")
         }
         pid = peer.pid
-        return AgentPeer(pid: peer.pid, uid: peer.uid, session: AgentSession(of: peer.sid),
-                         executable: peer.exe_inode == 0 ? nil : AgentExecutable(device: peer.exe_device, inode: peer.exe_inode))
+        return AgentPeer(pid: peer.pid, uid: peer.uid, session: AgentSession(of: peer.sid), program: AgentProgram(of: peer))
         #endif
     }
 

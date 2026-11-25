@@ -75,6 +75,23 @@ import Testing
         }
     }
 
+    /// A parent is gone to only from what is known not to be there.
+    @Test func theNearestThatIsThere() throws {
+        try inDirectory { root in
+            try make(root + "/app/key.p8")
+            try FileManager.default.createSymbolicLink(atPath: root + "/dead", withDestinationPath: "none")
+            let files = RunFiles(host: host, home: root)
+            #expect(try files.nearest(root + "/app/none/below") == root + "/app" && files.nearest(root + "/app") == root + "/app" && files.nearest("/") == "/")
+            #expect(try files.nearest(root + "/dead/below") == root + "/dead")
+            let fake = FakeRunHost()
+            fake.unseen = [root + "/app/none"]
+            #expect(throws: RunStop.self) { try RunFiles(host: fake, home: root).nearest(root + "/app/none/below") }
+            chmod(root + "/app", 0)
+            defer { chmod(root + "/app", 0o755) }
+            if geteuid() != 0 { #expect(throws: RunStop.self) { try files.nearest(root + "/app/none") } }
+        }
+    }
+
     /// One that may be searched but not read is there all the same.
     @Test func aDirectoryThatIsNotReadableIsKnown() throws {
         try inDirectory { root in

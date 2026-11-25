@@ -197,8 +197,9 @@ import XlessCore
     }
 
     @Test func noSecretMayBeInWhatTheBuildContainerMounts() throws {
-        func refused(_ environment: [String: String], _ what: String) throws {
+        func refused(_ environment: [String: String], _ what: String, unseen: Swift.Set<String> = []) throws {
             let host = FakeRunHost(answer: home.answer())
+            host.unseen = unseen
             #expect(try home.run(["--config", home.overlay], docker: true, host: host, environment: environment) == 2)
             #expect(host.lines.last?.contains(what) == true, "\(host.lines)")
             #expect(containers(host).isEmpty && !home.exists(home.secrets))
@@ -227,6 +228,21 @@ import XlessCore
         // what cannot be told is refused: a home that is not there
         try refused(["HOME": "\(home.root)/none"], "cannot tell where your home directory is (HOME: \(home.root)/none, which is not there, or not to be seen)")
         try refused(["HOME": ""], "cannot tell where your home directory is (HOME is empty)")
+        // a mount, or a place for the secrets, that cannot be seen: it is not taken for one that is not there
+        let cache = "\(home.home)/.cache/xless"
+        for unseen in ["\(cache)/work", "\(cache)/downloads", "\(cache)/inputs", "\(home.root)/run/xless"] {
+            try refused([:], "cannot tell where \(unseen) is", unseen: [unseen])
+        }
+        try refused(["XDG_RUNTIME_DIR": "\(home.root)/none"], "cannot tell where \(cache)/secrets is", unseen: ["\(cache)/secrets"])
+        // nor is a secret's file, also one that this run does not need
+        let closed = "\(home.root)/src/closed"
+        try FileManager.default.createDirectory(atPath: closed, withIntermediateDirectories: true)
+        secrets["XLESS_DIST_KEY_FILE"] = try home.write("dist.pem", "dist")
+        secrets["XLESS_DEVID_KEY_FILE"] = try home.write("src/closed/key.pem", "k")
+        try refused(secrets, "is inside the app source")
+        defer { chmod(closed, 0o700) }
+        chmod(closed, 0)
+        if geteuid() != 0 { try refused(secrets, "cannot tell where \(closed)/key.pem is") }
         try refused(["XLESS_SOURCE": home.home], "holds your home directory")
         try refused(["XLESS_SOURCE": home.root], "holds your home directory")
         try refused(["XLESS_SOURCE": "/"], "holds your home directory")

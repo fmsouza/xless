@@ -44,19 +44,39 @@ public enum AgentLauncher {
     public static let argument = "__agent"
     static let channel: Int32 = 3
 
-    /// This program's file.
-    static var executablePath: String? {
-        #if os(macOS)
-        var size = UInt32(PATH_MAX)
-        var buffer = [CChar](repeating: 0, count: Int(size))
-        guard _NSGetExecutablePath(&buffer, &size) == 0, let real = realpath(buffer, nil) else { return nil }
-        defer { free(real) }
-        return String(cString: real)
-        #else
-        // What this process runs, even when the file was replaced since.
-        return "/proc/self/exe"
-        #endif
+    #if os(macOS)
+    /// Why this program, the one at `path`, is not told from another.
+    static func untold(_ path: String? = ownPath()) -> AgentError {
+        if let path, AgentProgram.isUnsigned(path) {
+            return AgentError(.unavailable, "this xless has no code signature (a build that nothing signed), so macOS does not say which program it is, and nothing can be told from it",
+                              fix: "sign it, then run the command again: codesign --sign - \(ShellWord.quoted(path))")
+        }
+        return AgentError(.unavailable, "macOS does not say which program xless is (its code signature is not valid, or it runs where processes are hidden, as in a sandbox), so nothing can be told from it",
+                          fix: "run xless outside the sandbox, or install (or build) it again")
     }
+
+    /// Where the kernel says that this program is, also after it was moved; nil when it does not.
+    static func ownPath() -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(getpid(), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+    /// This program's file. Throws where it was replaced or removed while it runs (what is there now is not this program), and
+    /// where the system does not say which program it is.
+    static func executablePath(mapped: AgentExecutable? = .current, program: AgentProgram? = .current) throws -> String {
+        guard let mapped else { throw untold() }
+        // The kernel's path follows a file that was moved, where the one it was started by does not.
+        guard let path = ownPath(), AgentExecutable(at: path) == mapped else {
+            throw AgentError(.failed, "xless was replaced or removed while it runs, so it cannot start its agent", fix: "run the command again")
+        }
+        guard program != nil else { throw untold(path) }
+        return path
+    }
+    #else
+    /// What this process runs, even when the file was replaced since.
+    static func executablePath() throws -> String { "/proc/self/exe" }
+    #endif
 
     /// Why no agent can serve this process's session; nil when one can.
     /// - Parameter lease: for one that ends with this process (`xless session`), which may lead the session.
@@ -105,9 +125,7 @@ public enum AgentLauncher {
     private static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms,
                               lease: (command: String, seconds: Int)?, executable: String?) throws -> (AgentChannel, String) {
         if let obstacle = obstacle(lease: lease != nil) { throw obstacle }
-        guard let program = executable ?? executablePath else {
-            throw AgentError(.unavailable, "xless does not find its own program file to start its agent", fix: "run it by its full path")
-        }
+        let program = try executable ?? executablePath()
         try directory.prepare()
         var fds: [Int32] = [-1, -1]
         guard xless_unix_pair(&fds) == 0 else { throw failure("socketpair", errno) }

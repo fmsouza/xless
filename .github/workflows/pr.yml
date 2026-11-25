@@ -63,8 +63,48 @@ jobs:
           done
           if [ -n "$failed" ]; then echo "::error::failed shell tests:$failed"; exit 1; fi
 
+  # The same on macOS. Each step runs in a session whose leader lives (scripts/ci-session.sh), which the tests of the xless agent
+  # need and a runner may not give. The shell tests run with the macOS tools (bash 3.2 and the BSD ones among them), on the
+  # binary that was just built.
+  macos-tests:
+    name: macos-tests (arm64)
+    runs-on: xcode-27   # macOS 27, arm64, with the Xcode whose Swift is versions.env's
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Versions
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          python3 --version
+          ps -o pid,ppid,pgid,sess,command -p $$
+      - name: swift test
+        timeout-minutes: 40
+        run: scripts/ci-session.sh sh scripts/ci-swift.sh test
+      - name: swift test (AssetKit)
+        timeout-minutes: 20
+        run: scripts/ci-session.sh sh scripts/ci-swift.sh test --package-path ThirdParty/AssetKit
+      # As in the Linux job. Skipped here, with the guard's reason:
+      #   native-toolchain: it prepares Linux's open-source toolchain, which a native setup on Linux alone uses
+      - name: Shell tests
+        timeout-minutes: 30
+        run: |
+          swift build --product xless
+          XLESS_BIN="$(swift build --product xless --show-bin-path)/xless"
+          export XLESS_BIN
+          failed=""
+          for t in Tests/shell/*.test.sh; do
+            echo "::group::$t"
+            if ! scripts/ci-session.sh /bin/bash "$t"; then failed="$failed $t"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "::error::failed shell tests:$failed"; exit 1; fi
+
   # The release tarball, built the way the release build will build it (a static musl binary), installed with the
-  # one-line installer from a file:// release, and run.
+  # one-line installer from a file:// release, and run, through the tests of the xless agent too.
   package:
     name: package (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
@@ -87,7 +127,7 @@ jobs:
             || printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0\n' > /etc/resolv.conf
           apt="apt-get -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for attempt in 1 2 3; do
-            timeout -k 10 180 $apt update && timeout -k 10 300 $apt install -y git curl ca-certificates >/dev/null && break
+            timeout -k 10 180 $apt update && timeout -k 10 300 $apt install -y git python3 curl ca-certificates >/dev/null && break
             [ "$attempt" -lt 3 ] || exit 1
             echo "::warning::installing the tools failed (attempt $attempt of 3), retrying"
             dpkg --configure -a >/dev/null 2>&1 || true    # an install stopped while dpkg ran would block the next one
@@ -128,6 +168,86 @@ jobs:
           echo "$err" | grep -F 'Xcode 27.0 (27A266a)'
           echo "$err" | grep -F 'Xcode 27.1 (27A9275)'
           echo "$err" | grep -F 'Xcode 27.2 (27B52)'
+      # As in the macOS job, with the optimised, static program: linux-tests runs a debug build.
+      - name: The installed xless holds secrets in its agent and forgets them
+        timeout-minutes: 20
+        run: |
+          export XLESS_BIN="$HOME/.local/bin/xless"
+          for t in agent session; do bash "Tests/shell/$t.test.sh"; done
+
+  # The macOS tarballs, built the way the release build will build them: both on one machine, the x86_64 one cross-compiled.
+  package-macos:
+    name: package (macos-${{ matrix.arch }})
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build and package
+        uses: ./.github/actions/build-package
+        with:
+          os: macos
+          arch: ${{ matrix.arch }}
+          version: 0.0.0-dev
+          out-dir: dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tarball-macos-${{ matrix.arch }}
+          path: dist/xless-*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  # ... installed on the oldest macOS there is a runner of, on each architecture, and run: with the one-line installer from a
+  # file:// release, as a user would, and then through the tests of the xless agent and of every command that asks something
+  # (they run the installed binary, with the signature it is released with).
+  install-macos:
+    name: install (macos-${{ matrix.name }})
+    needs: package-macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: arm64, runner: macos-15 }
+          - { name: x86_64, runner: macos-15-intel }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: tarball-macos-*
+          path: release/download/v0.0.0-dev
+          merge-multiple: true
+      - name: Lay out the file:// release
+        run: |
+          (cd release/download/v0.0.0-dev && shasum -a 256 xless-*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+          mkdir -p release/latest
+          cp -R release/download/v0.0.0-dev release/latest/download
+      - name: Install from the file:// release
+        run: |
+          [ "$(uname -m)" = "${{ matrix.name }}" ]
+          XLESS_RELEASE_BASE="file://$PWD/release" sh scripts/install.sh
+          ~/.local/bin/xless --version | grep -x '0.0.0-dev'
+          scripts/check-macos-binary.sh ~/.local/bin/xless "${{ matrix.name }}"
+      - name: The installed xless refuses a file that is not an Xcode
+        run: |
+          rc=0
+          err=$(~/.local/bin/xless setup --docker --xcode /etc/hosts 2>&1 >/dev/null) || rc=$?
+          echo "$err"
+          [ "$rc" -eq 11 ]
+          echo "$err" | grep -F 'Xcode 27.0 (27A266a)'
+      - name: The installed xless asks, holds secrets in its agent and forgets them
+        timeout-minutes: 20
+        run: |
+          export XLESS_BIN="$HOME/.local/bin/xless"
+          for t in agent session no-input prompts; do scripts/ci-session.sh /bin/bash "Tests/shell/$t.test.sh"; done
 
   shellcheck:
     runs-on: ubuntu-24.04
@@ -138,7 +258,7 @@ jobs:
         run: shellcheck -s sh scripts/install.sh scripts/testflight.sh scripts/credential-helpers/xless-credential-pass scripts/credential-helpers/xless-credential-secret-tool
       - name: Shipped scripts
         run: |
-          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh scripts/ci-swift.sh
+          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh scripts/ci-swift.sh scripts/ci-session.sh scripts/check-package.sh scripts/check-macos-binary.sh scripts/check-link-map.sh
           shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/xcode-swift.sh
       - name: Mac bench scripts

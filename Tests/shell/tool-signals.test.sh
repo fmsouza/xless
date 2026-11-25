@@ -12,10 +12,10 @@ if [[ -z "$x" ]]; then
   x="$(cd "$repo" && env -u DEVELOPER_DIR swift build --show-bin-path)/xless"
 fi
 
-python3 -I - "$x" "$t" <<'PY'
+python3 -I - "$x" "$t" "$repo" <<'PY'
 import os, pty, select, signal, subprocess, sys, time
 
-xless, t = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
+xless, t, repo = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2]), sys.argv[3]
 keep = {k: os.environ[k] for k in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH") if k in os.environ}
 env = {**keep, "PATH": t + "/bin:" + os.environ["PATH"], "HOME": t + "/home", "XDG_DATA_HOME": t + "/data", "XDG_CONFIG_HOME": t + "/config",
        "XDG_CACHE_HOME": t + "/cache", "XDG_RUNTIME_DIR": t + "/run", "TMPDIR": t + "/tmp", "TERM": "dumb", "LC_ALL": "C"}
@@ -78,7 +78,7 @@ def start(ignored=None, polite=False):
     return p, pid_in("tool"), pid_in("child")
 
 def ended(p):
-    try: return p.wait(10)
+    try: return p.wait(30)
     except subprocess.TimeoutExpired:
         p.kill()
         return "xless goes on"
@@ -125,6 +125,79 @@ for i in range(50):
     p.send_signal(signal.SIGTERM)
     if ended(p) != -signal.SIGTERM or not until(lambda: not tools(), 3): left.append((i, tools()))
 check(not left, "at whatever moment it comes, nothing is left running", left)
+
+# The end is by that signal also when another thread looks at the handlers meanwhile, as whatever starts a tool does, and when it
+# is a thread of a dispatch queue that goes on to it (macOS: such a thread cannot send itself a signal). With the C that xless is
+# made of, where they can be made to meet.
+with open(t + "/meet.c", "w") as f:
+    f.write(r"""
+#include <pthread.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "CXlessProcess.h"
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#endif
+static atomic_int raising, back, queued, counted, noted;
+static void until(atomic_int *flag) { for (int i = 0; i < 500 && !atomic_load(flag); i++) usleep(10000); }
+int met_sigaction(int sig, const struct sigaction *new, struct sigaction *old) {
+    int r = sigaction(sig, new, old);
+    if (atomic_load(&queued) && !atomic_exchange(&counted, 1)) until(&noted); // this start is counted, and what it starts not known
+    if (sig == SIGTERM && new != NULL && atomic_load(&raising)) {
+        atomic_store(&back, 1);
+        usleep(1000000); // this start goes on no further yet
+    }
+    return r;
+}
+int met_raise(int sig) {
+    if (!atomic_exchange(&raising, 1) && !atomic_load(&queued)) until(&back);
+    return raise(sig);
+}
+static int start(void) {
+    char *const none[] = { NULL };
+    int pid;
+    return xless_spawn_session("/nonexistent", none, none, NULL, -1, -1, &pid);
+}
+static void *starts(void *unused) {
+    until(&raising);
+    start();
+    return unused;
+}
+#ifdef __APPLE__
+static void starts_on_a_queue(void *unused) {
+    atomic_store(&queued, 1);
+    start();
+}
+#endif
+int main(int argc, char **argv) {
+    pthread_t thread;
+    start();
+#ifdef __APPLE__
+    if (argc > 1) {
+        dispatch_async_f(dispatch_get_global_queue(0, 0), NULL, starts_on_a_queue);
+        until(&counted);
+        pthread_kill(pthread_self(), SIGTERM); // which waits for the start
+        atomic_store(&noted, 1);
+        sleep(30);
+        return 4;
+    }
+#endif
+    if (pthread_create(&thread, NULL, starts, NULL) != 0) return 2;
+    pthread_kill(pthread_self(), SIGTERM);
+    pthread_join(thread, NULL);
+    return 3;
+}
+""")
+c = repo + "/Sources/CXlessProcess"
+subprocess.run(["clang", "-I", c + "/include", "-Draise(s)=met_raise(s)", "-Dsigaction(a,b,c)=met_sigaction(a,b,c)", "-Wno-everything",
+                "-c", "-o", t + "/process.o", c + "/CXlessProcess.c"], check=True)
+subprocess.run(["clang", "-I", c + "/include", "-Wall", "-Werror", "-o", t + "/meet", t + "/meet.c", t + "/process.o", "-lpthread", *(["-lbsm"] if sys.platform == "darwin" else [])], check=True)
+for how, what in [([], "another thread ends xless")] + [(["queue"], "a thread of a dispatch queue ends xless then")] * (sys.platform == "darwin"):
+    p = subprocess.Popen([t + "/meet", *how], stdin=subprocess.DEVNULL, preexec_fn=lambda: dispositions(None))
+    rc = ended(p)
+    check(rc == -signal.SIGTERM, f"a signal that comes as a tool is about to be started: {what}, by that signal", rc)
 
 # At the two moments no test meets by chance (Linux, where a preloaded library can make them).
 if sys.platform == "linux":

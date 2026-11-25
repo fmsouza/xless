@@ -16,7 +16,8 @@ struct RunCommand: ParsableCommand {
         would run), --allow-disk-secrets. The other arguments go to xless ship, --from and --to among them.
 
         Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native. Natively on Linux it builds \
-        xless.yml projects; Tauri, plain Cargo and React Native overlays (--config) build in the images: add --docker. \
+        xless.yml projects; Tauri, plain Cargo and React Native overlays (--config) build in the images: add --docker. On \
+        macOS xless setup installs no native build tools yet: build in the images. \
         Secrets not set in the environment come from the secret store (`xless secrets`); with --docker they are written to a \
         tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
@@ -34,6 +35,10 @@ struct RunCommand: ParsableCommand {
             throw XlessError(.config, "a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images, not natively",
                              fix: "add --docker (after building the images once: xless setup --docker --xcode <Xcode.xip>)")
         }
+        #elseif os(macOS)
+        if useDocker == "0", !ProjectRunner.isScript(env), !rest.contains("--dry-run"), !Self.isOnPath("xtool", env) {
+            FileHandle.standardError.write(Data("note: xless installs no build tools on macOS yet (and there is no xtool on PATH): to build in Docker, add --docker (after xless setup --docker --xcode <Xcode.xip>, once)\n".utf8))
+        }
         #endif
         try ProjectRunner.run(rest, useDocker: useDocker)
     }
@@ -43,6 +48,10 @@ struct RunCommand: ParsableCommand {
         let end = arguments.firstIndex(of: "--") ?? arguments.endIndex
         let head = arguments[..<end]
         return (head.contains("--docker"), head.filter { $0 != "--docker" } + arguments[end...])
+    }
+
+    static func isOnPath(_ tool: String, _ env: [String: String]) -> Bool {
+        (env["PATH"] ?? "").split(separator: ":").contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(tool)") }
     }
 
     /// The script's arguments name an overlay (`--config`), before any `--`.

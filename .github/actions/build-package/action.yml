@@ -1,12 +1,17 @@
 name: Build and package xless
-description: Builds the static Linux xless for one architecture and packs the release tarball (used by pr.yml and release.yml).
+description: Builds xless for one system and architecture (a static binary on Linux) and packs the release tarball (used by pr.yml and release.yml).
 inputs:
+  os:
+    description: linux, or macos (on a macOS runner; either architecture)
+    required: false
+    default: linux
   arch:
     description: x86_64 or arm64
     required: true
   triple:
-    description: Swift SDK triple, e.g. x86_64-swift-linux-musl
-    required: true
+    description: Swift SDK triple, e.g. x86_64-swift-linux-musl (linux only)
+    required: false
+    default: ''
   version:
     description: Version for the tarball name (0.0.0-dev for the PR check, x.y.z for a release)
     required: true
@@ -27,6 +32,7 @@ runs:
         VERSION: ${{ inputs.version }}
       run: scripts/stamp-version.sh "$VERSION"
     - name: Build the static binary
+      if: inputs.os == 'linux'
       shell: bash
       env:
         TRIPLE: ${{ inputs.triple }}
@@ -37,21 +43,47 @@ runs:
         swift sdk install "$STATIC_SDK_URL" --checksum "$STATIC_SDK_SHA256"
         swift build -c release --product xless --swift-sdk "$TRIPLE"
         echo "XLESS_BIN=$(swift build -c release --product xless --swift-sdk "$TRIPLE" --show-bin-path)/xless" >> "$GITHUB_ENV"
+    # With the runner's Xcode, against its SDK: the binary links to the system's libraries only, and the package holds nothing
+    # of either (scripts/check-macos-binary.sh and check-package.sh, which package-release.sh runs). Nothing is cached. Without
+    # the runtime-compatibility-version, dependencies that are for older systems bring in libswiftCompatibility56.a.
+    - name: Build the macOS binary
+      if: inputs.os == 'macos'
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+      run: |
+        git config --global http.version HTTP/1.1
+        xcodebuild -version
+        swift --version
+        # The linker's map says what was linked in (scripts/check-link-map.sh, which package-release.sh runs).
+        map="$RUNNER_TEMP/xless-$ARCH.map"
+        build=(swift build -c release --product xless --arch "$ARCH" -Xswiftc -runtime-compatibility-version -Xswiftc none -Xlinker -map -Xlinker "$map")
+        "${build[@]}"
+        bin="$("${build[@]}" --show-bin-path)/xless"
+        # Package.swift has the linker sign it, for x86_64 too: what is built from source works without a step more.
+        codesign --verify --strict --verbose "$bin"
+        echo "XLESS_BIN=$bin" >> "$GITHUB_ENV"
+        echo "XLESS_LINK_MAP=$map" >> "$GITHUB_ENV"
     - name: The binary reports the stamped version
       if: inputs.stamp == 'true'
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        OS: ${{ inputs.os }}
+        ARCH: ${{ inputs.arch }}
       run: |
+        # The x86_64 binary of an arm64 Mac is first run on an Intel one, by the job that installs it.
+        if [ "$OS" = macos ] && [ "$(uname -m)" != "$ARCH" ]; then exit 0; fi
         got=$("$XLESS_BIN" --version)
         [ "$got" = "$VERSION" ] || { echo "::error::xless --version printed '$got', expected '$VERSION'"; exit 1; }
     - name: Package
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        OS: ${{ inputs.os }}
         ARCH: ${{ inputs.arch }}
         OUT_DIR: ${{ inputs.out-dir }}
       run: |
         mkdir -p "$OUT_DIR"
-        scripts/package-release.sh "$VERSION" "$ARCH" "$XLESS_BIN" "$OUT_DIR"
+        scripts/package-release.sh --os "$OS" "$VERSION" "$ARCH" "$XLESS_BIN" "$OUT_DIR"
         ls -l "$OUT_DIR"

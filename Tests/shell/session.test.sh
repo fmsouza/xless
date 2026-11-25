@@ -52,6 +52,7 @@ class Terminal:
         if self.pid == 0:
             if argv: os.execve(argv[0], argv, env)
             os.execve("/bin/bash", ["bash", "--noprofile", "--norc", "--noediting", "-i"], {**env, "PS1": "", "PS2": ""})
+        os.set_inheritable(self.fd, False) # the next terminal's shell would keep this one open
         self.seen = b""
         if argv is None:
             os.write(self.fd, b"stty -echo; PS1=; PS2=; echo READY$((1))\n")

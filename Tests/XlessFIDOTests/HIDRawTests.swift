@@ -24,6 +24,15 @@ final class HIDRawTests: XCTestCase {
         XCTAssertFalse(HIDDescriptor.parse([0xFE, 0x05]).isFIDO)
     }
 
+    func testADevicesNameIsPrintableAndShort() {
+        for bad in ["", "  ", "a\u{202E}b", "a\u{2028}b", "a\u{200B}b", "a\u{E000}b", "a\u{0378}b", "a\u{A0}b", "a\u{1B}b", "a\tb", "a\r"] {
+            XCTAssertNil(HIDName.printable(bad), bad.debugDescription)
+        }
+        XCTAssertEqual(HIDName.printable(" Schlüssel №5 (日本) "), "Schlüssel №5 (日本)")
+        XCTAssertEqual(HIDName.printable(String(repeating: "x", count: 5000)), String(repeating: "x", count: HIDName.longest))
+        XCTAssertEqual(HIDName.printable("e" + String(repeating: "\u{301}", count: 5000))?.unicodeScalars.count, HIDName.longest)
+    }
+
     #if os(Linux)
     func testListsOnlyTheFIDODevicesOfSysfs() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("xless-hidraw-\(UUID().uuidString)")
@@ -41,9 +50,12 @@ final class HIDRawTests: XCTestCase {
         var tiny = Self.fido
         tiny[17] = 0x04; tiny[30] = 0x04 // four-byte reports: no CTAPHID device
         try add("hidraw9", tiny, uevent: nil)
+        try add("hidraw20", Self.fido, uevent: "HID_NAME=Key\u{202E}yeK\n")
+        try add("hidraw21", Self.fido, uevent: "HID_NAME=\u{1B}[31mKey\n")
+        try add("hidraw22", Self.fido, uevent: "HID_NAME=" + String(repeating: "k", count: 500) + "\n")
         let devices = try HIDRawDevices.list(sysfs: root.path, dev: "/dev")
-        XCTAssertEqual(devices.map(\.path), ["/dev/hidraw3", "/dev/hidraw7", "/dev/hidraw12"])
-        XCTAssertEqual(devices.map(\.name), ["Yubico YubiKey OTP+FIDO+CCID", "hidraw7", "Later Key"])
+        XCTAssertEqual(devices.map(\.path), ["/dev/hidraw3", "/dev/hidraw7", "/dev/hidraw12", "/dev/hidraw20", "/dev/hidraw21", "/dev/hidraw22"])
+        XCTAssertEqual(devices.map(\.name), ["Yubico YubiKey OTP+FIDO+CCID", "hidraw7", "Later Key", "hidraw20", "hidraw21", String(repeating: "k", count: 64)])
         XCTAssertTrue(try HIDRawDevices.list(sysfs: root.appendingPathComponent("missing").path).isEmpty)
     }
 

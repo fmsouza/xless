@@ -147,6 +147,21 @@ private func pair(_ kernel: Kernel) throws -> (AgentChannel, far: Int32) {
     #expect(throws: AgentError.self) { try another.get("a") }
 }
 
+/// As when its file was replaced or removed, so the kernel cannot say which program it runs.
+@Test func anAgentOfAnUnknownProgramIsNotUsed() throws {
+    let agent = try TestAgent()
+    do {
+        _ = try AgentLink.connect(path: agent.path, directory: agent.directory, timeout: 5000) { fd -> xless_peer? in
+            guard var peer = AgentChannel.kernelPeer(fd) else { return nil }
+            (peer.exe_device, peer.exe_inode) = (0, 0)
+            return peer
+        }
+        Issue.record("it was used")
+    } catch let e as AgentError {
+        #expect(e.kind == .version)
+    }
+}
+
 @Test func aCommandDealsWithOneAgentProcessOnAConnectionToItsEnd() throws {
     let agent = try TestAgent()
     let kernel = Kernel()
@@ -199,3 +214,20 @@ private func pair(_ kernel: Kernel) throws -> (AgentChannel, far: Int32) {
     }
 }
 #endif
+
+@Test func aProcessIsToldByTheProgramItRuns() throws {
+    let mine = try #require(AgentExecutable(runBy: getpid()))
+    #expect(AgentExecutable.current == mine)
+    #if os(macOS)
+    #expect(AgentExecutable(at: try AgentLauncher.executablePath()) == mine)
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    child.arguments = ["60"]
+    try child.run()
+    defer { child.terminate() }
+    #expect(AgentExecutable(runBy: child.processIdentifier) == AgentExecutable(at: "/bin/sleep"))
+    #expect(AgentExecutable(runBy: child.processIdentifier) != mine)
+    #else
+    #expect(AgentExecutable(runBy: 1) == nil) // a command that holds secrets hides it
+    #endif
+}

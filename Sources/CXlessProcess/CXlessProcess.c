@@ -32,6 +32,7 @@
 #include <dlfcn.h>
 #include <libproc.h>
 #include <sys/attr.h>
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <sys/ptrace.h>
 #include <sys/sysctl.h>
@@ -326,6 +327,7 @@ static atomic_int tools[256]; // their pids, which are their process groups; 0: 
 static atomic_int owner;      // the process they are tools of (a forked child has their numbers too)
 static atomic_int starting;   // how many are being started
 static atomic_int deferred;   // the signal that came meanwhile
+static atomic_int ending;     // a signal ends this process: no tool is being started, and none will be
 
 /// SIGINT, SIGTERM and SIGHUP as they are; any other says the same as SIGTERM to them.
 static void tell_tools(int sig) {
@@ -358,6 +360,11 @@ static void take_default(int sig) {
     sigaddset(&only, sig);
     pthread_sigmask(SIG_UNBLOCK, &only, NULL);
     raise(sig);
+#ifdef __APPLE__
+    // A thread of a dispatch queue cannot send itself a signal (ENOTSUP). One to the process ends it, on whichever thread.
+    kill(getpid(), sig);
+    poll(NULL, 0, 1000);
+#endif
     _exit(128 + sig); // process 1 of a container: what a signal does by default is nothing
 }
 
@@ -367,12 +374,14 @@ static void forward(int sig) {
     if (getpid() == atomic_load(&owner)) {
         tell_tools(sig);
         // While one is being started nobody knows its number: whoever starts it goes on from here (`tool_started`). In
-        // this order, so that either it or this sees the other.
+        // this order, so that either it or this sees the other. Nothing is put off once it is the end: what is counted then
+        // starts no tool, but may have put this handler back as `take_default` was about to send the signal again.
         atomic_store(&deferred, sig);
-        if (atomic_load(&starting) > 0) {
+        if (!atomic_load(&ending) && atomic_load(&starting) > 0) {
             errno = e;
             return;
         }
+        atomic_store(&ending, 1);
         remove_private();
     }
     take_default(sig);
@@ -512,6 +521,7 @@ static void tool_started(int tool) { // 0: it was not
     }
     int sig;
     if (atomic_fetch_sub(&starting, 1) == 1 && (sig = atomic_load(&deferred)) != 0) {
+        atomic_store(&ending, 1);
         tell_tools(sig);
         remove_private();
         take_default(sig);
@@ -907,6 +917,8 @@ void *xless_secret_map(size_t size, int *locked) {
 #ifdef __linux__
     (void)madvise(p, length, MADV_DONTDUMP);
     (void)madvise(p, length, MADV_DONTFORK);
+#elif defined(__APPLE__)
+    (void)minherit(p, length, VM_INHERIT_NONE);
 #endif
     if (locked) *locked = ok;
     return p;
@@ -928,7 +940,18 @@ int xless_deny_attach(void) {
 }
 
 #if defined(__linux__)
+int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
+    if (pid != getpid()) return ENOTSUP;
+    struct stat st;
+    if (stat("/proc/self/exe", &st) != 0) return errno;
+    *device = (uint64_t)st.st_dev;
+    *inode = (uint64_t)st.st_ino;
+    return 0;
+}
+
 int xless_peer_of(int fd, struct xless_peer *out) { (void)fd; memset(out, 0, sizeof *out); return ENOTSUP; }
+
+int xless_own_token(struct xless_peer *out) { memset(out, 0, sizeof *out); return ENOTSUP; }
 
 int xless_unix_passcred(int fd) {
     int one = 1;
@@ -1017,6 +1040,26 @@ long xless_process_program(int pid, char *buffer, size_t length) {
     return readlink(path, buffer, length);
 }
 #elif defined(__APPLE__)
+int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
+    // The program is what a process has mapped lowest: before it are only anonymous regions.
+    uint64_t at = 0;
+    for (int i = 0; i < 64; i++) {
+        struct proc_regionwithpathinfo region;
+        memset(&region, 0, sizeof region);
+        errno = 0;
+        if (proc_pidinfo(pid, PROC_PIDREGIONPATHINFO, at, &region, sizeof region) < (int)sizeof region) return errno ? errno : ESRCH;
+        const struct vinfo_stat *file = &region.prp_vip.vip_vi.vi_stat;
+        if (file->vst_ino != 0) {
+            *device = (uint64_t)file->vst_dev;
+            *inode = file->vst_ino;
+            return 0;
+        }
+        if (region.prp_prinfo.pri_size == 0) break;
+        at = region.prp_prinfo.pri_address + region.prp_prinfo.pri_size;
+    }
+    return ENOENT;
+}
+
 int xless_peer_of(int fd, struct xless_peer *out) {
     memset(out, 0, sizeof *out);
     uid_t euid;
@@ -1033,16 +1076,35 @@ int xless_peer_of(int fd, struct xless_peer *out) {
     // runs another program, even if another one has its pid now. Read after the session, so the session is that
     // process's too. (Whether that process is the peer is for the caller: the token is of whoever had its pid just now.)
     char path[PROC_PIDPATHINFO_MAXSIZE];
-    if (proc_pidpath_audittoken(&token, path, sizeof path) <= 0) return ESRCH;
+    errno = 0;
+    int named = proc_pidpath_audittoken(&token, path, sizeof path) > 0;
+    if (!named && errno != ENOENT) return ESRCH; // ENOENT: it runs, and its file was removed
+    // Where a file was put in the place of the one it runs (an upgrade), the path names the new one: the program is told
+    // only when the file at the path is the one the process has mapped.
     struct stat st;
-    if (stat(path, &st) == 0) {
-        out->exe_device = (uint64_t)st.st_dev;
-        out->exe_inode = (uint64_t)st.st_ino;
+    uint64_t device, inode;
+    if (named && stat(path, &st) == 0 && xless_process_file(pid, &device, &inode) == 0
+        && device == (uint64_t)(uint32_t)st.st_dev && inode == (uint64_t)st.st_ino) {
+        out->exe_device = device;
+        out->exe_inode = inode;
     }
+    // It is still that process: what was asked by its pid is of it.
+    audit_token_t again;
+    length = sizeof again;
+    if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERTOKEN, &again, &length) != 0 || memcmp(&again, &token, sizeof token) != 0) return ESRCH;
     memcpy(out->token, &token, sizeof out->token);
     out->pid = pid;
     out->uid = euid;
     out->sid = sid;
+    return 0;
+}
+
+int xless_own_token(struct xless_peer *out) {
+    memset(out, 0, sizeof *out);
+    audit_token_t own;
+    mach_msg_type_number_t count = TASK_AUDIT_TOKEN_COUNT;
+    if (task_info(mach_task_self(), TASK_AUDIT_TOKEN, (task_info_t)&own, &count) != KERN_SUCCESS) return ESRCH;
+    memcpy(out->token, &own, sizeof out->token);
     return 0;
 }
 

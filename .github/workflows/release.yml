@@ -52,15 +52,19 @@ jobs:
           fi
           version=$(scripts/next-version.sh ${FIRST_VERSION:+--first "$FIRST_VERSION"})
           SHA=$(git rev-parse HEAD)
+          blocked=""
           # Only a commit whose main CI (the pr workflow's push run) succeeded is released: a night without that skips,
           # a manual dispatch fails loudly.
           if [ -n "$version" ] && ! why=$(scripts/ci-passed.sh "$SHA" 2>&1); then
             echo "::warning::not releasing v$version from $SHA: $why"
             if [ "$EVENT" != schedule ]; then exit 1; fi
+            blocked="$version"
             version=""
           fi
           { echo "version=$version"; echo "sha=$SHA"; echo "prev=$prev"; } >> "$GITHUB_OUTPUT"
-          if [ -n "$version" ]; then echo "Releasing v$version from $(git rev-parse HEAD)"; else echo "No releasable change."; fi
+          if [ -n "$version" ]; then echo "Releasing v$version from $(git rev-parse HEAD)"
+          elif [ -n "$blocked" ]; then echo "Not releasing v$blocked: see the warning above."
+          else echo "No releasable change."; fi
 
   build:
     name: build (${{ matrix.name }})
@@ -110,11 +114,43 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Both macOS tarballs, on one machine (the x86_64 one is cross-compiled), by the action pr.yml's package jobs run.
+  build-macos:
+    name: build (macos-${{ matrix.arch }})
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: xcode-27   # macOS 27, arm64
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Build and package
+        uses: ./.github/actions/build-package
+        with:
+          os: macos
+          arch: ${{ matrix.arch }}
+          version: ${{ needs.plan.outputs.version }}
+          out-dir: dist
+          stamp: 'true'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tarball-macos-${{ matrix.arch }}
+          path: dist/xless-*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   # Installs the stamped tarballs from a file:// copy of the release, on each architecture, exactly as a user would
-  # (scripts/verify-release.sh), before anything is published. On the bare runner: the static binary needs no Swift.
+  # (scripts/verify-release.sh), before anything is published. On the bare runner: the binaries need no Swift. Each job checks
+  # that all four are there and hold what they must (scripts/release-assets.sh), so one that is missing ends the release here.
   verify:
     name: verify (${{ matrix.name }})
-    needs: [plan, build]
+    needs: [plan, build, build-macos]
     if: needs.plan.outputs.version != ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
@@ -124,6 +160,8 @@ jobs:
         include:
           - { name: x86_64, runner: ubuntu-24.04 }
           - { name: arm64, runner: ubuntu-24.04-arm }
+          - { name: macos-x86_64, runner: macos-15-intel }
+          - { name: macos-arm64, runner: macos-15 }
     env:
       VERSION: ${{ needs.plan.outputs.version }}
     steps:
@@ -144,7 +182,7 @@ jobs:
   # Runs on the runner itself (gh is not in the swift container). The only job with write access: the release, and a
   # build provenance attestation for each asset (OIDC token for Sigstore, attestations stored on GitHub).
   publish:
-    needs: [plan, build, verify]
+    needs: [plan, build, build-macos, verify]
     if: needs.plan.outputs.version != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15

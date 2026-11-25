@@ -9,9 +9,11 @@ The scripts named here run from a source checkout. Those that run Apple's progra
 
 ## Tests
 
-- `swift test` runs the unit tests on the Mac; `make test-linux` runs them in Linux (versions.env's `SWIFT_IMAGE`: the
+- `swift test` runs the unit tests on the Mac (from a shell whose session leader lives, such as a terminal's; elsewhere
+  `scripts/ci-session.sh swift test`, or the agent's tests fail); `make test-linux` runs them in Linux (versions.env's `SWIFT_IMAGE`: the
   `swift:<SWIFT_VERSION>-jammy` image, pinned by digest). `swift test --package-path ThirdParty/AssetKit` runs AssetKit's.
-- `bash Tests/shell/<name>.test.sh` runs one shell test; CI runs them all.
+- `bash Tests/shell/<name>.test.sh` runs one shell test; CI runs them all, on Linux and (but those with a `SKIP` guard
+  for it) on macOS, there with the system's bash 3.2, sed, stat and tar.
 - `python3 -I scripts/check-doc-links.py README.md CONTRIBUTING.md docs/*.md` checks the documentation's relative
   links (`Tests/shell/check-doc-links.test.sh` runs it too).
 
@@ -114,9 +116,11 @@ xless setup --docker --sdk <the copied directory>     # the image; without --doc
 Releases are cut by `.github/workflows/release.yml`, at 03:00 UTC every night and by hand (`gh workflow run
 release.yml`). It computes the next version from the Conventional Commit titles merged since the last `v*` tag
 (`scripts/next-version.sh`; the rules are in [CONTRIBUTING.md](../CONTRIBUTING.md#versions-and-releases)). With no
-releasable commit it does nothing. Otherwise it builds both tarballs from that commit (`.github/actions/build-package`:
-`scripts/stamp-version.sh`, a static musl build, `scripts/package-release.sh`), then installs them on both architectures
-before publishing anything (the `verify` job: `scripts/release-assets.sh` writes `SHA256SUMS` and copies `install.sh`,
+releasable commit it does nothing. Otherwise it builds the four tarballs, `xless-<version>-<linux|macos>-<x86_64|arm64>`,
+from that commit (`.github/actions/build-package`: `scripts/stamp-version.sh`, a static musl build or
+[a macOS one](#the-macos-tarballs), `scripts/package-release.sh`), then installs them on both systems and architectures
+before publishing anything (the `verify` job: `scripts/release-assets.sh` refuses unless all four are there and
+`scripts/check-package.sh` accepts each, writes `SHA256SUMS` and copies `install.sh`,
 and `scripts/verify-release.sh` lays them out like a GitHub release, installs with that `install.sh` from `file://`,
 pinned and as the latest, and checks that `xless --version` and `share/xless/VERSION` are the new version). Only then
 does it attest the build provenance of the tarballs, `SHA256SUMS` and `install.sh` (`actions/attest-build-provenance`,
@@ -124,6 +128,42 @@ signed through GitHub's OIDC token with Sigstore and stored on GitHub; only the 
 `attestations: write`), tag `v<version>` and publish a GitHub release with those assets and notes from
 `scripts/release-notes.sh`. `gh attestation verify <asset> -R fmsouza/xless` checks one
 ([README](../README.md#install)). The source tree stays at version `0.0.0-dev`; only the release build stamps one.
+
+### The macOS tarballs
+
+Built on GitHub's `xcode-27` runner (arm64, macOS 27; the only label with the Swift 6.4 that `Package.swift` and Linux
+use, and named in `.github/actionlint.yaml` because actionlint does not know it), the x86_64 one with `swift build --arch
+x86_64`. They are for macOS 14.0 and later and run in CI on macOS 15 (arm64 and Intel) and 27 (arm64); GitHub offers no
+macOS 14 runner any more. `swift test` runs on arm64 only, since no Intel runner has that Swift: there the installed
+program is run, with the shell tests of the agent and the prompts.
+
+- **Each is signed ad hoc**, by `package-release.sh` (`codesign --sign -`, with the hardened runtime and `restrict`), whatever the
+  linker did: the agent tells xless by its signature, and for x86_64 the linker makes none by itself. `check-macos-binary.sh`
+  refuses a program without it, when it is packaged and again when it was installed. A build from source has the linker's
+  (`-adhoc_codesign` in `Package.swift`); the `package` jobs check that too, for both architectures.
+- **Nothing of Apple's is in them.** The Swift runtime and everything else is the system's. The build passes
+  `-runtime-compatibility-version none`, so the compiler adds none of its `libswiftCompatibility*` archives, which only
+  systems before macOS 14 need. `package-release.sh` runs the checks, and makes no package when one fails:
+  - `scripts/check-link-map.sh` reads the linker's map (`-Xlinker -map`, `XLESS_LINK_MAP`): every object must be one that the build
+    compiled, the system's libraries are there by name only (`.tbd`), and no archive, library file or object of the toolchain
+    or of a package is. It lists what may be in a map, with the reason. It takes the paths and the symbols of the build
+    directory as they are: it keeps out what the toolchain adds, not somebody who can write there.
+  - `scripts/check-macos-binary.sh` refuses a binary that needs a library outside `/usr/lib` and `/System/Library`, has a run
+    path of its own (`package-release.sh` takes out the Xcode's), is for another macOS or architecture, or has the section of
+    a compatibility archive. The release's `verify` jobs run it again on the installed program.
+  - `scripts/check-package.sh` compares the tarball with the checkout, on every system that handles it: the names, the owner, the
+    modes, no extended attributes; every file but `bin/xless`, `VERSION`, the `XLESS_VERSION` line and the packages' own licences
+    byte for byte or by sha256; those licences by name and as text; and `bin/xless` as a program of that system and architecture.
+
+  Nothing of the build is cached or uploaded but the tarball.
+- **Signed ad hoc**, with the hardened runtime and `restrict`, by `package-release.sh`. There is no Developer ID in CI and
+  the program is not notarized: it needs no secret, and needs none of the two, because `curl` and `tar` set no quarantine
+  mark, so Gatekeeper never asks. It names nobody: what vouches for a download are `SHA256SUMS`, which `install.sh` always
+  checks, and the attestation ([what the flags protect](security.md#linux-and-macos)).
+- **Reproducible as far as the Linux ones are:** sorted names, fixed owner and modes, no AppleDouble files; the binary is
+  what that Xcode's compiler makes.
+- **No Homebrew formula:** a tap is another repository, with a token here to write to it. `install.sh` is the installer;
+  a tap would be a follow-up.
 
 **The first release.** While there is no `v*` tag the nightly releases nothing. The first one is cut by hand, once:
 
@@ -154,7 +194,8 @@ would then stop without a word: whatever is merged after a quiet spell would nev
 with admin rights on the repository; CI never runs it): squash merges only, with the PR title and body as the commit;
 merged branches deleted; and a ruleset on `main` that requires a pull request, the six checks (`title`,
 `linux-tests (x86_64)`, `linux-tests (arm64)`, `package (x86_64)`, `package (arm64)`, `shellcheck`), and blocks force
-pushes and deletion. It is idempotent: run it again after changing a required check.
+pushes and deletion. It is idempotent: run it again after changing a required check. The five macOS checks of
+[CONTRIBUTING.md](../CONTRIBUTING.md#checks-on-every-pull-request) are not in it: add them once they have run for a while.
 
 It also applies a **`release tags`** ruleset on `refs/tags/v*`, the tags `scripts/next-version.sh` counts from: nobody
 can move (update or force-push) or delete one. Creating one can't be restricted: the release workflow creates each tag

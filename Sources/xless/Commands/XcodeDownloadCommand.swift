@@ -98,7 +98,7 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
         }
         await client.signOut()
         if !done.isEmpty {
-            FileHandle.standardError.write(Data("Next, for each Xcode: \(done.map { "xless setup --xcode \($0.path)" }.joined(separator: " ; "))\n".utf8))
+            FileHandle.standardError.write(Data("Next, for each Xcode: \(done.map { "\(SetupCommand.name) --xcode \($0.path)" }.joined(separator: " ; "))\n".utf8))
         }
         if let error = DownloadReport.failures(failed, of: resolved.count) { throw error }
     }

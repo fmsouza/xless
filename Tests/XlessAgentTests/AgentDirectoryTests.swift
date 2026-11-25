@@ -139,14 +139,15 @@ private func mode(_ path: String) -> mode_t {
 }
 
 @Test func onlyTheProcessThatMadeTheSocketAndRunsThisProgramIsEnded() {
-    let me = AgentExecutable(device: 1, inode: 2), owner = AgentDirectory.Owner(pid: 77, start: 7)
+    let me = AgentProgram(file: AgentExecutable(device: 1, inode: 2), code: [7]), owner = AgentDirectory.Owner(pid: 77, start: 7)
     func peer(pid: Int32 = 77, uid: uid_t = geteuid(), inode: UInt64 = 2) -> xless_peer {
         var p = xless_peer()
         (p.pid, p.uid, p.exe_device, p.exe_inode) = (pid, uid, 1, inode)
         return p
     }
-    func ends(_ p: xless_peer, owner o: AgentDirectory.Owner? = owner, running: Bool = true) -> Bool {
-        AgentLink.maySafelyEnd(p, owner: o, program: me, isRunning: { _ in running })
+    func ends(_ p: xless_peer, owner o: AgentDirectory.Owner? = owner, running: Bool = true, code: [UInt8] = [7]) -> Bool {
+        AgentLink.maySafelyEnd(p, owner: o, program: me, isRunning: { _ in running },
+                               programOf: { AgentProgram(file: AgentExecutable(device: $0.exe_device, inode: $0.exe_inode), code: code) })
     }
     #expect(ends(peer()))
     #expect(!ends(peer(pid: 78))) // another xless has the socket, or the pid the kernel kept
@@ -154,6 +155,7 @@ private func mode(_ path: String) -> mode_t {
     #expect(!ends(peer(), owner: nil))
     #expect(!ends(peer(uid: geteuid() &+ 1)))
     #expect(!ends(peer(inode: 3)))
+    #expect(!ends(peer(), code: [8])) // its file, and not its code
     #expect(!ends(peer(pid: getpid()), owner: AgentDirectory.Owner(pid: getpid(), start: 7))) // never itself
 }
 
