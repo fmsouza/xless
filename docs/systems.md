@@ -13,8 +13,8 @@ the release) is the same on every system. The **build** half needs Apple's SDK: 
 | Download Xcode (`xless xcode download`) | yes | yes | no | yes |
 | Swift package apps, for iOS and macOS | yes, after `xless setup` | yes, with the installed Xcode | no | yes, as Linux ([read first](security.md#in-wsl)) |
 | The same for the iOS simulator | no | yes | no | no |
-| Tauri and Cargo apps, for iOS and macOS | in Docker | in Docker | no | as Linux |
-| React Native and Expo apps, for iOS and its simulator | in Docker | in Docker | no | as Linux |
+| Tauri and Cargo apps, for iOS and macOS | in Docker | yes, with the installed Xcode and Rust (Tauri: Node), or in Docker | no | as Linux |
+| React Native and Expo apps, for iOS and its simulator | in Docker | yes, with the installed Xcode, Node and Ruby, or in Docker | no | as Linux |
 | Sign, notarize, package, upload | yes | yes | no | yes |
 | Checked on each pull request | the tests, on x86_64 and arm64 | the tests; a sample built, and signed with a throw-away certificate | the account commands and their tests | the Linux tests with the kernel taken for WSL's; nothing in WSL itself |
 
@@ -36,6 +36,10 @@ and the two last checks of that list were not part of it ([#181](https://github.
 Swift packages build with the Xcode that is installed, for devices, the simulator and macOS, with no SDK export and no Docker.
 Signing, notarizing, packaging and uploading are xless's own, as on Linux. Details and limits:
 [native-install.md](native-install.md#on-a-mac).
+
+Tauri, Cargo and React Native apps build there too, without Docker, in [a sandbox](build.md#overlays-on-a-mac). Not tried: an
+Expo app of a real size with CocoaPods, packages fetched from the network, a universal Tauri app for macOS. Not there: signing with
+an identity of the keychain.
 
 - CI builds and signs a sample there. An upload to App Store Connect from a Mac has not been recorded.
 - With a security key: tested with a simulated key only ([#199](https://github.com/fmsouza/xless/issues/199)).

@@ -7,7 +7,7 @@ ship it ([signing-and-testflight.md](signing-and-testflight.md)). [Install xless
 |---|---|
 | A Swift package app, on a Mac | [On a Mac](#on-a-mac) |
 | A Swift package app, on Linux | [On Linux](#on-linux) |
-| A React Native, Expo, Tauri or Cargo app | [In Docker](#in-docker), then [react-native.md](react-native.md), [tauri.md](tauri.md) or [cargo.md](cargo.md) |
+| A React Native, Expo, Tauri or Cargo app | [On a Mac](#overlays-on-a-mac), or [in Docker](#in-docker); then [react-native.md](react-native.md), [tauri.md](tauri.md) or [cargo.md](cargo.md) |
 | Windows | [WSL 2](#in-wsl-2), or a Mac or a Linux machine: builds do not run on Windows itself |
 
 A Swift package app is a package with an `xless.yml` beside its `Package.swift`: [xless-yml.md](xless-yml.md) is the reference.
@@ -27,6 +27,22 @@ xless run <project-dir> --destination simulator            # for the simulator, 
 
 `xless setup` there only checks what it finds. Which Xcode is used, which tools of it, and what a build covers:
 [native-install.md](native-install.md#on-a-mac). To try it with a small iOS app, [build the sample](#the-sample-app).
+
+### Overlays on a Mac
+
+A React Native, Tauri or Cargo app builds from its overlay, with the Mac's own rustup, Node, Ruby and Xcode.
+
+The app's build code (npm scripts, `build.rs`, gems, pods, plugins, build phases) runs in a sandbox, always; signing, packaging and
+uploading come after it, outside, with the secrets. One line at the start says what the sandbox opens. **It is not a container.**
+Read what it keeps away and what not in [security.md](security.md) ("An overlay's build on a Mac") before you build code that you do
+not trust. Then:
+
+```sh
+xless run --config <overlay.yml> --build-number <n> --to finalize
+```
+
+What the build needs beyond the app's checkout goes into `XLESS_BUILD_READ`, absolute paths with `:` between them. The app's code can
+read all that is in them: name nothing with a secret in it. What each kind of app needs on the Mac is in [native-install.md](native-install.md#on-a-mac). [In Docker](#in-docker) stays, with `--docker`.
 
 ## On Linux
 
@@ -82,8 +98,8 @@ unsigned iOS app for arm64 devices.
 
 ## In Docker
 
-The same builds can run in a Docker image on your machine, on Linux or on a Mac. Swift package apps can; React Native, Expo,
-Tauri and Cargo apps build in the images only. You need [Docker Engine](https://docs.docker.com/engine/install/) with the
+The same builds can run in a Docker image on your machine, on Linux or on a Mac. Swift package apps can; on Linux, React Native,
+Expo, Tauri and Cargo apps build in the images only. You need [Docker Engine](https://docs.docker.com/engine/install/) with the
 buildx plugin, usable without `sudo` (your user is in the `docker` group), about 40 GB where Docker keeps its data, and an
 [Xcode download](xcode-versions.md). Build the image once per Xcode version:
 

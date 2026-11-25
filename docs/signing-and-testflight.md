@@ -70,8 +70,8 @@ xless run ~/MyApp
 builds, signs, uploads and delivers an iOS `xless.yml` project to TestFlight (`xless ship --platform ios`, natively
 with what `xless setup` installed; with `--docker`, in the `xless` image). For an app described by an overlay use
 `xless run --docker --config <overlay.yml>`: a Tauri app ([tauri.md](tauri.md#shipping)) or a React Native / Expo app
-([react-native.md](react-native.md#shipping-three-containers)); overlays build in the images only. Arguments after the
-project or overlay go to `xless ship`, for example `--from upload` to retry only the upload (a `--` may come before
+([react-native.md](react-native.md#shipping-three-containers)). On Linux overlays build in the images only; on a Mac without
+`--docker` too ([on a Mac](build.md#overlays-on-a-mac)). Arguments after the project or overlay go to `xless ship`, for example `--from upload` to retry only the upload (a `--` may come before
 them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<overlay.yml>`, with `ARGS="…"`) is the
 `xless run` of the `xless` on `PATH` (or `XLESS_SELF`), in the images unless `xless setup` installed an SDK natively
 (`XLESS_USE_DOCKER=1` or `0` decides).

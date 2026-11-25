@@ -65,7 +65,8 @@ The installer checks the download against the release's checksums. To check the 
   empty, and there is no image to give them: one holds Apple's SDK, so it is never pushed to a registry. Nor does the SDK go into a
   CI cache or an artifact: not `~/.cache/xless/sdk`, and not what `xless setup` makes of it (`~/.local/share/xless-native`, the
   `swift-sdks` directory).
-- **A build on a Mac** needs the runner's Xcode ([native-install.md](native-install.md#on-a-mac)).
+- **A build on a Mac** needs the runner's Xcode, and for an overlay its Rust, Node or Ruby
+  ([native-install.md](native-install.md#on-a-mac)).
 
 ## Build without the secrets
 

@@ -110,7 +110,8 @@ The same without `provision`, one command at a time: [bootstrap.md](bootstrap.md
 ### 5. Build and ship
 
 Get the machine ready once: [on a Mac](build.md#on-a-mac) Xcode, opened once; [on Linux](build.md#on-linux) `xless
-setup`; [Docker](build.md#in-docker) for an overlay. The build runs the project's SwiftPM plugins and macros as you, but
+setup`; for an overlay, [Docker](build.md#in-docker) on Linux, or
+[the Mac's own tools](build.md#overlays-on-a-mac). The build runs the project's SwiftPM plugins and macros as you, but
 in a session and an empty keyring of their own and without the secret variables: a held unlock or a kept Apple ID
 session is out of their reach ([security.md](security.md#the-build-and-your-secrets)); in WSL read [In
 WSL](security.md#in-wsl) first. Then:
@@ -183,7 +184,7 @@ release: [release.md](release.md).
 
 1. [Install xless](../README.md#install).
 2. Follow [build.md](build.md): [on a Mac](build.md#on-a-mac), [on Linux](build.md#on-linux), or [in Docker](build.md#in-docker)
-   for a React Native, Expo, Tauri or Cargo app.
+   for a React Native, Expo, Tauri or Cargo app ([on a Mac](build.md#overlays-on-a-mac) without Docker too).
 3. The project: a Swift package with an [`xless.yml`](xless-yml.md), or an overlay. `teamID` may stay a placeholder that looks like one
    (10 characters, `A-Z` and `0-9`), as the sample's.
 

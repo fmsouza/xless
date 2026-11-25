@@ -25,7 +25,7 @@ protects from whom.
 |---|---|---|---|---|
 | Account, listing, TestFlight, release | yes | yes | yes | yes |
 | Build Swift packages, sign and ship | yes | yes, with your Xcode | no | as Linux |
-| Build React Native, Tauri, Cargo apps | in Docker | in Docker | no | as Linux |
+| Build React Native, Tauri, Cargo apps | in Docker | yes, with your Xcode, or in Docker | no | as Linux |
 
 The [whole table](docs/systems.md), with what was tried, what is not there and what is planned.
 
@@ -81,11 +81,13 @@ xless release publish                    # once approved, when you choose
 
 To build only, with no Apple account: `xless run <project-dir> --build-number 1 --to finalize`. It ends with an unsigned app.
 
-- **On a Mac**, with Xcode installed and opened once, nothing else is set up ([build: on a Mac](docs/build.md#on-a-mac)).
+- **On a Mac**, with Xcode installed and opened once, nothing else is set up ([build: on a Mac](docs/build.md#on-a-mac)). React
+  Native, Tauri and Cargo apps build with the Mac's own Node, Ruby or Rust ([how](docs/build.md#overlays-on-a-mac)).
 - **On Linux**, <a id="set-up"></a>`xless setup --xcode ~/Downloads/Xcode_27.xip`, once per Xcode version
   ([build: on Linux](docs/build.md#on-linux): what it needs and installs).
 - <a id="build-in-docker-instead"></a>**In Docker**, on either: `xless setup --docker --xcode …` once, then
-  `xless run --docker …`. React Native, Tauri and Cargo apps build there ([build: in Docker](docs/build.md#in-docker)).
+  `xless run --docker …`. On Linux, React Native, Tauri and Cargo apps build there
+  ([build: in Docker](docs/build.md#in-docker)).
 - **In WSL 2**, as on Linux, but read [what a build can reach there](docs/security.md#in-wsl) first.
 - <a id="get-xcode"></a>**The Xcode download** that Linux and Docker need: [the versions, and how to get one](docs/xcode-versions.md).
 
