@@ -43,13 +43,13 @@ first. The first API key can only be made with your Apple ID (*web session*):
 
 ```sh
 xless secrets init                          # asks a new passphrase, twice; it cannot be recovered
-xless auth login --keep 30m                 # sign in once (Apple ID, password, the two-factor code); lists your teams
+xless auth login --keep                     # sign in once (Apple ID, password, the two-factor code); lists your teams
 xless team use ABCDE12345                   # your team ID, from that list
 xless auth api-key create --role ADMIN      # the key goes straight into the store, checked, never on disk in clear
 ```
 
-`--keep 30m` keeps the session in the kernel keyring for the next commands of your login session (at most an hour;
-`xless auth logout` drops it); without it each web-session command signs in again. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
+`--keep` keeps the session in memory for the next commands of this terminal (8 hours, at most 2 without use; `--keep 30m`
+for less, `xless auth logout` drops it); without it each web-session command signs in again. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
 and users need it; a key that only ships builds, edits the listing and releases can be `APP_MANAGER`, the default
 ([roles](apple-account.md#xless-auth-api-key)).
 
@@ -98,8 +98,8 @@ even when it fails (exit 20). Details: [`xless provision`](apple-account.md#xles
 xless run .                             # build, sign, upload, deliver to the TestFlight groups of xless.yml
 ```
 
-The build runs the project's SwiftPM plugins and macros as you, but in an empty session keyring and without the
-secret variables: a remembered unlock or a kept Apple ID session is out of their reach
+The build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own and
+without the secret variables: a held unlock or a kept Apple ID session is out of their reach
 ([security.md](security.md#the-build-and-your-secrets)). The keys come from the store: one passphrase per run, nothing in a secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)). For CI, export what it needs once
 (`xless secrets export ASC_KEY_P8@ABCDE12345 --out key.p8`, and the same for `XLESS_DIST_KEY@…`), put the contents into
@@ -256,7 +256,11 @@ pause|resume|complete`). App Review's reasons for a rejection are not in the API
 |---|---|
 | App Store Connect API key (from the environment, a `_FILE` variable or the store) | `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `apps list/show/update/price-points`, `store pull/push` (but App Privacy), `builds`, `users`, `testflight`, `release`, `provision plan` (mostly), `api`, and the pipeline (`sign`, `upload`, TestFlight delivery) |
 | Apple ID web session (*web session*) | `auth login`, `team list`, `auth api-key create/list/revoke`, `apps create`, `store privacy`, `app-groups`, `icloud-containers`, `keys`, and the steps of `provision apply` that need them |
-| Neither | `auth status`, `auth logout`, `team use`, `secrets`, `store validate` |
+| Neither | `auth status`, `auth logout`, `unlock`, `lock`, `team use`, `secrets`, `store validate` |
+
+**Scripts.** `xless unlock` (and `xless auth login --keep`, for the web-session commands) at the start of the day lets the
+scripts of that terminal run without asking, and `--no-input` makes them fail instead of waiting for an answer
+([staying unlocked](secrets.md#staying-unlocked), [checking first](apple-account.md#xless-auth)).
 
 Once an app exists, only new apps, new keys and App Privacy answers need the Apple ID: the rest of a release runs on
 the API key, including in CI. Why, and what each sends where: [security.md](security.md#the-apple-id-web-session).
@@ -264,9 +268,8 @@ the API key, including in CI. Why, and what each sends where: [security.md](secu
 ## Signing out and cleaning up
 
 ```sh
-xless auth logout            # forget the kept Apple ID session
-xless secrets lock           # forget a remembered store unlock
-xless auth status            # which credentials resolve now, from where; reads no secret
+xless lock                   # forget everything held: the store's unlock and the kept Apple ID session
+xless auth status            # which credentials resolve now, from where, and what is held; reads no secret
 ```
 
 Revoking what you no longer use and removing everything xless keeps: [security.md](security.md#wiping-everything).

@@ -3,7 +3,8 @@
 xless errors read `[stage] cause — fix`: the last part says what to do. Exit codes: 2 is `xless run`'s own
 (arguments, a missing file or secret), 10 config, 11 SDK and `xless setup`, 19 prepare, 12 build, 13 assets,
 14 finalize, 15 sign, 16 package, 17 upload ([pipeline.md](pipeline.md#stages)); the Apple account commands exit 20
-(`xless release submit` also 21 and 22), and `xless secrets` exits 10 ([below](#apple-account-commands)). Tauri and React Native apps have
+(`xless release submit` also 21 and 22), `xless secrets` exits 10 ([below](#apple-account-commands)), and any command
+that would have to ask something with `--no-input` exits 23. Tauri and React Native apps have
 their own tables: [tauri.md](tauri.md#troubleshooting), [react-native.md](react-native.md#troubleshooting).
 
 ## Installing
@@ -177,18 +178,24 @@ reports its own errors as `[config]`, exit 10.
 | `xless release submit`: `… PPM.compliance.form.SECURITYASF395E …`, `… AIGENERATEFD1DE …` | Since November 2026 a new app sold in China mainland cannot be submitted until its Security Assessment and AI-Generated or Synthetic Content declarations are answered. They have no App Store Connect API: answer them in App Store Connect (the app → General → App Compliance), or list `availability.territories` without `CHN` and run `xless store push`. Then run `xless release submit` again. |
 | `missing secret ASC_KEY_ID — set ASC_KEY_ID or ASC_KEY_ID_FILE, or keep the API key in the secret store …` | No API key resolves: create one (`xless auth api-key create`), import yours (`xless auth api-key import`), or set the variables. `xless auth status` shows what resolves, from where, without reading a secret. |
 | `there is no secret store at …` (exit 10) | `xless secrets init` first ([secrets.md](secrets.md)). |
-| `the secret store is locked and there is no terminal to ask its passphrase on` | The command runs without a terminal (a script, `nohup`, CI). Run it in a terminal, or unlock first in the same login session: `xless secrets unlock --remember 30m` (Linux). CI uses `NAME` / `NAME_FILE` variables instead of the store. |
+| `the secret store is locked and there is no terminal to ask its passphrase on` | The command runs without a terminal (a script, `nohup`, CI). Run it in a terminal, or run `xless unlock` first in the terminal the script is started from. A cron job or a service is not served by an unlock: it, like CI, uses `NAME` / `NAME_FILE` variables instead of the store. |
+| `[input] --no-input (XLESS_NO_INPUT): xless would ask for …` (exit 23) | The command needed something typed, and `--no-input` is set: the fix says what to hold beforehand (`xless unlock`, `xless auth login --keep`) or which option answers it (`--yes`). `xless auth status --json` shows what is held and until when ([apple-account.md](apple-account.md#xless-auth)). |
+| `xless unlock` was run, and a command still asks the passphrase | It ended: after its time, 2 hours without use, sleep, or (macOS) a locked screen (`xless auth status`); or the command runs in another terminal (run `xless unlock` there too), or in no terminal at all (cron, a service, `ssh host xless …`). Tools that xless runs are refused on purpose ([security.md](security.md#who-may-use-what-the-agent-holds)). |
+| `the xless agent that holds your unlock was started by another xless …` | xless was upgraded, or two installs are in use: `xless lock`, then `xless unlock`. |
+| `… xless-agent … is not a directory`, `belongs to another user`, `can be used by others` | Something else is where the agent's sockets go, so xless neither makes nor uses an agent there. Look at it, then remove it. |
+| `the store cannot be kept unlocked here: …` | No agent can run here (xless was started without a shell, as by `ssh host xless …`, or Linux is older than 5.3) and there is no kernel keyring: each command asks. Run it from a shell (`ssh -t host`, `docker exec -it … bash`). |
 | `the secret store has several entries for ASC_KEY_P8: …` | Pick the team: `--team <TEAM_ID>`, or `xless team use <TEAM_ID>`; entries of a team are named `NAME@<TEAM_ID>` or recorded with `--team-id`. |
 | `… is accessible to other users`, `… is a symlink`, `… belongs to another user` | xless refuses a store others could read or swap, and never fixes it: `chmod 700 ~/.local/share/xless/vault`, `chmod 600` the files in it, or move the symlink away. |
 | `the secret store was written by a newer xless …`, `the entry … was written by a newer xless` | A newer xless changed the store: this one reads the entries it knows but changes nothing. Upgrade xless (run the install line again, [README](../README.md#install)) ([secrets.md](secrets.md#store-format-and-older-xless-releases)). |
 | `the secret store failed its integrity check` | The file, or one entry, was altered or damaged: nothing was read from it. Restore it from a backup, or remove it and import the keys again ([security.md](security.md#wiping-everything)). |
-| `signing in to Apple needs an interactive terminal` | A web-session command ran without a terminal. Run it in one, or keep a session first in this login session: `xless auth login --keep 30m`. |
+| `signing in to Apple needs an interactive terminal` | A web-session command ran without a terminal. Run it in one, or keep a session first in this terminal: `xless auth login --keep`. |
 | `… old two-step verification …` | xless supports two-factor codes and security keys only; use an Apple ID with two-factor authentication (another Admin of the team) or the [browser way](bootstrap.md#appendix-the-same-in-a-browser). |
 | `… security key …` (none connected, `permission denied`, not registered, not touched in time, PIN) | See [Signing in with a security key](apple-account.md#signing-in-with-a-security-key). Over SSH or on a server, `/dev/hidraw*` usually needs the udev rule shown there. |
 | `Apple has agreements or terms pending for this account …` | xless never accepts legal terms. The Account Holder accepts them on the page the error names (App Store Connect > Business, or developer.apple.com/account), then run the command again. |
-| `the kernel keyring is not available here (macOS, or a container that blocks it)` | `--remember` and `--keep` need the Linux kernel keyring. Leave them out: each command asks again. |
+| `the Apple ID session cannot be kept here` | As for the store, above: run without `--keep`, or from a shell. |
+| `the Apple ID session is saved across reboots in xless's encrypted store only` | `--across-reboots` does not work with a credential helper ([why](security.md#across-reboots)): leave it out. |
 | A web-session command fails with `App Store Connect answered HTTP …` or `the developer portal …` | These interfaces are undocumented and may have changed. The error names the page to do it in a browser meanwhile; please report it with the `--verbose` trace (it is redacted: [security.md](security.md#process-hardening)). |
-| `HTTP 401` after `xless auth login --keep` | Apple ended the kept session early: `xless auth logout`, then sign in again. |
+| Apple refuses a kept session before its time | Apple ended it. The command asks for the password (and a code, if Apple wants one) and keeps the new session for the rest of the time; without a terminal, run `xless auth login --keep` in one. |
 | `HTTP 403` from the App Store Connect API | The key's role is too narrow: the fix names the role and `xless auth api-key create --role <ROLE>`. |
 | `API key <ID> was created, but xless does not have its private key` | Apple serves a new key's private key once, and the download or the store failed. Revoke that key (`xless auth api-key revoke <ID>`, or `xless keys revoke <ID>` for an auth key) and create another. |
 

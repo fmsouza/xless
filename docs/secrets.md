@@ -24,8 +24,8 @@ xless ship --platform ios                            # asks the passphrase once,
 | `import <name> --file <path>` | Adds the file's content. `--kind` (default: from the name), `--team-id`, `--key-id`, `--issuer-id`, `--certificate-id`, `--expires YYYY-MM-DD`, `--role` (an API key's), `--services` (an auth key's: `apns,siwa`) record what it is. Then offers to delete the file. |
 | `export <name> --out <path>` | Writes the secret to a new file (mode 0600; an existing file is never overwritten). That copy is in clear: delete it once used. |
 | `rm <name>` | Removes an entry, after asking (`--yes` skips the question). It cannot be recovered. |
-| `unlock --remember 30m` | Keeps the store unlocked for at most an hour (see below). |
-| `lock` | Forgets a remembered unlock now. |
+| `unlock --remember 30m` | Keeps the store unlocked for that long, or without a duration for the default time: the same as [`xless unlock`](#staying-unlocked). |
+| `lock` | Forgets the store's unlock now (`xless lock` forgets everything held). |
 | `passwd` | Changes the passphrase. |
 
 Kinds: `asc-api-key` (an App Store Connect API key: `.p8`, key ID and issuer ID required), `signing-key` (an RSA
@@ -90,8 +90,8 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   one process: one passphrase. With `--config`, steps 1 and 3 are two processes on either side of the build, and each
   asks it: nothing unlocked stays in a process while the build code runs. The build step runs with
   `XLESS_NO_SECRET_STORE=1`: its xless never opens the store, and it leaves the session keyring, so the build code it
-  runs cannot reach a remembered unlock. (Every tool any xless runs, in a project directory's single process too,
-  starts in an empty session keyring with `XLESS_NO_SECRET_STORE=1`:
+  runs cannot reach a held unlock. (Every tool any xless runs, in a project directory's single process too,
+  starts in a POSIX session of its own and an empty session keyring, with `XLESS_NO_SECRET_STORE=1`:
   [security.md](security.md#the-build-and-your-secrets).) This keeps xless itself from handing out a secret there; it
   is no sandbox: code that runs on your machine as you can read your files, which is why the overlays build in Docker.
 - **With `--docker`**, the store is not in any container. Before the first step, the xless on your machine (asking the
@@ -122,16 +122,36 @@ CI keeps using the environment and `_FILE` variables, and never opens the store.
 
 The passphrase is read from the terminal (`/dev/tty`) only, never from a pipe, a file, an argument or the
 environment. A command that needs the store when it is locked and has no terminal (a script, `nohup`) stops with an
-error that says so.
+error that says so; with `--no-input` it stops with exit code 23 even where there is one
+([security.md](security.md#asking-for-nothing---no-input)).
 
 ## Staying unlocked
 
 By default each command that needs the store asks the passphrase once, however many keys it reads and writes (the App
 Store Connect API key and a new certificate's key, say), and forgets the unlocked store when it exits.
-`--remember <duration>` (on `unlock`, `init`, `import` and `export`; at most `1h`) keeps it unlocked in the Linux kernel
-keyring instead: later commands in the same login session (the same terminal and its children) read the store without
-asking, until the time runs out or `xless secrets lock`. Other users, other login sessions of yours, and the tools
-xless runs (the build's plugins and scripts start in an empty keyring) cannot read the cached key. macOS has no kernel keyring, and containers often block it; there `--remember` is refused.
+`xless unlock` keeps it unlocked instead, so a script asks nothing:
+
+```sh
+xless unlock                # the passphrase, once: the store stays unlocked for this terminal
+xless unlock --for 2d       # … for two days; --idle 4h: … and 4 h without use
+xless run . && xless release submit --yes
+xless auth status           # what is held, where, until when (--json for a script)
+xless lock                  # forget everything held, now
+```
+
+- **How long:** 8 hours and at most 2 hours without use, unless you say otherwise; never more than 7 days. Set your own
+  times, and a lower maximum, in `~/.config/xless/config.yml`:
+
+  ```yaml
+  unlock: { duration: 8h, idle: 2h, maximum: 7d }
+  ```
+- **Where:** in memory only, in the xless agent (Linux and macOS), or in the Linux kernel keyring for an hour or less.
+  `--remember [<duration>]` on `unlock`, `init`, `import` and `export` does the same while it does its own work.
+- **For whom:** the commands you run in the same terminal, and the scripts they are in. Another terminal shares it after an
+  `xless unlock` of its own; cron jobs and services are not served. Closing the terminals, putting the
+  machine to sleep, locking the screen (macOS), `passwd` and a replaced store end it too. Other users, and the tools xless
+  runs (the build's plugins and scripts, npm, Docker), never reach it. The whole model, what it does not stop, and how to
+  lock with a Linux screen locker: [security.md](security.md#holding-an-unlock-off-by-default-in-memory).
 
 ## Keeping the secrets in your keyring or pass (credential helpers)
 
@@ -162,7 +182,7 @@ ln -s ~/.local/share/xless/credential-helpers/xless-credential-pass ~/.local/bin
 Every `xless secrets` command works the same with a helper, and so does everything that reads or writes secrets
 (`xless ship`, `xless run`, `xless auth api-key create`, `xless certs create`, `xless keys create`, `xless provision`,
 `sign bootstrap`). A few have nothing to do: `init` checks that the helper answers, `unlock` and `lock` leave locking
-to the keyring, `--remember` is ignored, and `passwd` is refused (change the keyring's or the GnuPG key's password with
+to the keyring (`xless unlock` too), `--remember` is ignored, and `passwd` is refused (change the keyring's or the GnuPG key's password with
 their own tools). Moving from the vault to a helper is done entry by entry: `xless secrets export <name> --out <file>`
 with `backend: vault`, then `xless secrets import <name> --file <file> …` with `backend: helper`, then delete the file.
 
@@ -281,6 +301,6 @@ file (a backup) still opens with the old passphrase, so after a passphrase leak,
 [security.md](security.md) has the whole model: the caches, process hardening, and which host gets what.
 
 The store protects keys at rest: a stolen disk or laptop, a backup or a synced home directory, and other users of the
-machine. It does not protect against malware running as you while the store is unlocked (it can read the process's
-memory or the unlocked key in the kernel keyring, or wait for you to type the passphrase), nor against someone who
-has both the file and the passphrase.
+machine. It does not protect against malware running as you outside what xless starts, while the store is unlocked
+([what it can do](security.md#what-an-attacker-who-runs-as-you-can-do)), nor against someone who has both the file and
+the passphrase.

@@ -38,6 +38,7 @@ and send where, in [security.md](security.md).
 | `--json` | Prints JSON instead of a table (see [JSON output](#json-output)). |
 | `--yes` | Answers yes to the confirmation that every destructive call asks. Without a terminal, such a call is refused unless `--yes` is given; it never goes ahead silently. |
 | `--verbose` | Shows every HTTP exchange with Apple on standard error. The trace never shows the key, the token, a cookie or a secret field: they read `<redacted>`. |
+| `--no-input` | Of every xless command (or `XLESS_NO_INPUT=1`): instead of asking for a passphrase, a sign-in, a choice or a confirmation, it stops at once with `[input]` and exit code **23**. A confirmation that `--yes` answers is not asked, so `--no-input --yes` goes ahead. |
 
 ## The Apple ID web session
 
@@ -51,12 +52,22 @@ fails, the error says which interface it was and which page to use in a browser 
   a touch on a [security key](#signing-in-with-a-security-key) (Linux). Everything is typed on the terminal
   (`/dev/tty`); never read from a pipe, a file, an argument or the environment. Accounts with the old two-step
   verification are not supported.
-- The session's cookies stay in memory and are forgotten when the command ends. Nothing is written to disk, ever.
-- **Opt-in cache:** `xless auth login --keep 30m` seals the cookies with a random key and keeps both in the Linux kernel
-  keyring for that long (at most an hour, never past the session's own expiry). Later commands of the same login
-  session use it without signing in; reading it needs that login session, as with `ssh-agent`. `xless auth logout`
-  drops it, and the kernel drops it when the time is up. There is no cache on macOS or in containers that block the
-  keyring (Docker's default).
+- The session's cookies stay in memory and are forgotten when the command ends. Nothing is written to disk, unless
+  `--across-reboots` asks for it, sealed.
+- **Keeping it:** `xless auth login --keep` seals the cookies with a random key and keeps both in memory for the later
+  commands of the same terminal, so they do not sign in again: in the xless agent, or in the Linux kernel keyring for an
+  hour or less. Without a duration it is kept as long as config.yml's `unlock` says (8 hours, at most 2 without use,
+  unless you change them); `--keep 3d` asks for more, at most 7 days and never past the session's own expiry. It ends when
+  the terminal is closed, the machine sleeps or (macOS) the screen is locked, with `xless auth logout` and with
+  `xless lock` ([who may use it, and when it ends](security.md#holding-an-unlock-off-by-default-in-memory)).
+- **Across reboots:** `--keep 3d --across-reboots` also saves the session in the encrypted store, sealed as its other
+  entries are. After a reboot, a command that needs the session asks the store's passphrase (or nothing, after
+  `xless unlock`) instead of signing in. Off by default; not with a credential helper
+  ([why](security.md#across-reboots)).
+- **When Apple refuses it early:** how long Apple accepts a session is not documented and not known; xless never takes
+  more than Apple's cookie allows. A kept session that Apple refuses is said to be, and the command signs in again: it asks
+  only for the password where Apple still trusts this device (its trusted-device cookie is kept with the session), and for
+  a code only if Apple wants one. What replaces it is kept for the rest of the time. With `--no-input` it stops instead.
 - **Teams:** the developer portal knows a team by its team ID, App Store Connect by a provider number; xless matches
   them by name and asks when several App Store Connect teams share it.
 - **Agreements:** xless never accepts legal terms. When Apple wants new terms accepted, the command stops and names the
@@ -99,15 +110,44 @@ Touch your security key (Yubico YubiKey OTP+FIDO+CCID) to sign in.
 
 ```sh
 xless auth login                  # sign in, list the teams; nothing is kept
-xless auth login --keep 30m       # ... and keep the session for 30 minutes (Linux)
-xless auth status                 # which credentials resolve, from where; the kept session's remaining life
+xless auth login --keep           # ... and keep the session for this terminal, for 8 hours (--keep 30m: 30 minutes)
+xless auth login --keep 3d --across-reboots   # ... and save it, sealed, in the secret store
+xless auth status                 # which credentials resolve, from where; what is held, until when
 xless auth logout                 # forget the kept session
+xless unlock                      # keep the secret store unlocked for this terminal
+xless lock                        # forget everything held: the unlock and the session
 ```
 
 `xless auth status` reads no secret and sends nothing: for `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` it says whether
 each comes from the environment, a `_FILE` variable (and its path) or the secret store (and the entry), for which team,
-and whether an Apple ID session is kept (for whom, until when). App Store Connect does not tell a key its own role, so
-the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#xless-auth-api-key)). `--json` prints the same as a document.
+whether the secret store is unlocked and whether an Apple ID session is kept (where, until when, after how long without use
+it ends), and which commands need that session. App Store Connect does not tell a key its own role, so
+the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#xless-auth-api-key)).
+
+`--json` prints the same as a document, so a script can check before it starts. Besides the API key's fields
+(`team`, `teamSource`, `apiKey`, `keyTeam`, `keyRole`):
+
+| Field | What it says |
+|---|---|
+| `store.state` | `unlocked`; `locked` (a command asks the passphrase); `unavailable` (locked, and it cannot be kept unlocked here); `helper` (a credential helper's own lock, named in `detail`); `missing` (no store); `error` (`detail`) |
+| `store.backend` | `agent` or `keyring`, when unlocked |
+| `store.expires`, `.remainingSeconds` | until when (the keyring's is not known to xless) |
+| `store.idleSeconds`, `.idleRemainingSeconds` | in the agent: how long without use ends it, and how much of that is left |
+| `session.state` | `kept`; `saved` (in the locked store: a command asks its passphrase); `none`; `unavailable` (none, and it cannot be kept here) |
+| `session.appleID`, `.backend`, `.expires`, `.remainingSeconds`, `.idleSeconds`, `.idleRemainingSeconds` | as the store's, when kept; `backend` is `agent`, `keyring` or `store` (saved, and the store is unlocked) |
+| `session.savedUntil` | until when it is saved across reboots, when it is |
+| `session.neededBy` | the commands that need the session; every other one works with the API key, also in CI |
+
+```sh
+# a script that must not stop half-way: everything it needs is held, or it does not start
+xless auth status --json | jq -e '.store.state == "unlocked" and .session.state == "kept"' >/dev/null || exit 1
+export XLESS_NO_INPUT=1      # and should something run out, a command fails with exit code 23 instead of asking
+```
+
+**Keep the web session out of scripts where you can:** the API key in the store covers a release, TestFlight, builds,
+certificates, profiles, devices and the listing, and needs only `xless unlock`. A script needs the Apple ID session only for
+the commands in `neededBy` (creating an app record, App Store Connect keys, auth keys, app groups and iCloud containers,
+and App Privacy).
 
 ## `xless auth api-key`
 
@@ -1032,7 +1072,7 @@ and containers and profile, planned like the app's.
 
 - **`plan`** only reads, and prints the steps grouped by area (`[web]` marks the ones that use the Apple ID web
   session), the **drift** and what **blocks** the plan. Planning never signs in: it uses a session kept by `xless auth
-  login --keep 30m`; without one, the web steps are listed as "checked when applied". It asks the secret store's
+  login --keep`; without one, the web steps are listed as "checked when applied". It asks the secret store's
   passphrase only to read the API key from the store, or to match a stored signing key that has no recorded
   certificate.
 - **`apply`** plans again, shows the plan, asks (or `--yes`) and runs the steps in order in one process: the secret
@@ -1105,7 +1145,8 @@ and says how many minutes to wait.
 ## Errors
 
 An account command that fails prints `[account] cause — fix` on standard error and exits with code **20** (`xless
-release submit` also exits with 21 and 22: [above](#xless-release)). The cause
+release submit` also exits with 21 and 22: [above](#xless-release)); one that would have to ask something with
+`--no-input` prints `[input] …` and exits with **23**. The cause
 names the request (`GET /v1/apps/123`) and Apple's error code, detail and the field it points at. A failure of the
 Apple ID web session names the interface (App Store Connect's or the developer portal's), says it is undocumented and
 gives the page to use meanwhile; a refused session (HTTP 401) asks to sign in again (`xless auth logout` first when a

@@ -12,14 +12,15 @@ build. The pages below go further.
   notarized DMG, and running in CI.
 - [account.md](account.md): your Apple account from the terminal, by task: the first app from zero with
   `xless provision`, adding a device, rotating a certificate, inviting a tester, releasing.
-- [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, and how the
-  pipeline reads it.
-- [security.md](security.md): the threat model and what xless guarantees: the secret store's format, the opt-in
-  caches, process hardening, what goes to which Apple host, the web-session commands, and how to wipe everything.
+- [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, how the
+  pipeline reads it, and keeping it unlocked (`xless unlock`, `xless lock`).
+- [security.md](security.md): the threat model and what xless guarantees: the secret store's format, what
+  `xless unlock` and `--keep` hold and who may use it, process hardening, what goes to which Apple host, the web-session commands, and how to wipe everything.
 - [apple-account.md](apple-account.md): the reference of every Apple account command (`xless auth`, `team`,
   `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `app-groups`, `icloud-containers`, `keys`, `apps`,
   `store`, `builds`, `users`, `testflight`, `release`, `provision`, `api`, and the shared `--team`, `--json`, `--yes`,
-  `--verbose`), the Apple ID web session, their JSON output, rate limits and `[account]` errors (exit code 20).
+  `--verbose`, `--no-input`), the Apple ID web session, their JSON output, rate limits and `[account]` errors (exit
+  code 20).
 - [appstore-manifest.md](appstore-manifest.md): the App Store listing as an `appstore/` directory, `xless store pull`,
   `xless store validate` and `xless store push`.
 - [bootstrap.md](bootstrap.md): the one-time Apple setup from the terminal (API key, `xless provision`, or bundle ID,
