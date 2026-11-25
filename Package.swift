@@ -109,7 +109,7 @@ let package = Package(
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
             "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore", "XlessRun", "XlessImages", "CXlessProcess",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        ]),
+        ], linkerSettings: [.unsafeFlags(["-Xlinker", "-adhoc_codesign"], .when(platforms: [.macOS]))]), // the agent knows it by its signature; for Intel the linker makes none by itself
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
         // Not a product: `--product xless` (image builds) skips it; only `swift run IBDifferential` builds it.
         .executableTarget(name: "IBDifferential", dependencies: ["XlessIB", "XlessCore"]),

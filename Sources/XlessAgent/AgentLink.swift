@@ -227,14 +227,17 @@ final class AgentLink {
         let mine = AgentSession.current
         isSameSession = mine.isUsable && peer.session == mine && peer.uid == geteuid()
         #if os(macOS)
-        // nil: its file was replaced or removed, or it is not the code of that file, or the system does not tell.
-        if isSameSession, peer.program == nil || peer.program != AgentProgram.current {
-            throw AgentError.versionMismatch(theirs: printableVersion(version) + ", another program file")
-        }
+        if isSameSession { try Self.compare(peer.program, with: .current, version: version) }
         #endif
     }
 
-    private func printableVersion(_ text: String) -> String { Self.printable(text) }
+    #if os(macOS)
+    /// - Parameter theirs: nil: its file was replaced or removed, or it is not the code of that file, or the system does not tell.
+    static func compare(_ theirs: AgentProgram?, with mine: AgentProgram?, version: String) throws {
+        guard let mine else { throw AgentLauncher.untold() }
+        guard theirs == mine else { throw AgentError.versionMismatch(theirs: printable(version) + ", another program file") }
+    }
+    #endif
 
     /// For tests: this connection as a command of another terminal sees it.
     func pretendAnotherSession() { isSameSession = false }

@@ -35,7 +35,7 @@ private final class Programs {
 
     func build(_ name: String, _ source: String, _ arguments: [String] = []) throws {
         try Data(source.utf8).write(to: URL(fileURLWithPath: path(name + ".c")))
-        try run("/usr/bin/cc", ["-o", path(name), path(name + ".c")] + arguments)
+        try run("/usr/bin/cc", ["-Wl,-adhoc_codesign", "-o", path(name), path(name + ".c")] + arguments) // for Intel the linker signs only then
     }
 
     /// Runs it, and asks the kernel who connected.
@@ -91,7 +91,7 @@ private final class Programs {
                 return speak(v[1]);
             }
             """).utf8).write(to: URL(fileURLWithPath: path("code.c")))
-        try run("/usr/bin/cc", ["-dynamiclib", "-install_name", path("code.dylib"), "-o", path("code.dylib"), path("code.c")])
+        try run("/usr/bin/cc", ["-Wl,-adhoc_codesign", "-dynamiclib", "-install_name", path("code.dylib"), "-o", path("code.dylib"), path("code.c")])
         try build(name, """
             #include <mach-o/ldsyms.h>
             int fool(const void *, char **);

@@ -137,6 +137,10 @@ x86_64`. They are for macOS 14.0 and later and run in CI on macOS 15 (arm64 and 
 macOS 14 runner any more. `swift test` runs on arm64 only, since no Intel runner has that Swift: there the installed
 program is run, with the shell tests of the agent and the prompts.
 
+- **Each is signed ad hoc**, by `package-release.sh` (`codesign --sign -`, with the hardened runtime and `restrict`), whatever the
+  linker did: the agent tells xless by its signature, and for x86_64 the linker makes none by itself. `check-macos-binary.sh`
+  refuses a program without it, when it is packaged and again when it was installed. A build from source has the linker's
+  (`-adhoc_codesign` in `Package.swift`); the `package` jobs check that too, for both architectures.
 - **Nothing of Apple's is in them.** The Swift runtime and everything else is the system's. The build passes
   `-runtime-compatibility-version none`, so the compiler adds none of its `libswiftCompatibility*` archives, which only
   systems before macOS 14 need. `package-release.sh` runs the checks, and makes no package when one fails:

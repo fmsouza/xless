@@ -188,8 +188,9 @@ An agent serves a process only when **all** of these hold, each taken from the k
    and inode, so a moved or renamed `xless` is still the same one), and the same code: the hash of the code directory that
    the kernel started it with (`SecCodeCheckValidity` for its audit token), which must also be the hash of the file at its
    path. A program can have xless's file mapped and at its own path; it cannot have the hash. What is not signed, or cannot
-   be told, is refused, and an agent that cannot tell its own program does not start. After an upgrade, the new `xless` is
-   another program: it says so, and `xless lock` ends the agent of the old one.
+   be told, is refused, and an agent that cannot tell its own program does not start (releases are signed ad hoc, and so is
+   a build from source, by the linker). After an upgrade, the new `xless` is another program: it says so, and `xless lock`
+   ends the agent of the old one.
 
    This keeps other programs, and other builds of xless, from speaking to the agent themselves. It keeps out nobody who is
    in a granted session (they can run xless), and in a build of your own, where macOS takes `DYLD_INSERT_LIBRARIES` and

@@ -45,21 +45,32 @@ public enum AgentLauncher {
     static let channel: Int32 = 3
 
     #if os(macOS)
-    static let untold = AgentError(.unavailable, "macOS does not say which program xless is (it has no valid code signature, or it runs where processes are hidden, as in a sandbox), so nothing can be told from it",
-                                   fix: "run xless outside the sandbox; a program of your own needs a signature: codesign --sign - <xless>")
+    /// Why this program, the one at `path`, is not told from another.
+    static func untold(_ path: String? = ownPath()) -> AgentError {
+        if let path, AgentProgram.isUnsigned(path) {
+            return AgentError(.unavailable, "this xless has no code signature (a build that nothing signed), so macOS does not say which program it is, and nothing can be told from it",
+                              fix: "sign it, then run the command again: codesign --sign - \(ShellWord.quoted(path))")
+        }
+        return AgentError(.unavailable, "macOS does not say which program xless is (its code signature is not valid, or it runs where processes are hidden, as in a sandbox), so nothing can be told from it",
+                          fix: "run xless outside the sandbox, or install (or build) it again")
+    }
+
+    /// Where the kernel says that this program is, also after it was moved; nil when it does not.
+    static func ownPath() -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(getpid(), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
 
     /// This program's file. Throws where it was replaced or removed while it runs (what is there now is not this program), and
     /// where the system does not say which program it is.
     static func executablePath(mapped: AgentExecutable? = .current, program: AgentProgram? = .current) throws -> String {
-        guard let mapped else { throw untold }
+        guard let mapped else { throw untold() }
         // The kernel's path follows a file that was moved, where the one it was started by does not.
-        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
-        let length = proc_pidpath(getpid(), &buffer, UInt32(buffer.count))
-        let path = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        guard length > 0, AgentExecutable(at: path) == mapped else {
+        guard let path = ownPath(), AgentExecutable(at: path) == mapped else {
             throw AgentError(.failed, "xless was replaced or removed while it runs, so it cannot start its agent", fix: "run the command again")
         }
-        guard program != nil else { throw untold }
+        guard program != nil else { throw untold(path) }
         return path
     }
     #else

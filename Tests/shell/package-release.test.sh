@@ -214,6 +214,20 @@ if [[ "$(uname)" == Darwin ]] && cc=$(command -v clang); then
   "$cc" -arch "$host" -mmacosx-version-min=14.0 -dynamiclib -install_name @rpath/libf.dylib "$t/f.c" -o "$t/libf.dylib"
   "$cc" -arch "$host" -mmacosx-version-min=14.0 "$t/m.c" "$t/libf.dylib" -o "$t/needs"; no "$host" "$t/needs" "needs what is not the system's: @rpath/libf.dylib"
   bash "$repo/scripts/check-macos-binary.sh" "$t/prog" "$host" >/dev/null 2>&1 && fail "a binary signed by the linker only is accepted"
+  # What the linker leaves unsigned (for Intel, by itself, everything): no program of a package, and its package has a signature.
+  "$cc" -arch x86_64 -mmacosx-version-min=14.0 -Wl,-no_adhoc_codesign "$t/m.c" "$t/f.c" -o "$t/unsigned"
+  codesign --verify "$t/unsigned" 2>/dev/null && fail "the linker signed it all the same"
+  bash "$repo/scripts/check-macos-binary.sh" "$t/unsigned" x86_64 >/dev/null 2>"$t/err" && fail "an unsigned binary is accepted"
+  grep -qF "does not verify" "$t/err" || fail "unsigned: $(cat "$t/err")"
+  XLESS_CODESIGN=true; export XLESS_CODESIGN; no x86_64 "$t/unsigned" "does not verify"; unset XLESS_CODESIGN
+  XLESS_STRIP=strip bash "$repo/scripts/package-release.sh" --os macos 1.2.3 x86_64 "$t/unsigned" "$t/out" >/dev/null 2>"$t/err" || fail "no package of an unsigned binary: $(cat "$t/err")"
+  rm -rf "$x"; mkdir "$x"; tar -xzf "$t/out/xless-1.2.3-macos-x86_64.tar.gz" -C "$x"
+  signature=$(codesign -dvv "$x/xless-1.2.3-macos-x86_64/bin/xless" 2>&1)
+  [[ "$signature" == *"flags=0x10802(adhoc,restrict,runtime)"* ]] || fail "x86_64 signature: $signature"
+  # And what our own link flag (Package.swift) does for it: a build from source that its own agent can tell.
+  grep -qF '"-Xlinker", "-adhoc_codesign"' "$repo/Package.swift" || fail "Package.swift leaves an Intel build unsigned"
+  "$cc" -arch x86_64 -mmacosx-version-min=14.0 -Wl,-adhoc_codesign "$t/m.c" "$t/f.c" -o "$t/signed"
+  codesign --verify --strict "$t/signed" || fail "-adhoc_codesign signs nothing"
 fi
 
 # A run path that cannot be taken out says why.

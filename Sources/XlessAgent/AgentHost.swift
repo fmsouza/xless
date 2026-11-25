@@ -57,7 +57,7 @@ public enum AgentHost {
     #if os(macOS)
     /// The program that commands must run. An agent that cannot tell its own would have to take any.
     static func program(_ current: AgentProgram? = .current) throws -> AgentProgram {
-        guard let current else { throw AgentLauncher.untold }
+        guard let current else { throw AgentLauncher.untold() }
         return current
     }
     #endif

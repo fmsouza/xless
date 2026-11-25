@@ -104,4 +104,34 @@ private func refusing(_ why: AgentRefusal) -> String {
         #expect(untold.kind == .unavailable && untold.cause.contains("does not say which program") && !untold.cause.contains("replaced"))
     }
 }
+
+/// What `swift build` makes where the linker signs nothing: that there is no signature is said, and the command that makes one.
+@Test func aProgramWithoutASignatureIsToldToSignItself() throws {
+    func run(_ tool: String, _ arguments: [String]) throws { try #require(try Shell.run(tool, arguments, stage: .build).status == 0) }
+    let scratch = ScratchBox()
+    let path = scratch.path + "/it's mine"
+    try Data("int main(void) { return 0; }".utf8).write(to: URL(fileURLWithPath: scratch.path + "/p.c"))
+    try run("/usr/bin/cc", ["-Wl,-adhoc_codesign", "-o", path, scratch.path + "/p.c"])
+    #expect(AgentLauncher.untold(path).cause.contains("does not say which program"))
+    try run("/usr/bin/codesign", ["--remove-signature", path])
+    let unsigned = AgentLauncher.untold(path)
+    #expect(unsigned.kind == .unavailable && unsigned.cause.contains("no code signature"))
+    let command = try #require(unsigned.fix.range(of: "codesign --sign - ").map { String(unsigned.fix[$0.lowerBound...]) })
+    try run("/bin/sh", ["-c", command])
+    #expect(AgentLauncher.untold(path).cause.contains("does not say which program"))
+    // Nothing to look at: what is not known is not said.
+    #expect(AgentLauncher.untold(nil).cause.contains("does not say which program"))
+    #expect(AgentLauncher.untold(scratch.path + "/none").cause.contains("does not say which program"))
+}
+
+@Test func anAgentsProgramIsComparedWithThisOnesOnlyWhenThatIsKnown() throws {
+    let mine = try #require(AgentProgram.current)
+    let other = AgentProgram(file: mine.file, code: [1])
+    func why(_ theirs: AgentProgram?, _ mine: AgentProgram?) -> AgentError? {
+        do { try AgentLink.compare(theirs, with: mine, version: "1"); return nil } catch { return error as? AgentError }
+    }
+    #expect(why(mine, mine) == nil)
+    for e in [why(other, mine), why(nil, mine)] { #expect(e?.kind == .version) }
+    for theirs in [mine, nil] { #expect(why(theirs, nil)?.kind == .unavailable) } // not "another xless", which no `xless lock` would help
+}
 #endif

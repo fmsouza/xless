@@ -55,6 +55,13 @@ struct AgentProgram: Equatable, Sendable {
         self.init(file: AgentExecutable(device: peer.exe_device, inode: peer.exe_inode), code: code)
     }
 
+    /// Whether the file at `path` has no code signature at all: what runs of it has no hash.
+    static func isUnsigned(_ path: String) -> Bool {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess, let code else { return false }
+        return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSBasicValidateOnly), nil) == errSecCSUnsigned
+    }
+
     /// The hash of the code that the process of an audit token (its version included) runs, by the kernel's word.
     ///
     /// The API that tells the hash reads it from the file at the process's path. `SecCodeCheckValidity` is what asks the kernel:

@@ -59,7 +59,10 @@ runs:
         map="$RUNNER_TEMP/xless-$ARCH.map"
         build=(swift build -c release --product xless --arch "$ARCH" -Xswiftc -runtime-compatibility-version -Xswiftc none -Xlinker -map -Xlinker "$map")
         "${build[@]}"
-        echo "XLESS_BIN=$("${build[@]}" --show-bin-path)/xless" >> "$GITHUB_ENV"
+        bin="$("${build[@]}" --show-bin-path)/xless"
+        # Package.swift has the linker sign it, for x86_64 too: what is built from source works without a step more.
+        codesign --verify --strict --verbose "$bin"
+        echo "XLESS_BIN=$bin" >> "$GITHUB_ENV"
         echo "XLESS_LINK_MAP=$map" >> "$GITHUB_ENV"
     - name: The binary reports the stamped version
       if: inputs.stamp == 'true'
