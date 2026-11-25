@@ -221,8 +221,8 @@ public struct StoreSender: Sendable {
     func send(_ request: StoreRequest, path: String) async throws -> String? {
         guard let name = request.secret else {
             do {
-                let response = try await client.request(request.method, path, body: try request.body.map { try JSONEncoder().encode($0) },
-                                                        maxAttempts: request.method == "POST" ? 1 : ASCClient.maxAttempts)
+                let response = try await ASCDirectRequests(client: client).request(request.method, path, body: try request.body.map { try JSONEncoder().encode($0) },
+                                                                                  maxAttempts: request.method == "POST" ? 1 : ASCClient.maxAttempts)
                 return Self.createdID(response.data)
             } catch let e as ASCError where request.method == "DELETE" && e.status == 404 {
                 return nil  // already gone (a retried DELETE whose first attempt went through)
@@ -231,7 +231,7 @@ public struct StoreSender: Sendable {
         let value = try value(of: name)
         let body = Self.inject(value, into: request.body ?? .object([:]))
         do {
-            let response = try await client.request(request.method, path, body: try JSONEncoder().encode(body), maxAttempts: 1)
+            let response = try await ASCDirectRequests(client: client).request(request.method, path, body: try JSONEncoder().encode(body), maxAttempts: 1)
             return Self.createdID(response.data)
         } catch let error as ASCError {
             throw Self.scrub(error, value)

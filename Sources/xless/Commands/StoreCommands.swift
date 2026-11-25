@@ -156,7 +156,7 @@ enum StoreDownload {
         var sink: FileSink?
         defer { sink?.close() }
         do {
-            try await client.download(URLRequest(url: url)) {
+            try await ASCDirectRequests(client: client).download(URLRequest(url: url)) {
                 sink?.close()
                 let fresh = try FileSink(file)
                 sink = fresh

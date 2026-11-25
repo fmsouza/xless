@@ -119,7 +119,7 @@ struct ProvisionVault: @unchecked Sendable {
 struct APIProvisionAccount: ProvisionAccount {
     let resources: ASCResources
 
-    var issuerID: String { resources.client.issuerID }
+    var issuerID: String { resources.issuerID }
     var signing: APISigningAccount { APISigningAccount(resources: resources, stage: .account) }
     var certificates: ASCCertificates { ASCCertificates(resources: resources) }
 

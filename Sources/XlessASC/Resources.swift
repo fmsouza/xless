@@ -120,7 +120,10 @@ enum ASCSettled<R: Sendable>: Sendable {
 /// listings that follow `links.next`, reads with `include`, creates, updates, deletes and relationship linkage. Untyped
 /// resources decode as `ASCAnyResource` / `JSONValue`.
 public struct ASCResources: Sendable {
-    public let client: ASCClient
+    /// Not public: outside XlessASC a path reaches Apple through a service (or `ASCDirectRequests`, by name).
+    let client: ASCClient
+    /// The issuer of the API key the requests are made with.
+    public var issuerID: String { client.issuerID }
     /// The page size asked when the query sets none: App Store Connect's maximum for most listings.
     public static let defaultLimit = 200
 

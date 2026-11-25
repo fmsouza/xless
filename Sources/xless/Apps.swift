@@ -55,7 +55,7 @@ struct KeyAppCreationAPI: AppCreationAPI {
     let issuerID: String
 
     init(resources: ASCResources) {
-        apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources); issuerID = resources.client.issuerID
+        apps = ASCApps(resources: resources); bundleIDs = ASCBundleIDs(resources: resources); issuerID = resources.issuerID
     }
 
     func findApp(bundleID: String) async throws -> AppSummary? { try await apps.find(bundleID: bundleID).map(AppSummary.init) }
