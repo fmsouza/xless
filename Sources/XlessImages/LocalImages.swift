@@ -64,7 +64,10 @@ public struct LocalImages {
     }
 
     private static func quoted(_ path: String) -> String {
-        path.wholeMatch(of: /[A-Za-z0-9_.\/:@%+=-]+/) != nil ? path : "'\(path.replacing("'", with: "'\\''"))'"
+        if path.wholeMatch(of: /[A-Za-z0-9_.\/:@%+=-]+/) != nil { return path }
+        // by its bytes: to Swift a ' and a mark that combines with it are one Character, which is not '
+        let parts = path.utf8.split(separator: UInt8(ascii: "'"), omittingEmptySubsequences: false)
+        return "'\(parts.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "'\\''"))'"
     }
 
     /// The image of the pinned Xcode; without a pin, that of the newest Xcode there is one of.

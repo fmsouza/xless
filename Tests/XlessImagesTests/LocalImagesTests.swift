@@ -125,6 +125,9 @@ func problem(_ body: () throws -> some Any) -> String {
         #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.contains("build it: xless setup --docker --sdk /c/sdk/xcode26.6-17F113 --arch arm64 (from the SDK export in the cache; when that is gone: "))
         #expect(problem { try docker.local.base(arch: "arm64", pin: "27.0") }.contains("build it: xless setup --docker --sdk '/c/sdk x/xcode27.0-27A266a' --arch arm64 ("))
         #expect(problem { try docker.local.base(arch: "arm64", pin: nil) }.contains("xless setup --docker --sdk '/c/sdk x/xcode27.0-27A266a' --arch arm64 ("))
+        // quoted by its bytes: a mark after a quote makes them one Character
+        docker.exports[1].directory = "/c/a'\u{301}; b"
+        #expect(problem { try docker.local.base(arch: "arm64", pin: "27.0") }.contains(" --sdk '/c/a'\\''\u{301}; b' --arch arm64 ("))
     }
 
     @Test func theExportsAreWhatTheCacheHolds() throws {
