@@ -1,48 +1,70 @@
 # xless documentation
 
-Start with the [README](../README.md): what xless is, what you need, the install line, `xless setup`, and a first
-build. The pages below go further.
+The [README](../README.md) says what xless is and how to install it. These are the pages by task.
 
-## Using xless
+## Get started
 
-- [pipeline.md](pipeline.md): how a build runs, the images, the stages (`build` → `assets` → `finalize` → `sign` →
-  `package` → `upload`) and their exit codes.
-- [xless-yml.md](xless-yml.md): the `xless.yml` reference, for Swift package apps.
-- [signing-and-testflight.md](signing-and-testflight.md): secrets, build numbers, `xless run` up to TestFlight, the
-  notarized DMG, and running in CI.
-- [account.md](account.md): your Apple account from the terminal, by task: the first app from zero with
-  `xless provision`, adding a device, rotating a certificate, inviting a tester, releasing.
-- [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, how the
-  pipeline reads it, and typing its passphrase once: keeping it unlocked (`xless unlock`, `xless lock`), one unlock for a
-  script (`xless session`).
-- [security.md](security.md): the threat model and what xless guarantees: the secret store's format, what
-  `xless unlock` and `--keep` hold and who may use it, process hardening, what goes to which Apple host, the web-session commands, and how to wipe everything.
-- [apple-account.md](apple-account.md): the reference of every Apple account command (`xless auth`, `team`,
-  `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `app-groups`, `icloud-containers`, `keys`, `apps`,
-  `store`, `builds`, `users`, `testflight`, `release`, `provision`, `api`, and the shared `--team`, `--json`, `--yes`,
-  `--verbose`, `--no-input`), the Apple ID web session, their JSON output, rate limits and `[account]` errors (exit
-  code 20).
+- [get-started.md](get-started.md): five paths, each to the end: nothing yet, an app on App Store Connect, only building, only the
+  account, CI.
+- [install.md](install.md): upgrades, versions, checking a download.
+- [systems.md](systems.md): what works on Linux, macOS, Windows and WSL 2, what does not, and what is planned.
+- [troubleshooting.md](troubleshooting.md): install, setup, build and App Store Connect errors, and known gaps.
+- [uninstall.md](uninstall.md): `xless clean`, freeing disk space after an upgrade, and uninstalling.
+
+## Set up the account and the app
+
+- [account.md](account.md): what you need first, and by task: a device, a certificate, push keys, cleaning up.
+- [bootstrap.md](bootstrap.md): the setup one step at a time instead of `xless provision`, and the same in a browser.
+
+## The listing and the App Store
+
 - [appstore-manifest.md](appstore-manifest.md): the App Store listing as an `appstore/` directory, `xless store pull`,
   `xless store validate` and `xless store push`.
-- [bootstrap.md](bootstrap.md): the one-time Apple setup from the terminal (API key, `xless provision`, or bundle ID,
-  certificates and app record one at a time), and the same in a browser.
+- [testflight.md](testflight.md): invite internal and external testers.
+- [release.md](release.md): the submission to App Review, and the release.
+
+## Build
+
+- [build.md](build.md): build an app on a Mac, on Linux, in Docker and in WSL 2.
+- [xcode-versions.md](xcode-versions.md): the supported Xcode versions, and how to download one;
+  [xcode-download.md](xcode-download.md): `xless xcode download`, and what happens to your Apple ID and password.
 - [react-native.md](react-native.md): React Native / Expo iOS apps, with app extensions and simulator builds.
 - [tauri.md](tauri.md): Tauri v2 apps, for iOS and macOS.
 - [cargo.md](cargo.md): plain Cargo apps (a Rust binary with its own event loop), for iOS and macOS.
-- [troubleshooting.md](troubleshooting.md): install, setup, build and App Store Connect errors, and known gaps.
+- [native-install.md](native-install.md): without Docker: what goes where on Linux, what is used on a Mac, what there is on Windows.
+- [images.md](images.md): the Docker image (`--docker`), the kits for Tauri, Cargo and React Native apps, an image of your own, and
+  how to build it by hand.
 
-## Installing and images
+## Sign and ship
 
-- [install.md](install.md): upgrades, versions, checking a download.
-- [build.md](build.md): build an app on a Mac, on Linux and in Docker.
-- [systems.md](systems.md): what works on Linux, macOS, Windows and WSL 2.
-- [xcode-versions.md](xcode-versions.md): the supported Xcode versions, and how to download one.
+- [signing-and-testflight.md](signing-and-testflight.md): secrets, build numbers, `xless run` up to TestFlight, the
+  notarized DMG, the Mac App Store package, and what `sign` changes on the account.
+
+## Automate and CI
+
+- [automate.md](automate.md): runs without questions, exit codes, several apps, checking a configuration, pulling and pushing
+  listings.
+- [ci.md](ci.md): the secrets of a job, the flags, the runner; [examples/example-ios.yml](examples/example-ios.yml) is an example
+  GitHub Actions workflow for an app repository.
+
+## Security
+
+- [security.md](security.md): the threat model and what xless guarantees: the secret store's format, what
+  `xless unlock` and `--keep` hold and who may use it, process hardening, what goes to which Apple host, the web-session commands, and
+  how to wipe everything.
+- [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, how the
+  pipeline reads it, and typing its passphrase once: keeping it unlocked (`xless unlock`, `xless lock`), one unlock for a
+  script (`xless session`).
 - [apple-requirements.md](apple-requirements.md): everything xless needs from Apple, and the audit behind that list.
-- [xcode-download.md](xcode-download.md): `xless xcode download`, one terminal sign-in to Apple for any number of Xcode
-  `.xip`s, and what happens to your Apple ID and password.
-- [images.md](images.md): the Docker image (`--docker`), the kits for Tauri, Cargo and React Native apps, an image of your own, and how to build it by hand.
-- [native-install.md](native-install.md): the native install `xless setup` makes (the default): what goes where, and its limits.
-- [uninstall.md](uninstall.md): `xless clean`, freeing disk space after an upgrade, and uninstalling.
+
+## Reference
+
+- [apple-account.md](apple-account.md): every Apple account command, the shared options, the Apple ID web session, their JSON output,
+  rate limits and `[account]` errors (exit code 20).
+- [xless-yml.md](xless-yml.md): the `xless.yml` of a Swift package app.
+- The overlays: [Tauri](tauri.md), [Cargo](cargo.md), [React Native](react-native.md#overlay-reference).
+- [pipeline.md](pipeline.md): how a build runs, the stages (`build` → `assets` → `finalize` → `sign` →
+  `package` → `upload`) and their exit codes.
 
 ## Working on xless
 
@@ -50,9 +72,8 @@ build. The pages below go further.
   versions are computed.
 - [maintainers.md](maintainers.md): the Mac tools, the parity tests, measuring a new Xcode, images on other machines, releases
   and the repository settings.
-- [examples/example-ios.yml](examples/example-ios.yml): an example GitHub Actions workflow for an app repository.
 
-## Research notes
+### Research notes
 
 Measurements and decisions behind the code, in [research/](research/):
 
@@ -65,7 +86,7 @@ Measurements and decisions behind the code, in [research/](research/):
 - [The React Native iOS contract](research/react-native-ios-contract.md) and [the Tauri iOS contract](research/tauri-ios-contract.md)
 - [What M7 has not verified against a real Apple account](research/m7-live-checklist.md), and where #105 checks it
 
-## Acceptance records
+### Acceptance records
 
 What each milestone checked, and how: [m2a](acceptance-m2a.md), [m2b](acceptance-m2b.md), [m2c](acceptance-m2c.md),
 [m3](acceptance-m3.md), [m4](acceptance-m4.md), [m5](acceptance-m5.md) (releases, and setup from a `.xip` on a fresh Linux VM),

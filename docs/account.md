@@ -7,7 +7,7 @@ users, the review submission and the release. This page has what you need first,
 [get-started.md](get-started.md). Every command, option and JSON shape is in the reference, [apple-account.md](apple-account.md); what xless keeps, where, and what it sends to which host is
 in [security.md](security.md).
 
-> **Status.** Most of this was run once on a real Apple account, for one new app, from its first API key to a build on a tester's
+> **Status.** The way of a new app was run once on a real Apple account, from its first API key to a build on a tester's
 > device and the submission to App Review ([the record](acceptance-m7.md#record), 2026-11-24). The approval and `release publish`
 > were not ([#181](https://github.com/fmsouza/xless/issues/181)); what that run did not use is tested against recorded Apple
 > answers. The parts that use the Apple ID web session (marked *web session* below) rely on Apple's undocumented web interfaces and
