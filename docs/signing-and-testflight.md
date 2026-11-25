@@ -215,8 +215,8 @@ xless: sign: 3 changes on the account:
 - It never makes or revokes a certificate (`xless sign bootstrap`), and never touches any other profile, app group,
   iCloud container, device or the app record. `xless provision` plans and makes those
   ([apple-account.md](apple-account.md#xless-provision)), from the same checks.
-- A request whose answer is lost (a dropped connection, HTTP 5xx) is not sent again blindly: `sign` looks whether the
-  bundle ID or the profile was made, and sends it again only when it was not.
+- What it creates is sent again after a failure that says nothing (a dropped connection, HTTP 429 or 5xx) only once
+  reading shows nothing was made, at most 5 times in all; one that was made is used. `provision` does the same.
 
 To let `sign` change nothing, pass `--no-provisioning-updates` (`xless sign`, `xless ship`, `xless run …
 --no-provisioning-updates`), or set `provisioningUpdates: false` in xless.yml or the overlay. `sign` then only reads:

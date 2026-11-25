@@ -60,7 +60,8 @@ public protocol SigningAccount: Sendable {
     func createProfile(name: String, type: ProfileType, bundleResourceID: String, bundleID identifier: String, certificateID: String) async throws -> SigningProfile
 }
 
-/// The documented App Store Connect API, with the API key. `stage`: the stage of its errors.
+/// The documented App Store Connect API, with the API key, for `sign` and `provision` alike. A create (a bundle ID, a
+/// capability, a profile) is sent again only after reading shows nothing was made. `stage`: the stage of its errors.
 public struct APISigningAccount: SigningAccount {
     public let resources: ASCResources
     public let stage: Stage
@@ -75,9 +76,7 @@ public struct APISigningAccount: SigningAccount {
     /// UNIVERSAL, whatever the platform: the same identifier then carries the iOS (IOS_APP_STORE) and the macOS
     /// (MAC_APP_DIRECT) profile.
     public func register(bundleID identifier: String) async throws -> String {
-        try await resources.settled(lookup: { try await bundleIDs.find(identifier: identifier)?.id }, create: {
-            try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal).bundleID.id
-        })
+        try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal).bundleID.id
     }
 
     public func capabilities(of bundleResourceID: String) async throws -> [SigningCapability] {

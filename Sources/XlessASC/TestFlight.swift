@@ -244,29 +244,9 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
-    /// What became of a create.
-    private enum Settled<R: Sendable>: Sendable {
-        case made(R)
-        /// Found by reading: `ours` when an answer of this create was lost (this request made it), else it was there.
-        case found(R, ours: Bool)
-
-        var outcome: Outcome<R> {
-            switch self {
-            case .made(let r), .found(let r, ours: true): .created(r)
-            case .found(let r, ours: false): .unchanged(r)
-            }
-        }
-    }
-
-    /// `ASCResources.settled`, telling what was made from what was found.
-    private func settle<R: Sendable>(lookup: () async throws -> R?, create: () async throws -> R) async throws -> Settled<R> {
-        var lost = false
-        return try await resources.settled(lookup: { try await lookup().map { .found($0, ours: lost) } }, create: {
-            do { return .made(try await create()) } catch {
-                if (error as? ASCError)?.status != 409 { lost = true }
-                throw error
-            }
-        })
+    /// A create that was made, or one that was there already.
+    private static func outcome<R: Sendable>(_ settled: ASCSettled<R>) -> Outcome<R> {
+        settled.existed ? .unchanged(settled.value) : .created(settled.value)
     }
 
     // MARK: Groups
@@ -313,11 +293,11 @@ public struct ASCTestFlight: Sendable {
         struct Attributes: Encodable, Sendable { var name: String; var isInternalGroup: Bool; var hasAccessToAllBuilds: Bool?; var feedbackEnabled: Bool? }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
         let attributes = Attributes(name: name, isInternalGroup: !external, hasAccessToAllBuilds: external ? nil : allBuilds, feedbackEnabled: feedback)
-        return try await settle(lookup: { try await groups(app: appID).first { $0.name == name && $0.isInternal == !external } }, create: {
+        return Self.outcome(try await resources.settle(lookup: { try await groups(app: appID).first { $0.name == name && $0.isInternal == !external } }, create: {
             let created: ASCSingle<ASCBetaGroup> = try await resources.create("/v1/betaGroups", type: "betaGroups", attributes: attributes,
                                                                              relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
             return created.data
-        }).outcome
+        }))
     }
 
     /// The settings `updateGroup` changes; nil leaves one as it is.
@@ -433,7 +413,7 @@ public struct ASCTestFlight: Sendable {
         }
         struct Attributes: Encodable, Sendable { var email: String; var firstName: String?; var lastName: String? }
         struct Relationships: Encodable, Sendable { var betaGroups: ASCToMany }
-        let settled = try await settle(lookup: { try await findTester(email: request.email, app: appID) }, create: {
+        let settled = try await resources.settle(lookup: { try await findTester(email: request.email, app: appID) }, create: {
             let created: ASCSingle<ASCBetaTester> = try await resources.create(
                 "/v1/betaTesters", type: "betaTesters", attributes: Attributes(email: request.email, firstName: request.firstName, lastName: request.lastName),
                 relationships: Relationships(betaGroups: ASCToMany([ASCRef(type: "betaGroups", id: group.id)])))
@@ -536,14 +516,14 @@ public struct ASCTestFlight: Sendable {
         }
         if let loc = try await existing() { return try await update(loc) }
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
-        let settled = try await settle(lookup: existing, create: {
+        let settled = try await resources.settle(lookup: existing, create: {
             let created: ASCSingle<ASCBetaBuildLocalization> = try await resources.create(
                 "/v1/betaBuildLocalizations", type: "betaBuildLocalizations", attributes: ["locale": locale, "whatsNew": text],
                 relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))
             return created.data
         })
         if case .found(let loc, _) = settled, loc.attributes.whatsNew != text { return try await update(loc) }
-        return settled.outcome
+        return Self.outcome(settled)
     }
 
     // MARK: Beta information
@@ -585,7 +565,7 @@ public struct ASCTestFlight: Sendable {
         guard !attributes.isEmpty else { return nil }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
         attributes["locale"] = locale
-        let settled = try await settle(lookup: { try await localizations(app: appID).first { $0.attributes.locale == locale } }, create: { [attributes] in
+        let settled = try await resources.settle(lookup: { try await localizations(app: appID).first { $0.attributes.locale == locale } }, create: { [attributes] in
             let created: ASCSingle<ASCBetaAppLocalization> = try await resources.create(
                 "/v1/betaAppLocalizations", type: "betaAppLocalizations", attributes: attributes,
                 relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
@@ -593,7 +573,7 @@ public struct ASCTestFlight: Sendable {
         })
         // Another one (a race, or Apple's) gets what differs.
         if case .found(let loc, _) = settled, !Self.infoDiff(text, have: loc.attributes).isEmpty { return try await update(loc) }
-        return settled.outcome
+        return Self.outcome(settled)
     }
 
     /// The app's beta App Review details, without the demo account's password.
@@ -658,10 +638,10 @@ public struct ASCTestFlight: Sendable {
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
         struct Inner: Encodable, Sendable { var type = "betaAppReviewSubmissions"; var relationships: Relationships }
         struct Body: Encodable, Sendable { var data: Inner }
-        return try await settle(lookup: { try await submission(build: buildID) }, create: {
+        return Self.outcome(try await resources.settle(lookup: { try await submission(build: buildID) }, create: {
             let created: ASCSingle<ASCBetaSubmission> = try await resources.client.postOnce(
                 "/v1/betaAppReviewSubmissions", body: Body(data: Inner(relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))))
             return created.data
-        }).outcome
+        }))
     }
 }

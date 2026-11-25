@@ -231,7 +231,8 @@ public struct ASCProfiles: Sendable {
     struct CreateAttributes: Encodable, Sendable { var name: String; var profileType: String }
     struct CreateRelationships: Encodable, Sendable { var bundleId: ASCToOne; var certificates: ASCToMany; var devices: ASCToMany? }
 
-    /// Creates a profile. `deviceIDs` is sent only when not empty. The POST is sent once, never retried.
+    /// Creates a profile: one request. `deviceIDs` is sent only when not empty. `sign` and `provision` send it again only
+    /// after reading shows nothing was made (`APISigningAccount.createProfile`); `xless profiles create` never does.
     public func create(name: String, type: ProfileType, bundleIDResourceID: String, certificateIDs: [String],
                        deviceIDs: [String] = []) async throws -> ASCProfile {
         let relationships = CreateRelationships(

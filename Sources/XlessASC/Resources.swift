@@ -105,6 +105,17 @@ public struct ASCSingle<D: Decodable & Sendable>: Decodable, Sendable {
     }
 }
 
+/// What became of a create (`ASCResources.settle`).
+enum ASCSettled<R: Sendable>: Sendable {
+    case made(R)
+    /// Found by reading: `ours` when an answer to this create was lost (it made it), else it was there already (409).
+    case found(R, ours: Bool)
+
+    var value: R { switch self { case .made(let r), .found(let r, _): r } }
+    /// It was there before this create.
+    var existed: Bool { if case .found(_, ours: false) = self { true } else { false } }
+}
+
 /// The JSON:API operations every App Store Connect resource shares, on top of `ASCClient` (JWT, retries, rate limits):
 /// listings that follow `links.next`, reads with `include`, creates, updates, deletes and relationship linkage. Untyped
 /// resources decode as `ASCAnyResource` / `JSONValue`.
@@ -148,8 +159,9 @@ public struct ASCResources: Sendable {
         try await client.get(path, query: query.items)
     }
 
-    /// POST `{ data: { type, attributes, relationships } }` to a collection. Sent once, never retried: a retry of a
-    /// create whose first attempt went through could make a second resource, or burn a scarce one (a certificate slot).
+    /// POST `{ data: { type, attributes, relationships } }` to a collection: one request. A create is sent again only after
+    /// reading shows nothing was made (`settled`, `settle`): a blind retry of one that went through could make a second
+    /// resource, or burn a scarce one (a certificate slot).
     public func create<A: Encodable & Sendable, R: Encodable & Sendable, D: Decodable & Sendable>(
         _ path: String, type: String, attributes: A, relationships: R?) async throws -> ASCSingle<D> {
         try await client.postOnce(path, body: Body(data: .init(type: type, id: nil, attributes: attributes, relationships: relationships)))
@@ -160,9 +172,10 @@ public struct ASCResources: Sendable {
     }
 
     /// A create that is sent again after a failure that says nothing (a lost connection, 429, 5xx) only once `lookup` shows
-    /// it was not made; one that was made by the request whose answer was lost or cannot be read, or refused (409) because
-    /// it exists, is what `lookup` found. `create` sends one request (`create(_:type:attributes:)`). For creates that can be found again
-    /// by their name; never for certificates and keys.
+    /// it was not made (at most `ASCClient.maxAttempts` requests in all); one that was made by the request whose answer was
+    /// lost or cannot be read, or refused (409) because it exists, is what `lookup` found. When `lookup` fails, nothing is
+    /// sent again. `create` sends one request (`create(_:type:attributes:)`). For creates that can be found again by what
+    /// they ask for (a name, an identifier); never for certificates and keys.
     public func settled<T: Sendable>(lookup: () async throws -> T?, create: () async throws -> T) async throws -> T {
         var attempt = 0
         while true {
@@ -182,6 +195,17 @@ public struct ASCResources: Sendable {
                 try await client.sleep(.seconds(wait))
             }
         }
+    }
+
+    /// `settled`, telling what was made from what was found.
+    func settle<R: Sendable>(lookup: () async throws -> R?, create: () async throws -> R) async throws -> ASCSettled<R> {
+        var lost = false
+        return try await settled(lookup: { try await lookup().map { .found($0, ours: lost) } }, create: {
+            do { return .made(try await create()) } catch {
+                if (error as? ASCError)?.status != 409 { lost = true }
+                throw error
+            }
+        })
     }
 
     /// PATCH `{ data: { type, id, attributes } }` to the resource at `path`.

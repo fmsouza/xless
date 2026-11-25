@@ -142,7 +142,8 @@ and must be one `versions.env` supports. Nothing is exported, so the disk check 
 ## App Store Connect
 
 `xless upload` maps App Store Connect errors to explanations; unknown codes are printed verbatim. Network calls retry
-only on HTTP 5xx, 429 and transport errors (at most 5 attempts); nothing else is retried.
+only on HTTP 5xx, 429 and transport errors (at most 5 attempts); nothing else is retried. A create is sent again only
+after reading shows nothing was made, and one that could not be found again (a certificate, a key, an invitation) never is.
 
 | Symptom | Meaning and fix |
 |---|---|

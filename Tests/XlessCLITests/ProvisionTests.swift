@@ -592,6 +592,30 @@ private final class TypingPassphrase: PassphrasePrompter {
     #expect(plan.drift.first?.message.contains("it lacks aps-environment") == true, "\(plan.text)")
 }
 
+/// `provision` and `sign` send a create again by one rule: only after reading shows nothing was made.
+@Test func provisionAndSignSettleAFailedCreateTheSameWay() async throws {
+    let none = #"{"data":[]}"#, made = #"{"data":{"type":"bundleIds","id":"B1","attributes":{"identifier":"com.example.app"}}}"#
+    let on = #"{"data":{"type":"bundleIdCapabilities","id":"C1","attributes":{"capabilityType":"PUSH_NOTIFICATIONS"}}}"#
+    let profile = #"{"data":{"type":"profiles","id":"P1","attributes":{"name":"n"}}}"#
+    func requests(_ account: (ASCResources) -> any SigningAccount) async throws -> [String] {
+        let t = FakeTransport([(200, none), (503, ""), (200, none), (201, made),           // the bundle ID
+                               (200, none), (503, ""), (200, none), (201, on),             // a capability
+                               (503, ""), (200, none), (201, profile)])                    // the profile
+        let creds = try ASCCredentials.fromSecrets(Secrets(env: fakeKeyEnv, fallback: nil), stage: .account)
+        let a = account(ASCResources(client: ASCClient(credentials: creds, transport: t, sleep: { _ in })))
+        _ = try await a.register(bundleID: "com.example.app")
+        try await a.enable(CapabilityRequest(.pushNotifications), on: "B1", identifier: "com.example.app")
+        _ = try await a.createProfile(name: "n", type: .iosAppStore, bundleResourceID: "B1", bundleID: "com.example.app", certificateID: "C1")
+        #expect(t.responses.isEmpty)
+        return t.requests.map { "\($0.httpMethod!) \($0.url!.path)" }
+    }
+    let sign = try await requests { APISigningAccount(resources: $0, stage: .sign) }
+    #expect(sign == ["GET /v1/bundleIds", "POST /v1/bundleIds", "GET /v1/bundleIds", "POST /v1/bundleIds",
+                     "GET /v1/bundleIds/B1/bundleIdCapabilities", "POST /v1/bundleIdCapabilities", "GET /v1/bundleIds/B1/bundleIdCapabilities", "POST /v1/bundleIdCapabilities",
+                     "POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles"])
+    #expect(try await requests { APIProvisionAccount(resources: $0) } == sign)
+}
+
 /// The names in a plan are the project's and Apple's: none of them clears, hides or forges a line of it.
 @Test func nothingInAProvisionPlanDrivesTheTerminal() throws {
     let hostile = "\u{1B}[2J\r\n  + create\u{202E}\u{200B}"

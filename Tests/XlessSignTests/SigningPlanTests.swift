@@ -212,7 +212,7 @@ private func isPlain(_ text: String) -> Bool { TerminalText.escaped(text) == tex
 
 // MARK: - A create whose answer is lost
 
-@Test func aLostAnswerToACreateIsLookedUpNeverSentTwice() async throws {
+@Test func aLostAnswerToACreateIsLookedUpNotSentAgain() async throws {
     var s = Signing()
     s.entitlements = push
     s.asc.failures = ["POST /v1/bundleIds": [(500, true)], "POST /v1/profiles": [(500, true)]]
@@ -221,12 +221,13 @@ private func isPlain(_ text: String) -> Bool { TerminalText.escaped(text) == tex
     #expect(s.asc.profiles.count == 1)
 }
 
-@Test func aFailedCreateIsSentAgain() async throws {
+@Test func aFailedCreateIsSentAgainAfterReadingShowsNothingWasMade() async throws {
     let s = Signing()
     try s.registered { $0.certificates = ["OLD"] }
     s.asc.failures = ["POST /v1/profiles": [(500, false), (503, false)]]
     _ = try await s.apply(try await s.plan())
     #expect(s.writes == ["DELETE /v1/profiles/P0", "POST /v1/profiles", "POST /v1/profiles", "POST /v1/profiles"])
+    #expect(s.asc.log.suffix(5) == ["POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles"])
 }
 
 /// A listing may show a deleted profile a little longer: it is never taken for the new one.
