@@ -528,8 +528,9 @@ int xless_peer_of(int fd, struct xless_peer *out) {
     if (pid <= 0 || audit_token_to_euid(token) != euid) return ESRCH;
     int sid = getsid(pid);
     if (sid < 0) return errno;
-    // The path by audit token, which holds the process's version: it fails when that process has ended or runs another
-    // program, even if another one has its pid now. Read after the session, so the session was the peer's.
+    // The path by audit token, which holds the process's version: it fails when the process of that token has ended or
+    // runs another program, even if another one has its pid now. Read after the session, so the session is that
+    // process's too. (Whether that process is the peer is for the caller: the token is of whoever had its pid just now.)
     char path[PROC_PIDPATHINFO_MAXSIZE];
     if (proc_pidpath_audittoken(&token, path, sizeof path) <= 0) return ESRCH;
     struct stat st;
@@ -537,6 +538,7 @@ int xless_peer_of(int fd, struct xless_peer *out) {
         out->exe_device = (uint64_t)st.st_dev;
         out->exe_inode = (uint64_t)st.st_ino;
     }
+    memcpy(out->token, &token, sizeof out->token);
     out->pid = pid;
     out->uid = euid;
     out->sid = sid;

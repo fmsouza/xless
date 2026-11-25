@@ -43,13 +43,14 @@ final class AgentLink {
     var isTrusted: Bool { isSameSession || hasProved }
 
     /// - Parameter timeout: milliseconds for each answer.
-    static func connect(path: String, directory: AgentDirectory, timeout: Int = 1500) throws -> AgentLink {
-        let link = try AgentLink(path: path, directory: directory, timeout: timeout)
+    static func connect(path: String, directory: AgentDirectory, timeout: Int = 1500,
+                        readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws -> AgentLink {
+        let link = try AgentLink(path: path, directory: directory, timeout: timeout, readPeer: readPeer)
         try link.handshake()
         return link
     }
 
-    private init(path: String, directory: AgentDirectory, timeout: Int) throws {
+    private init(path: String, directory: AgentDirectory, timeout: Int, readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws {
         guard try directory.verify(), let identity = directory.identity(of: path) else { throw AgentError.gone }
         // Refused: nobody listens, or (macOS) too many are waiting. A busy agent takes them in no time.
         var fd = xless_unix_connect(path)
@@ -59,7 +60,7 @@ final class AgentLink {
         }
         if fd == -ECONNREFUSED { Self.removeStale(path, identity, directory) }
         guard fd >= 0 else { throw AgentError.gone }
-        channel = try AgentChannel(fd: fd)
+        channel = try AgentChannel(fd: fd, readPeer: readPeer)
         self.timeout = timeout
     }
 
@@ -149,11 +150,13 @@ final class AgentLink {
     func get(_ name: String, using: Bool = true) throws -> AgentHeld? { try fetch(name, nonce: AgentProof.nonce(), using: using)?.held }
 
     private func fetch(_ name: String, nonce: [UInt8], using: Bool) throws -> (held: AgentHeld, proof: [UInt8])? {
-        try request(.get) {
+        let answer = try request(.get) {
             $0.put(name)
             $0.put(bytes: nonce)
             $0.put(using)
-        }.body { r in
+        }
+        _ = try channel.peer() // still the process that was looked at
+        return try answer.body { r in
             guard try r.bool() else { return nil }
             let secret = try r.secret(max: AgentLimits.itemBytes)
             let status = AgentItemStatus(name: name, label: try r.string(max: AgentLimits.labelBytes), remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int())
@@ -174,6 +177,7 @@ final class AgentLink {
     /// Holds `secret`. Only a trusted agent is sent one.
     func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typed: Bool) throws {
         guard isTrusted else { throw AgentError(.refused, "the xless agent is not one this command can trust", fix: "run `xless lock`, then `xless unlock`") }
+        _ = try channel.peer() // still the process that was looked at
         try request(.put) {
             $0.put(name); $0.put(label)
             $0.put(hold.seconds); $0.put(hold.idle); $0.put(hold.maximum)

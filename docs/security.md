@@ -156,11 +156,20 @@ An agent serves a process only when **all** of these hold, each taken from the k
    **and** start time, so a process ID used again later is not taken for it. Another terminal is granted once the store
    is unlocked there too (`xless unlock` in it): it must show the agent that it knows the store's data key, which takes the
    passphrase, and can add only the session the kernel says it is in.
-3. On macOS, it is **the same xless executable** as the agent (by the file's device and inode, of the exact process that
-   connected: the audit token names its process ID's version too).
+3. On macOS, it is **the same xless executable** as the agent (by the file's device and inode).
 
-On Linux the identity comes with every piece of the message (`SCM_CREDENTIALS`) and is pinned with a pidfd and a one-time
-challenge; on macOS it is the socket's audit token (`LOCAL_PEERTOKEN`). A process that ends before the answer gets none.
+Who speaks is taken once, pinned, and looked at again before every answer:
+
+- On Linux the kernel names the sender of every piece of a message (`SCM_CREDENTIALS`), and a pidfd opened at the first
+  one keeps hold of that process.
+- On macOS the kernel keeps only the process ID of whoever used the other end last, and says (`LOCAL_PEERTOKEN`) whose
+  that ID is *at the moment it is asked*. So the whole audit token, process version included, is read when the first
+  message comes; every later look must find the very same token. A process that has ended, or whose ID another one has
+  since, is refused, and the connection with it.
+
+Only then is a one-time challenge sent, which that process has to answer: so it was there when it was looked at, and not
+another one that had its ID by then. The command looks at the agent in the same way, and looks again before it sends a
+secret and before it takes one.
 
 **What refuses build code is rule 2.** Every tool xless runs (a compiler, swift-build, npm, cargo, pod, a hook, rcodesign,
 Docker) is started in a POSIX session of its own. A process can leave a session, for a new one, but no system call enters

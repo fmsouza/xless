@@ -80,6 +80,7 @@ final class AgentServer: @unchecked Sendable {
     private let clock: AgentClock
     var options: Options
     var peerCheck: PeerCheck = { try $0.peer() }
+    var readPeer: AgentChannel.PeerReader = AgentChannel.kernelPeer
     private let id = AgentProof.nonce()
     private var connections: [Connection] = []
     private var exit: Exit?
@@ -172,7 +173,7 @@ final class AgentServer: @unchecked Sendable {
         for _ in 0..<AgentLimits.connections {
             let fd = xless_unix_accept(bound.fd)
             guard fd >= 0 else { return }
-            guard let channel = try? AgentChannel(fd: fd) else { continue } // another user's
+            guard let channel = try? AgentChannel(fd: fd, readPeer: readPeer) else { continue } // another user's
             if connections.count >= AgentLimits.connections {
                 // The oldest one that has shown no right to be here makes room.
                 connections.remove(at: connections.firstIndex { !$0.granted } ?? 0)

@@ -56,21 +56,38 @@ struct AgentMessage {
 }
 
 /// A connected socket that reads and writes whole messages without blocking, and knows which one process is at its
-/// other end: Linux says which process sent each byte (`SCM_CREDENTIALS`), and a pidfd keeps hold of it, so its pid is
-/// not another's by the time its session is asked; macOS has the audit token of the process that used the other end
-/// last, whose process version tells a reused pid apart. A second process on the same connection is an error.
+/// other end. Linux says which process sent each byte (`SCM_CREDENTIALS`), and a pidfd keeps hold of it, so its pid is
+/// not another's by the time its session is asked. macOS keeps only the pid of the process that used the other end last,
+/// and says, when asked, whose that pid is now: the audit token read as the first bytes come is the one that every later
+/// look must find again, process version included, so a pid that became another process's is told apart. Either way the
+/// challenge (`AgentServer.prove`, `AgentLink.handshake`) has that very process answer after it was looked at, so it was
+/// there to be looked at: whoever reads the challenge is the one that used that end last (writing may not count:
+/// `sendfile`). Another process on the same connection is an error, and the connection is of no use any more.
 final class AgentChannel {
+    /// What the kernel says of the process at the other end; nil when it says nothing (it has ended). macOS.
+    typealias PeerReader = (Int32) -> xless_peer?
+
+    static let kernelPeer: @Sendable (Int32) -> xless_peer? = { fd in
+        var peer = xless_peer()
+        return xless_peer_of(fd, &peer) == 0 ? peer : nil
+    }
+
     private(set) var fd: Int32
     private(set) var pid: Int32 = 0
     private var pidfd: Int32 = -1
+    private let readPeer: PeerReader
+    private var hasSpoken = false
+    /// macOS: the audit token of the process that spoke first; nil when it was gone by then.
+    private var token: [UInt32]?
     private var input = SecretPages(count: AgentFrame.headerSize)
     private var filled = 0
     private var output: [SecretPages] = []
     private var sent = 0
 
     /// Owns `fd` from here on, also when it throws: when the other end is another user's.
-    init(fd: Int32) throws {
+    init(fd: Int32, readPeer: @escaping PeerReader = AgentChannel.kernelPeer) throws {
         self.fd = fd
+        self.readPeer = readPeer
         _ = xless_unix_passcred(fd)
         guard xless_unix_peer_uid(fd) == Int(geteuid()) else {
             throw AgentError(.unsafePath, "the other end of the xless agent's socket belongs to another user", fix: "remove the socket's directory and run `xless unlock` again")
@@ -127,11 +144,17 @@ final class AgentChannel {
         }
         pid = sender
         pidfd = held
+        #else
+        guard !hasSpoken else { return }
+        hasSpoken = true
+        token = readPeer(fd).map(Self.token)
         #endif
     }
 
-    /// Who is at the other end. It is there now: on Linux the process that sent what was read since `next` first returned
-    /// a message still runs, so the session asked of its pid is its own.
+    private static func token(_ peer: xless_peer) -> [UInt32] { withUnsafeBytes(of: peer.token) { Array($0.bindMemory(to: UInt32.self)) } }
+
+    /// Who is at the other end. It is there now: the process that sent the first message still runs, so the session asked
+    /// of its pid is its own.
     func peer() throws -> AgentPeer {
         #if os(Linux)
         guard pidfd >= 0 else { throw AgentError.gone }
@@ -139,9 +162,11 @@ final class AgentChannel {
         guard xless_pidfd_alive(pidfd) == 1 else { throw AgentError.gone }
         return AgentPeer(pid: pid, uid: geteuid(), session: session, executable: nil)
         #else
-        var peer = xless_peer()
-        guard xless_peer_of(fd, &peer) == 0 else { throw AgentError.gone }
-        if pid != 0, pid != peer.pid { throw AgentError.malformed("another process speaks") }
+        guard let token else { throw AgentError.gone }
+        guard let peer = readPeer(fd), Self.token(peer) == token else {
+            self.token = nil
+            throw AgentError.malformed("another process speaks")
+        }
         pid = peer.pid
         return AgentPeer(pid: peer.pid, uid: peer.uid, session: AgentSession(of: peer.sid),
                          executable: peer.exe_inode == 0 ? nil : AgentExecutable(device: peer.exe_device, inode: peer.exe_inode))

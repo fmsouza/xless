@@ -102,10 +102,13 @@ struct xless_peer {
     int sid;              // its POSIX session
     uint64_t exe_device;  // its executable file (macOS; 0 elsewhere)
     uint64_t exe_inode;
+    uint32_t token[8];    // its audit token (macOS): the last member is the process version, which no two processes share
 };
-/// macOS: fills `*out` from the audit token of the process that last used the other end; a process that has ended (and
-/// whose pid another one may have) or runs another program by now is ESRCH. 0, or an errno value (ENOTSUP elsewhere:
-/// Linux has the sender's pid on each message, see xless_unix_recv, and a pidfd to hold it by).
+/// macOS: fills `*out` for the process that has, at this moment, the pid of the one that last used the other end: the
+/// kernel keeps that pid only (LOCAL_PEERTOKEN), so once that process has ended this fails (EINVAL) or, when the pid was
+/// given out again, describes another one. The same peer has the same token: keep the first and compare. Everything in
+/// `*out` is of one process. 0, or an errno value (ENOTSUP elsewhere: Linux has the sender's pid on each message, see
+/// xless_unix_recv, and a pidfd to hold it by).
 int xless_peer_of(int fd, struct xless_peer *out);
 /// Linux: asks for the sender's credentials on each message received on `fd`. Elsewhere nothing. 0, or an errno value.
 int xless_unix_passcred(int fd);
