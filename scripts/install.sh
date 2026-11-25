@@ -178,12 +178,12 @@ main() {
       ;;
   esac
 
+  # Docker is optional on both: only `--docker` (the images) needs it.
+  echo "next: the account commands work now (xless auth login, xless provision, xless store, ...)"
   if [ "$os" = macos ]; then
-    echo "next: the account commands work now (xless auth login, xless provision, xless store, ...); to build apps, in Docker"
-    echo "(Docker Desktop or colima): xless setup --docker --xcode ~/Downloads/Xcode_27.xip"
+    echo "to build apps: install Xcode, open it once, then xless run <project-dir>"
   else
-    # Docker is optional: `xless setup` installs natively; only `--docker` (the images) needs it.
-    echo "next: xless setup --xcode ~/Downloads/Xcode_27.xip"
+    echo "to build apps: xless setup --xcode ~/Downloads/Xcode_27.xip"
   fi
 }
 

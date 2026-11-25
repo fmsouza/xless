@@ -51,7 +51,7 @@ run "${base[@]}" XLESS_PREFIX="$p" PATH="$p/bin:$t/tools"
 [[ "$(cat "$p/share/xless/VERSION")" == 1.2.3 ]] || fail "VERSION"
 [[ "$("$p/bin/xless")" == "xless 1.2.3 x86_64" ]] || fail "wrong binary installed"
 echo "$out" | grep -qF "xless 1.2.3 installed to $p/bin/xless" || fail "no installed line: $out"
-echo "$out" | grep -qF "next: xless setup --xcode ~/Downloads/Xcode_27.xip" || fail "no next line: $out"
+[[ "$out" == *"next: the account commands work now (xless auth login, "*"to build apps: xless setup --xcode ~/Downloads/Xcode_27.xip"* ]] || fail "no next lines: $out"
 echo "$out" | grep -q "export PATH=" && fail "PATH hint printed though prefix is on PATH"
 echo "$out" | grep -qi "docker" && fail "docker mentioned: $out"
 [[ -z "$(ls -A "$p/share" | grep -v '^xless$')" ]] || fail "temp files left in share: $(ls -A "$p/share")"
@@ -158,7 +158,8 @@ fake sw_vers '[ "$*" = -productVersion ] && echo 15.6.1'
 fake sysctl '[ "$*" = "-n hw.optional.arm64" ] || exit 1; echo 1'
 run "${mac[@]}" XLESS_UNAME_M=arm64 XLESS_PREFIX="$t/m1" PATH="$t/m1/bin:$t/tools-mac"
 [[ $rc == 0 && "$("$t/m1/bin/xless")" == "xless 1.2.3 macos arm64" && "$(cat "$t/m1/share/xless/VERSION")" == 1.2.3 ]] || fail "an Apple silicon Mac: rc=$rc $out"
-[[ "$out" == *"next: the account commands work now"*"xless setup --docker --xcode ~/Downloads/Xcode_27.xip"* ]] || fail "no next lines on macOS: $out"
+[[ "$out" == *"next: the account commands work now (xless auth login, "*"to build apps: install Xcode, open it once, then xless run <project-dir>"* ]] || fail "no next lines on macOS: $out"
+[[ "$out" != *[Dd]ocker* && "$out" != *.xip* ]] || fail "a Mac with Xcode needs no Docker and no .xip: $out"
 run "${mac[@]}" XLESS_UNAME_M=x86_64 XLESS_VERSION=1.3.0 XLESS_PREFIX="$t/m1" PATH="$t/m1/bin:$t/tools-mac"
 [[ $rc == 0 && "$("$t/m1/bin/xless")" == "xless 1.3.0 macos arm64" ]] || fail "a Rosetta shell: rc=$rc $out"
 fake sysctl 'exit 1'
@@ -212,7 +213,7 @@ echo "$out" | grep -qF "export PATH=\"$t/home/.local/bin:\$PATH\"" || fail "no e
 run "${base[@]}" XLESS_PREFIX="$t/pd" PATH="$t/pd/bin:$t/tools-nodocker"
 [[ $rc == 0 ]] || fail "no-docker install exited $rc: $out"
 echo "$out" | grep -qi "docker" && fail "docker mentioned though setup installs natively: $out"
-echo "$out" | grep -qF "next: xless setup --xcode" || fail "no next line without docker: $out"
+echo "$out" | grep -qF "to build apps: xless setup --xcode" || fail "no next line without docker: $out"
 
 # A failure after the share swap (the binary cannot be renamed into place) rolls everything back.
 p="$t/p4"

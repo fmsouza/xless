@@ -461,6 +461,7 @@
 + Tests/XlessCLITests/CommandsNotHereTests.swift
 + Tests/XlessCLITests/DeviceCommandTests.swift
 + Tests/XlessCLITests/HeldSecretsTests.swift
++ Tests/XlessCLITests/HelpTextTests.swift
 + Tests/XlessCLITests/KeepOfferTests.swift
 + Tests/XlessCLITests/KeyRescueTests.swift
 - Tests/XlessCLITests/LiveCheckTests.swift
