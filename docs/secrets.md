@@ -156,7 +156,7 @@ xless lock                  # forget everything held, now
   `xless unlock` of its own; cron jobs and services are not served. Closing the terminals, putting the
   machine to sleep and locking the screen (macOS) end what the agent holds; `passwd` and a replaced store end it
   everywhere. Other users, and the tools xless
-  runs (the build's plugins and scripts, npm, Docker), never reach it. The whole model, what it does not stop, and how to
+  runs (the build's plugins and scripts, npm), never reach it, nor does a container. The whole model, what it does not stop, and how to
   lock with a Linux screen locker: [security.md](security.md#holding-an-unlock-off-by-default-in-memory).
 
 ## Keeping the secrets in your keyring or pass (credential helpers)

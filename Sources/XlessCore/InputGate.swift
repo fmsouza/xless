@@ -1,7 +1,7 @@
 import Foundation
 
 /// `--no-input` (or XLESS_NO_INPUT=1): nothing is asked for; a command that would ask fails at once, with an exit code
-/// of its own (`Stage.input`, 21), so a script never waits for an answer nobody gives.
+/// of its own (`Stage.input`, 23), so a script never waits for an answer nobody gives.
 ///
 /// The one gate. Whatever asks calls `require` first: the terminal (`TerminalPrompter`, the only opener of /dev/tty that
 /// asks anything), the store's unlock (`VaultUnlocker`), a confirmation (`AccountConfirm`). A credential helper, which asks by

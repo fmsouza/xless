@@ -176,13 +176,14 @@ Only then is a one-time challenge sent, which that process has to answer: so it 
 another one that had its ID by then. The command looks at the agent in the same way, and looks again before it sends a
 secret and before it takes one.
 
-**What refuses build code is rule 2.** Every tool xless runs (a compiler, swift-build, npm, cargo, pod, a hook, rcodesign,
-Docker) is started in a POSIX session of its own. A process can leave a session, for a new one, but no system call enters
+**What refuses build code is rule 2.** Every tool xless runs (a compiler, swift-build, npm, cargo, pod, a hook, rcodesign)
+is started in a POSIX session of its own. A process can leave a session, for a new one, but no system call enters
 an existing one: so nothing that a build starts, however it forks, daemonizes or calls `setsid`, and not even the `xless`
 binary itself run by it, is in a granted session. It also starts with `XLESS_NO_SECRET_STORE=1`, with which
 xless looks for nothing held; that one the code could unset, the session it could not. `Tests/shell/agent.test.sh` runs
-such code against a real agent, every way of getting away included. Two programs stay in the terminal's session, and run
-no code of the project: the script behind `xless run` (its build step is an `xless ship`, whose tools are not) and a
+such code against a real agent, every way of getting away included. What stays in the terminal's session runs no code of
+the project: the script behind `xless run` (its build step is an `xless ship`, whose tools are not), with `--docker` the
+docker client which that script runs (the build is in the container), and a
 [credential helper](#with-a-credential-helper), which may ask something on the terminal and already sees every secret.
 
 A session of its own has no terminal, so Ctrl-C and a closed window do not reach a tool by themselves: xless passes SIGINT,
