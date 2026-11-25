@@ -145,12 +145,43 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The Windows zip, by the same action. The runner is the one of pr.yml's package-windows.
+  build-windows:
+    name: build (windows-x86_64)
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Toolchain
+        timeout-minutes: 40
+        shell: pwsh
+        run: scripts/windows-toolchain.ps1
+      - name: Build and package
+        uses: ./.github/actions/build-package
+        with:
+          os: windows
+          arch: x86_64
+          version: ${{ needs.plan.outputs.version }}
+          out-dir: dist
+          stamp: 'true'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tarball-windows-x86_64
+          path: dist/xless-*.zip
+          if-no-files-found: error
+          retention-days: 1
+
   # Installs the stamped tarballs from a file:// copy of the release, on each architecture, exactly as a user would
   # (scripts/verify-release.sh), before anything is published. On the bare runner: the binaries need no Swift. Each job checks
-  # that all four are there and hold what they must (scripts/release-assets.sh), so one that is missing ends the release here.
+  # that all of them (and the zip) are there and hold what they must (scripts/release-assets.sh), so one that is missing ends the release here.
   verify:
     name: verify (${{ matrix.name }})
-    needs: [plan, build, build-macos]
+    needs: [plan, build, build-macos, build-windows]
     if: needs.plan.outputs.version != ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
@@ -179,10 +210,38 @@ jobs:
       - name: Install the release and check its version
         run: scripts/verify-release.sh "$VERSION" dist
 
+  # The same for the zip, with install.ps1 (scripts/verify-release.ps1), on machines without a toolchain.
+  verify-windows:
+    name: verify (${{ matrix.runner }})
+    needs: [plan, build, build-macos, build-windows]
+    if: needs.plan.outputs.version != ''
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        runner: [windows-2022, windows-2025]
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      XLESS_ALLOW_ELEVATED: '1'   # the runners' only user is an administrator
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: tarball-*
+          path: dist
+          merge-multiple: true
+      - name: Install the release and check its version
+        shell: pwsh
+        run: scripts/verify-release.ps1 $env:VERSION dist
+
   # Runs on the runner itself (gh is not in the swift container). The only job with write access: the release, and a
   # build provenance attestation for each asset (OIDC token for Sigstore, attestations stored on GitHub).
   publish:
-    needs: [plan, build, build-macos, verify]
+    needs: [plan, build, build-macos, build-windows, verify, verify-windows]
     if: needs.plan.outputs.version != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -206,8 +265,8 @@ jobs:
           pattern: tarball-*
           path: dist
           merge-multiple: true
-      # The same script the verify job ran, on the same tarballs.
-      - name: Checksums and installer
+      # The same script the verify job ran, on the same packages.
+      - name: Checksums and installers
         run: scripts/release-assets.sh "$VERSION" dist
       # Signed SLSA build provenance for each asset: `gh attestation verify <file> -R fmsouza/xless` proves that this
       # workflow, at this commit, made it (docs/maintainers.md#releases).
@@ -216,8 +275,10 @@ jobs:
         with:
           subject-path: |
             dist/xless-*.tar.gz
+            dist/xless-*.zip
             dist/SHA256SUMS
             dist/install.sh
+            dist/install.ps1
       - name: Release notes
         run: |
           scripts/release-notes.sh "$PREV" "$SHA" > notes.md
@@ -226,4 +287,4 @@ jobs:
       - name: Create the tag and the release
         run: |
           gh release create "v$VERSION" --target "$SHA" --title "v$VERSION" --notes-file notes.md \
-            dist/xless-*.tar.gz dist/SHA256SUMS dist/install.sh
+            dist/xless-*.tar.gz dist/xless-*.zip dist/SHA256SUMS dist/install.sh dist/install.ps1
