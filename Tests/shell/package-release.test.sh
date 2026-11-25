@@ -263,6 +263,18 @@ if [[ "$(uname)" == Darwin ]] && lib="$(dirname "$(dirname "$(xcrun --find swift
   xcrun swiftc -target "$host-apple-macosx14.0" -runtime-compatibility-version none -c "$o/main.swift" -o "$o/main.o" 2>"$t/err" || fail "swiftc: $(cat "$t/err")"
   link() { xcrun swiftc -target "$host-apple-macosx14.0" -runtime-compatibility-version none "$o/main.o" -o "$r/Products/Release/xless" -Xlinker -map -Xlinker "$t/real.map" "$@" 2>"$t/err" || fail "link: $(cat "$t/err")"; }
   link; bash "$repo/scripts/check-link-map.sh" "$t/real.map" "$r/Products/Release/xless" "$host" >"$t/err" 2>&1 || fail "the real linker's map is refused: $(cat "$t/err")"
+  # A target's objects in one, as the build makes it (ld -r renames what has no name of its own), and then with an archive in it.
+  p="$r/Intermediates.noindex/y.build/Release/Y-t.build/Objects-normal/$host"; mkdir -p "$p"
+  printf 'static int twice(int x) { return 2 * x; }\nint y(int x) { static const char *s[] = { "a", "b" }; return s[x & 1][0] + twice(x); }\n' > "$p/A.c"
+  printf 'int z(void) { static double d[] = { 1.5, 2.5 }; return (int)d[0] + "cd"[1]; }\n' > "$p/B.c"
+  for c in A B; do "$cc" -arch "$host" -mmacosx-version-min=14.0 -O0 -c "$p/$c.c" -o "$p/$c.o"; done
+  printf '%s\n' "$p/A.o" "$p/B.o" > "$p/Y.LinkFileList"
+  merge() { "$cc" -arch "$host" -mmacosx-version-min=14.0 -r -nostdlib "$p/A.o" "$p/B.o" "$@" -o "$r/Products/Release/Y.o" 2>"$t/err" || fail "ld -r: $(cat "$t/err")"; }
+  merge; link "$r/Products/Release/Y.o"
+  bash "$repo/scripts/check-link-map.sh" "$t/real.map" "$r/Products/Release/xless" "$host" >"$t/err" 2>&1 || fail "a target's objects in one are refused: $(cat "$t/err")"
+  merge -Wl,-force_load,"$lib/libswiftCompatibilityPacks.a"
+  bash "$repo/scripts/check-link-map.sh" "$t/real.map" "$r/Products/Release/xless" "$host" >"$t/err" 2>&1 && fail "accepted an archive inside a target's objects"
+  grep -qF "Y.o defines what its own objects do not" "$t/err" || fail "merged: $(cat "$t/err")"
   for a in Packs Concurrency DynamicReplacements; do
     link -Xlinker -force_load -Xlinker "$lib/libswiftCompatibility$a.a"
     bash "$repo/scripts/check-link-map.sh" "$t/real.map" "$r/Products/Release/xless" "$host" >"$t/err" 2>&1 && fail "accepted libswiftCompatibility$a.a"

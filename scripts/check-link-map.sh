@@ -61,7 +61,8 @@ while IFS= read -r name; do
     nm -jU -arch "$arch" "$object" >> "$t/parts" 2>/dev/null || die "nm cannot read $object"
   done < "$list"
   nm -jU -arch "$arch" "$out/Products/Release/$name" > "$t/whole" 2>/dev/null || die "nm cannot read $name"
-  odd="$(comm -23 <(sort -u "$t/whole") <(sort -u "$t/parts") | sed -n 1,5p)"
+  # With a name (static ones too): the linker numbers the labels that have none anew.
+  odd="$(comm -23 <(sort -u "$t/whole") <(sort -u "$t/parts") | sed -n '/^_/p' | sed -n 1,5p)"
   [[ -z "$odd" ]] || die "$name defines what its own objects do not: $odd"
 done < "$t/targets"
 echo "check-link-map: $bin: $compiled objects and $(wc -l < "$t/targets" | tr -d ' ') targets of this build, and the system's libraries by name"
