@@ -1,6 +1,7 @@
 # The native install
 
-On a Mac there is nothing to install: xless builds with your Xcode ([below](#on-a-mac)).
+On a Mac there is nothing to install: xless builds with your Xcode ([below](#on-a-mac)). On Windows there are the account
+commands only ([below](#windows)).
 
 On Linux, `xless setup --xcode <Xcode.xip>` installs what xless builds with straight onto the machine, and `xless run`
 builds with it. This is the default; the Docker images (`--docker`, [README](../README.md#build-in-docker-instead))
@@ -128,6 +129,47 @@ data files (`versions.env`, the scripts) only through `XLESS_SHARE`, so run setu
 `XLESS_SHARE=<the checkout> xless setup --xcode <Xcode.xip>`. A source build is version `0.0.0-dev`, as is a checkout's
 `versions.env`, so it refuses a release's share directory (`~/.local/share/xless`) and the other way round
 ([troubleshooting.md](troubleshooting.md#installing)).
+
+## Windows
+
+On Windows xless has its account commands, natively: `auth`, `team`, `secrets`, `devices`, `bundle-ids`, `merchant-ids`, `certs`,
+`profiles`, `app-groups`, `icloud-containers`, `keys`, `apps`, `store`, `builds`, `users`, `testflight`, `release`, `iap`,
+`subscriptions`, `sandbox-testers`, `reviews`, `reports`, `webhooks`, `provision` and `api` ([apple-account.md](apple-account.md)).
+**Builds do not run there:** install xless inside [WSL2](https://learn.microsoft.com/windows/wsl/install) (`wsl --install`), with the
+line for Linux, and build in it, or build on a Mac or Linux. The commands that build say so.
+
+```powershell
+irm https://github.com/fmsouza/xless/releases/latest/download/install.ps1 | iex
+```
+
+It needs Windows 10 1809 or later (or Windows 11, or Server 2019 and later), x64, and Windows PowerShell 5.1 or PowerShell 7. On ARM64 the
+x64 program runs under Windows 11's emulation.
+
+- **Where.** `%LOCALAPPDATA%\Programs\xless`, which only you, the system and the administrators may open, and the `bin` directory in it on
+  your own `PATH`. Your secret store and settings are elsewhere (`%LOCALAPPDATA%\xless`).
+- **What it checks.** The zip against the release's `SHA256SUMS`, always, over HTTPS only; nothing is replaced before that. The zip's
+  and the installer's provenance can be checked with [`gh attestation verify`](../README.md#install).
+- **What it does not do.** It needs no administrator and refuses an elevated terminal, whose user may be another one (a machine without
+  another kind, such as a CI runner, sets `XLESS_ALLOW_ELEVATED=1`). It changes no execution policy, and installs nothing else.
+- **The Visual C++ runtime** of Microsoft is the one thing xless needs that Windows may not have. The installer says when it is
+  missing: `winget install Microsoft.VCRedist.2015+.x64`.
+- **Upgrade:** run the line again (an xless that runs meanwhile goes on). **A given release:** `$env:XLESS_VERSION = 'x.y.z'` first.
+- **Remove it:** `$env:XLESS_UNINSTALL = '1'`, then the line. It takes away the program and its `PATH` entry, and keeps your secret store
+  and settings.
+
+The program carries no signature (Authenticode): what vouches for it are the checksum and the attestation. A zip that a browser downloaded
+is marked, and SmartScreen asks about what is unpacked from it; the install line leaves no mark.
+
+Use it in a console: Windows Terminal, the console of PowerShell or `cmd`, or a terminal that uses Windows' pseudoconsole (Git Bash's
+newer ones do; with an old one, `winpty xless …`). PowerShell ISE has no console, and xless asks nothing there.
+
+What is not there, and what each command says instead: builds (`setup`, `run`, `ship`, …: inside WSL2, or on a Mac or Linux), keeping a secret store or a
+sign-in unlocked (`unlock`, `session`, `--remember`, `--keep`, `--across-reboots`: every command asks; in CI, set the variables), credential
+helpers, `secrets materialize` and `secrets import-env`, security keys (use a code), and the overlay of a Tauri, Cargo or React Native
+project (`--config`: give `--app` or `--bundle-id`). What holds there of xless's security, and what does not:
+[security.md](security.md#windows).
+
+In Git Bash, MSYS turns an argument such as `/v1/apps` into a Windows path: `MSYS_NO_PATHCONV=1 xless api GET /v1/apps`.
 
 ## Removing it
 

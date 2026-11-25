@@ -23,36 +23,41 @@ VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except
 
 ## Windows
 
-Part of xless is built and tested on Windows, by `windows-tests (x86_64)`: the libraries of the account commands (XlessCore, XlessASC,
-XlessAppleID, XlessFIDO, XlessSign, XlessStore, XlessVault). There is no `xless` for Windows.
+The account commands build and run on Windows, x64 ([what is there](native-install.md#windows), [what holds](security.md#windows)). There is no
+build there, so most of the package is left out.
 
 - The end of `Package.swift` makes the Windows package of the same manifest: which targets, and which of their files are left out
   (`notOnWindows`). `Tests/windows/sources.txt` says it of every file, and `WindowsSourcesTests` (on every system) fails for a file that
-  is in neither list: decide for a new file whether Windows can have it.
+  is in neither list: decide for a new file whether Windows can have it. A command that Windows does not have is in
+  `Sources/xless/CommandsNotHere.swift`, with what it says instead.
 - `swift build --build-tests -Xmanifest -DXLESS_WINDOWS_TARGETS --scratch-path .build/windows-targets` builds the same targets and files on
   a Mac or on Linux: what it cannot compile, Windows cannot either. It says nothing about the `#if os(Windows)` code.
 - The toolchain is `versions.env`'s (`SWIFT_WINDOWS_*`), installed by `scripts/windows-toolchain.ps1` once its SHA-256 and its Authenticode
   signer are the pinned ones. With a new `SWIFT_VERSION`, take the SHA-256 from winget's manifest of that version
-  (microsoft/winget-pkgs, `manifests/s/Swift/Toolchain/`), and the signer from the installer itself. Always `--build-system native`.
-- What asks Windows for something is C, in `Sources/CXlessWindows`, for Windows 10 1809 and later.
+  (microsoft/winget-pkgs, `manifests/s/Swift/Toolchain/`), and the signer from the installer itself. Always `--build-system native`, on
+  `windows-2022`: the C++ headers of `windows-2025`'s Visual Studio refuse that Swift's clang. arm64 has no package of its own: 6.4's
+  optimiser miscompiles async code there, and the x64 one runs under emulation.
+- What asks Windows for something is C, in `Sources/CXlessWindows`, for Windows 10 1809 and later. Requests go through WinHTTP, not URLSession:
+  its uploads stall once they exceed about 64 KB there (swift-corelibs-foundation #5532).
+- Nothing starts a program there: `scripts/windows-package.py` refuses an `xless.exe` that imports what could.
+- `Tests/windows/*.ps1` are the tests that need a machine to throw away: they set who writes crash dumps, trust an authority, install xless and
+  make a secret store, all for the user who runs them. Only CI runs them.
 
-What holds on Windows, and what does not:
+### The Windows zip
 
-- The secret store is `%LOCALAPPDATA%\xless\vault` (the system's answer, not the variable's). Its directory and files are owned by the user
-  of the process's token and let nobody else in; whatever else is found there (another owner, an access entry of anybody but the user, the
-  system and the administrators, an inherited or missing access list, a link, a junction, a second name, a share, a drive that Windows calls
-  removable, FAT) is refused, never repaired. (A USB disk mostly calls itself fixed, and is taken.) A key that xless writes is made and checked
-  so too, but may be on any drive that keeps access lists, a mapped share's as well (a path `\\server\…` is refused). The system and the administrators are accepted when something else let
-  them in, and never let in by xless: they are root's counterparts.
-- The store is replaced in one step and flushed before; Windows has no way to flush a directory, so after a power cut the old store may
-  be back. A backup, a shadow copy or a search index may have what is in a file that was written in clear, as on any system.
-- A process that read a secret shows no error dialog, has no heap in an error report, and ends at a fault before Windows' error reporting
-  sees it; a process for which the first two cannot be had reads none. Best effort beyond that: its own access list denies other processes of
-  the user to open its memory, and no DLL is loaded from a share, an extension point or a file of low integrity.
-- That is less than on Linux. An administrator can read any process. A program of the same user that opened the process before it read
-  a secret, or that started it under a debugger, keeps what it has. `__fastfail` (a corrupted stack or heap) goes to Windows' error reporting
-  past the process's own handler: an administrator's `LocalDumps` setting then writes a dump.
-- Nothing is kept unlocked, there are no credential helpers, no security keys and no `secrets materialize`.
+`xless-<version>-windows-x86_64.zip`: `bin\xless.exe` with the DLLs of the Swift runtime that it needs, `LICENSE` and
+`share\xless\{VERSION,licenses\}`. `package-release.sh --os windows` makes it (in Git Bash, with Python) and `scripts/windows-package.py` checks
+it, there and again on every system that handles it: the names, no links, the licences by sha256, each program's and library's imports (the
+zip's own, or a list of what every Windows has in System32, or the Visual C++ runtime), its architecture and its ASLR and NX flags, and that
+`xless.exe` takes its own libraries from its directory and System32 only (`/DEPENDENTLOADFLAG:0xA00`) and can start no program.
+
+- **Nothing of Microsoft's is in it:** not the Visual C++ runtime (`vcruntime140*.dll`, `msvcp140.dll`: a person installs it, and `install.ps1`
+  says so), not the UCRT (Windows' own), nothing of the SDK, no `.lib`, no `.pdb` (`-debug-info-format none`).
+- **The Swift runtime is dynamic:** the static one crashes there (swift #94100, #91442, #91520).
+- **Not signed:** there is no certificate in CI. `SHA256SUMS`, which `install.ps1` always checks, and the attestation vouch for it.
+- `scripts/install.ps1` is for Windows PowerShell 5.1 and PowerShell 7, plain ASCII, and one function called by its last line, so that a
+  download that was cut runs nothing. `Tests/windows/install.test.ps1` is its test.
+- **No winget or Scoop manifest** yet: both need a published URL and its hash, and winget a maintainer's account.
 
 ## Building the images on the Mac
 
@@ -149,14 +154,15 @@ xless setup --docker --sdk <the copied directory>     # the image; without --doc
 Releases are cut by `.github/workflows/release.yml`, at 03:00 UTC every night and by hand (`gh workflow run
 release.yml`). It computes the next version from the Conventional Commit titles merged since the last `v*` tag
 (`scripts/next-version.sh`; the rules are in [CONTRIBUTING.md](../CONTRIBUTING.md#versions-and-releases)). With no
-releasable commit it does nothing. Otherwise it builds the four tarballs, `xless-<version>-<linux|macos>-<x86_64|arm64>`,
-from that commit (`.github/actions/build-package`: `scripts/stamp-version.sh`, a static musl build or
-[a macOS one](#the-macos-tarballs), `scripts/package-release.sh`), then installs them on both systems and architectures
-before publishing anything (the `verify` job: `scripts/release-assets.sh` refuses unless all four are there and
-`scripts/check-package.sh` accepts each, writes `SHA256SUMS` and copies `install.sh`,
-and `scripts/verify-release.sh` lays them out like a GitHub release, installs with that `install.sh` from `file://`,
-pinned and as the latest, and checks that `xless --version` and `share/xless/VERSION` are the new version). Only then
-does it attest the build provenance of the tarballs, `SHA256SUMS` and `install.sh` (`actions/attest-build-provenance`,
+releasable commit it does nothing. Otherwise it builds the four tarballs, `xless-<version>-<linux|macos>-<x86_64|arm64>`, and
+[the Windows zip](#the-windows-zip)
+from that commit (`.github/actions/build-package`: `scripts/stamp-version.sh`, a static musl build,
+[a macOS one](#the-macos-tarballs) or a Windows one, `scripts/package-release.sh`), then installs them on all systems and architectures
+before publishing anything (the `verify` jobs: `scripts/release-assets.sh` refuses unless all five are there and
+`scripts/check-package.sh` accepts each, writes `SHA256SUMS` and copies `install.sh` and `install.ps1`,
+and `scripts/verify-release.sh`, on Windows `verify-release.ps1`, lays them out like a GitHub release, installs with that installer from
+`file://`, pinned and as the latest, and checks that `xless --version` and `share/xless/VERSION` are the new version). Only then
+does it attest the build provenance of the packages, `SHA256SUMS` and both installers (`actions/attest-build-provenance`,
 signed through GitHub's OIDC token with Sigstore and stored on GitHub; only the `publish` job gets `id-token: write` and
 `attestations: write`), tag `v<version>` and publish a GitHub release with those assets and notes from
 `scripts/release-notes.sh`. `gh attestation verify <asset> -R fmsouza/xless` checks one

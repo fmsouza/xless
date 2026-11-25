@@ -28,7 +28,7 @@ They use the App Store Connect API key: `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_K
 the secret store's `ASC_KEY_P8` entry with its recorded IDs ([secrets.md](secrets.md#how-the-pipeline-finds-a-secret)).
 Use a key with the narrowest role that does the job ([below](#errors)). The same commands by task (the first app
 from zero, a new device, a certificate rotation, a tester, a release) are in [account.md](account.md); what they keep
-and send where, in [security.md](security.md).
+and send where, in [security.md](security.md). On [Windows](native-install.md#windows) they all work, and ask each time.
 
 ## Shared options
 
@@ -94,6 +94,8 @@ Touch your security key (Yubico YubiKey OTP+FIDO+CCID) to sign in.
 - **PIN:** Apple does not ask for the key's PIN, so most keys sign without one. A key configured to always check it
   asks for it (read with echo off, like the password), and the prompt shows how many tries the key has left; xless
   stops after three wrong PINs, before the key locks itself. The PIN goes to the key only, encrypted as FIDO2 specifies; never to Apple, never to disk.
+- **Windows:** not yet. Windows lets only its own dialog speak to a security key, which xless does not use: choose the code
+  instead, where the Apple ID has another device or number for one.
 - **No key plugged in:** xless asks you to plug one in and press Enter. NFC and Bluetooth keys are not supported.
 - **Permission on macOS:** macOS normally lets a program open a security key with no question. Should it refuse, xless
   says so and names the setting: allow your terminal under System Settings > Privacy & Security > Input Monitoring,

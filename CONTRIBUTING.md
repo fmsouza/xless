@@ -50,7 +50,9 @@ the release run says so in a warning.
 | `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner. One (`xcode-native`) builds the sample with the runner's Xcode, for a device, the simulator and macOS, and signs it with a throw-away certificate |
 | `package (macos-arm64)`, `package (macos-x86_64)` | The macOS tarballs built as a release would build them (the x86_64 one cross-compiled) and checked: nothing of Apple's in them, only the system's libraries needed |
 | `install (macos-arm64)`, `install (macos-x86_64)` | Each one installed with `scripts/install.sh` and run on a Mac of its architecture, the agent and the prompts included |
-| `windows-tests (x86_64)` | The libraries of the account commands and their tests on GitHub's `windows-2022` runner, and that a crash of a process with a secret leaves no dump. xless itself does not build on Windows yet ([maintainers.md](docs/maintainers.md#windows)) |
+| `windows-tests (x86_64)` | The account commands, their libraries and their tests on GitHub's `windows-2022` runner; what can be seen only of a process of its own (no dump of one with a secret, locks, where libraries come from), what counts as a secure connection, and PSScriptAnalyzer on the PowerShell scripts ([maintainers.md](docs/maintainers.md#windows)) |
+| `package (windows-x86_64)` | The Windows zip built as a release would build it, and checked: nothing of Microsoft's in it, only Windows' own libraries needed, and the Visual C++ runtime |
+| `install (windows-2022)`, `install (windows-2025)` | `scripts/install.ps1` tested and the zip installed with it, by Windows PowerShell and PowerShell 7, and run in a console: a secret store made and opened |
 
 Linux CI never touches an Xcode, an SDK or an image. The macOS jobs compile with the runner's Xcode, as any Swift program
 on a Mac is; nothing of it goes into an archive, an artifact or a cache. CI uses no Apple secret.
