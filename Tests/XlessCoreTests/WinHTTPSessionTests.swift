@@ -364,11 +364,28 @@ func whatAProxyAnswersInsteadOfTheServerIsNoAnswer(status: String) async throws 
     if status.hasPrefix("407") { #expect(await code { _ = try await send(URLRequest(url: URL(string: "http://some.invalid/")!), env: env, idle: 10) } != nil) }
 }
 
+private func header(_ name: String, _ value: String) throws -> URLRequest {
+    var request = URLRequest(url: try #require(URL(string: "http://127.0.0.1:1/")))
+    request.setValue(value, forHTTPHeaderField: name)
+    return request
+}
+
+/// Whether xless refuses `request`. Foundation itself drops some headers that cannot be sent, and then there is nothing to refuse.
+private func isRefused(_ request: URLRequest) throws -> Bool {
+    do { return try WinHTTPRequest(request).headers == "User-Agent: xless\r\n" && request.allHTTPHeaderFields?.isEmpty != false }
+    catch is URLError { return true }
+}
+
 @Test func whatCannotBeSentIsRefused() async throws {
     for text in ["ftp://a.invalid/", "file:///C:/x", "https:///x", "http://user:pw@127.0.0.1/"] {
         guard let url = URL(string: text) else { continue }
         #expect(await code { _ = try await send(URLRequest(url: url)) } != nil, "\(text)")
     }
+    for value in ["a\r\nX: y", "a\nb", "a\u{0}b", "a\u{7F}b", "a\u{85}b", "caf\u{E9}", "a\u{010D}\u{010A}X: y", "a\u{1F4A9}"] {
+        #expect(try isRefused(header("X-A", value)), "\(value.debugDescription)")
+        #expect(try isRefused(header("X-\(value)", "a")), "\(value.debugDescription)")
+    }
+    #expect(try WinHTTPRequest(header("X-A", "a\tb ~!\"")).headers.contains("X-A: a\tb ~!\"\r\n"))
     #expect(throws: XlessError.self) { try WinHTTPSession(env: ["HTTPS_PROXY": "socks5://127.0.0.1:1"]) }
 }
 #endif

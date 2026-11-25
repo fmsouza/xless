@@ -169,8 +169,9 @@ struct WinHTTPRequest {
         var agent = false
         for (name, value) in (request.allHTTPHeaderFields ?? [:]).sorted(by: { $0.key < $1.key }) {
             if ["content-length", "host"].contains(name.lowercased()) { continue } // WinHTTP's to say
+            // ASCII alone: WinHTTP makes bytes of UTF-16 in a way that nothing says, and a letter cut to its low byte may be a line's end.
             guard !name.isEmpty, name.unicodeScalars.allSatisfy({ $0.isASCII && $0.value > 0x20 && $0 != ":" && $0.value != 0x7F }),
-                  value.unicodeScalars.allSatisfy({ $0.value >= 0x20 || $0 == "\t" }) else { throw URLError(.badURL, userInfo: [NSLocalizedDescriptionKey: "the header \(name) cannot be sent"]) }
+                  value.unicodeScalars.allSatisfy({ (0x20...0x7E).contains($0.value) || $0 == "\t" }) else { throw URLError(.badURL, userInfo: [NSLocalizedDescriptionKey: "the header \(name) cannot be sent"]) }
             if name.lowercased() == "user-agent" { agent = true }
             lines += "\(name): \(value)\r\n"
         }

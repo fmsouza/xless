@@ -20,6 +20,8 @@
 
 // MARK: - The process
 
+int xless_output_finish(void) { return fflush(stdout) != 0 || ferror(stdout) != 0; }
+
 static UINT output_page;
 
 static void give_page_back(void) { SetConsoleOutputCP(output_page); }

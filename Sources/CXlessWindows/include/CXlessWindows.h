@@ -148,6 +148,8 @@ int xless_user_sid(wchar_t *out);
 /// or PATH, a broken heap ends the process, and standard output and error are UTF-8 and have the line ends they are given (a console
 /// gets its own code page back at exit). 0, or a Windows error: what could not be had.
 unsigned long xless_process_start(void);
+// Not 0: something of what C's stdout was given could not be written.
+int xless_output_finish(void);
 
 /// Sets a variable of this process's environment, for GetEnvironmentVariableW and the C library alike. 0, or an errno.
 int xless_set_environment(const wchar_t *name, const wchar_t *value);

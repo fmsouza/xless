@@ -17,6 +17,29 @@ public enum WindowsProcess {
     }
 }
 
+/// What is written for a person or a program that has gone (`xless … | more`, ended): Foundation's own `write` would trap. Elsewhere SIGPIPE
+/// ends the process.
+public enum WindowsOutput {
+    public static func write(_ data: Data, to handle: FileHandle) {
+        do { try handle.write(contentsOf: data) } catch {
+            try? FileHandle.standardError.write(contentsOf: Data("error: cannot write the output\n".utf8))
+            exit(1)
+        }
+    }
+
+    /// At the end of a command: what `print` could not write it has not said.
+    public static func finish() {
+        guard xless_output_finish() != 0 else { return }
+        try? FileHandle.standardError.write(contentsOf: Data("error: cannot write the output\n".utf8))
+        exit(1)
+    }
+}
+
+// In each module that writes so: before Foundation's.
+extension FileHandle {
+    func write(_ data: Data) { WindowsOutput.write(data, to: self) }
+}
+
 /// What Windows says of an error's number.
 public enum WindowsError {
     public static func text(_ code: UInt32) -> String {

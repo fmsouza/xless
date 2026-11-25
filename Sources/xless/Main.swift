@@ -66,9 +66,20 @@ enum Main {
             say(refused)
             exit(refused.exitCode)
         }
-        guard let error else { return }
+        guard let error else {
+            #if os(Windows)
+            WindowsOutput.finish()
+            #endif
+            return
+        }
         guard let error = error as? XlessError else { Xless.exit(withError: error) }
         say(error)
         exit(error.exitCode)
     }
 }
+
+#if os(Windows)
+extension FileHandle {
+    func write(_ data: Data) { WindowsOutput.write(data, to: self) }
+}
+#endif
