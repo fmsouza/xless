@@ -274,7 +274,8 @@ sign and upload.) What keeps that code from it:
 - **Linux:** the agent is not dumpable: no process of yours can read its memory, attach a debugger to it or look into its
   `/proc` entry. It and the tools are out of the login's session keyring.
 - **macOS:** `PT_DENY_ATTACH` on the agent, the peer's whole audit token looked at before every answer, and the same
-  executable as the agent's, by device and inode.
+  program as the agent's: its file, and its code by the hash that the kernel started it with
+  ([rule 3](#who-may-use-what-the-agent-holds)).
 
 What it does not keep out is what nothing of xless's does: root, the kernel, and a program that can make your terminal, or
 a program in it, run a command ([below](#what-an-attacker-who-runs-as-you-can-do)). To have nothing held while code of the
