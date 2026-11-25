@@ -23,8 +23,10 @@ PASS, NEXT, VALUE = "correct horse battery staple", "another long passphrase her
 keep = {k: os.environ[k] for k in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH") if k in os.environ}
 env = {**keep, "HOME": t + "/home", "XDG_DATA_HOME": t + "/data", "XDG_CONFIG_HOME": t + "/config", "XDG_RUNTIME_DIR": t + "/run",
        "TMPDIR": t + "/tmp", "TERM": "dumb", "LC_ALL": "C", "X": xless, "T": t}
-for d in ("home", "data", "config", "run", "tmp", "bin"):
+for d in ("home", "data", "config", "run", "tmp", "bin", "config/xless"):
     os.mkdir(f"{t}/{d}", 0o700)
+with open(t + "/config/xless/config.yml", "w") as f:   # what is held here is asked for (the offer: prompts.test.sh)
+    f.write("unlock: { keep: never }\n")
 failures = 0
 
 def check(ok, what, detail=""):

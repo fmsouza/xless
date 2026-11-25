@@ -92,6 +92,8 @@ for name, text in (("name", "App"), ("description", "An app."), ("keywords", "ap
     write(f"{t}/appstore/en-US/{name}.txt", text + "\n")
 write(t + "/tauri/app/package.json", '{"name": "app", "version": "1.0.0"}')
 write(t + "/tauri/app/src-tauri/tauri.conf.json", '{"productName": "App", "version": "1.0.0", "identifier": "com.example.app"}')
+os.mkdir(t + "/config/xless", 0o700)
+write(t + "/config/xless/config.yml", "unlock: { keep: never }\n")   # the offer to keep it: prompts.test.sh
 rc, out = on_a_terminal([xless, "secrets", "init"], [PASS, PASS])
 check(rc == 0, "secrets init", out)
 rc, out = on_a_terminal([xless, "secrets", "init"], [PASS, PASS], {**env, "XDG_DATA_HOME": t + "/empty"})
@@ -204,10 +206,9 @@ check(rc == 0, "--yes needs no input", (rc, out))
 
 # A credential helper has no terminal to ask on.
 os.mkdir(t + "/helpers", 0o755)
-os.mkdir(t + "/config/xless", 0o700) if not os.path.isdir(t + "/config/xless") else None
 write(t + "/helpers/xless-credential-ask", f"#!/bin/sh\nif (: < /dev/tty) 2>/dev/null; then echo terminal; else echo none; fi >> {t}/helper.log\nexit 1\n")
 os.chmod(t + "/helpers/xless-credential-ask", 0o755)
-write(t + "/config/xless/config.yml", "secrets: { backend: helper, helper: ask }\n")
+write(t + "/config/xless/config.yml", "unlock: { keep: never }\nsecrets: { backend: helper, helper: ask }\n")
 e = {**env, "PATH": t + "/helpers:" + env["PATH"]}
 on_a_terminal([xless, "secrets", "list"], environment=e)
 on_a_terminal([xless, "secrets", "list", "--no-input"], environment=e)

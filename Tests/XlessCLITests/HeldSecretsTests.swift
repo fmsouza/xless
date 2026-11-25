@@ -20,6 +20,10 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     var failure: AgentError?
     var needsWitness = false
 
+    /// The seconds that have passed since what is held was put.
+    private var aged = 0
+    func age(by seconds: Int) { lock.withLock { aged += seconds } }
+
     var names: [String] { lock.withLock { items.keys.sorted() } }
     func hold(_ name: String) -> SecretHold? { lock.withLock { items[name]?.seed.hold } }
     func label(_ name: String) -> String? { lock.withLock { items[name]?.seed.label } }
@@ -57,7 +61,7 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     func statuses() -> [AgentStatus] {
         lock.withLock {
             guard !items.isEmpty else { return [] }
-            let list = items.values.map { AgentItemStatus(name: $0.seed.name, label: $0.seed.label, remaining: $0.seed.hold.seconds, idle: $0.seed.hold.idle, idleRemaining: $0.seed.hold.idle) }
+            let list = items.values.map { AgentItemStatus(name: $0.seed.name, label: $0.seed.label, remaining: $0.seed.hold.seconds - aged, idle: $0.seed.hold.idle, idleRemaining: $0.seed.hold.idle) }
             return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name })]
         }
     }

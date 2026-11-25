@@ -29,6 +29,7 @@ enum Main {
         }
         do {
             var command = try Xless.parseAsRoot(Array(HoldArguments.withDefaults(arguments).dropFirst()))
+            RunningCommand.set(type(of: command))
             if var asyncCommand = command as? AsyncParsableCommand {
                 try await asyncCommand.run()
             } else {

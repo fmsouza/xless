@@ -115,16 +115,23 @@ public struct AppleSessionCache: Sendable {
 
     /// Seals `web`'s cookies and keeps them for the hold, or less when Apple's session cookie (`myacinfo`; any of them when
     /// there is none) expires sooner. Replaces a kept session. `acrossReboots` also saves it, until then.
+    /// - Parameter kept: the kept session `web` was restored from, when it is kept on: its longest hold counts from its sign-in.
     @discardableResult
-    public func keep(_ web: AppleWebClient, appleID: String, hold: SecretHold, acrossReboots: Bool = false) async throws -> KeptSessionInfo {
+    public func keep(_ web: AppleWebClient, appleID: String, hold: SecretHold, acrossReboots: Bool = false,
+                     of kept: KeptSessionInfo? = nil) async throws -> KeptSessionInfo {
         if acrossReboots, saved == nil { throw Self.notSaved() }
         guard store.isAvailable else { throw Self.unavailable() }
-        let created = Self.whole(now())
-        var lifetime = store.allowed(hold)
+        let start = Self.whole(now()), created = kept?.created ?? start
+        let age = max(0, Int(start.timeIntervalSince(created)))
+        var lifetime = min(store.allowed(hold), hold.maximum - age)
         if let expiry = await web.sessionCookieExpiry() {
-            lifetime = min(lifetime, Int(expiry.timeIntervalSince(created).rounded(.down)))
+            lifetime = min(lifetime, Int(expiry.timeIntervalSince(start).rounded(.down)))
         }
         guard lifetime >= Self.minimumSeconds else {
+            if kept != nil, hold.maximum - age < Self.minimumSeconds {
+                throw XlessError(.account, "the Apple ID session was made \(HoldDuration.text(age)) ago, as long as one may be kept",
+                                 fix: "run `xless auth logout`, then sign in again")
+            }
             throw XlessError(.account, "Apple's session runs out in \(max(lifetime, 0)) s, too soon to keep",
                              fix: "re-run without --keep; each command signs in")
         }
@@ -132,7 +139,7 @@ public struct AppleSessionCache: Sendable {
         guard !cookies.isEmpty else {
             throw XlessError(.account, "there is no Apple ID session to keep", fix: "sign in first (`xless auth login --keep`)")
         }
-        let info = KeptSessionInfo(appleID: appleID, created: created, expires: created.addingTimeInterval(TimeInterval(lifetime)))
+        let info = KeptSessionInfo(appleID: appleID, created: created, expires: start.addingTimeInterval(TimeInterval(lifetime)))
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
         var plain = try encoder.encode(Payload(appleID: appleID, created: info.created, expires: info.expires, cookies: cookies,
@@ -153,9 +160,9 @@ public struct AppleSessionCache: Sendable {
             try saved.save(bytes, expires: info.expires)
         }
         do {
-            let kept = SecretHold(seconds: lifetime, idle: min(hold.idle, lifetime), maximum: hold.maximum)
-            try store.put(Self.blobName, blob, hold: kept)
-            try store.put(Self.keyName, keyBytes, hold: kept)
+            let left = SecretHold(seconds: lifetime, idle: min(hold.idle, lifetime), maximum: hold.maximum - age)
+            try store.put(Self.blobName, blob, hold: left)
+            try store.put(Self.keyName, keyBytes, hold: left)
         } catch {
             forget()
             throw XlessError(.account, "cannot keep the Apple ID session: \(error)", fix: "re-run without --keep")

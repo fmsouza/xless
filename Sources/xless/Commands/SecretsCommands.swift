@@ -45,7 +45,7 @@ enum SecretStoreCLI {
 
     /// The store config.yml's `secrets.backend` names, made once per process and shared by every command and by the
     /// pipeline's lookups (`main`), so the vault's passphrase is asked at most once.
-    private static let configured = Result { try ConfiguredSecretStore.load(cache: cache, prompter: { try? TerminalPrompter.forSecretStore() }) }
+    private static let configured = Result { try ConfiguredSecretStore.load(cache: cache, manner: KeepOffer.shared, prompter: { try? TerminalPrompter.forSecretStore() }) }
 
     static func backend() throws -> ConfiguredSecretStore { try configured.get() }
 
@@ -117,15 +117,19 @@ enum SecretStoreCLI {
     /// Unlocks the vault and keeps it unlocked for `hold`; what to say about it.
     static func unlock(_ vault: VaultSecretStore, hold: SecretHold) throws -> String {
         let file = try existing(vault)
-        if cache.held(id: file.id) == nil {
-            let plan = cache.plan(hold)
-            say("Unlocking the secret store for the commands of this terminal, for \(HoldDuration.text(plan.seconds))\(plan.idle.map { " (\(HoldDuration.text($0)) without use)" } ?? ""); `xless lock` ends it.")
-        }
+        let renewed = cache.held(id: file.id) != nil
         _ = try vault.key(for: file, remember: hold, reason: "unlocking")
         guard let held = cache.held(id: file.id) else {
             throw VaultError(.cacheUnavailable, "the store did not stay unlocked", fix: "run `xless lock`, then `xless unlock`")
         }
+        if !renewed, AppleWebCLI.held.held() == nil, let terminal = try? TerminalPrompter.forSecretStore() { KeepOffer.shared.also(.session, terminal) }
         return "the secret store stays unlocked \(VaultReport.held(held, now: Date())) (until `xless lock`)"
+    }
+
+    /// There is nothing to keep unlocked: no vault, or it is already.
+    static var isHeldOrAbsent: Bool {
+        guard case .success(.vault(let vault)) = configured, let file = (try? vault.vault.read()) ?? nil else { return true }
+        return cache.held(id: file.id) != nil
     }
 
     /// Fails if the store was replaced since `file` was read (the key in hand would not be its key).
@@ -182,8 +186,10 @@ struct SecretsInitCommand: ParsableCommand {
             try vault.vault.create(file)
             // An unlock of a store that was here before opens nothing any more.
             do { try SecretStoreCLI.cache.forget(place: location.file.path) } catch { SecretStoreCLI.say("warning: \(error)") }
-            if let remember { try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: remember, typedAgo: 0) }
             print("created the secret store at \(location.file.path)")
+            if let hold = remember ?? KeepOffer.shared.offer(terminal) {
+                try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: hold, typedAgo: 0)
+            }
         }
     }
 }
@@ -395,7 +401,7 @@ struct SecretsUnlockCommand: ParsableCommand {
 }
 
 struct SecretsLockCommand: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "lock", abstract: "Forget the store's unlock now (`xless lock` also drops a kept Apple ID session).")
+    static let configuration = CommandConfiguration(commandName: "lock", abstract: "Forget the store's unlock now, and a yes to keeping the next one (`xless lock` also drops a kept Apple ID session).")
 
     func run() throws {
         try SecretStoreCLI.run {
@@ -404,6 +410,7 @@ struct SecretsLockCommand: ParsableCommand {
                 return
             }
             let file = try SecretStoreCLI.existing(vault)
+            KeepOffer.shared.withdraw()
             print(try SecretStoreCLI.cache.forget(id: file.id) ? "locked the secret store" : "the secret store was not unlocked")
         }
     }

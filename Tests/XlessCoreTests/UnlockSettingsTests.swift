@@ -80,3 +80,16 @@ func aMalformedSettingIsAnErrorNeverADefault(yaml: String) {
     #expect(f(["api", "GET", "--keep"]) == ["api", "GET", "--keep"])
     #expect(f([]) == [])
 }
+
+@Test func whetherToOfferToKeepIsASettingAndAskingIsTheDefault() throws {
+    #expect(try settings(nil).keep == .ask)
+    #expect(try settings("unlock: { duration: 1h }").keep == .ask)
+    for (text, keep) in [("ask", KeepAnswer.ask), ("always", .always), ("never", .never)] {
+        #expect(try settings("unlock: { keep: \(text) }").keep == keep)
+    }
+    for bad in ["yes", "sometimes", "1", "[always]"] {
+        let error = #expect(throws: XlessError.self) { try settings("unlock: { keep: \(bad) }") }
+        #expect(error?.cause.contains("unlock.keep") == true)
+        #expect(error?.fix.contains("keep") == true)
+    }
+}

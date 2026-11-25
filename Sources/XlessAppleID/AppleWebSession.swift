@@ -22,14 +22,27 @@ public final class AppleWebSession: Sendable {
     }
 
     /// The kept session when there is one (`cache`), else a sign-in through `prompter` (asked for only then).
-    public static func open(web: AppleWebClient, cache: AppleSessionCache?,
-                            prompter: () throws -> any SignInPrompter) async throws -> AppleWebSession {
+    /// - Parameter keep: asked after a sign-in: how long to keep the session (nil: for this command).
+    public static func open(web: AppleWebClient, cache: AppleSessionCache?, prompter: () throws -> any SignInPrompter,
+                            keep: () -> SecretHold? = { nil }) async throws -> AppleWebSession {
+        let terminal: any SignInPrompter
+        let session: AppleWebSession
         if let cache, let kept = try await cache.restore(into: web) {
-            let session = AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
-            guard await session.isRefused() else { return session }
-            return try await signInAgain(web: web, kept: kept, cache: cache, prompter: try prompter())
+            let restored = AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
+            guard await restored.isRefused() else { return restored }
+            terminal = try prompter()
+            session = try await signInAgain(web: web, kept: kept, cache: cache, prompter: terminal)
+        } else {
+            terminal = try prompter()
+            session = try await signIn(web: web, prompter: terminal)
         }
-        return try await signIn(web: web, prompter: try prompter())
+        guard session.kept == nil, let cache, let hold = keep() else { return session }
+        do {
+            return AppleWebSession(web: web, appleID: session.appleID, kept: try await cache.keep(web, appleID: session.appleID, hold: hold))
+        } catch {
+            terminal.say("note: \(error)")
+            return session
+        }
     }
 
     /// Whether Apple no longer takes the session: App Store Connect says so, and the developer portal too (an Apple ID

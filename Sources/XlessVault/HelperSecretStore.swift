@@ -293,9 +293,9 @@ public enum ConfiguredSecretStore: Sendable {
 
     /// From `$XDG_CONFIG_HOME/xless/config.yml`: the vault at its standard place, or the helper found on PATH.
     public static func load(env: [String: String] = ProcessInfo.processInfo.environment, cache: (any VaultKeyCache)? = KernelKeyringCache(),
-                            prompter: @escaping () -> (any PassphrasePrompter)?) throws -> ConfiguredSecretStore {
+                            manner: (any UnlockManner)? = nil, prompter: @escaping () -> (any PassphrasePrompter)?) throws -> ConfiguredSecretStore {
         switch try UserConfig.secretsBackend(env: env) {
-        case .vault: .vault(VaultSecretStore(store: VaultStore(location: .standard(env: env)), cache: cache, prompter: prompter))
+        case .vault: .vault(VaultSecretStore(store: VaultStore(location: .standard(env: env)), cache: cache, manner: manner, prompter: prompter))
         case .helper(let name): .helper(HelperSecretStore(helper: try CredentialHelper.find(name: name, env: env), lock: .standard(env: env)))
         }
     }

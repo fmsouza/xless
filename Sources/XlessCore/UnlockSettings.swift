@@ -42,8 +42,11 @@ public enum HoldDuration {
     }
 }
 
+/// `unlock.keep` in config.yml: the answer to the offer to keep what was just typed for the next commands.
+public enum KeepAnswer: String, Sendable, Equatable, CaseIterable { case ask, always, never }
+
 /// `unlock:` in config.yml: how long an unlock and an Apple ID session are held when one is asked for, and the most that
-/// may be asked for. It holds nothing by itself.
+/// may be asked for; `keep: always` (and only that) holds without a question.
 public struct UnlockSettings: Sendable, Equatable {
     public var duration: Int
     public var idle: Int
@@ -51,20 +54,24 @@ public struct UnlockSettings: Sendable, Equatable {
     /// The agent drops everything when the system sleeps, and when the screen is locked (where it can tell).
     public var lockOnSleep: Bool
     public var lockOnScreenLock: Bool
+    /// Whether what was typed is kept for the next commands: asked each time, unless it says the answer.
+    public var keep: KeepAnswer
 
-    public init(duration: Int = 8 * 3600, idle: Int = 2 * 3600, maximum: Int = HoldDuration.maximum, lockOnSleep: Bool = true, lockOnScreenLock: Bool = true) {
+    public init(duration: Int = 8 * 3600, idle: Int = 2 * 3600, maximum: Int = HoldDuration.maximum, lockOnSleep: Bool = true, lockOnScreenLock: Bool = true,
+                keep: KeepAnswer = .ask) {
         self.duration = duration; self.idle = idle; self.maximum = maximum
         self.lockOnSleep = lockOnSleep; self.lockOnScreenLock = lockOnScreenLock
+        self.keep = keep
     }
 
-    static let example = "unlock: { duration: 8h, idle: 2h, maximum: 7d, lockOnSleep: true, lockOnScreenLock: true }"
+    static let example = "unlock: { duration: 8h, idle: 2h, maximum: 7d, lockOnSleep: true, lockOnScreenLock: true, keep: ask }"
 
     /// The `unlock` value of config.yml (nil: not set).
     static func parse(_ value: Any?, file: String) throws -> UnlockSettings {
         func bad(_ why: String) -> XlessError { XlessError(.config, "\(file): \(why)", fix: "write it as \(example) (at most 7d)") }
         guard let value else { return UnlockSettings() }
         guard let map = value as? [String: Any] else { throw bad("`unlock` is not a mapping") }
-        let keys = ["duration", "idle", "maximum", "lockOnSleep", "lockOnScreenLock"]
+        let keys = ["duration", "idle", "maximum", "lockOnSleep", "lockOnScreenLock", "keep"]
         if let extra = map.keys.sorted().first(where: { !keys.contains($0) }) { throw bad("`unlock` has an unknown key `\(extra)`") }
         func duration(_ key: String) throws -> Int? {
             guard let raw = map[key] else { return nil }
@@ -78,13 +85,19 @@ public struct UnlockSettings: Sendable, Equatable {
             guard let on = raw as? Bool else { throw bad("`unlock.\(key)` is neither true nor false") }
             return on
         }
+        func keep() throws -> KeepAnswer {
+            guard let raw = map["keep"] else { return .ask }
+            guard let text = raw as? String, let answer = KeepAnswer(rawValue: text) else { throw bad("`unlock.keep` is none of ask, always and never") }
+            return answer
+        }
         let standard = UnlockSettings()
         let maximum = try duration("maximum") ?? standard.maximum
         let longest = try duration("duration") ?? min(standard.duration, maximum)
         let idle = try duration("idle") ?? min(standard.idle, longest)
         guard longest <= maximum else { throw bad("`unlock.duration` is longer than `unlock.maximum`") }
         guard idle <= maximum else { throw bad("`unlock.idle` is longer than `unlock.maximum`") }
-        return UnlockSettings(duration: longest, idle: idle, maximum: maximum, lockOnSleep: try flag("lockOnSleep"), lockOnScreenLock: try flag("lockOnScreenLock"))
+        return UnlockSettings(duration: longest, idle: idle, maximum: maximum, lockOnSleep: try flag("lockOnSleep"), lockOnScreenLock: try flag("lockOnScreenLock"),
+                              keep: try keep())
     }
 
     /// What an option that says `default` stands for.
