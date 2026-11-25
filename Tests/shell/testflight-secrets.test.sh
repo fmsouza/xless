@@ -11,6 +11,9 @@ bg=()
 finally() { local p; for p in ${bg[@]+"${bg[@]}"}; do kill "$p" 2>/dev/null || true; done; rm -rf "$t"; }
 trap finally EXIT
 fail() { echo "FAIL: $*"; exit 1; }
+# a zombie counts as stopped: under a PID 1 that reaps nothing (CI's job container runs tail -f /dev/null), a process whose
+# parent ended stays one
+alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
 waitfor() { local _; for _ in $(seq 100); do grep -q "$1" "$2" 2>/dev/null && return 0; sleep 0.1; done; return 1; }   # RE FILE
 mkdir -p "$t/proj" "$t/bin" "$t/home" "$t/run" "$t/ov/app" "$t/keys"
 chmod 700 "$t/run"
@@ -171,8 +174,8 @@ for _ in $(seq 100); do [[ -s "$t/hung" ]] && break; sleep 0.1; done
 start=$SECONDS; kill -INT "$pid"; code=0; wait "$pid" || code=$?
 [[ $code -eq 130 && $((SECONDS - start)) -lt 6 ]] || fail "hanging docker: exit $code after $((SECONDS - start)) s, want 130 at once"
 grep -qF "docker does not answer; remove what may be left of this run's containers with: docker rm -f \$(docker ps -aq --filter label=xless.run=$pid." "$t/err" || fail "hanging docker: no word on what may be left: $(cat "$t/err")"
-for _ in $(seq 50); do kill -0 "$(cat "$t/hung")" 2>/dev/null || break; sleep 0.1; done
-kill "$(cat "$t/hung")" 2>/dev/null && fail "hanging docker: it outlived the run"
+for _ in $(seq 50); do alive "$(cat "$t/hung")" || break; sleep 0.1; done
+! alive "$(cat "$t/hung")" || fail "hanging docker: it outlived the run"
 [[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "hanging docker: the lock outlived the stopped run"
 
 # a SIGKILL leaves no chance to clean up: the next run on the work copy, which takes its lock over, removes them
