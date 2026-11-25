@@ -84,6 +84,25 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
         #expect(offer(agents).offer(ScriptedTerminal(["n"])) == nil)
     }
 
+    @Test func aYesIsOfTheTerminalItWasGivenIn() {
+        let agents = FakeAgents()
+        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        agents.needsWitness = true // they are another terminal's, which a command that has the store's key could use
+        let no = ScriptedTerminal(["n"])
+        #expect(offer(agents).session(no) == nil)
+        #expect(no.questions.count == 1)
+        #expect(offer(agents).agreedUntil() == nil)
+    }
+
+    @Test func aYesOfThisTerminalLastsNoLongerForALongerOneOfAnother() {
+        let agents = FakeAgents()
+        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        agents.age(by: 7 * 3600)
+        let item = AgentItemStatus(name: "xless-keep", label: "", remaining: 8 * 3600, idle: 1, idleRemaining: 1)
+        agents.elsewhere = [AgentStatus(isGranted: true, count: 1, remaining: 8 * 3600, sessions: 2, items: [item], isSameSession: false)]
+        #expect(offer(agents).session(ScriptedTerminal())?.seconds == 3600)
+    }
+
     @Test func theConfigurationAnswersIt() {
         let agents = FakeAgents(), terminal = ScriptedTerminal()
         #expect(offer(agents, .always).offer(terminal) == standard)

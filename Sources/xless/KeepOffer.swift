@@ -91,12 +91,12 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
 
     // MARK: after
 
-    func offer(_ prompter: any PassphrasePrompter) -> SecretHold? { hold(.store, prompter) { nil } }
+    func offer(_ prompter: any PassphrasePrompter) -> SecretHold? { hold(.store, prompter) }
 
     /// Signed in, on `prompter`: how long to keep the session, when the person agrees.
-    func session(_ prompter: any PassphrasePrompter, witness: () -> AgentWitness? = { nil }) -> SecretHold? { hold(.session, prompter, witness) }
+    func session(_ prompter: any PassphrasePrompter) -> SecretHold? { hold(.session, prompter) }
 
-    private func hold(_ kind: Kind, _ prompter: any PassphrasePrompter, _ witness: () -> AgentWitness?) -> SecretHold? {
+    private func hold(_ kind: Kind, _ prompter: any PassphrasePrompter) -> SecretHold? {
         guard canOffer, let settings, let standard = try? settings.hold(nil, option: "", stage: .config) else { return nil }
         return lock.withLock {
             switch answer {
@@ -106,7 +106,7 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
                 return hold
             case nil: break
             }
-            if let left = consented(witness) {
+            if let left = consented() {
                 let hold = Self.within(left, standard)
                 prompter.say(Self.kept(kind, text(hold)))
                 answer = .yes(hold)
@@ -128,7 +128,7 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     func also(_ kind: Kind, _ prompter: any PassphrasePrompter) {
         guard canOffer, let settings, let standard = try? settings.hold(nil, option: "", stage: .config) else { return }
         lock.withLock {
-            guard answer == nil, consented({ nil }) == nil else { return }
+            guard answer == nil, consented() == nil else { return }
             if settings.keep == .ask {
                 let what = kind == .session ? "Keep the Apple ID session too, once a command signs in" : "Keep the secret store unlocked too, once a command asks its passphrase"
                 guard yes("\(what) (\(text(standard)))? [y/N] ", prompter) else { return }
@@ -138,7 +138,7 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     }
 
     /// Until when a yes given in this terminal lasts; nil: none was.
-    func agreedUntil(now: Date = Date()) -> Date? { consented { nil }.map { now.addingTimeInterval(TimeInterval($0)) } }
+    func agreedUntil(now: Date = Date()) -> Date? { consented().map { now.addingTimeInterval(TimeInterval($0)) } }
 
     /// Forgets a yes, whichever terminal it was given in; why one may not be.
     @discardableResult func withdraw() -> AgentError? {
@@ -165,10 +165,11 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
         try? agents.put([mark]) { nil }
     }
 
-    /// The seconds left of a yes given in this terminal.
-    private func consented(_ witness: () -> AgentWitness?) -> Int? {
-        guard agents.get(Self.consent, using: false, witness: witness) != nil else { return nil }
-        let left = agents.statuses().filter(\.isGranted).flatMap(\.items).filter { $0.name == Self.consent }.map(\.remaining).max() ?? 0
+    /// The seconds left of a yes given in this terminal: one that another terminal's agent holds is no answer here, also
+    /// where that agent serves this one.
+    private func consented() -> Int? {
+        guard agents.get(Self.consent, using: false, witness: { nil }) != nil else { return nil }
+        let left = agents.statuses().filter { $0.isGranted && $0.isSameSession }.flatMap(\.items).filter { $0.name == Self.consent }.map(\.remaining).max() ?? 0
         return left >= Self.least ? left : nil
     }
 

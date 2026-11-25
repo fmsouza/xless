@@ -66,11 +66,13 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     var unreached: AgentError?
     func statuses() -> [AgentStatus] {
         lock.withLock {
-            guard !items.isEmpty else { return [] }
+            guard !items.isEmpty else { return elsewhere }
             let list = items.values.map { AgentItemStatus(name: $0.seed.name, label: $0.seed.label, remaining: $0.seed.hold.seconds - aged, idle: $0.seed.hold.idle, idleRemaining: $0.seed.hold.idle) }
-            return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name }, isSameSession: true)]
+            return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name }, isSameSession: !needsWitness)] + elsewhere
         }
     }
+    /// Of agents of other sessions, which serve this one too.
+    var elsewhere: [AgentStatus] = []
     func leases() -> [AgentStatus] { [] }
 }
 
