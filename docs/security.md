@@ -70,7 +70,9 @@ and wait for you to type the passphrase: that is why the overlays build in Docke
    own `xless <bundle ID> <TYPE>` profile when it cannot be used (and prints what it will change first; with
    `--no-provisioning-updates` it changes nothing:
    [signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)), and `xless store privacy
-   push` deletes the App Privacy answers app.yml no longer declares.
+   push` deletes the App Privacy answers app.yml no longer declares. Nothing is sent to App Review but by `xless release
+   submit`; a build it picks itself is one App Store Connect calls the version's newest valid build (what is on disk,
+   where build code can write, is only a hint), and is named before anything is sent.
 
 ## The secret store
 

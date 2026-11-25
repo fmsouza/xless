@@ -369,7 +369,7 @@ These are measured differences from an Xcode build, or workarounds the Linux too
 
 ## Troubleshooting
 
-Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17. Exit 2 is `xless run --docker` itself (arguments, a missing secret variable, a secret inside a mounted directory).
+Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17. Exit 2 is `xless run --docker` itself (arguments, a missing secret variable, a secret inside a mounted directory).
 
 | Exit | Stage and message | What to do |
 |---|---|---|

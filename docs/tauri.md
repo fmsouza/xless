@@ -149,7 +149,7 @@ The top-level `infoPlist` and `binaryDependencies` are iOS-only: the macOS build
 1. `xless ship --platform macos --to finalize` with no secret file or variable: prepare, build (both architectures), assets, finalize.
 2. `xless ship --platform macos --from sign --to package` with `XLESS_DEVID_KEY_FILE` and the App Store Connect key: sign, then package (build the DMG, sign it, notarize, staple, check the stapled ticket). No build code runs here.
 
-`--from <stage>` and `--to <stage>` among the extra arguments choose the steps; `--from package` reuses the signed app (for example to retry a notarization that failed on the network). The overlay's folder must not hold the Developer ID key either. Exit codes are those of the pipeline: prepare 19, build 12, finalize 14, sign 15, package 16. A notarization the service rejects is a `package` error (16) that names the submission; so is a DMG whose signature has no stapled ticket after `notary-submit --staple` (`rcodesign staple <dmg>` retries the staple alone).
+`--from <stage>` and `--to <stage>` among the extra arguments choose the steps; `--from package` reuses the signed app (for example to retry a notarization that failed on the network). The overlay's folder must not hold the Developer ID key either. Exit codes are those of the pipeline: prepare 19, build 12, finalize 14, sign 15 (24 with provisioning updates off), package 16. A notarization the service rejects is a `package` error (16) that names the submission; so is a DMG whose signature has no stapled ticket after `notary-submit --staple` (`rcodesign staple <dmg>` retries the staple alone).
 
 **Known gaps** ([research/parity-known-gaps.md](research/parity-known-gaps.md#tauri-macos)):
 
@@ -177,7 +177,7 @@ From a source checkout, `make test-tauri-linux` builds `samples/HelloTauri` thro
 
 ## Troubleshooting
 
-Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15, package 16, upload 17.
+Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
 
 | Exit | Stage and message | What to do |
 |---|---|---|
