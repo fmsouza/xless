@@ -243,6 +243,7 @@ for destination in device simulator; do
   more=(XLESS_BUILD_READ="$t/dep")
   if [[ "$destination" == device ]]; then run ship --config "$t/ov/rn.yml" --platform ios --to finalize; else run ship --config "$t/ov/rn.yml" --platform ios --destination simulator --from build; fi
   [[ "$code" == 0 ]] || fail "the React Native app for the $destination exited $code"
+  grep -q "of your files it reads .*, $t/dep and the tools on PATH" "$t/err" || fail "xless does not say what it opens"
   [[ "$(cat "$work/ios/report")" == "no key
 no source
 no token

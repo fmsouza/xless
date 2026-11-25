@@ -53,6 +53,9 @@ struct NativeOverlay {
         cache = env["XLESS_CACHE"].flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : nil } ?? URL(fileURLWithPath: home).appendingPathComponent(".cache/xless")
     }
 
+    /// With `readVariable`.
+    private var given: [String] { (env[Self.readVariable] ?? "").split(separator: ":").map(String.init) }
+
     /// The home directory that the builds have: package managers keep what they fetched in it from one build to the next.
     var buildHome: URL { cache.appendingPathComponent("build-home", isDirectory: true) }
     var temporary: URL { buildHome.appendingPathComponent("tmp/\(work.lastPathComponent)", isDirectory: true) }
@@ -61,7 +64,6 @@ struct NativeOverlay {
 
     func sandbox(executable: URL, reads more: [String]) throws -> BuildSandbox {
         let closed = BuildSandbox.privatePlaces + [home, BuildSandbox.userHome, env["TMPDIR"].flatMap { $0.hasPrefix("/") ? $0 : nil }].compactMap { $0 }
-        let given = (env[Self.readVariable] ?? "").split(separator: ":").map(String.init)
         let opened = [("the app source", checkout), ("the overlay's directory", [overlay.deletingLastPathComponent().path]), (Self.readVariable, given)]
             + inputs.map { ("the path input '\($0.name)'", [$0.path]) }
         var reads: [String] = []
@@ -147,7 +149,8 @@ struct NativeOverlay {
         let (variables, reads) = try environment(buildNumber: buildNumber)
         let command = try sandbox(executable: executable, reads: reads).command(executable.path, words)
         Self.say(xcode.summary)
-        Self.say("the app's build code runs in a sandbox: of your files it reads \(checkout.first ?? source.path), \(overlay.deletingLastPathComponent().path) and the tools on PATH, and writes \(work.path) and \(buildHome.path) (docs/security.md, \"An overlay's build on a Mac\")")
+        let opened = ([checkout.first ?? source.path, overlay.deletingLastPathComponent().path] + given + inputs.map(\.path)).joined(separator: ", ")
+        Self.say("the app's build code runs in a sandbox: of your files it reads \(opened) and the tools on PATH, and writes \(work.path) and \(buildHome.path) (docs/security.md, \"An overlay's build on a Mac\")")
         let out = OutputRelay(to: output), err = OutputRelay(to: FileHandle.standardError)
         let status: Int32
         do {
