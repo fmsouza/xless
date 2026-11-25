@@ -125,6 +125,15 @@ private func appTree() throws -> URL {
     #expect(try IdentifierReplacement.none.rewriteInfoPlists(in: app, stage: .finalize).isEmpty)
 }
 
+@Test func aRewrittenInfoPlistIsANewFile() throws {
+    let app = try appTree(), own = app.deletingLastPathComponent().appendingPathComponent("own-\(UUID().uuidString)")
+    try FileManager.default.linkItem(at: app.appendingPathComponent("Info.plist"), to: own)
+    let before = try Data(contentsOf: own)
+    #expect(try map.rewriteInfoPlists(in: app, stage: .finalize).contains("Info.plist: SharedContainerGroup"))
+    #expect(try Data(contentsOf: own) == before)
+    #expect(try Data(contentsOf: app.appendingPathComponent("Info.plist")) != before)
+}
+
 @Test func aReplacementThatWouldChangeABundleIDIsRefused() throws {
     let app = try appTree()
     let e = #expect(throws: XlessError.self) { try IdentifierReplacement(["com.example.app": "com.x.y"]).rewriteInfoPlists(in: app, stage: .finalize) }

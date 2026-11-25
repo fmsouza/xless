@@ -47,6 +47,14 @@ private func noToolchain() throws -> SwiftToolchain? { nil }
     #expect(!FileManager.default.fileExists(atPath: BuildSDKRecord.url(in: stage).path))
 }
 
+/// Build code can write where it is.
+@Test func aLinkIsNoRecordOfTheSDK() throws {
+    let stage = try tempDir("sdkcheck-stage"), other = try tempDir("sdkcheck-other")
+    try BuildSDKRecord(pin: nil, toolchain: meta("2700", "27A266a", sdk: "27.0")).write(in: other)
+    try FileManager.default.createSymbolicLink(at: BuildSDKRecord.url(in: stage), withDestinationURL: BuildSDKRecord.url(in: other))
+    #expect(BuildSDKRecord.load(in: other) != nil && BuildSDKRecord.load(in: stage) == nil)
+}
+
 @Test func aPinWithoutMetadataIsRefusedAndNoPinWithoutMetadataRecordsNothing() throws {
     let stage = try tempDir("sdkcheck-stage")
     let missing = stage.appendingPathComponent("none/toolchain-meta.json")

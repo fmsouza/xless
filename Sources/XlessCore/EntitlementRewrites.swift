@@ -49,7 +49,8 @@ public struct IdentifierReplacement: Sendable, Equatable {
         return IdentifierReplacement(m)
     }
 
-    /// Sign's check: the overlay's map must be the one finalize applied to the Info.plists.
+    /// Sign's check: the overlay's map must be the one finalize applied to the Info.plists. Build code can write the record, beside the
+    /// app of finalize, which is not signed: it can have sign refused, or make Info.plists of another map pass, as it can make any others.
     public func checkFinalized(in finalDir: URL, stage: Stage = .sign) throws {
         let applied = try Self.recorded(in: finalDir)
         guard applied != self else { return }
@@ -160,7 +161,7 @@ public struct IdentifierReplacement: Sendable, Equatable {
         for rel in Self.infoPlists(in: app) {
             let url = app.appendingPathComponent(rel)
             var format = PropertyListSerialization.PropertyListFormat.binary
-            guard let data = try? Data(contentsOf: url),
+            guard let data = try? PlainFile.read(url),
                   let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: &format) as? [String: Any] else {
                 throw XlessError(stage, "\(rel) in \(app.lastPathComponent) is not a dictionary property list", fix: "check how the build produced it")
             }
@@ -179,7 +180,8 @@ public struct IdentifierReplacement: Sendable, Equatable {
                 if changed.isEmpty { continue }
             }
             do {
-                try PropertyListSerialization.data(fromPropertyList: rewritten, format: format, options: 0).write(to: url)
+                // (a new file: what else the old one is, is not written)
+                try PropertyListSerialization.data(fromPropertyList: rewritten, format: format, options: 0).write(to: url, options: .atomic)
             } catch {
                 throw XlessError(stage, "cannot write \(rel) in \(app.lastPathComponent): \(error)", fix: "check disk space and permissions")
             }
