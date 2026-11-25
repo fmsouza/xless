@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# On a Mac, the built xless with the Xcode that is installed: Samples/HelloShip for a device, for the simulator and for macOS, with a
+# On a Mac, the built xless with the Xcode that is installed: samples/HelloShip for a device, for the simulator and for macOS, with a
 # home directory of its own and nothing downloaded; then its iOS app signed by xless's signer with a throw-away certificate that the
 # signer itself makes, and packaged. No Apple account, no keychain, and nothing is sent anywhere.
 #   Tests/shell/xcode-native.test.sh            (builds xless with `swift build`; XLESS_BIN=<path> uses that binary)
@@ -41,7 +41,7 @@ fi
 [[ "$code" == 0 ]] || fail "xless setup exited $code"
 [[ -z "$(find "$t/home" -type f)" ]] || fail "xless setup wrote into the home directory: $(find "$t/home" -type f)"
 
-cp -R "$repo/Samples/HelloShip" "$t/p"
+cp -R "$repo/samples/HelloShip" "$t/p"
 rm -rf "$t/p/.xless" "$t/p/.build"
 build="$t/p/.xless/build"
 
