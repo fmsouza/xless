@@ -29,8 +29,8 @@ struct Context {
     var rnOverlay: ReactNativeOverlay? = nil
     var reactNative: ResolvedReactNative? = nil
     /// What the stages of an overlay build with on a Mac (`NativeOverlay`); nil elsewhere.
-    var xcode: InstalledXcode? = nil
-    private var sdk: DarwinSDK { xcode.map { DarwinSDK(xcode: $0) } ?? DarwinSDK() }
+    var native: MacNative? = nil
+    private var sdk: DarwinSDK { native.map { DarwinSDK(xcode: $0.xcode) } ?? DarwinSDK() }
 
     /// `--destination simulator` (React Native overlays, and xless.yml projects on a Mac): stages after build are refused.
     var simulator = false
@@ -76,7 +76,7 @@ struct Context {
     var reactNativeBuild: ReactNativeBuildContext? {
         guard let rnOverlay, let sourceRoot, let workRoot, let reactNative else { return nil }
         return ReactNativeBuildContext(overlay: rnOverlay, resolved: reactNative, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths,
-                                       destination: simulator ? .iphonesimulator : .iphoneos)
+                                       destination: simulator ? .iphonesimulator : .iphoneos, xcode: native.map { XcodeBuild(sdk: sdk, meta: $0.meta) })
     }
 
     /// The cargo stages' view of this context; nil without a `type: cargo` overlay.

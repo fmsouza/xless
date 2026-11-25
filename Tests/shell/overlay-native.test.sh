@@ -80,7 +80,12 @@ probe() { name="$1"; shift; if "$@" >/dev/null 2>&1; then echo "$name: yes"; els
   probe replaced mv .xless/build .xless/other
   probe socket /usr/bin/perl -MIO::Socket::UNIX -e 'exit(IO::Socket::UNIX->new(Peer => $ARGV[0]) ? 0 : 1)' "$real/s"
   probe keychain /usr/bin/security list-keychains
-  probe open /usr/bin/open -Ra Finder
+  # an app of its own, which the system would start outside the sandbox
+  mkdir -p Out.app/Contents/MacOS
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>out</string><key>CFBundleIdentifier</key><string>com.example.out</string><key>CFBundlePackageType</key><string>APPL</string><key>LSBackgroundOnly</key><true/></dict></plist>' >Out.app/Contents/Info.plist
+  printf '#!/bin/sh\ntouch "%s/app/x"\n' "$real" >Out.app/Contents/MacOS/out
+  chmod +x Out.app/Contents/MacOS/out
+  probe open /usr/bin/open -g "$PWD/Out.app"
   probe again /usr/bin/sandbox-exec -p '(version 1)(allow default)' /usr/bin/true
   probe parent kill -0 "$tester"
   probe terminal sh -c 'echo x >/dev/tty'

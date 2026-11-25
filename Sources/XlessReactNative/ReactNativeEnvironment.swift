@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessTauri
 
 /// The environment of the React Native steps (contract doc, "Env-only fixes" and "Overrides and environment Task 8 sets").
 public enum ReactNativeEnvironment {
@@ -27,6 +28,15 @@ public enum ReactNativeEnvironment {
         env["EXPO_NO_TELEMETRY"] = "1"
         env["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0"
         for (k, v) in overlay.env { env[k] = v }
+        return env
+    }
+
+    /// `prepare` for a Mac, and the environment of `xcodebuild`: xless's stand-ins first on PATH (`XcodeBuild.writeTools`), and the gems
+    /// in a directory of the build's own (Ruby's is the user's, which the sandbox does not let it write).
+    public static func native(overlay: ReactNativeOverlay, work: URL, base: [String: String]) -> [String: String?] {
+        var env = build(overlay: overlay)
+        env["PATH"] = RustApple.wrapperDirectory(workRoot: work).path + ":" + (base["PATH"] ?? "/usr/bin:/bin")
+        if overlay.env["BUNDLE_PATH"] == nil { env["BUNDLE_PATH"] = (base["HOME"] ?? NSHomeDirectory()) + "/.bundle/xless" }
         return env
     }
 

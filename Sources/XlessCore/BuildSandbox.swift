@@ -42,6 +42,7 @@ public struct BuildSandbox: Sendable, Equatable {
         "com.apple.system.opendirectoryd.libinfo", "com.apple.system.opendirectoryd.membership", "com.apple.bsd.dirhelper",
         "com.apple.FSEvents", "com.apple.trustd.agent", "com.apple.trustd", "com.apple.system.notification_center",
         "com.apple.SystemConfiguration.configd", "com.apple.SystemConfiguration.DNSConfiguration", "com.apple.logd",
+        "com.apple.lsd.mapdb", // the types of documents, read only: xcodebuild asks whether a workspace is one
     ]
 
     /// The sandbox's rules. (The last that fits counts; what is more specific than `file-read*` would win over it, so it is not used.)

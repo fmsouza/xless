@@ -29,12 +29,12 @@ struct NativeOverlay {
     }
 
     /// What a stage builds with on a Mac: nil off a Mac and for an xless.yml project. Outside the sandbox an overlay's code never runs.
-    static func xcode(for ctx: Context, stage: Stage) throws -> InstalledXcode? {
+    static func mac(for ctx: Context, stage: Stage) throws -> MacNative? {
         guard MacNative.isMac, ctx.hasPrepare else { return nil }
         guard try isInside() else {
             throw XlessError(stage, "the app's build code does not run outside the sandbox", fix: "report this as an xless bug")
         }
-        return try MacNative.here(for: ctx, stage: stage)?.xcode
+        return try MacNative.here(for: ctx, stage: stage)
     }
 
     let source: URL, overlay: URL, work: URL, paths: StagePaths

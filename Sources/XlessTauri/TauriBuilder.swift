@@ -136,7 +136,7 @@ public enum TauriBuilder {
 
     /// On a Mac, `corepack pnpm …` as the user's own tools do it: the pnpm on PATH, unless package.json names a release for corepack to
     /// run and there is a corepack (Node.js has none from 25 on).
-    static func ownManager(_ command: [String], appRoot: URL, path: String) -> [String] {
+    public static func ownManager(_ command: [String], appRoot: URL, path: String) -> [String] {
         guard command.first == "corepack", command.count > 1 else { return command }
         func onPath(_ name: String) -> Bool { path.split(separator: ":").contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") } }
         let package = (try? Data(contentsOf: appRoot.appendingPathComponent("package.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
