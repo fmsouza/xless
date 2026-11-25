@@ -35,11 +35,17 @@ private func scratchDir() throws -> URL {
     let lock = NSLock()
     nonisolated(unsafe) var failures: [String] = []
     let done = DispatchGroup()
+    // macOS scans a program before its first run, which takes a busy machine seconds for each; the error is Linux's.
+    #if os(Linux)
+    let rounds = 40
+    #else
+    let rounds = 5
+    #endif
     for worker in 0..<16 {
         done.enter()
         Thread {
             defer { done.leave() }
-            for i in 0..<40 {
+            for i in 0..<rounds {
                 let tool = dir.appendingPathComponent("tool-\(worker)-\(i)")
                 do {
                     try ExecutableFile.write(body, to: tool, stage: .build)
