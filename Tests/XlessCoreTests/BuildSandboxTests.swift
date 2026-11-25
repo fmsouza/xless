@@ -74,6 +74,23 @@ private final class Sandboxed {
     #expect(try box.sh("/usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec(\"/bin/cat\", \"../private\")'").status != 0)
 }
 
+@Test func whatXlessUsesOfTheBuildOutsideItStaysItself() throws {
+    let box = try Sandboxed()
+    let fm = FileManager.default
+    for directory in ["w/.x/build/signed", "other"] { try fm.createDirectory(atPath: "\(box.root)/\(directory)", withIntermediateDirectories: true) }
+    box.sandbox.writes.append(box.root + "/other")
+    box.sandbox.fixed = ["\(box.work)/.x", "\(box.work)/.x/build"]
+    box.sandbox.readOnly = ["\(box.work)/.x/build/signed"]
+    for denied in ["mv .x/build .x/b", "mv .x x", "mv \(ShellWord.quoted(box.work)) ../other/w", "rm -rf .x/build/signed", "rmdir .x/build/signed", "touch .x/build/signed/f", "rm -rf ../other", "rm -rf .x/build/signed; ln -sFh /etc .x/build"] {
+        #expect(try box.sh(denied).status != 0, "\(denied)")
+    }
+    #expect(fm.fileExists(atPath: box.work + "/.x/build/signed") && fm.fileExists(atPath: box.root + "/other"))
+    for allowed in ["mkdir -p .x/build/final/a && touch .x/build/final/a/f .x/f && mv .x/build/final .x/build/f && rm -r .x/build/f", "touch -t 202001010000 . .x/build && chmod 755 . .x", "mkdir ../other/d && rmdir ../other/d"] {
+        let answer = try box.sh(allowed)
+        #expect(answer.status == 0, "\(allowed): \(answer.out)")
+    }
+}
+
 @Test func theSandboxReachesNoServiceThatCouldStartAProgramOutsideOrAskForASecret() throws {
     let box = try Sandboxed()
     #expect(try box.sh("lsappinfo list | grep .").status != 0)

@@ -17,6 +17,10 @@ public struct BuildSandbox: Sendable, Equatable {
     public var reads: [String]
     /// What is writable; also readable.
     public var writes: [String]
+    /// Not writable, though it is below what is: where xless puts what it makes of the build outside the sandbox.
+    public var readOnly: [String]
+    /// Directories that stay themselves where they are (a link in their place would lead xless elsewhere), as those of `writes` do.
+    public var fixed: [String]
     /// Never readable or writable, wherever it is.
     public var secrets: [String]
     /// Closed for reading, but for those: where users keep their files. Nothing is writable anywhere, but for `writes`.
@@ -24,8 +28,8 @@ public struct BuildSandbox: Sendable, Equatable {
 
     public static let tool = "/usr/bin/sandbox-exec"
 
-    public init(reads: [String], writes: [String], secrets: [String], closed: [String]) {
-        self.reads = reads; self.writes = writes; self.secrets = secrets; self.closed = closed
+    public init(reads: [String], writes: [String], readOnly: [String] = [], fixed: [String] = [], secrets: [String], closed: [String]) {
+        self.reads = reads; self.writes = writes; self.readOnly = readOnly; self.fixed = fixed; self.secrets = secrets; self.closed = closed
     }
 
     /// The home directories, the other volumes, and the directories for temporary files, which xless's own are in too.
@@ -47,6 +51,9 @@ public struct BuildSandbox: Sendable, Equatable {
         var rules = ["(version 1)", "(allow default)", "(deny file-write*)"]
         func add(_ words: String, _ all: [String]) throws { if !all.isEmpty { rules.append("(\(words) \(try paths(all)))") } }
         try add("allow file-write*", writes)
+        try add("deny file-write*", readOnly)
+        let fixed = try (writes + fixed).map { " (literal \(try Self.quoted(Self.real($0))))" }.joined()
+        if !fixed.isEmpty { rules.append("(deny file-write-create file-write-unlink\(fixed))") }
         rules.append(#"(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))"#)
         // xcodebuild saves files there first, below a directory with a name of its own, and renames them into their place. What others
         // have there cannot be listed, read or (but for a name that somebody guesses) changed.
