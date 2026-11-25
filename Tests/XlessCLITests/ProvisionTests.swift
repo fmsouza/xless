@@ -376,6 +376,51 @@ private func subjects(_ plan: ProvisionPlan) -> [String] { plan.steps.map { "\($
     #expect(again.text.contains("nothing to do"))
 }
 
+/// Types the passphrase, and says so in `lines`.
+private final class TypingPassphrase: PassphrasePrompter {
+    let lines: Lines
+    init(lines: Lines) { self.lines = lines }
+    func askSecret(_ prompt: String) throws -> SecretBytes { lines.add("passphrase"); return SecretBytes(utf8: "correct horse battery") }
+    func ask(_ prompt: String) throws -> String { lines.add("question"); return "" }
+    func say(_ line: String) {}
+}
+
+@Test func everythingIsAskedBeforeTheFirstStepOncePerApply() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    var s = Setup(vault: v)
+    let lines = Lines()
+    s.vault.vault = ProvisionVault(store: VaultSecretStore(store: v.store, cache: nil, prompter: { TypingPassphrase(lines: lines) }), env: [:])
+    s.hasWeb = false // planned without a session: what needs one is known
+    _ = try await s.apply(try await s.plan(), lines: lines)
+    #expect(Array(lines.all.prefix(2)) == ["passphrase", "sign-in"] && lines.all[2].hasPrefix("1/"), "\(lines.all)")
+    #expect(lines.all.filter { ["passphrase", "question", "sign-in"].contains($0) }.count == 2, "each once")
+    // Nothing to write and no web step: nothing is asked.
+    let more = Lines()
+    s.hasWeb = true
+    s.world.groups = [:]
+    let plan = try await s.plan()
+    #expect(!plan.steps.isEmpty && !plan.steps.contains { $0.web || $0.writesStore }, "\(plan.text)")
+    s.vault.vault = ProvisionVault(store: VaultSecretStore(store: v.store, cache: nil, prompter: { TypingPassphrase(lines: more) }), env: [:])
+    _ = try await s.apply(plan, lines: more)
+    #expect(!more.all.contains { ["passphrase", "question", "sign-in"].contains($0) }, "\(more.all)")
+}
+
+@Test func aSignInThatFailsStopsApplyBeforeAnythingIsSent() async throws {
+    let v = try TestVault()
+    defer { v.cleanup() }
+    let s = Setup(vault: v)
+    let plan = try await s.plan()
+    let applier = ProvisionApplier(inputs: s.inputs, account: s.account, web: { throw XlessError(.account, "Apple refused the password", fix: "try again") },
+                                   vault: s.vault.vault, store: s.store, now: now)
+    var caught: ProvisionApplyFailure?
+    do { _ = try await applier.apply(plan) } catch let f as ProvisionApplyFailure { caught = f }
+    let failure = try #require(caught)
+    #expect(s.world.writes.isEmpty, "\(s.world.writes)")
+    #expect(failure.applied.done.isEmpty && failure.left.count == plan.steps.count - 1 && failure.failed?.cause == "Apple refused the password")
+    #expect(failure.error.cause.contains("(0 of 16 steps were done, 16 left)"), "\(failure.error.cause)")
+}
+
 @Test func aFailedApplySaysWhatWasDoneAndARerunDoesTheRest() async throws {
     let v = try TestVault()
     defer { v.cleanup() }

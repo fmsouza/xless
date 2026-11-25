@@ -615,7 +615,7 @@ struct ProvisionApplyFailure: Error, StageReportableError {
 struct ProvisionApplier {
     let inputs: ProvisionInputs
     let account: any ProvisionAccount
-    /// Signs in (or restores the kept session) the first time a step needs it.
+    /// Signs in (or restores the kept session), when a step needs it.
     let web: () async throws -> ProvisionWebSide
     let vault: ProvisionVault
     var store: ProvisionStore?
@@ -631,9 +631,27 @@ struct ProvisionApplier {
         var state = plan.known
         var side: ProvisionWebSide?
         var applied = ProvisionApplied()
+        /// Step `i` stopped the apply.
+        func failure(at i: Int, _ error: any Error) -> ProvisionApplyFailure {
+            let step = plan.steps[i], e = XlessError.wrapping(error, stage: .account)
+            let done = applied.done
+            let left = plan.steps[done.count...].map { "\($0.area.title): \($0.action.rawValue) \($0.subject)" }
+            say("done: " + (done.isEmpty ? "nothing" : done.map(\.result).joined(separator: "; ")))
+            say("left: " + left.joined(separator: "; "))
+            let failure = XlessError(.account, "\(step.area.title), \(step.action.rawValue) \(step.subject): \(e.cause) (\(done.count) of \(plan.steps.count) steps were done, \(left.count) left)",
+                                     fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left")
+            return ProvisionApplyFailure(applied: applied, failed: .init(area: step.area, action: step.action, subject: step.subject, cause: e.cause, fix: e.fix),
+                                         left: plan.steps.enumerated().filter { $0.offset >= done.count && $0.offset != i }.map(\.element), error: failure)
+        }
+        // Everything that may be asked is, once, before the first step: nothing then waits for an answer half way through.
+        if let i = plan.steps.firstIndex(where: \.writesStore) {
+            do { try vault.unlock(try storeFile(), reason: "storing the new keys") } catch { throw failure(at: i, error) }
+        }
+        if let i = plan.steps.firstIndex(where: \.web) {
+            do { side = try await web() } catch { throw failure(at: i, error) }
+        }
         for (i, step) in plan.steps.enumerated() {
             do {
-                if step.web, side == nil { side = try await web() }
                 var found: [ProvisionDrift] = []
                 let result = try await run(step, state: &state, web: side, drift: &found, planNotes: plan.notes)
                 applied.done.append(ProvisionDone(area: step.area, subject: step.subject, result: result))
@@ -643,15 +661,7 @@ struct ProvisionApplier {
                     say("drift: \(d.subject): \(d.message) — \(d.fix)")
                 }
             } catch {
-                let e = XlessError.wrapping(error, stage: .account)
-                let done = applied.done
-                let left = plan.steps[i...].map { "\($0.area.title): \($0.action.rawValue) \($0.subject)" }
-                say("done: " + (done.isEmpty ? "nothing" : done.map(\.result).joined(separator: "; ")))
-                say("left: " + left.joined(separator: "; "))
-                let failure = XlessError(.account, "\(step.area.title), \(step.action.rawValue) \(step.subject): \(e.cause) (\(done.count) of \(plan.steps.count) steps were done, \(left.count) left)",
-                                         fix: "\(e.fix); then re-run `xless provision apply`: it plans again and does only what is left")
-                throw ProvisionApplyFailure(applied: applied, failed: .init(area: step.area, action: step.action, subject: step.subject, cause: e.cause, fix: e.fix),
-                                            left: Array(plan.steps[(i + 1)...]), error: failure)
+                throw failure(at: i, error)
             }
         }
         return applied
