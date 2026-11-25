@@ -137,6 +137,13 @@ private final class Once: @unchecked Sendable {
 }
 
 @Test func aSignalCancelsTheWaitWhichOnlyRead() async throws {
+    // What the signal does before the wait it does after it, whole: what passes signals on to the tools blocks the others.
+    var mine = sigaction(), before = sigaction(), after = sigaction()
+    mine.sa_flags = Int32(SA_RESTART)
+    sigaddset(&mine.sa_mask, SIGTTIN)
+    mine.handler = { _ in }
+    sigaction(SIGUSR2, &mine, &before)
+    defer { sigaction(SIGUSR2, &before, nil) }
     let flag = Interrupt.Flag()
     let once = Once()
     let t = FakeTransport((0..<1000).map { _ in (200, one(build(idA, number: "42", state: "PROCESSING"))) })
@@ -157,6 +164,22 @@ private final class Once: @unchecked Sendable {
         #expect(flag.interrupted)
     }
     #expect(t.requests.count == 1 && t.requests[0].httpMethod == "GET")
+    sigaction(SIGUSR2, nil, &after)
+    #expect(sigismember(&after.sa_mask, SIGTTIN) == 1)
+    #expect(after.sa_flags & Int32(SA_RESTART) != 0)
+}
+
+private extension sigaction {
+    var handler: @convention(c) (Int32) -> Void {
+        get { { _ in } }
+        set {
+            #if os(Linux)
+            __sigaction_handler.sa_handler = newValue
+            #else
+            __sigaction_u.__sa_handler = newValue
+            #endif
+        }
+    }
 }
 
 @Test func expireAsksAndNeverExpiresTwice() async throws {
