@@ -143,8 +143,10 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func makeDirectory(_ path: String) -> Bool { files.makeDirectory(path) }
     func removeFile(_ path: String) { files.removeFile(path) }
     func removeEmptyDirectory(_ path: String) { files.removeEmptyDirectory(path) }
-    func removeTree(_ path: String) { if !keepsTrees { files.removeTree(path) } }
+    func removeTree(_ path: String) { if !keepsTrees && !kept.contains(path) { files.removeTree(path) } }
     var keepsTrees = false
+    /// Trees that cannot be removed.
+    var kept: Swift.Set<String> = []
     func isPrivateDirectory(_ path: String) -> Bool { files.isPrivateDirectory(path) }
     func ownFile(_ path: String) -> String? { files.ownFile(path) }
 }

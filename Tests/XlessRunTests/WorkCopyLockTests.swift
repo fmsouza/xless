@@ -431,6 +431,22 @@ import Testing
         #expect(home.exists(directory))
     }
 
+    /// Also where the run stops because it cannot remove the secrets, or stop the step: the lock does not say it any more.
+    @Test(arguments: [(true, false), (false, true), (true, true)])
+    func aGoneRunsConfigurationIsRemovedWhateverElseFails(secretsStay: Bool, stepStays: Bool) throws {
+        let directory = "\(home.home)/.cache/xless/run/\(String(repeating: "0a", count: 16))"
+        try make(directory)
+        let secrets = try makeSecrets()
+        try leave(pid: 77, more: "job=88 then\nsecrets=\(secrets)\nconfiguration=\(directory)\n")
+        let host = FakeRunHost(processes: stepStays ? [88: .init(started: "then", stubborn: true)] : [:])
+        if secretsStay { host.kept = [secrets] }
+        #expect(try run(host) == 2)
+        #expect(home.exists(secrets) == secretsStay && host.lines.contains { $0.hasSuffix("remove them with: rm -rf \(secrets)") } == secretsStay, "\(host.lines)")
+        #expect(host.lines.contains { $0.hasSuffix("stop it: kill -9 88") } == stepStays, "\(host.lines)")
+        #expect(!home.exists(directory) && host.lines.contains("==> removing the xless.yml it left in \(directory)"), "\(host.lines)")
+        #expect(!host.allSteps.contains { $0.words.contains("ship") })
+    }
+
     /// And nothing else: only a private directory of this user's, where a run makes it.
     @Test func nothingElseIsRemovedAsAConfiguration() throws {
         let id = String(repeating: "0a", count: 16), base = "\(home.home)/.cache/xless/run"
