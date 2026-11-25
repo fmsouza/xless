@@ -311,6 +311,30 @@ def get(s, name=b'a'):
     #expect(child.wait() == 1)
 }
 
+@Test func aPeerThatDoesNotAnswerTheChallengeGetsNothing() throws {
+    // Of the granted session, but what it sent before it was asked anything may be a process's that has ended since.
+    let agent = try TestAgent()
+    func get() -> SecretPages {
+        var w = WireWriter()
+        w.put("a"); w.put(bytes: [UInt8](repeating: 1, count: 16)); w.put(true)
+        return w.frame(code: .get)
+    }
+    let silent = try RawPeer(agent.path)
+    silent.send(get())
+    #expect(try #require(silent.answer()).0.code == AgentCode.refused.rawValue)
+    let wrong = try RawPeer(agent.path)
+    var hello = WireWriter()
+    hello.put(bytes: [UInt8](repeating: 1, count: 16)); hello.put("test")
+    wrong.send(hello.frame(code: .hello))
+    _ = try #require(wrong.answer())
+    var proof = WireWriter()
+    proof.put(bytes: [UInt8](repeating: 0, count: 16)); proof.put(bytes: [UInt8](repeating: 2, count: 16))
+    wrong.send(proof.frame(code: .prove))
+    #expect(try #require(wrong.answer()).0.code == AgentCode.refused.rawValue)
+    #expect(wrong.isClosed())
+    #expect(try agent.link().get("a") != nil) // and who does is served
+}
+
 @Test func aSessionThatEndedIsServedNoMore() throws {
     let ended = Flag()
     let agent = try TestAgent()

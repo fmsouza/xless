@@ -71,9 +71,13 @@ private func mode(_ path: String) -> mode_t {
 }
 
 @Test func aDirectoryOfAnotherUserIsRefused() throws {
-    // /usr/bin belongs to root: as root, pretend to be someone else.
-    let d = AgentDirectory(path: "/usr/bin", user: getuid() == 0 ? 12345 : getuid())
-    #expect(throws: AgentError.self) { try d.verify() }
+    let scratch = ScratchDirectory()
+    let mine = AgentDirectory(path: scratch.path + "/xless-agent")
+    try mine.prepare() // 0700: only its owner is wrong
+    let theirs = AgentDirectory(path: mine.path, user: geteuid() + 1) // as that user sees this one's
+    #expect(throws: AgentError.self) { try theirs.verify() }
+    #expect(throws: AgentError.self) { try theirs.prepare() }
+    #expect(throws: AgentError.self) { try theirs.sockets() }
 }
 
 @Test func onlySocketsOfTheUserAreListedAndAtMostSoMany() throws {
