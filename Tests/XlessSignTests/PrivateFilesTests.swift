@@ -37,6 +37,55 @@ private func entries(_ url: URL) throws -> [String] { try FileManager.default.co
     #expect(try entries(root).isEmpty)
 }
 
+/// The directory is never readable by others, not even between making it and setting its mode: another thread looks while it
+/// is made, again and again. (With a umask of 077 there is nothing to see.)
+@Test func thePrivateDirectoryIsNeverOpenToOthers() throws {
+    let root = try scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    let look = Looking(root)
+    let thread = Thread { look.run() }
+    thread.start()
+    for _ in 0..<400 { try PrivateFiles.with(stage: .sign, in: root) { _ in } }
+    #expect(look.stop() == [])
+}
+
+/// Looks at the modes of what is in a directory, from a thread of its own, until told to stop.
+private final class Looking: @unchecked Sendable {
+    private let root: String, lock = NSLock(), done = DispatchSemaphore(value: 0)
+    private var seen: Set<mode_t> = [], stopped = false
+    init(_ root: URL) { self.root = root.path }
+
+    func run() {
+        while !lock.withLock({ stopped }) {
+            guard let dir = opendir(root) else { continue }
+            while let entry = readdir(dir) {
+                let name = withUnsafeBytes(of: &entry.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+                var info = stat()
+                guard name.hasPrefix("xless-keys-"), lstat("\(root)/\(name)", &info) == 0, info.st_mode & 0o7777 != 0o700 else { continue }
+                _ = lock.withLock { seen.insert(info.st_mode & 0o7777) }
+            }
+            closedir(dir)
+        }
+        done.signal()
+    }
+
+    /// The modes seen that are not 0700.
+    func stop() -> [String] {
+        lock.withLock { stopped = true }
+        done.wait()
+        return lock.withLock { seen.map { String($0, radix: 8) }.sorted() }
+    }
+}
+
+@Test func privateFilesHoldAPlistTheSameWay() throws {
+    let root = try scratch(); defer { try? FileManager.default.removeItem(at: root) }
+    try PrivateFiles.with(stage: .sign, in: root) { files in
+        let url = try files.write(plist: ["get-task-allow": false], as: "ent.plist")
+        #expect(try mode(url) == 0o600)
+        #expect(try String(contentsOf: url, encoding: .utf8).contains("<key>get-task-allow</key>"))
+        #expect(throws: XlessError.self) { try files.write(plist: [:], as: "ent.plist") }
+    }
+}
+
 @Test func privateFilesGoAwayWhenTheCallThrows() throws {
     let root = try scratch(); defer { try? FileManager.default.removeItem(at: root) }
     struct Stop: Error {}

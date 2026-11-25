@@ -10,7 +10,7 @@ enum Notary {
                          encodeKey: ([String]) throws -> Void = { try Shell.run("rcodesign", $0, stage: .package) },
                          run: ([String]) throws -> Run = rcodesign) throws {
         try PrivateFiles.with(stage: .package) { files in
-            let p8 = try files.write(try p8Contents(secrets), as: "key.p8"), keyJSON = files.directory.appendingPathComponent("key.json")
+            let p8 = try files.write(try p8Contents(secrets), as: "key.p8"), keyJSON = try files.make("key.json")
             try encodeKey(RCodesign.encodeKeyArguments(issuerID: secrets.identifier("ASC_ISSUER_ID", stage: .package),
                                                        keyID: secrets.identifier("ASC_KEY_ID", stage: .package), p8: p8, out: keyJSON))
             try submit(file, apiKeyJSON: keyJSON, run: run)

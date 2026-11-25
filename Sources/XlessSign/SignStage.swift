@@ -97,13 +97,12 @@ public enum SignStage {
         let runtimePaths = distribution == .developerID ? RCodesign.hardenedRuntimePaths(in: app, mainExecutable: main) : []
 
         try PrivateFiles.with(stage: .sign) { files in
-            let signer = try files.signer(key: key, certificate: cert.der), entURL = files.directory.appendingPathComponent("ent.plist")
+            let signer = try files.signer(key: key, certificate: cert.der)
+            var entURL = files.directory.appendingPathComponent("ent.plist")
             var nestedEntitlements: [(path: String, file: URL)] = []
             for (i, p) in provisioned.enumerated() {
-                if p.target.path.isEmpty { try Plist.write(merged[i], to: entURL, format: .xml, stage: .sign); continue }
-                let url = files.directory.appendingPathComponent("ent-\(i).plist")
-                try Plist.write(merged[i], to: url, format: .xml, stage: .sign)
-                nestedEntitlements.append((p.target.path, url))
+                if p.target.path.isEmpty { entURL = try files.write(plist: merged[i], as: "ent.plist"); continue }
+                nestedEntitlements.append((p.target.path, try files.write(plist: merged[i], as: "ent-\(i).plist")))
             }
             try codesign(RCodesign.signArguments(bundle: app, keyPEM: signer.key, certPEM: signer.certificate, entitlements: entURL, distribution: distribution,
                                                  runtimePaths: runtimePaths, nestedEntitlements: nestedEntitlements))

@@ -2,8 +2,10 @@ import Foundation
 import XlessCore
 
 /// The files rcodesign reads a key from: mode 0600, in a fresh directory of mode 0700 that is removed with everything in
-/// it when the call ends, however it ends. Signing, the DMG, the flat package and notarization all take theirs from here;
-/// nothing else writes key material for a tool.
+/// it when the call ends, however it ends. The directory is made with that mode (mkdir(2)), never opened up first, and
+/// every file in it is created by this type (`O_CREAT|O_EXCL|O_NOFOLLOW`), the one a tool then writes into included.
+/// Signing, the DMG, the flat package and notarization all take theirs from here; nothing else writes key material for a
+/// tool.
 public struct PrivateFiles {
     public let directory: URL
     let stage: Stage
@@ -14,9 +16,9 @@ public struct PrivateFiles {
         let files = PrivateFiles(directory: parent.appendingPathComponent("xless-keys-\(UUID().uuidString)"), stage: stage, parent: parent)
         do {
             try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-            // Without intermediate directories: one that is already there is not ours.
-            try FileManager.default.createDirectory(at: files.directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         } catch { throw files.cannotWrite }
+        // Not Foundation's, which makes the directory open and then sets its mode. One that is already there is not ours.
+        guard mkdir(files.directory.path, 0o700) == 0 else { throw files.cannotWrite }
         defer { try? FileManager.default.removeItem(at: files.directory) }
         return try body(files)
     }
@@ -27,6 +29,14 @@ public struct PrivateFiles {
         do { try SigningKey.writeExclusively(contents, toPath: file.path, mode: 0o600) } catch { throw cannotWrite }
         return file
     }
+
+    /// Writes `plist`, as XML, to a new file of mode 0600.
+    public func write(plist: [String: Any], as name: String) throws -> URL {
+        try write(Plist.data(plist, format: .xml, named: name, stage: stage), as: name)
+    }
+
+    /// A new, empty file of mode 0600 for a tool to write into.
+    public func make(_ name: String) throws -> URL { try write(Data(), as: name) }
 
     /// The two PEM files `rcodesign sign` takes: the private key and its certificate.
     public func signer(key: SigningKey, certificate der: Data) throws -> (key: URL, certificate: URL) {

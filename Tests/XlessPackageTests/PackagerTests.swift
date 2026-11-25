@@ -155,6 +155,8 @@ private func notarizedZip(_ root: URL, failure: XlessError? = nil, log: String =
         #expect((try fm.attributesOfItem(atPath: p8)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         #expect((try fm.attributesOfItem(atPath: (p8 as NSString).deletingLastPathComponent)[.posixPermissions] as? NSNumber)?.intValue == 0o700)
         #expect((json as NSString).deletingLastPathComponent == (p8 as NSString).deletingLastPathComponent)
+        // rcodesign writes into a file that is already private, not one whose mode it chooses.
+        #expect(((try? fm.attributesOfItem(atPath: json))?[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         try Data(p8.utf8).write(to: root.appendingPathComponent("p8-path"))
     }, submit: { args in
         #expect(args.first == "notary-submit" && args.contains("--staple"))

@@ -21,6 +21,8 @@ final class SignCapture: @unchecked Sendable {
             let value = args[i + 1]
             let (scope, file) = value.hasPrefix("/") ? ("", value) : (String(value.split(separator: ":", maxSplits: 1)[0]), String(value.split(separator: ":", maxSplits: 1)[1]))
             entitlements[scope] = try Plist.read(URL(fileURLWithPath: file), stage: .sign)
+            // It is next to the private key: as private as the key.
+            #expect((try FileManager.default.attributesOfItem(atPath: file)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         }
     }
 }
