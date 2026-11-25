@@ -81,3 +81,19 @@ private func make(_ path: String, directory: Bool = false, mode: Int = 0o755) th
     if let me = NSUserName() as String?, !me.isEmpty { #expect(try with(["user:\(me) allow add_file"]) == nil) }
 }
 #endif
+
+#if os(macOS)
+@Test func aVolumeThatIgnoresOwnersIsNotTrusted() throws {
+    let root = try temporary()
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    try make(root + "/d", directory: true)
+    try make(root + "/d/f")
+    func problem(_ flags: UInt32?) -> String? {
+        TrustedPath.problem(root + "/d/f", user: geteuid()) { $0.hasPrefix(root + "/d") ? flags : TrustedPath.volumeFlags(of: $0) }
+    }
+    #expect(problem(TrustedPath.volumeFlags(of: root)) == nil)
+    #expect(problem(UInt32(MNT_IGNORE_OWNERSHIP)) == "the volume of \(root)/d ignores who owns its files")
+    #expect(problem(nil) == "the volume of \(root)/d cannot be looked at")
+    #expect(TrustedPath.volumeFlags(of: root + "/none") == nil)
+}
+#endif

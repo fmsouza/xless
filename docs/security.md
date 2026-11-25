@@ -569,7 +569,8 @@ copies nothing of Xcode's into an image, a cache or a release; an app's own buil
 - **Which Xcode is used.** Only one with a signature of Apple's: the app's, as the App Store or developer.apple.com ship it, and
   that of each program in it that xless starts (`swift`, `actool`, `ibtool`, `xcodebuild`, `install_name_tool`) or that those are
   known to start (`swift-build`, `clang`, `ld`, `swift-plugin-server`, the build service…). Each has to be a program signed by
-  Apple, not a script, and under its own name where xless knows it. Those programs and the directories of their libraries, with
+  Apple, not a script, and under its own name where xless knows it. Those programs and the top directories of their libraries
+  (`usr/bin`, `usr/lib`, `usr/libexec`, `Library/Xcode`, `SharedFrameworks` and `Frameworks` themselves, not what is in them), with
   every directory from `/` to them, have to belong to root or to you and to be writable by nobody else but the administrators of
   the Mac (the groups `wheel` and `admin`), by their mode and their access control list, on a volume that keeps owners. (A disk
   that ignores them shows every file as yours.) `DEVELOPER_DIR` may choose an Xcode, not go around the checks. Every command that
@@ -577,10 +578,11 @@ copies nothing of Xcode's into an image, a cache or a release; an app's own buil
 - **What that does not cover.** The other files of Xcode: the SDKs and platforms, the headers, modules and libraries in them, and
   the libraries that the programs load, are not compared with a signature (that takes minutes), and of the SDKs and platforms
   nobody looks at who can write them. So a genuine Xcode to which somebody *added* something there passes, as XcodeGhost
-  was spread: install Xcode from the App Store or from developer.apple.com yourself. In an Xcode that you unpacked from a `.xip`
-  some of these directories can be written by the group `staff`, which is every user of the Mac; `chmod -R go-w <Xcode.app>` ends
-  that. And what belongs to you, every program of yours can change, also between the check and the build; xless itself is no
-  different there.
+  was spread: install Xcode from the App Store or from developer.apple.com yourself. Some of what is there is code that the build
+  runs: the compiler plugins of a platform or of the toolchain (`usr/lib/swift/host/plugins`). In an Xcode that you unpacked from a
+  `.xip`, some of these directories can be written by the group `staff`, which is every user of the Mac: on a Mac with several, any
+  of them can so run code in your builds. `chmod -R go-w <Xcode.app>` ends that. And what belongs to you, every program of yours
+  can change, also between the check and the build; xless itself is no different there.
 - **The build runs as you**, as natively on Linux: its code can read your files. SwiftPM's own sandbox stays on
   (`sandbox-exec`): a package's manifest, and the plugins and tools that a build runs, write only to the directories of the build and
   the temporary ones (not into the project, nor into your home directory) and reach no network. A project that is itself in a

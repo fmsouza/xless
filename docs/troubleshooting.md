@@ -70,7 +70,7 @@ On a Mac, natively ([native-install.md](native-install.md#on-a-mac)):
 | Symptom | What to do |
 |---|---|
 | `no Xcode on this Mac` | Install Xcode from the App Store (or a `.xip` from <https://developer.apple.com/download>) and open it once. The Command Line Tools alone have no iOS SDK. Without Xcode: `xless run --docker`. The account commands (`xless auth`, `provision`, `store`, `testflight`, `release` and so on) need none. |
-| `Xcode … is not used: … is not signed by Apple`, `… is no program`, `it has no swift-build` | It was changed, or is no Xcode. Install it again, or choose another one with `DEVELOPER_DIR`. |
+| `Xcode … is not used: … is not signed by Apple`, `… is no program`, `it has no swift-build` | It was changed, or is no Xcode. Install it again, or choose another one with `DEVELOPER_DIR`. `… is not signed by Apple as <name>` of an Xcode straight from Apple: that Xcode names this program differently, and xless does not know it; please report it. |
 | `Xcode … is not used: … can be written by other users`, `… belongs to another user` | Another user of the Mac could change it. `chmod go-w <that path>`, or give it to root or to yourself. Where the message names the access control list: `ls -led <that path>` shows it and `chmod -N <that path>` removes it. |
 | `Xcode … is not used: the volume of … ignores who owns its files` | It is on a disk on which every user can write everything (Finder, Get Info: "Ignore ownership on this volume"). Turn that off, or move Xcode to `/Applications`. |
 | `rcodesign, which signs, is not used from …: … can be written by other users` | Another user of the Mac could change the program that gets your signing key. `chmod go-w <that path>`, or set `XLESS_NATIVE_HOME` to a directory that only you can write. |

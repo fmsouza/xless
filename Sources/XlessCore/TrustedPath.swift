@@ -13,9 +13,12 @@ import Darwin
 public enum TrustedPath {
     /// Why somebody else could change the file or directory at `path`, or put another one there; nil: nobody could. Every directory
     /// from / to it is looked at, and, where a name on the way is a link, every one to what that names.
-    public static func problem(_ path: String, user: UInt32 = geteuid()) -> String? {
+    public static func problem(_ path: String, user: UInt32 = geteuid()) -> String? { problem(path, user: user, volumeFlags: volumeFlags) }
+
+    static func problem(_ path: String, user: UInt32, volumeFlags: (String) -> UInt32?) -> String? {
         guard let entries = entries(to: path) else { return "\(path) is not there" }
-        return entries.lazy.compactMap { problem(entry: $0, user: user) }.first
+        for entry in entries { if let problem = problem(entry: entry, user: user, volumeFlags: volumeFlags) { return problem } }
+        return nil
     }
 
     /// The directories, the links and the file that the system goes through for `path`; nil: it does not get there.
@@ -45,7 +48,17 @@ public enum TrustedPath {
         return entries
     }
 
-    private static func problem(entry path: String, user: UInt32) -> String? {
+    /// The flags that a volume is mounted with (macOS); nil: not known.
+    static func volumeFlags(of path: String) -> UInt32? {
+        #if canImport(Darwin)
+        var volume = statfs()
+        return statfs(path, &volume) == 0 ? volume.f_flags : nil
+        #else
+        return 0
+        #endif
+    }
+
+    private static func problem(entry path: String, user: UInt32, volumeFlags: (String) -> UInt32?) -> String? {
         var st = stat()
         guard lstat(path, &st) == 0 else { return "\(path) is not there" }
         let isLink = st.st_mode & S_IFMT == S_IFLNK
@@ -57,10 +70,9 @@ public enum TrustedPath {
         case 1: return "\(path) can be written by other users (its access control list: ls -led)"
         default: return "the access control list of \(path) cannot be read"
         }
-        var volume = statfs()
-        guard isLink || statfs(path, &volume) == 0 else { return "the volume of \(path) cannot be looked at" }
+        guard let flags = isLink ? 0 : volumeFlags(path) else { return "the volume of \(path) cannot be looked at" }
         // Every file there is said to be this user's, whoever wrote it.
-        if volume.f_flags & UInt32(MNT_IGNORE_OWNERSHIP) != 0 { return "the volume of \(path) ignores who owns its files" }
+        if flags & UInt32(MNT_IGNORE_OWNERSHIP) != 0 { return "the volume of \(path) ignores who owns its files" }
         #endif
         return nil
     }

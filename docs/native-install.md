@@ -96,8 +96,8 @@ dynamic library (`lib….dylib`) too; on iOS, where the App Store takes no loose
 product static there. Where an app's lowest system needs Swift libraries that Apple ships with Xcode for older systems, the build stops and says to
 raise `minimumOS`. A simulator build has no entitlements.
 
-Package versions are those of the project's `Package.resolved`. Without one, the newest that the manifest allows are taken, and the
-build says so: commit that file.
+Package versions are those of the project's `Package.resolved`, where the manifests allow them. Without one, the newest that the
+manifest allows are taken. The build ends with a note on each package that the file does not hold: commit that file.
 
 Build products are in the project's `.xless/` (`xcode-pkg-*`, `xcode-build-*`, and `build/` as on Linux). They are deleted with
 it. SwiftPM keeps its own caches and settings as it does without xless: `~/Library/Caches/org.swift.swiftpm` and `~/.swiftpm`

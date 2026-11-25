@@ -823,7 +823,8 @@ to a revision. Each is cloned at its revision into a directory named by its iden
 frameworks in `PackageFrameworks/` (Xcode's layout); `--disable-local-rpath` drops the `@loader_path` rpath SwiftPM adds
 for `swift run` (Xcode does not; with it the ExpoModulesJSI framework had one rpath more than the Mac's). The
 package's own dependencies are resolved by SwiftPM during `dump-pif` (network, prepare time); a CNG workspace has no
-`Package.resolved`, so they resolve to the newest allowed versions, as in Xcode. Requirements other than a revision pin
+`Package.resolved`, so they resolve to the newest allowed versions, as in Xcode; one that has it (`xcshareddata/swiftpm`)
+pins them, through a copy in the root package. Requirements other than a revision pin
 are refused. The PIF is dumped from an empty root package that depends on the checkout (`.package(path:)`), not in
 the checkout: with one root package SwiftPM materializes the root's library products as static archives
 (`lib<product>.a`, which the extension then linked as an archive: only referenced members, 548 KB), while a dependency's

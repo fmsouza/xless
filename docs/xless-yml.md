@@ -39,7 +39,7 @@ infoPlist: Resources/Info.plist
 | Key | Type | Required | Notes |
 |---|---|---|---|
 | `minimumOS` | string | yes | Dotted version such as `"17.0"`. For iOS it must be 13.0 or later (Apple's rule, checked at `finalize`). Keep it equal to the `platforms:` in `Package.swift`. |
-| `product` | string | yes | The library product in `Package.swift` that holds the app (e.g. `.library(name: "HelloShip", targets: ["HelloShip"])`). xtool (iOS) and xless (macOS) link it into a generated executable named after it. |
+| `product` | string | yes | The library product in `Package.swift` that holds the app (e.g. `.library(name: "HelloShip", targets: ["HelloShip"])`). xtool (iOS) and xless (macOS, and iOS on a Mac) link it into a generated executable named after it. Its packages are built in the versions that the project's `Package.resolved` names, where the manifests allow them; a note after the build names each one that differs. |
 | `entitlements` | path | no | Entitlements plist, relative to the project. Managed and security-sensitive entitlements are gated against the provisioning profile. `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` become `<teamID>.`; on iOS the values of `keychain-access-groups`, `com.apple.security.application-groups` and `com.apple.developer.associated-domains` must be ones the profile allows, and `aps-environment` takes the profile's value, as Xcode signs. |
 | `distribution` | `app-store` or `developer-id` | no | Defaults: iOS `app-store`, macOS `developer-id`. |
 | `bundleID` | string | no | Overrides the top-level `bundleID` for this platform. Same format rule. |
