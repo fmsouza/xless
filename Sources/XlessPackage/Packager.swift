@@ -6,6 +6,10 @@ public enum Packager {
     /// Entries that must never ship in a bundle archive (Finder / AppleDouble litter from macOS hosts).
     static let junkExclusions = ["*.DS_Store", "*/._*", "._*"]
 
+    /// A name as an argument of `zip` (which keeps it without the `./`): what a build names `-T` is a file, and no option. An option
+    /// of `zip` can run a command, and it runs where the secrets are.
+    static func argument(_ entry: String) -> String { "./" + entry }
+
     /// The `.ipa`, and `<name>.app.dSYM.zip` of `dSYMs` (the build's debug symbols) when it has any, as
     /// fastlane's `gym` names it. The same app zips to the same bytes at any time and under any umask: the staged copy
     /// takes the app's own dates back (`PkgBuilder.copyDates`), `Payload/` is 755 and dated like the app, and `zip -X`
@@ -32,9 +36,12 @@ public enum Packager {
     /// name fastlane's `gym` gives it, next to the package of `app`. Returns nil, writing nothing, when there is none.
     @discardableResult
     public static func zipDSYMs(_ dSYMs: URL?, app: URL, into out: URL) throws -> URL? {
+        if let dSYMs, (try? FileManager.default.destinationOfSymbolicLink(atPath: dSYMs.path)) != nil {
+            throw XlessError(.package, "\(dSYMs.path) is a link: the symbols of the build are a directory of its own", fix: "remove it and build again")
+        }
         guard let dSYMs, let entries = try? FileManager.default.contentsOfDirectory(atPath: dSYMs.path), !entries.isEmpty else { return nil }
         let zip = out.appendingPathComponent("\(app.lastPathComponent).dSYM.zip")
-        try Shell.run("zip", ["-qry", zip.path] + entries.sorted() + ["-x"] + junkExclusions, cwd: dSYMs, stage: .package)
+        try Shell.run("zip", ["-qry", zip.path] + entries.sorted().map(argument) + ["-x"] + junkExclusions, cwd: dSYMs, stage: .package)
         return zip
     }
 
@@ -54,7 +61,7 @@ public enum Packager {
             try Notary.notarize(app, secrets: secrets, encodeKey: encodeKey, run: submit)
             try Notary.checkStapled(app: app)
             let zip = out.appendingPathComponent("\(name)-macOS.zip")
-            try Shell.run("zip", ["-qry", zip.path, app.lastPathComponent, "-x"] + junkExclusions, cwd: out, stage: .package)
+            try Shell.run("zip", ["-qry", zip.path, argument(app.lastPathComponent), "-x"] + junkExclusions, cwd: out, stage: .package)
             try zipDSYMs(dSYMs, app: signedApp, into: out)
             return zip
         }

@@ -120,6 +120,33 @@ func makeDSYMs(_ root: URL, name: String) throws -> URL {
     return dSYMs
 }
 
+/// What a build leaves in the symbols is a name, not an option: `zip` runs what `--unzip-command` says.
+@Test func aNameAmongTheSymbolsIsNoOptionOfZip() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let out = root.appendingPathComponent("out")
+    try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    let dSYMs = try makeDSYMs(root, name: "A.app")
+    let names = ["-T", "-@", "-", "@", "--unzip-command=touch ran;:"]
+    for name in names { try Data("x".utf8).write(to: dSYMs.appendingPathComponent(name)) }
+    let zip = try #require(try Packager.zipDSYMs(dSYMs, app: root.appendingPathComponent("A.app"), into: out))
+    let left = try FileManager.default.contentsOfDirectory(atPath: dSYMs.path)
+    #expect(!left.contains("ran"))
+    let listing = try Shell.run("unzip", ["-Z1", zip.path], stage: .package).stdout.split(separator: "\n").map(String.init)
+    for name in names + ["A.app.dSYM/Contents/Resources/DWARF/x"] { #expect(listing.contains(name), "\(name): \(listing)") }
+}
+
+@Test func linkedSymbolsAreNotPackaged() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let out = root.appendingPathComponent("out"), elsewhere = root.appendingPathComponent("home"), link = root.appendingPathComponent("dSYMs")
+    for dir in [out, elsewhere] { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+    try Data("x".utf8).write(to: elsewhere.appendingPathComponent("private"))
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: elsewhere)
+    #expect(throws: XlessError.self) { _ = try Packager.zipDSYMs(link, app: root.appendingPathComponent("A.app"), into: out) }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)
+}
+
 @Test func zipDSYMsNamesTheZipAfterTheApp() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
