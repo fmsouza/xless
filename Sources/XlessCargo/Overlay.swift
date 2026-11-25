@@ -181,6 +181,7 @@ extension CargoOverlay {
             }
             for input in (top["inputs"] as? [Any]) ?? [] { try check(input, inputKeys, "inputs") }
         }
+        try ProvisioningUpdates.check(yaml: yaml, file: "overlay \(name)")
         let raw: Raw
         do {
             raw = try YAMLDecoder().decode(Raw.self, from: yaml)

@@ -284,13 +284,13 @@ private struct RawConfig: Decodable {
 
 extension ProjectConfig {
     public static func parse(yaml: String, buildOverride: String? = nil, buildScheme: BuildScheme = .fixed) throws -> ProjectConfig {
+        try ProvisioningUpdates.check(yaml: yaml, file: "xless.yml")
         let raw: RawConfig
         do {
             raw = try YAMLDecoder().decode(RawConfig.self, from: yaml)
         } catch {
             throw XlessError(.config, "xless.yml is invalid: \(error)", fix: "see docs/xless-yml.md for the schema")
         }
-        try ProvisioningUpdates.refuseMisspelt(yaml: yaml, file: "xless.yml")
         var platforms: [Platform: PlatformConfig] = [:]
         for (key, value) in raw.platforms {
             guard let p = Platform(rawValue: key) else {

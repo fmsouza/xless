@@ -126,13 +126,13 @@ private struct Raw: Decodable {
 
 extension TauriOverlay {
     public static func parse(yaml: String, name: String) throws -> TauriOverlay {
+        try ProvisioningUpdates.check(yaml: yaml, file: "overlay \(name)")
         let raw: Raw
         do {
             raw = try YAMLDecoder().decode(Raw.self, from: yaml)
         } catch {
             throw XlessError(.config, "overlay \(name) is invalid: \(error)", fix: "see samples/HelloTauri/xless.overlay.example.yml for the schema")
         }
-        try ProvisioningUpdates.refuseMisspelt(yaml: yaml, file: "overlay \(name)")
         guard raw.type == "tauri" else {
             throw XlessError(.config, "overlay \(name): type '\(raw.type)' is not supported", fix: "set type: tauri (type: react-native is a React Native / Expo overlay, type: cargo a plain Cargo app)")
         }

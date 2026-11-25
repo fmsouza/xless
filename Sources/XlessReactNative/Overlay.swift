@@ -126,6 +126,7 @@ extension ReactNativeOverlay {
                 }
             }
         }
+        try ProvisioningUpdates.check(yaml: yaml, file: "overlay \(name)")
         let raw: Raw
         do {
             raw = try YAMLDecoder().decode(Raw.self, from: yaml)

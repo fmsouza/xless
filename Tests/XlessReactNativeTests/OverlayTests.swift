@@ -178,4 +178,7 @@ func refusesBadReactNativeOverlays(_ swap: (String, String)) {
         let nowhere = URL(fileURLWithPath: "/nonexistent")
         #expect(try ReactNativeProject.resolve(overlay: o, source: nowhere, work: nowhere).config.provisioningUpdates == want)
     }
+    for line in ["provisioningUpdates:\n", "provisionUpdates: false\n", "testflight: { provisioningUpdates: false }\n", "7: a\nprovisionUpdates: false\n"] {
+        #expect(throws: XlessError.self, "\(line)") { _ = try ReactNativeOverlay.parse(yaml: base + line, name: "a") }
+    }
 }

@@ -140,6 +140,9 @@ private let hello = "[package]\nname = \"hello-mobile\"\nversion = \"1.2.3\"\n"
         for platform in Platform.allCases {
             #expect(try !CargoProject.resolve(overlay: off, platform: platform, source: dir).config.provisioningUpdates)
         }
+        for line in ["provisioningUpdates:", "provisionUpdates: false", "testflight: { provisioningUpdates: false }", "7: a\nprovisionUpdates: false"] {
+            #expect(throws: XlessError.self, "\(line)") { _ = try overlay(version: "1.0", extra: line) }
+        }
     }
 
     @Test func iosConfig() throws {

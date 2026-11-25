@@ -223,8 +223,9 @@ To let `sign` change nothing, pass `--no-provisioning-updates` (`xless sign`, `x
 --no-provisioning-updates`), or set `provisioningUpdates: false` in xless.yml or the overlay. `sign` then only reads:
 when the account lacks something, it fails with exit code **24** and the list of it, and signs nothing. Make the
 changes where that is wanted (`xless provision apply`, `xless profiles renew <id>`, or a `sign` without the
-restriction), then run again. The flag only restricts: nothing on the command line turns the config's `false` off. A
-missing certificate is exit 15 either way.
+restriction), then run again. The flag only restricts: nothing on the command line turns the config's `false` off. The
+key without a value, anywhere but at the top level, or a key that reads like it, is a configuration error (exit 10),
+never ignored. A missing certificate is exit 15 either way.
 
 ## Running `xless ship` yourself
 

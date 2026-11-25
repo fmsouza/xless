@@ -143,4 +143,7 @@ private func makeMacSource(tauri: String? = nil, mac: String? = #"{"bundle":{"ma
     }
     // Tauri overlays ignore keys they do not know: a misspelt restriction is refused.
     #expect(throws: XlessError.self) { _ = try overlay("provisioning_updates: false\n") }
+    for line in ["provisioningUpdates:\n", "provisionUpdates: false\n", "ios: { provisioningUpdates: false }\n", "testflight: { provisioningUpdates: false }\n"] {
+        #expect(throws: XlessError.self, "\(line)") { _ = try overlay(line) }
+    }
 }
