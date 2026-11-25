@@ -41,6 +41,13 @@ public struct StartedStep: Sendable {
 public protocol RunHost: AnyObject, Sendable {
     var processID: Int32 { get }
     var hostName: String { get }
+    /// What tells this machine from another one, whatever its name is now (not its own ID, but a hash); empty: unknown.
+    var machine: String { get }
+    /// What tells this start of the system from another one, as the first word of `mark` does; empty: unknown (macOS has none).
+    var boot: String { get }
+    /// The PID namespace, where a system has such: a process of another one has another PID here, or is not to be seen. Empty:
+    /// unknown (macOS has none).
+    var namespace: String { get }
     /// As the images' names have it: arm64 or amd64.
     var architecture: String { get }
     var isMac: Bool { get }
@@ -90,11 +97,18 @@ public protocol RunHost: AnyObject, Sendable {
 
     /// The path with every symbolic link resolved; nil: there is no such file (or it is not to be seen, or not in UTF-8).
     func realPath(_ path: String) -> String?
+    /// The path as the file system holds it, its links resolved. It is another one than `realPath` where macOS shows folders of
+    /// its data volume (/System/Volumes/Data) as if they were in /, /Users among them. nil: it cannot be told.
+    func physicalPath(_ path: String) -> String?
     /// The same file or directory, whatever the spellings; nil: one is not there (or not to be seen).
     func isSame(_ a: String, _ b: String) -> Bool?
     func isReadable(_ path: String) -> Bool
     /// A regular file, or a link to one.
     func isFile(_ path: String) -> Bool
+    /// A directory of this user's (no link to one) that nobody else may use, by a path without a link in it.
+    func isPrivateDirectory(_ path: String) -> Bool
+    /// What a regular file of this user's has (no link to one); nil: there is no such file.
+    func ownFile(_ path: String) -> String?
     /// A new empty file that only this user can read.
     func temporaryFile() throws -> String
     /// Makes `path` another name of `file`; false: there is a `path` already (or it cannot).

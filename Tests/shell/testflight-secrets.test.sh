@@ -43,7 +43,7 @@ if [[ "$3" == --check ]]; then   # prints the optional (?NAME) secrets the store
   exit "${CHECK_EXIT:-0}"
 fi
 d="${MAT_DIR:-$XDG_RUNTIME_DIR/xless/0123456789abcdef0123456789abcdef}"
-mkdir -p "$d"; echo "$d"
+mkdir -p "$d"; chmod 700 "$d"; echo "$d"
 [[ -z "${MAT_SLEEP:-}" ]] || { echo $$ > "$MPID"; exec sleep 30; }
 for a in "$@"; do
   case "$a" in *=*) mkdir -p "$d/${a%%=*}"
@@ -186,7 +186,17 @@ for _ in $(seq 100); do [[ -s "$t/dpid" ]] && break; sleep 0.1; done
 kill -KILL "$pid"; wait "$pid" 2>/dev/null || true
 [[ -d "$K" ]] || fail "SIGKILL: nothing left to test"
 "${docker[@]}" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "the run after a SIGKILL: $(cat "$t/err")"
-grep -q "removing the secrets it left in $K" "$t/err" && [[ ! -e "$K" ]] || fail "a killed run's secrets were left: $(cat "$t/err")"
+grep -q "removed the secrets it left in $(cd -P "$t" && pwd -P)${K#"$t"}" "$t/err" && [[ ! -e "$K" ]] || fail "a killed run's secrets were left: $(cat "$t/err")"
+kill "$(cat "$t/dpid")" 2>/dev/null || true
+# the same where that place is a link to a directory of another name (a cache moved to another disk)
+mkdir -p "$t/run2" "$t/big/cache-x"; chmod 700 "$t/run2"; ln -s "$t/big/cache-x" "$t/run2/xless"
+reset; id=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; K="$(cd -P "$t" && pwd -P)/big/cache-x/$id"
+"${docker[@]}" DSLEEP="--from sign" XDG_RUNTIME_DIR="$t/run2" MAT_DIR="$t/run2/xless/$id" "$S" --config "$t/ov/app.yml" >/dev/null 2>&1 & pid=$!; bg+=("$pid")
+for _ in $(seq 100); do [[ -s "$t/dpid" ]] && break; sleep 0.1; done
+[[ -s "$t/dpid" && -d "$K/sign" ]] || fail "SIGKILL, a link: step 3 never started: $(cat "$t/dlog")"
+kill -KILL "$pid"; wait "$pid" 2>/dev/null || true
+"${docker[@]}" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "the run after a SIGKILL, a link: $(cat "$t/err")"
+grep -qF "removed the secrets it left in $K" "$t/err" && [[ ! -e "$K" && -L "$t/run2/xless" ]] || fail "a killed run's secrets behind a link were left: $(cat "$t/err")"
 kill "$(cat "$t/dpid")" 2>/dev/null || true
 # the run directory's place must not be inside a cache folder the build container mounts read-write either
 mkdir -p "$t/home/.cache/xless/work/rt"; chmod 700 "$t/home/.cache/xless/work/rt"; reset; code=0

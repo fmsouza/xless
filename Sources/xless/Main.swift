@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import XlessAgent
 import XlessCore
+import XlessRun
 import XlessVault
 
 @main
@@ -10,7 +11,7 @@ enum Main {
         // `xless __agent`, which xless starts itself (`xless unlock`): before anything else, with nothing of the environment.
         if let status = AgentHost.runIfAsked(CommandLine.arguments) { exit(status) }
         // `--no-input`, of any command: also for the processes it becomes or starts.
-        let (arguments, noInput) = InputGate.taking(CommandLine.arguments)
+        let (arguments, noInput) = InputGate.taking(PosixRunHost.arguments)
         if noInput { setenv(InputGate.variable, "1", 1) }
         XlessSession.take()
         ScriptProcess.path = ProcessInfo.processInfo.environment["PATH"]

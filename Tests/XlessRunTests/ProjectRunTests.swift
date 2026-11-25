@@ -225,10 +225,15 @@ import XlessCore
         try refused(["XDG_RUNTIME_DIR": "\(home.root)/src"], "which is mounted into the build container; point XDG_RUNTIME_DIR elsewhere")
         try refused(["XLESS_TESTFLIGHT_ENV": home.write("src/x.env", "A=1\n")], "ENV_FILE")
         // what cannot be told is refused: a home that is not there
-        try refused(["HOME": "\(home.root)/none"], "cannot tell where \(home.root)/none is")
+        try refused(["HOME": "\(home.root)/none"], "cannot tell where your home directory is (HOME: \(home.root)/none, which is not there, or not to be seen)")
+        try refused(["HOME": ""], "cannot tell where your home directory is (HOME is empty)")
         try refused(["XLESS_SOURCE": home.home], "holds your home directory")
         try refused(["XLESS_SOURCE": home.root], "holds your home directory")
         try refused(["XLESS_SOURCE": "/"], "holds your home directory")
+        #if os(macOS)
+        // the data volume, which holds /Users and all the user's: macOS shows its folders in / too
+        for volume in ["/System/Volumes/Data", "/System/Volumes", "/System"] { try refused(["XLESS_SOURCE": volume], "holds your home directory") }
+        #endif
     }
 
     @Test func theEnvFileIsDataAndWinsOverTheEnvironment() throws {

@@ -1,5 +1,6 @@
 #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
 import CXlessProcess
+import Crypto
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -16,21 +17,53 @@ public final class PosixRunHost: RunHost {
         var description: String { String(cString: strerror(code)) }
     }
 
-    /// This process's arguments and variables (`NAME=value`) that are not UTF-8, by what Swift makes of them: for a step they are
-    /// the bytes that they were.
-    private let given: (words: [String: [CChar]], variables: [String: [CChar]])
+    /// This process's arguments that are not UTF-8, by the bytes of what `arguments` makes of them: for a step they are the bytes
+    /// that they were.
+    private let words: [[UInt8]: [UInt8]]
+    /// Its variables (`NAME=value`), where one is not UTF-8, by what Swift makes of their names.
+    private let variables: [String: [[UInt8]]]
+
+    /// This process's arguments. What is not UTF-8 in them is U+FFFD, and as many more of those as tell them apart.
+    public static var arguments: [String] { texts(strings(UnsafePointer(CommandLine.unsafeArgv))) }
+
+    static func texts(_ words: [[UInt8]]) -> [String] {
+        var known: [[UInt8]: String] = [:], taken: Set<[UInt8]> = []
+        for word in words {
+            guard let text = utf8(word) else { continue }
+            known[word] = text
+            taken.insert(word)
+        }
+        return words.map { word in
+            if let text = known[word] { return text }
+            var text = String(decoding: word, as: UTF8.self)
+            while !taken.insert(Array(text.utf8)).inserted { text += "\u{FFFD}" }
+            known[word] = text
+            return text
+        }
+    }
+
+    /// nil: they are not UTF-8.
+    static func utf8(_ bytes: [UInt8]) -> String? {
+        let text = String(decoding: bytes, as: UTF8.self)
+        return text.utf8.elementsEqual(bytes) ? text : nil
+    }
+
+    private static func strings(_ list: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [[UInt8]] {
+        var out: [[UInt8]] = [], next = list
+        while let here = next, let text = here.pointee {
+            out.append(UnsafeBufferPointer(start: text, count: strlen(text)).map { UInt8(bitPattern: $0) })
+            next = here + 1
+        }
+        return out
+    }
+
+    private static func name(_ variable: [UInt8]) -> ArraySlice<UInt8> { variable.prefix { $0 != UInt8(ascii: "=") } }
 
     public init() {
-        func bytes(_ list: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [String: [CChar]] {
-            var out: [String: [CChar]] = [:]
-            var next = list
-            while let here = next, let text = here.pointee {
-                if String(validatingCString: text) == nil { out[String(cString: text)] = Array(UnsafeBufferPointer(start: text, count: strlen(text) + 1)) }
-                next = here + 1
-            }
-            return out
-        }
-        given = (bytes(UnsafePointer(CommandLine.unsafeArgv)), bytes(xless_environment()))
+        let given = Self.strings(UnsafePointer(CommandLine.unsafeArgv))
+        words = Dictionary(zip(Self.texts(given).map { Array($0.utf8) }, given)) { first, _ in first }.filter { $0.key != $0.value }
+        variables = Dictionary(grouping: Self.strings(xless_environment())) { String(decoding: Self.name($0), as: UTF8.self) }
+            .filter { $0.value.contains { Self.utf8($0) == nil } }
         // Output nobody reads any more must not end the run before it has cleaned up.
         signal(SIGPIPE, SIG_IGN)
         // Ignored (xless may have been started so), the system would keep no step's exit code.
@@ -55,6 +88,44 @@ public final class PosixRunHost: RunHost {
     }
 
     public var hostName: String { systemName { $0.nodename } }
+
+    /// By the machine's own ID, which stays as it is when its name follows the network. A container (it has a PID namespace of its
+    /// own) has none but what its image may have: it is known by the system it is on and its name.
+    public var machine: String {
+        #if os(macOS)
+        var id = [UInt8](repeating: 0, count: 16), wait = timespec(tv_sec: 1, tv_nsec: 0)
+        return gethostuuid(&id, &wait) == 0 ? Self.machine(id.map { String(format: "%02x", $0) }.joined()) : ""
+        #else
+        let firstNamespace = "pid:[4026531836]" // PROC_PID_INIT_INO, the same on every Linux
+        if namespace == firstNamespace {
+            let id = Self.word("/etc/machine-id")
+            if id.wholeMatch(of: /[0-9a-f]{32}/) != nil { return Self.machine(id) }
+        }
+        let boot = self.boot
+        return boot.isEmpty ? "" : Self.machine(boot, hostName)
+        #endif
+    }
+
+    public var boot: String { isMac ? "" : Self.word("/proc/sys/kernel/random/boot_id") }
+
+    public var namespace: String {
+        var name = [CChar](repeating: 0, count: 256)
+        let n = isMac ? 0 : readlink("/proc/self/ns/pid", &name, name.count)
+        return n > 0 ? String(decoding: name[..<n].map { UInt8(bitPattern: $0) }, as: UTF8.self) : ""
+    }
+
+    /// A hash, as machine-id(5) asks for: the ID itself is nobody else's to know.
+    static func machine(_ ids: String...) -> String {
+        if ids == [""] { return "" }
+        let code = HMAC<SHA256>.authenticationCode(for: Data("xless: the machine of a work copy's lock".utf8), using: SymmetricKey(data: Data(ids.joined(separator: "\n").utf8)))
+        return String(code.map { String(format: "%02x", $0) }.joined().prefix(32))
+    }
+
+    /// The first word of a file; empty: there is none.
+    private static func word(_ file: String) -> String {
+        ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+    }
+
     public var architecture: String { ["arm64", "aarch64"].contains(systemName { $0.machine }) ? "arm64" : "amd64" }
 
     public var currentDirectory: String {
@@ -104,8 +175,8 @@ public final class PosixRunHost: RunHost {
         }
         if step.quiet { quiet = open("/dev/null", O_WRONLY | O_CLOEXEC) }
         var pid: Int32 = 0
-        let code = withStrings(step.words, given.words) { words in
-            withStrings(step.environment.map { "\($0.key)=\($0.value)" }, given.variables) { environment in
+        let code = withStrings(bytes(step.words)) { words in
+            withStrings(bytes(step.environment)) { environment in
                 xless_spawn_step(path, words, environment, step.directory, out, quiet, &pid)
             }
         }
@@ -170,8 +241,8 @@ public final class PosixRunHost: RunHost {
 
     public func become(_ words: [String], environment: [String: String]) -> String {
         guard let path = program(words[0], path: environment["PATH"]) else { return String(cString: strerror(ENOENT)) }
-        withStrings(words, given.words) { words in
-            withStrings(environment.map { "\($0.key)=\($0.value)" }, given.variables) { environment in
+        withStrings(bytes(words)) { words in
+            withStrings(bytes(environment)) { environment in
                 signal(SIGPIPE, SIG_DFL)
                 _ = execve(path, words, environment)
             }
@@ -179,8 +250,22 @@ public final class PosixRunHost: RunHost {
         return String(cString: strerror(errno))
     }
 
-    private func withStrings<R>(_ strings: [String], _ given: [String: [CChar]], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
-        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { text in given[text].map { strdup($0) } ?? strdup(text) } + [nil]
+    private func bytes(_ words: [String]) -> [[UInt8]] { words.map { Array($0.utf8) }.map { self.words[$0] ?? $0 } }
+
+    /// Those that have the value that they were given are the bytes that they were, also those whose names Swift takes for one.
+    private func bytes(_ environment: [String: String]) -> [[UInt8]] {
+        environment.flatMap { name, value -> [[UInt8]] in
+            let given = variables[name] ?? []
+            func isSame(_ variable: [UInt8]) -> Bool {
+                String(decoding: variable.dropFirst(Self.name(variable).count + 1), as: UTF8.self).utf8.elementsEqual(value.utf8)
+            }
+            guard given.contains(where: isSame) else { return [Array("\(name)=\(value)".utf8)] }
+            return Dictionary(grouping: given, by: Self.name).values.map { named in named.first(where: isSame) ?? named[0] }
+        }
+    }
+
+    private func withStrings<R>(_ strings: [[UInt8]], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R) -> R {
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { text in (text + [0]).withUnsafeBufferPointer { $0.withMemoryRebound(to: CChar.self) { strdup($0.baseAddress!) } } } + [nil]
         defer { for pointer in pointers { free(pointer) } }
         return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
     }
@@ -210,12 +295,12 @@ public final class PosixRunHost: RunHost {
     public func started(_ pid: Int32) -> String { ps(["-o", "lstart=", "-p", "\(pid)"]) }
     public func commandLine(_ pid: Int32) -> String { ps(["-o", "command=", "-p", "\(pid)"]) }
 
-    public func mark(_ pid: Int32) -> String {
-        let start = xless_process_start(pid)
-        guard start != 0 else { return "" }
-        // On Linux it counts from the start of the system.
-        let boot = (try? String(contentsOfFile: "/proc/sys/kernel/random/boot_id", encoding: .utf8)) ?? ""
-        return (boot.split(whereSeparator: \.isWhitespace) + ["\(start)"]).joined(separator: " ")
+    public func mark(_ pid: Int32) -> String { Self.mark(xless_process_start(pid), boot: boot, isMac: isMac) }
+
+    /// On Linux a start counts from the system's: without a word on which that was it marks nothing.
+    static func mark(_ start: UInt64, boot: String, isMac: Bool) -> String {
+        if start == 0 { return "" }
+        return isMac ? "\(start)" : boot.isEmpty ? "" : "\(boot) \(start)"
     }
 
     public func programFile(_ pid: Int32) -> String {
@@ -250,6 +335,15 @@ public final class PosixRunHost: RunHost {
         return String(validatingCString: resolved)
     }
 
+    public func physicalPath(_ path: String) -> String? {
+        #if os(macOS)
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        return xless_physical_path(path, &buffer, buffer.count) > 0 ? String(validatingCString: buffer) : nil
+        #else
+        return realPath(path)
+        #endif
+    }
+
     public func isSame(_ a: String, _ b: String) -> Bool? {
         var x = stat(), y = stat()
         guard stat(a, &x) == 0, stat(b, &y) == 0 else { return nil }
@@ -261,6 +355,30 @@ public final class PosixRunHost: RunHost {
     public func isFile(_ path: String) -> Bool {
         var info = stat()
         return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+    }
+
+    public func isPrivateDirectory(_ path: String) -> Bool {
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == geteuid(), info.st_mode & 0o777 == 0o700,
+              let real = realPath(path) else { return false }
+        return real.utf8.elementsEqual(path.utf8)
+    }
+
+    public func ownFile(_ path: String) -> String? {
+        // (O_NONBLOCK: opening a FIFO waits for who writes to it.)
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == geteuid() else { return nil }
+        var bytes: [UInt8] = [], buffer = [UInt8](repeating: 0, count: 16384)
+        while true {
+            let n = read(descriptor, &buffer, buffer.count)
+            if n < 0, errno == EINTR { continue }
+            guard n >= 0 else { return nil }
+            if n == 0 { return Self.utf8(bytes) }
+            bytes += buffer[..<n]
+        }
     }
 
     public func temporaryFile() throws -> String {

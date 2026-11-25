@@ -90,6 +90,10 @@ void *xless_remove_when_ended(const char *path, int is_directory);
 /// Forgets it: it is gone, or not private any more.
 void xless_keep_when_ended(void *entry);
 
+/// macOS: the path of the file at `path` as its file system holds it, which is on the data volume (/System/Volumes/Data) for what
+/// macOS shows in / of it, into `buffer`: its length, or -1 (it cannot be told; elsewhere: never).
+long xless_physical_path(const char *path, char *buffer, size_t length);
+
 /// This process's variables (environ).
 char *const *xless_environment(void);
 

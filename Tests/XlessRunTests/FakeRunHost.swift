@@ -24,6 +24,9 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     private(set) var became: [String]?
     private(set) var becameWith: [String: String] = [:]
 
+    /// Instead of what the system says.
+    var physical: (@Sendable (String) -> String?)?
+
     init(programs: Swift.Set<String> = ["docker", "xless"], isMac: Bool = false, directory: String = "/", processes: [Int32: Process] = [:],
          answer: @escaping @Sendable (FakeRunHost, RunStep) -> Answer = { _, _ in (0, "") }) {
         self.programs = programs
@@ -49,6 +52,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     var processID: Int32 { 4242 }
     var hostName: String { "here" }
+    var machine = "this one", boot = "boot", namespace = "pid:[1]"
     var architecture: String { "arm64" }
     var now: Date { Date(timeIntervalSince1970: 1_800_000_000) }
     var currentDirectory: String { directory }
@@ -125,6 +129,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func pause(_ seconds: Double) { if stopping, Thread.current.threadDictionary["run"] != nil { pthread_exit(nil) } }
 
     func realPath(_ path: String) -> String? { files.realPath(path) }
+    func physicalPath(_ path: String) -> String? { physical.map { $0(path) } ?? files.physicalPath(path) }
     func isSame(_ a: String, _ b: String) -> Bool? { files.isSame(a, b) }
     func isReadable(_ path: String) -> Bool { files.isReadable(path) }
     func isFile(_ path: String) -> Bool { files.isFile(path) }
@@ -134,7 +139,10 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func makeDirectory(_ path: String) -> Bool { files.makeDirectory(path) }
     func removeFile(_ path: String) { files.removeFile(path) }
     func removeEmptyDirectory(_ path: String) { files.removeEmptyDirectory(path) }
-    func removeTree(_ path: String) { files.removeTree(path) }
+    func removeTree(_ path: String) { if !keepsTrees { files.removeTree(path) } }
+    var keepsTrees = false
+    func isPrivateDirectory(_ path: String) -> Bool { files.isPrivateDirectory(path) }
+    func ownFile(_ path: String) -> String? { files.ownFile(path) }
 }
 
 /// A home with a project, an overlay and its source, of one test.

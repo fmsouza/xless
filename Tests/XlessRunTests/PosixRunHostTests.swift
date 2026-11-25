@@ -34,6 +34,42 @@ import Testing
         }
     }
 
+    /// Two names that differ only there are two.
+    @Test func variablesWhoseNamesAreNotUTF8AreKeptApart() async {
+        await #expect(processExitsWith: .success) {
+            func set(_ name: [UInt8], _ value: String) { (Array("N".utf8) + name + [0]).withUnsafeBufferPointer { b in b.withMemoryRebound(to: CChar.self) { _ = setenv($0.baseAddress!, value, 1) } } }
+            for (name, value): ([UInt8], String) in [([0xFF], "1"), ([0xFE], "1"), ([0xFD], "2"), (Array("\u{FFFD}".utf8), "3")] { set(name, value) }
+            let host = PosixRunHost()
+            func kept(_ environment: [String: String]) throws -> [[UInt8]] { // without a shell: it would drop them
+                let file = try host.temporaryFile()
+                defer { host.removeFile(file) }
+                _ = host.finish(try host.start(RunStep(["env"], environment: environment, output: .file(file))))
+                return try Data(contentsOf: URL(fileURLWithPath: file)).split(separator: 10).map(Array.init).filter { $0.count > 1 && $0[0] == 0x4E && $0[1] >= 0x80 }
+            }
+            let mine = ProcessInfo.processInfo.environment
+            guard try Set(kept(mine)) == [[0x4E, 0xFF, 0x3D, 0x31], [0x4E, 0xFE, 0x3D, 0x31], [0x4E, 0xFD, 0x3D, 0x32], [0x4E, 0xEF, 0xBF, 0xBD, 0x3D, 0x33]] else { exit(1) }
+            guard try kept(["PATH": mine["PATH"] ?? "/usr/bin:/bin"]).isEmpty else { exit(2) }
+        }
+    }
+
+    /// Arguments that differ only in bytes that are not UTF-8 are two.
+    @Test func argumentsThatAreNotUTF8AreKeptApart() {
+        func texts(_ words: [[UInt8]]) -> [String] { PosixRunHost.texts(words) }
+        let a = Array("--a=".utf8)
+        #expect(texts([Array("xless".utf8), a + [0xFF]]) == ["xless", "--a=\u{FFFD}"])
+        #expect(texts([a + [0xFF], a + [0xFF]]) == ["--a=\u{FFFD}", "--a=\u{FFFD}"]) // the same
+        let cases: [[[UInt8]]] = [[a + [0xFF], a + [0xFE]], [a + [0xFF], a + [0xFE], a + [0xFD], a + [0xFE]], [a + [0xFF], Array("--a=\u{FFFD}".utf8)],
+                                  [a + [0xFF], a + [0xFE], Array("--a=\u{FFFD}\u{FFFD}".utf8)], [Array("e\u{301}".utf8) + [0xFF], Array("\u{e9}".utf8) + [0xFF]]]
+        for words in cases {
+            let texts = texts(words).map { Array($0.utf8) }
+            for i in words.indices {
+                for j in words.indices { #expect((words[i] == words[j]) == (texts[i] == texts[j]), "\(words)") }
+                if PosixRunHost.utf8(words[i]) != nil { #expect(texts[i] == words[i], "\(words)") }
+            }
+        }
+        #expect(PosixRunHost.arguments == CommandLine.arguments)
+    }
+
     @Test func aStepHasNothingToReadAndNoDescriptorOfTheRuns() throws {
         let file = try host.temporaryFile()
         defer { host.removeFile(file) }
@@ -85,6 +121,24 @@ import Testing
         }
         #expect(!FileManager.default.fileExists(atPath: secret))
         #expect(FileManager.default.fileExists(atPath: file) != cleansUp)
+    }
+
+    /// Nor does a stack that overflows, in any thread that said what to remove.
+    @Test func aStackThatOverflowsLeavesNothing() async throws {
+        let first = try host.temporaryFile(), second = try host.temporaryFile()
+        defer { host.removeFile(first); host.removeFile(second) }
+        await #expect(processExitsWith: .failure) { [first = first as String, second = second as String] in
+            let host = PosixRunHost()
+            host.removeOnFault(first, isDirectory: false)
+            Thread.detachNewThread {
+                host.removeOnFault(second, isDirectory: false)
+                func deep(_ n: Int) -> Int { n < 0 ? n : deep(n + 1) &+ deep(n + 2) }
+                exit(deep(0) == 1 ? 0 : 0)
+            }
+            host.pause(60)
+            exit(0)
+        }
+        #expect(!FileManager.default.fileExists(atPath: first) && !FileManager.default.fileExists(atPath: second))
     }
 
     /// Started with SIGCHLD ignored (some supervisors do), where the system keeps no process's end.
@@ -140,6 +194,53 @@ import Testing
         #expect(!host.isRunning(0) && !host.isRunning(-1) && host.mark(0).isEmpty && host.programFile(0).isEmpty)
         // not this user's (or init itself, where that is this user's): it runs all the same
         #expect(host.isRunning(1))
+    }
+
+    /// What tells this machine from another one is not its name, nor its own ID, which is nobody else's to know.
+    @Test func thisMachine() throws {
+        let machine = host.machine
+        #expect(machine.utf8.count == 32 && machine.allSatisfy { "0123456789abcdef".contains($0) } && machine == PosixRunHost().machine)
+        var ids = ["/etc/machine-id", "/proc/sys/kernel/random/boot_id"].compactMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        #if os(macOS)
+        var id = [UInt8](repeating: 0, count: 16), wait = timespec(tv_sec: 5, tv_nsec: 0)
+        try #require(gethostuuid(&id, &wait) == 0)
+        ids.append(id.map { String(format: "%02x", $0) }.joined())
+        #endif
+        for id in ids { #expect(id.lowercased().filter(\.isHexDigit) != machine) }
+        #expect(PosixRunHost.machine("a", "b") == PosixRunHost.machine("a", "b") && PosixRunHost.machine("a", "b") != PosixRunHost.machine("a", "c"))
+        #expect(PosixRunHost.machine("") .isEmpty && PosixRunHost.machine("a", "b") != PosixRunHost.machine("ab", ""))
+    }
+
+    /// The system's mark of a process is of this start of it too, where that can be told; and PIDs are of a namespace.
+    @Test func thisStartOfTheSystem() {
+        let mark = host.mark(host.processID).split(separator: " ").map(String.init)
+        #if os(Linux)
+        #expect(mark.count == 2 && mark.first == host.boot)
+        #expect(host.namespace.hasPrefix("pid:[") && host.namespace.hasSuffix("]"))
+        #else
+        #expect(mark.count == 1 && host.boot.isEmpty && host.namespace.isEmpty)
+        #endif
+        #expect(PosixRunHost.mark(12, boot: "b", isMac: false) == "b 12" && PosixRunHost.mark(12, boot: "", isMac: false).isEmpty)
+        #expect(PosixRunHost.mark(12, boot: "", isMac: true) == "12" && PosixRunHost.mark(0, boot: "b", isMac: false).isEmpty)
+    }
+
+    @Test func whatIsThisUsersAlone() throws {
+        let file = try host.temporaryFile(), root = try #require(host.realPath(FileManager.default.temporaryDirectory.path)) + "/xless-own-\(UUID().uuidString)"
+        defer { host.removeFile(file); host.removeTree(root) }
+        try #require(mkdir(root, 0o700) == 0)
+        #expect(host.isPrivateDirectory(root) && !host.isPrivateDirectory(root + "/") && !host.isPrivateDirectory(root + "/none") && !host.isPrivateDirectory(file))
+        for mode: mode_t in [0o755, 0o710, 0o701, 0o500] {
+            chmod(root, mode)
+            #expect(!host.isPrivateDirectory(root), "\(mode)")
+        }
+        chmod(root, 0o700)
+        try Data("first\nsecond\n".utf8).write(to: URL(fileURLWithPath: root + "/file"))
+        for (link, to) in [("/link", "file"), ("/self", ".")] { try FileManager.default.createSymbolicLink(atPath: root + link, withDestinationPath: to) }
+        #expect(!host.isPrivateDirectory(root + "/self"))
+        #expect(host.ownFile(root + "/file") == "first\nsecond\n")
+        try #require(mkfifo(root + "/fifo", 0o600) == 0)
+        for name in ["/link", "/self", "/fifo", "/none", ""] { #expect(host.ownFile(root + name) == nil, "\(name)") }
+        if geteuid() != 0 { #expect(host.ownFile("/etc/passwd") == nil && !host.isPrivateDirectory("/root")) }
     }
 
     @Test func files() throws {
