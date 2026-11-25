@@ -172,6 +172,25 @@ func dataList(_ items: [String], next: String? = nil) -> String {
     #expect(refused.requests.count == 2)
 }
 
+/// A capability that someone enabled meanwhile with another option is not what was asked for.
+@Test func anEnableThatFindsOtherSettingsIsNotUnchanged() async throws {
+    func on(_ option: String) -> String {
+        dataList([capabilityJSON("C9", "DATA_PROTECTION", settings: #"[{"key":"DATA_PROTECTION_PERMISSION_LEVEL","options":[{"key":"\#(option)","enabled":true}]}]"#)])
+    }
+    func enable(_ t: MockTransport, _ settings: [CapabilitySetting] = [CapabilitySetting(.dataProtectionPermissionLevel, "COMPLETE_PROTECTION")]) async throws -> ASCBundleIDs.Enabling {
+        try await bundleIDs(t).enable(.dataProtection, settings: settings, on: "B1", existing: [])
+    }
+    let other = MockTransport([(409, "{}"), (200, on("PROTECTED_UNTIL_FIRST_USER_AUTH"))])
+    do { _ = try await enable(other); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 409) }
+    #expect(other.steps.isEmpty)
+    let lost = MockTransport([(503, ""), (200, on("PROTECTED_UNTIL_FIRST_USER_AUTH")), (409, "{}"), (200, on("PROTECTED_UNTIL_FIRST_USER_AUTH"))])
+    do { _ = try await enable(lost); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 409) }
+    // The same option, or none asked for.
+    guard case .unchanged = try await enable(MockTransport([(409, "{}"), (200, on("COMPLETE_PROTECTION"))])) else { Issue.record("expected unchanged"); return }
+    guard case .enabled = try await enable(MockTransport([(503, ""), (200, on("COMPLETE_PROTECTION"))])) else { Issue.record("expected enabled"); return }
+    guard case .unchanged = try await enable(MockTransport([(409, "{}"), (200, on("PROTECTED_UNLESS_OPEN"))]), []) else { Issue.record("expected unchanged"); return }
+}
+
 @Test func enableWithoutSettingsSendsNoneOrTheDefault() async throws {
     let t = MockTransport([(201, #"{"data":\#(capabilityJSON("C9", "PUSH_NOTIFICATIONS"))}"#)])
     _ = try await bundleIDs(t).enable(.pushNotifications, on: "B1", existing: [])

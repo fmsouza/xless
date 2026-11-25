@@ -215,15 +215,19 @@ public struct ASCBundleIDs: Sendable {
     /// Enables `type` with `settings` (its default setting when none is given) on a bundle ID. Enabled already:
     /// nothing is sent when no setting is given or every given one has that option, else the capability's settings are
     /// changed (PATCH). `existing`: the bundle ID's capabilities, when the caller has them. A create is sent again only
-    /// after reading shows that the capability is not enabled.
+    /// after reading shows that the capability is not enabled; one refused because it is enabled meanwhile with another
+    /// option is the error.
     public func enable(_ type: CapabilityType, settings: [CapabilitySetting] = [], on bundleIDResourceID: String,
                        existing: [ASCBundleIDCapability]? = nil) async throws -> Enabling {
         let have: [ASCBundleIDCapability]
         if let existing { have = existing } else { have = try await capabilities(of: bundleIDResourceID) }
         struct Attributes: Encodable, Sendable { var capabilityType: String; var settings: [CapabilitySetting]? }
+        func has(_ capability: ASCBundleIDCapability) -> Bool {
+            let chosen = capability.chosenSettings
+            return CapabilitySetting.chosen(settings).allSatisfy { chosen[$0.key] == $0.value }
+        }
         if let current = have.first(where: { $0.capabilityType == type.rawValue }) {
-            let chosen = current.chosenSettings
-            if CapabilitySetting.chosen(settings).allSatisfy({ chosen[$0.key] == $0.value }) { return .unchanged(current) }
+            if has(current) { return .unchanged(current) }
             let updated: ASCSingle<ASCBundleIDCapability> = try await resources.update(
                 "\(Self.capabilitiesPath)/\(current.id)", type: "bundleIdCapabilities", id: current.id,
                 attributes: Attributes(capabilityType: type.rawValue, settings: settings))
@@ -232,7 +236,7 @@ public struct ASCBundleIDs: Sendable {
         struct Relationships: Encodable, Sendable { var bundleId: ASCToOne }
         let sent = settings.isEmpty ? CapabilitySetting.defaults(for: type) : settings
         let attributes = Attributes(capabilityType: type.rawValue, settings: sent.isEmpty ? nil : sent)
-        let settled = try await resources.settle(.unique, lookup: { try await capabilities(of: bundleIDResourceID).first { $0.capabilityType == type.rawValue } }, create: {
+        let settled = try await resources.settle(.unique, lookup: { try await capabilities(of: bundleIDResourceID).first { $0.capabilityType == type.rawValue && has($0) } }, create: {
             let created: ASCSingle<ASCBundleIDCapability> = try await resources.create(
                 Self.capabilitiesPath, type: "bundleIdCapabilities", attributes: attributes,
                 relationships: Relationships(bundleId: ASCToOne(ASCRef(type: "bundleIds", id: bundleIDResourceID))))
