@@ -174,10 +174,10 @@ public struct ASCApps: Sendable {
         } catch let e as ASCError where e.status == 404 { return false }
     }
 
-    /// The app with exactly this bundle identifier.
+    /// The app with exactly this bundle identifier; an app whose identifier cannot be read is an error, not another app.
     public func find(bundleID: String) async throws -> ASCApp? {
         let listing = try await resources.list(Self.path, query: ASCQuery(filters: [("bundleId", bundleID)]), as: ASCApp.self)
-        return listing.items.first { $0.bundleID == bundleID }
+        return try listing.items.first { try $0.resource.text("bundleId") == bundleID }
     }
 
     /// Whether App Store Connect takes the key at all: the smallest read there is (one app, whichever comes first).

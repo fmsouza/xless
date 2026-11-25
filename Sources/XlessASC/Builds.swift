@@ -29,6 +29,16 @@ extension ASCKeptResource where A == ASCBuildAttributes {
 }
 
 extension ASCAnyResource {
+    /// The text of one attribute, nil when it is absent or null. Anything else is an error: the typed attributes of an
+    /// `ASCKeptResource` would be left out then, all of them, as if App Store Connect had given none.
+    func text(_ name: String) throws -> String? {
+        switch attributes?[name] {
+        case nil, .null: return nil
+        case .string(let text): return text
+        case .some: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "\(name) of the \(type) resource \(id) is not text"))
+        }
+    }
+
     /// The ID a to-one relationship's linkage points at, when the answer carried the linkage.
     public func relatedID(_ name: String) -> String? { relationships?[name]?["data"]?["id"]?.string }
 }
@@ -223,15 +233,22 @@ public struct ASCBuilds: Sendable {
         return ASCBuildDetail(build: single.data, included: single.included)
     }
 
-    /// The build on its own, nothing included: what the wait after an upload reads every round.
-    public func alone(id: String) async throws -> ASCBuild {
-        try await resources.get("\(Self.path)/\(id)", as: ASCBuild.self).data
+    /// The build's processing state (nil: not given), nothing included: what the wait after an upload reads every round.
+    public func processing(id: String) async throws -> (id: String, state: String?) {
+        let build = try await resources.get("\(Self.path)/\(id)", as: ASCBuild.self).data
+        return (build.id, try build.resource.text("processingState"))
     }
 
-    /// The build numbers App Store Connect holds for the app's version: every state and platform, expired ones too.
+    /// The build numbers App Store Connect holds for the app's version: every state and platform, expired ones too. A
+    /// build whose number cannot be read is an error: the list is what the next number is compared with.
     public func numbers(appID: String, version: String) async throws -> [String] {
         let query = ASCQuery(filters: [("app", appID), ("preReleaseVersion.version", version)], fields: [("builds", ["version"])])
-        return try await resources.list(Self.path, query: query, as: ASCBuild.self).items.compactMap(\.attributes.version)
+        return try await resources.list(Self.path, query: query, as: ASCBuild.self).items.map { build in
+            guard let number = try build.resource.text("version") else {
+                throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "the build \(build.id) has no version"))
+            }
+            return number
+        }
     }
 
     /// The build with exactly this version and build number (expired or not); nil when there is none. Several matches
@@ -309,7 +326,7 @@ public struct ASCBuilds: Sendable {
             last = nil
             if let id { last = try await get(id: id) }
             try onRead(last)
-            return last?.build.attributes.processingState
+            return try last?.build.resource.text("processingState")
         }
         return Waited(end: end, build: last)
     }

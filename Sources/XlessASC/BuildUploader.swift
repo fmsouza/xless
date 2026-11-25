@@ -109,9 +109,9 @@ public struct BuildUploader: Sendable {
         }
         let uploaded = "the build is uploaded (build \(buildID!)); watch App Store Connect → TestFlight — don't re-upload with the same build number"
         let end = try await BuildProcessing.poll(deadline: deadline, interval: pollInterval, sleep: sleep) {
-            let b = try await step("polling build processing", fix: uploaded) { try await ASCBuilds(resources: resources).alone(id: buildID!) }
+            let b = try await step("polling build processing", fix: uploaded) { try await ASCBuilds(resources: resources).processing(id: buildID!) }
             record.buildID = b.id
-            record.processingState = b.attributes.processingState
+            record.processingState = b.state
             try report()
             return record.processingState
         }
