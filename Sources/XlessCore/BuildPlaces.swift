@@ -9,7 +9,7 @@ public enum BuildPlaces {
         "PATH", "LANG", "LANGUAGE", "TERM", "COLORTERM", "NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "CI", "TZ", "USER", "LOGNAME", "SHELL", "SOURCE_DATE_EPOCH",
         "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
         "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE", "CARGO_HTTP_CAINFO", "GIT_SSL_CAINFO",
-        "XLESS_TOOLS", "XLESS_RN_CLEAN", "XLESS_SHARE",
+        "XLESS_RN_CLEAN", "XLESS_SHARE",
     ]
 
     /// The build's environment: those variables, and a home and a directory for temporary files of its own.

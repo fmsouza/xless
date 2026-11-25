@@ -45,7 +45,7 @@ public enum BinaryDeps {
             }
         }
 
-        let temp = fm.temporaryDirectory.appendingPathComponent("xless-bindep-\(UUID().uuidString)", isDirectory: true)
+        let temp = Files.temporary.appendingPathComponent("xless-bindep-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: temp, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: temp) }
         if url.path.hasSuffix(".zip") {

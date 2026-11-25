@@ -25,7 +25,7 @@ public struct CargoBuildContext: Sendable {
     /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it).
     var tools: [String: String] { ["PATH": "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"] }
     /// The cargo targets of this platform: on macOS, those of `macos.architectures`.
-    var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
+    public var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
     var inputsRecord: URL { workRoot.appendingPathComponent(".xless/cargo-inputs.json") }
 }
 
@@ -59,8 +59,10 @@ public enum CargoBuilder {
                 byEnv[input.env].map { (input.name, $0) }
             })), to: ctx.inputsRecord)
 
-            try RustApple.bootstrap(searchFrom: ctx.workRoot, workRoot: ctx.workRoot, toolchain: ctx.overlay.toolchain, targets: ctx.rustTargets,
-                                    env: ctx.tools, baseEnvironment: ctx.env, log: { log($0) })
+            if !ctx.sdk.isXcode { // (on a Mac it is the user's own: RustApple.prepareNative)
+                try RustApple.bootstrap(searchFrom: ctx.workRoot, workRoot: ctx.workRoot, toolchain: ctx.overlay.toolchain, targets: ctx.rustTargets,
+                                        env: ctx.tools, baseEnvironment: ctx.env, log: { log($0) })
+            }
             return ctx.workRoot
         }
     }

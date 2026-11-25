@@ -28,7 +28,7 @@ public enum Shell {
     ) throws -> ShellResult {
         let environment = ChildProcess.environment(baseEnvironment, extra: env)
 
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-shell-\(UUID().uuidString)")
+        let tmp = Files.temporary.appendingPathComponent("xless-shell-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
         let outURL = tmp.appendingPathComponent("out"), errURL = tmp.appendingPathComponent("err")

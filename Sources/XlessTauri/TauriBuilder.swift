@@ -46,6 +46,7 @@ protocol TauriWorkContext {
     var overlay: TauriOverlay { get }
     var sourceRoot: URL { get }
     var workRoot: URL { get }
+    var sdk: DarwinSDK { get }
     var env: [String: String] { get }
     /// Relative to the repository root.
     var tauriDirPath: String { get }
@@ -117,7 +118,7 @@ public enum TauriBuilder {
             log("\(install.arguments.joined(separator: " ")) (\(install.lockfile))")
             try run(install.arguments, cwd: ctx.appRoot, env: ctx.tools, ctx: ctx, stage: .prepare)
         }
-        try bootstrapRust(ctx, targets: rustTargets)
+        if !ctx.sdk.isXcode { try bootstrapRust(ctx, targets: rustTargets) } // (on a Mac it is the user's own: RustApple.prepareNative)
     }
 
     /// rustup itself (`rustup-init` when missing), then `RustApple.rustupSteps`, run in the Tauri directory.

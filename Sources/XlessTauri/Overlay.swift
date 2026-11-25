@@ -226,9 +226,12 @@ public struct OverlayPaths: Sendable {
     let overlayDir: URL
     let env: [String: String]
 
+    /// The home that an overlay's `~` means, where HOME is another one (the sandbox of a build on a Mac).
+    public static let homeVariable = "XLESS_OVERLAY_HOME"
+
     public init(overlay url: URL, env: [String: String] = ProcessInfo.processInfo.environment) {
         name = url.deletingPathExtension().lastPathComponent
-        home = env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        home = (env[Self.homeVariable] ?? env["HOME"]).flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         overlayDir = url.deletingLastPathComponent()
         self.env = env
     }

@@ -66,7 +66,7 @@ public enum WorkCopy {
             }
         }
 
-        let list = fm.temporaryDirectory.appendingPathComponent("xless-files-\(UUID().uuidString)")
+        let list = Files.temporary.appendingPathComponent("xless-files-\(UUID().uuidString)")
         try Data(tracked.map { "\($0)\0" }.joined().utf8).write(to: list)
         defer { try? fm.removeItem(at: list) }
         // -a copies symlinks as symlinks (never follows them) and preserves mtimes. `--delete` does nothing with `--files-from`; removals are the manifest pass above.

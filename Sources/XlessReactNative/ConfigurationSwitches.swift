@@ -57,7 +57,7 @@ enum ConfigurationSwitches {
             let settings = try TargetSettings(project: project, target: target, configuration: configuration, overrides: [:])
             var environment = env
             for (k, v) in try settings.environment() { environment[k] = v }
-            let script = FileManager.default.temporaryDirectory.appendingPathComponent("xless-switch-\(UUID().uuidString).sh")
+            let script = Files.temporary.appendingPathComponent("xless-switch-\(UUID().uuidString).sh")
             try Data(phase.script.utf8).write(to: script)
             defer { try? FileManager.default.removeItem(at: script) }
             log("\(phase.target): \(phase.name)")

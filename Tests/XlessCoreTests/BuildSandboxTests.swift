@@ -11,6 +11,7 @@ import Testing
     #expect(BuildSandbox.real(root.path + "/link/not/there") == real + "/a/not/there" && BuildSandbox.real("/not-there") == "/not-there" && BuildSandbox.real("/") == "/")
     #expect(try BuildSandbox.quoted(#"/a "b"\c"#) == #""/a \"b\"\\c""#)
     for bad in ["relative", "/", "/a\nb", "/a\u{7f}"] { #expect(throws: XlessError.self) { try BuildSandbox.quoted(bad) } }
+    #expect(BuildSandbox.above("/a/b/c") == ["/a", "/a/b"] && BuildSandbox.above("/a") == [])
     #expect(try BuildSandbox.pattern("/a.b(c)+") == #"/a\.b\(c\)\+"#)
     #expect(BuildSandbox.isBelow("/a/b", "/a") && BuildSandbox.isBelow("/a", "/a") && !BuildSandbox.isBelow("/ab", "/a") && BuildSandbox.isBelow("/a", "/"))
 }
@@ -19,8 +20,8 @@ import Testing
     let rules = try BuildSandbox(reads: ["/opt/r"], writes: ["/opt/w"], secrets: ["/opt/w/secret"], closed: ["/opt"]).profile().split(separator: "\n").map(String.init)
     func index(_ rule: String) throws -> Int { try #require(rules.firstIndex(of: rule), "\(rule)") }
     #expect(rules.prefix(3) == ["(version 1)", "(allow default)", "(deny file-write*)"])
-    let closed = try index(#"(deny file-read-data file-read-xattr (subpath "/opt"))"#), open = try index(#"(allow file-read-data file-read-xattr (subpath "/opt/r") (subpath "/opt/w"))"#)
-    let secret = try index(#"(deny file-read-data file-read-xattr file-write* (subpath "/opt/w/secret"))"#)
+    let closed = try index(#"(deny file-read-data file-read-xattr file-read-metadata (subpath "/opt"))"#), open = try index(#"(allow file-read-data file-read-xattr file-read-metadata (subpath "/opt/r") (subpath "/opt/w"))"#)
+    let secret = try index(#"(deny file-read-data file-read-xattr file-read-metadata file-write* (subpath "/opt/w/secret"))"#)
     #expect(try closed < open && open < secret && index(#"(allow file-write* (subpath "/opt/w"))"#) < secret)
     #expect(rules.filter { $0.contains("secret") }.count == 1 && rules.suffix(from: secret + 1).allSatisfy { !$0.contains("file-") })
 }
@@ -44,7 +45,7 @@ private final class Sandboxed {
 
     func run(_ words: String...) throws -> (status: Int32, out: String) {
         let command = try sandbox.command(words[0], Array(words.dropFirst()))
-        let out = URL(fileURLWithPath: root).appendingPathComponent("out-\(UUID().uuidString)")
+        let out = URL(fileURLWithPath: work).appendingPathComponent("out-\(UUID().uuidString)") // (a program looks at its output file, too)
         _ = FileManager.default.createFile(atPath: out.path, contents: nil)
         let handle = try FileHandle(forWritingTo: out)
         defer { try? handle.close() }
@@ -68,6 +69,9 @@ private final class Sandboxed {
         #expect(answer.status != 0 && answer.out.lowercased().contains("not permitted"), "\(denied): \(answer.status) \(answer.out)")
     }
     #expect(!FileManager.default.fileExists(atPath: "/private/tmp/xless-sandbox-test"))
+    // what is closed is not there, the way to what is open is
+    #expect(try box.sh("test -e ../private || test -e secret").status == 1)
+    #expect(try box.sh("test -d .. && test -d ../../ && cd ../r && pwd -P").out == box.root + "/r\n")
     // a link of the build's own leads nowhere else
     #expect(try box.sh("ln -s ../private link && cat link").status != 0)
     // and it holds for all that it starts, in a session of its own too

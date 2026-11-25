@@ -23,7 +23,8 @@ public struct BuildSandbox: Sendable, Equatable {
     public var fixed: [String]
     /// Never readable or writable, wherever it is.
     public var secrets: [String]
-    /// Closed for reading, but for those: where users keep their files. Nothing is writable anywhere, but for `writes`.
+    /// Closed for reading, but for those, and not there for whoever looks: where users keep their files (and tools look for the
+    /// settings of a user, in every directory above the work copy). Nothing is writable anywhere, but for `writes`.
     public var closed: [String]
 
     public static let tool = "/usr/bin/sandbox-exec"
@@ -55,15 +56,20 @@ public struct BuildSandbox: Sendable, Equatable {
         let fixed = try (writes + fixed).map { " (literal \(try Self.quoted(Self.real($0))))" }.joined()
         if !fixed.isEmpty { rules.append("(deny file-write-create file-write-unlink\(fixed))") }
         rules.append(#"(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))"#)
-        // xcodebuild saves files there first, below a directory with a name of its own, and renames them into their place. What others
-        // have there cannot be listed, read or (but for a name that somebody guesses) changed.
+        // xcodebuild saves files in the user's directory for temporary files whatever TMPDIR says, below directories with names of its
+        // own, and renames them into their place. What others have there cannot be listed, read or (but for a name that somebody guesses)
+        // changed.
         if let temporary = Self.userTemporaryDirectory {
             rules.append("(allow file-write* (regex #\"^\(try Self.pattern(Self.real(temporary)))/TemporaryItems(/NSIRD_|$)\"))")
         }
-        try add("deny file-read-data file-read-xattr", closed)
+        let read = "file-read-data file-read-xattr file-read-metadata"
+        try add("deny \(read)", closed)
+        // the way to what is open
+        let above = Set((reads + writes).flatMap { Self.above(Self.real($0)) }).sorted()
+        if !above.isEmpty { rules.append("(allow file-read-metadata \(try above.map { "(literal \(try Self.quoted($0)))" }.joined(separator: " ")))") }
         rules.append(#"(deny file-read-data file-write* (regex #"^/dev/tty"))"#)
-        try add("allow file-read-data file-read-xattr", reads + writes)
-        try add("deny file-read-data file-read-xattr file-write*", secrets)
+        try add("allow \(read)", reads + writes)
+        try add("deny \(read) file-write*", secrets)
         rules += ["(deny mach-lookup)", "(allow mach-lookup \(Self.services.map { "(global-name \"\($0)\")" }.joined(separator: " ")))"]
         let sockets = try writes.map { " (remote unix-socket (subpath \(try Self.quoted(Self.real($0)))))" }.joined()
         rules += ["(deny network-outbound (remote unix-socket))", #"(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder"))"# + sockets + ")"]
@@ -115,6 +121,11 @@ public struct BuildSandbox: Sendable, Equatable {
             rest.append(url.lastPathComponent)
             at = url.deletingLastPathComponent().path
         }
+    }
+
+    /// The directories that `path` is in, but for /.
+    static func above(_ path: String) -> [String] {
+        path.split(separator: "/").dropLast().reduce(into: []) { all, name in all.append("\(all.last ?? "")/\(name)") }
     }
 
     /// Of this user, whatever the environment says.

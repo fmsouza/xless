@@ -1,6 +1,17 @@
 import Foundation
 
 public enum Files {
+    /// Where temporary files go: TMPDIR's directory, on a Mac too, where Foundation takes the user's own whatever TMPDIR says (and in
+    /// the sandbox of a build, `BuildSandbox`, there is none but TMPDIR's).
+    public static var temporary: URL {
+        #if canImport(Darwin)
+        if let path = ProcessInfo.processInfo.environment["TMPDIR"], path.hasPrefix("/"), FileManager.default.isWritableFile(atPath: path) {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        #endif
+        return FileManager.default.temporaryDirectory
+    }
+
     /// Recreates `dir` empty, copies `bundle` into it, returns the copy's URL.
     public static func copyBundle(_ bundle: URL, intoFreshDir dir: URL) throws -> URL {
         let fm = FileManager.default

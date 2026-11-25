@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 import XlessASC
 import XlessCore
 import XlessRun
@@ -28,6 +29,7 @@ struct ShipCommand: AsyncParsableCommand {
     }
 
     func run() async throws {
+        try NativeOverlay.clearTemporary()
         var ctx = try await Context.load(options, distribution: distribution, fresh: DatedBuildNumber.isFreshRun(command: "ship", from: from),
                                          expecting: expectConfig)
         let steps: [(Stage, (Context) async throws -> String)] = [
@@ -41,9 +43,15 @@ struct ShipCommand: AsyncParsableCommand {
         ]
         let stages = StagePolicy.shipStages(from: from, to: to, simulator: options.destination == .simulator, hasPrepare: ctx.hasPrepare,
                                             platform: ctx.platform, distribution: ctx.config.distribution(for: ctx.platform))
-        for (stage, step) in steps where stages.contains(stage) {
+        // On a Mac an overlay's build has its own xless, in a sandbox.
+        let inside = try NativeOverlay.isOutside(ctx) ? stages.filter { $0 <= .finalize } : []
+        try await NativeOverlay.build(ctx, options: options, distribution: distribution, stages: inside, output: .standardOutput)
+        if !inside.isEmpty, ctx.isReactNative { ctx = try await Context.load(options, distribution: distribution, fresh: false) }
+        for (stage, step) in steps where stages.contains(stage) && !inside.contains(stage) {
             print("==> \(stage.rawValue)")
+            fflush(nil)
             print(try await step(ctx))
+            fflush(nil) // (a pipe, with what the tools write to it in between)
             // React Native: the Xcode project exists only after prepare; resolve again (the run's build number is recorded).
             if stage == .prepare, ctx.isReactNative { ctx = try await Context.load(options, distribution: distribution, fresh: false) }
         }

@@ -26,7 +26,7 @@ public struct XcodeAssets: Sendable {
     /// Compiles `catalog` into the app's resources; what goes into its Info.plist.
     func compile(_ catalog: URL, with actool: URL, into resources: URL, platform: Platform, minimumOS: String, info: [String: Any]) throws -> [String: Any] {
         let icon = AssetsStage.appIconSet(catalog: catalog)?.deletingPathExtension().lastPathComponent
-        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("xless-actool-\(UUID().uuidString)", isDirectory: true)
+        let scratch = Files.temporary.appendingPathComponent("xless-actool-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         let partial = scratch.appendingPathComponent("partial.plist")

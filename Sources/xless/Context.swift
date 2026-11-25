@@ -28,6 +28,10 @@ struct Context {
     /// With `--config` and a `type: react-native` overlay (`overlay` is nil then).
     var rnOverlay: ReactNativeOverlay? = nil
     var reactNative: ResolvedReactNative? = nil
+    /// What the stages of an overlay build with on a Mac (`NativeOverlay`); nil elsewhere.
+    var xcode: InstalledXcode? = nil
+    private var sdk: DarwinSDK { xcode.map { DarwinSDK(xcode: $0) } ?? DarwinSDK() }
+
     /// `--destination simulator` (React Native overlays, and xless.yml projects on a Mac): stages after build are refused.
     var simulator = false
 
@@ -59,13 +63,13 @@ struct Context {
     /// The Tauri stages' view of this context; nil without `--config` or for `--platform macos`.
     var tauriBuild: TauriBuildContext? {
         guard let overlay, let sourceRoot, let workRoot, let tauri else { return nil }
-        return TauriBuildContext(overlay: overlay, resolved: tauri, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths)
+        return TauriBuildContext(overlay: overlay, resolved: tauri, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
     }
 
     /// The macOS Tauri stages' view of this context; nil without `--config … --platform macos`.
     var tauriMacBuild: TauriMacBuildContext? {
         guard let overlay, let sourceRoot, let workRoot, let tauriMac else { return nil }
-        return TauriMacBuildContext(overlay: overlay, resolved: tauriMac, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths)
+        return TauriMacBuildContext(overlay: overlay, resolved: tauriMac, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
     }
 
     /// The React Native stages' view of this context; nil without a `type: react-native` overlay.
@@ -78,7 +82,7 @@ struct Context {
     /// The cargo stages' view of this context; nil without a `type: cargo` overlay.
     var cargoBuild: CargoBuildContext? {
         guard let cargo, let cargoResolved, let sourceRoot, let workRoot else { return nil }
-        return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths)
+        return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
     }
 
     /// `--distribution` (ship): replaces the platform's configured distribution for this run; the config file is

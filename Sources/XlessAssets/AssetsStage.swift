@@ -110,7 +110,7 @@ public enum AssetsStage {
         }
         let result: CompileResult
         let fm = FileManager.default
-        let scratch = fm.temporaryDirectory.appendingPathComponent("xless-assets-\(UUID().uuidString)", isDirectory: true)
+        let scratch = Files.temporary.appendingPathComponent("xless-assets-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: scratch) }
         do {
             let copy = try normalizedCatalogCopy(catalog, in: scratch, singleSizeIcon: source?.filename)
