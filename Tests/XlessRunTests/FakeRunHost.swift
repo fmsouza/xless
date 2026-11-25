@@ -49,6 +49,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
 
     var processID: Int32 { 4242 }
     var hostName: String { "here" }
+    var machine: String { "this one" }
     var architecture: String { "arm64" }
     var now: Date { Date(timeIntervalSince1970: 1_800_000_000) }
     var currentDirectory: String { directory }

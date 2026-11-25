@@ -230,6 +230,7 @@ extension ProjectRun {
             throw RunStop.usage("\"\(xself)\" secrets materialize printed '\(directory)', not a run directory")
         }
         cleanup.note(secrets: directory, secrets.sets)
+        lock?.note("secrets=\(directory)")
         try refuseInBuildMounts(directory)
         secrets.directory = directory
     }

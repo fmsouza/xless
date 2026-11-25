@@ -41,6 +41,8 @@ public struct StartedStep: Sendable {
 public protocol RunHost: AnyObject, Sendable {
     var processID: Int32 { get }
     var hostName: String { get }
+    /// What tells this machine from another one, whatever its name is now (not its own ID, but a hash); empty: unknown.
+    var machine: String { get }
     /// As the images' names have it: arm64 or amd64.
     var architecture: String { get }
     var isMac: Bool { get }

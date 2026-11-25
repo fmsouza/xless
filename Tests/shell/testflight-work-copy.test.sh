@@ -93,7 +93,7 @@ for how in marks nomarks link; do
   code=0; "${docker[@]}" KLOG="$t/klogE" WORK_IDS=live0 "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/errB" || code=$?
   [[ $code -eq 2 ]] || fail "$how: a second run on a busy work copy: exit $code, want 2: $(cat "$t/errB")"
   if [[ $how = marks ]]; then grep -qF "wait for it to end, or stop it: kill $a" "$t/errB" || fail "$how: $(cat "$t/errB")"
-  else grep -qF "when no run works there any more, remove " "$t/errB" || fail "$how: the refusal does not say how to go on: $(cat "$t/errB")"; fi
+  else grep -qF "when no run works there any more, stop its step, if it still runs (kill $aj), then remove $lock and run again" "$t/errB" || fail "$how: the refusal does not say how to go on: $(cat "$t/errB")"; fi
   grep -q '^run \|^rm ' "$t/klogE" 2>/dev/null && fail "$how: the refused run ran or removed containers: $(cat "$t/klogE")"
   alive "$a" && alive "$aj" || fail "$how: the refused run stopped the live run"
   kill -TERM "$a"; wait "$a" || true
@@ -105,6 +105,50 @@ code=0; "${docker[@]}" "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || code
 [[ $code -eq 2 ]] && grep -qF "remove $lock and run again" "$t/err" || fail "a lock of another machine: exit $code: $(cat "$t/err")"
 rm "$lock"
 "${docker[@]}" "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || fail "after removing it: $(cat "$t/err")"
+
+# a run killed with SIGKILL, then the machine has another name (a Mac's follows the network): its secrets, its step and its
+# containers go all the same. On another machine nothing can be told: refused, and the message says what to remove there.
+# (The machine is known by a hash: its own ID is not in the lock.)
+left="$t/home/run/xless/0123456789abcdef0123456789abcdef"
+for where in renamed other; do
+  : > "$t/klog"; mkdir -p "$left/sign"; echo v > "$left/sign/XLESS_DIST_KEY"; echo "$left" > "$t/out"
+  "${docker[@]}" RUN_SLEEP=120 "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/errA" & a=$!; bg+=("$a")
+  waitfor '^run ' "$t/klog" && waitfor '^job=' "$lock" || fail "$where: the first run never started: $(cat "$t/errA")"
+  aj=$(sed -n 's/^job=\([0-9]*\).*/\1/p' "$lock"); bg+=("$aj")
+  kill -KILL "$a"; wait "$a" 2>/dev/null || true
+  alive "$aj" || fail "$where: the step ended with its run, so nothing is shown"
+  grep -Eq '^machine=[0-9a-f]{32}$' "$lock" || fail "the lock does not say the machine: $(cat "$lock")"
+  for id in "$(cat /etc/machine-id 2>/dev/null || true)" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d - || true)" \
+            "$(/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | sed -n 's/.*"IOPlatformUUID" = "\(.*\)"/\1/p' | tr -d - | tr A-F a-f || true)"; do
+    [[ -z "$id" ]] || ! sed -n 's/^machine=//p' "$lock" | grep -qiF "$id" || fail "the machine's own ID is in the lock"
+  done
+  sed -i.bak "s/^host=.*/host=elsewhere.example/" "$lock"; echo "secrets_out=$t/out" >> "$lock"
+  [[ $where = renamed ]] || { sed -i.bak "s/^machine=.*/machine=00000000000000000000000000000000/" "$lock"; echo "secrets=$left" >> "$lock"; }
+  rm -f "$lock.bak"; : > "$t/klog"
+  code=0; "${docker[@]}" WORK_IDS=dead2 "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || code=$?
+  if [[ $where = renamed ]]; then
+    [[ $code -eq 0 ]] || fail "a killed run on this machine, by another name: exit $code: $(cat "$t/err")"
+    [[ ! -e "$left" ]] || fail "the killed run's secrets are still there"
+    alive "$aj" && fail "the killed run's step still runs"
+    grep -qx 'rm -f dead2' "$t/klog" || fail "the killed run's container was not removed: $(cat "$t/klog")"
+    [[ ! -e "$lock" ]] || fail "the lock outlived the run that took it over"
+  else
+    [[ $code -eq 2 && -e "$left" && -e "$lock" ]] && alive "$aj" || fail "another machine's run: exit $code: $(cat "$t/err")"
+    grep -qF "stop its step, if it still runs (on elsewhere.example: kill $aj), then remove the secrets that it may have left (on elsewhere.example: rm -rf $left), then remove $lock and run again" "$t/err" \
+      || fail "the refusal does not say what may be left: $(cat "$t/err")"
+    grep -q '^run \|^rm ' "$t/klog" && fail "the refused run ran or removed containers: $(cat "$t/klog")"
+    kill "$aj" || true; rm -rf "$left" "$lock"
+  fi
+done
+
+# a PID that another process has by now is no run: an editor on xless.yml, a process of the same second
+sleep 300 & other=$!; bg+=("$other")
+tail -f "$t/proj/xless.yml" >/dev/null & editor=$!; bg+=("$editor")
+printf 'pid=%s\nstarted=x\nhost=%s\nwork=%s\n' "$editor" "$(uname -n)" "$t/proj" > "$lock"
+"${docker[@]}" "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || fail "a process with xless in an argument is taken for a run: $(cat "$t/err")"
+printf 'pid=%s\nstarted=%s\nhost=%s\nmark=another 1\nwork=%s\n' "$other" "$(started "$other")" "$(uname -n)" "$t/proj" > "$lock"
+"${docker[@]}" "$S" "$t/proj" "${args[@]}" >/dev/null 2>"$t/err" || fail "a process that started in the same second is taken for the run: $(cat "$t/err")"
+alive "$other" && alive "$editor" || fail "a process that has a gone run's PID was stopped"
 
 # overlays: the work copy is the overlay's name under the work root, so two overlay files of one name share it, in docker
 # and natively; a React Native overlay's is its work volume

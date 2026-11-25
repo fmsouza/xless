@@ -142,6 +142,21 @@ import Testing
         #expect(host.isRunning(1))
     }
 
+    /// What tells this machine from another one is not its name, nor its own ID, which is nobody else's to know.
+    @Test func thisMachine() throws {
+        let machine = host.machine
+        #expect(machine.utf8.count == 32 && machine.allSatisfy { "0123456789abcdef".contains($0) } && machine == PosixRunHost().machine)
+        var ids = ["/etc/machine-id", "/proc/sys/kernel/random/boot_id"].compactMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        #if os(macOS)
+        var id = [UInt8](repeating: 0, count: 16), wait = timespec(tv_sec: 5, tv_nsec: 0)
+        try #require(gethostuuid(&id, &wait) == 0)
+        ids.append(id.map { String(format: "%02x", $0) }.joined())
+        #endif
+        for id in ids { #expect(id.lowercased().filter(\.isHexDigit) != machine) }
+        #expect(PosixRunHost.machine("a", "b") == PosixRunHost.machine("a", "b") && PosixRunHost.machine("a", "b") != PosixRunHost.machine("a", "c"))
+        #expect(PosixRunHost.machine("") .isEmpty && PosixRunHost.machine("a", "b") != PosixRunHost.machine("ab", ""))
+    }
+
     @Test func files() throws {
         let a = try host.temporaryFile(), b = a + ".b"
         defer { host.removeFile(a); host.removeFile(b) }

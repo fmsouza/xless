@@ -1,8 +1,8 @@
 import Foundation
 
 /// One run per work copy. A run holds a lock on its work copy, ~/.cache/xless/locks/<hash>.lock: its PID, the start time of
-/// that process, the system's own mark of it and the program it runs (so a reused PID is not taken for it), the machine it is on
-/// and, while a step runs, the step's. A run on a work copy that a live run holds, or may hold, is refused. A SIGKILL leaves no
+/// that process, the system's own mark of it and the program it runs (so a reused PID is not taken for it), the machine it is on,
+/// where its secrets are and, while a step runs, the step's PID. A run on a work copy that a live run holds, or may hold, is refused. A SIGKILL leaves no
 /// chance to clean up, so the next run on that work copy takes the lock over and stops what the killed run left: the step it
 /// recorded, the secrets it wrote, and every container labelled xless.work=<hash> (every run that labels a container so holds
 /// the lock while it runs).
@@ -22,7 +22,7 @@ final class WorkCopyLock {
         let hash = Self.hash(of: key), directory = "\(home)/.cache/xless/locks", me = host.processID
         let lock = "\(directory)/\(hash).lock", new = "\(directory)/\(hash).\(me)"
         path = lock
-        owner = "pid=\(me)\nstarted=\(host.started(me))\nhost=\(host.hostName)\nmark=\(host.mark(me))\nprogram=\(host.programFile(me))\nwork=\(key)\n"
+        owner = "pid=\(me)\nstarted=\(host.started(me))\nhost=\(host.hostName)\nmark=\(host.mark(me))\nprogram=\(host.programFile(me))\nmachine=\(host.machine)\nwork=\(key)\n"
         cleanup.change { $0.temporary += [new, "\(new).new", "\(lock).\(me)"] }
         do {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -54,11 +54,24 @@ final class WorkCopyLock {
         }
         let pid = field("pid"), started = field("started")
         let who = "another run (pid \(pid) on \(field("host")), started \(started))"
-        switch state(Int32(pid) ?? 0, on: field("host"), started: started, mark: field("mark"), program: field("program")) {
+        let isHere = field("host") == host.hostName || !host.machine.isEmpty && field("machine") == host.machine
+        // The step it was at, and the secrets it wrote from the store: where they are, and in the file it recorded before they were
+        // (the first line). Nothing else has them once the lock is gone.
+        let job = Self.job(field("job")), mark = field("jobmark")
+        func isJob(_ job: (pid: Int32, started: String)) -> Bool { isProcess(job.pid, job.started, mark) }
+        let secrets = [field("secrets"), field("secrets_out").isEmpty || !isHere ? "" : RunCleanup.firstLine(field("secrets_out")) ?? ""]
+            .first { RunText.isSecretsDirectory($0) && (!isHere || Self.isDirectory($0)) }
+        switch state(Int32(pid) ?? 0, elsewhere: isHere ? nil : field("host"), started: started, mark: field("mark"), program: field("program")) {
         case .gone: break
         case .live: throw RunStop.usage("the work copy \(key) is in use by \(who); wait for it to end, or stop it: kill \(pid)")
         case .unsure(let why):
-            throw RunStop.usage("the work copy \(key) may be in use by \(who): \(why); wait for it to end, or stop it; when no run works there any more, remove \(path) and run again")
+            let there = isHere ? "" : "on \(field("host")): "
+            var first = ""
+            if let job, !isHere || isJob(job) { first += "stop its step, if it still runs (\(there)kill \(job.pid)), then " }
+            if let what = secrets.map(RunText.quoted) ?? (isHere || field("secrets_out").isEmpty ? nil : "\"$(head -n 1 \(RunText.quoted(field("secrets_out"))))\"") {
+                first += "remove the secrets that it may have left (\(there)rm -rf \(what)), then "
+            }
+            throw RunStop.usage("the work copy \(key) may be in use by \(who): \(why); wait for it to end, or stop it; when no run works there any more, \(first)remove \(path) and run again")
         }
         // That run is gone: take the lock over, one taker at a time (the .takeover directory). The lock is replaced by a rename,
         // so it never disappears and no new run can take it in between.
@@ -73,22 +86,27 @@ final class WorkCopyLock {
         }
         guard taken else { throw RunStop.usage("another run is taking over the work copy \(key); run again (if none is, remove \(takeover))") }
         host.say("==> work copy \(key): the run that held it (pid \(pid)) is gone without cleaning up; stopping what it left")
-        let step = field("job").split(separator: " ", maxSplits: 1).map(String.init)
-        let mark = field("jobmark")
-        if step.count == 2, let job = Int32(step[0]), isProcess(job, step[1], mark) {
-            host.say("==> stopping its step (pid \(job))")
-            RunCleanup.stopTree(job, host)
-            for _ in 0..<50 where isProcess(job, step[1], mark) { host.pause(0.1) }
-            guard !isProcess(job, step[1], mark) else { throw RunStop.usage("the step of the run that held the work copy \(key) (pid \(job)) does not stop; stop it: kill -9 \(job)") }
+        if let job, isJob(job) {
+            host.say("==> stopping its step (pid \(job.pid))")
+            RunCleanup.stopTree(job.pid, host)
+            for _ in 0..<50 where isJob(job) { host.pause(0.1) }
+            guard !isJob(job) else { throw RunStop.usage("the step of the run that held the work copy \(key) (pid \(job.pid)) does not stop; stop it: kill -9 \(job.pid)") }
         }
-        // The secrets it wrote from the store: their run directory is the first line of the file it recorded.
-        let file = field("secrets_out")
+        if let secrets {
+            host.say("==> removing the secrets it left in \(secrets)")
+            host.removeTree(secrets)
+        }
+    }
+
+    /// `job=`: a PID and when it started.
+    private static func job(_ text: String) -> (pid: Int32, started: String)? {
+        let parts = RunText.cut(text, at: " ", max: 1, keepingEmpty: true)
+        return parts.count == 2 ? Int32(parts[0]).map { ($0, parts[1]) } : nil
+    }
+
+    private static func isDirectory(_ path: String) -> Bool {
         var isDirectory: ObjCBool = false
-        if !file.isEmpty, let left = RunCleanup.firstLine(file), RunText.isSecretsDirectory(left),
-           FileManager.default.fileExists(atPath: left, isDirectory: &isDirectory), isDirectory.boolValue {
-            host.say("==> removing the secrets it left in \(left)")
-            host.removeTree(left)
-        }
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     /// `pid` runs, and is the process that started then (not a reused PID): by the system's mark of it, and where there is none by
@@ -101,27 +119,34 @@ final class WorkCopyLock {
 
     private enum RunState { case live, gone, unsure(String) }
 
-    /// Whether the run that wrote a lock is alive. It is gone only when its PID is not there any more, or everything says that
-    /// another process has it by now: the start time alone moves with the clock (one stepped under a long build), and what a
-    /// process was started as says little (`xless --no-input run`, a link with another name).
-    private func state(_ pid: Int32, on machine: String, started: String, mark: String, program: String) -> RunState {
+    /// Whether the run that wrote a lock is alive, as far as that is seen from this machine. The system's mark says so; where one of them has none, it is
+    /// gone only when its PID is not there any more, or is another process's by its start time (which alone moves with the clock:
+    /// one stepped under a long build) and by what that one runs.
+    private func state(_ pid: Int32, elsewhere machine: String?, started: String, mark: String, program: String) -> RunState {
         guard pid > 0 else { return .unsure("its lock says no process") }
-        guard machine == host.hostName else { return .unsure("it is on \(machine), and this machine's name is \(host.hostName)") }
-        guard host.isRunning(pid) else { return .gone }
+        if let machine { return .unsure("it is on \(machine), and this machine's name is \(host.hostName)") }
+        guard pid != host.processID, host.isRunning(pid) else { return .gone }
         let now = (started: host.started(pid), mark: host.mark(pid), program: host.programFile(pid))
-        if pid != host.processID, !started.isEmpty && started == now.started || !mark.isEmpty && mark == now.mark { return .live }
+        if !mark.isEmpty, !now.mark.isEmpty { return mark == now.mark ? .live : .gone }
+        if !started.isEmpty, started == now.started { return .live }
         if started.isEmpty || now.started.isEmpty || now.program.isEmpty || isRun(now.program, host.commandLine(pid), program) {
             return .unsure("pid \(pid) runs, and it cannot be told whether it is that run")
         }
         return .gone
     }
 
-    /// Whether a process may be a run: it runs the program that wrote the lock (or ran it: an upgrade replaced that), or one, or
-    /// with a word, that has xless's name or that of the script that did this before.
+    /// Whether a process may be a run: it runs the program that wrote the lock, or an xless (also one that an upgrade replaced), or
+    /// is a shell that runs the script that did this before. (A word of its arguments alone says nothing.)
     private func isRun(_ file: String, _ command: String, _ program: String) -> Bool {
+        func isXless(_ word: String) -> Bool { ["xless", "xless (deleted)"].contains(RunFiles.name(word)) }
         if !program.isEmpty, file == program || file == "\(program) (deleted)" { return true }
-        let words = [file] + command.split(whereSeparator: \.isWhitespace).map(String.init)
-        return words.map(RunFiles.name).contains { $0.contains("xless") || $0 == "testflight.sh" }
+        let words = command.split(whereSeparator: \.isWhitespace).map(String.init)
+        if isXless(file) || words.first.map(isXless) == true { return true }
+        // What an interpreter runs: the first of its words that is no option.
+        guard let runs = words.dropFirst().first(where: { !RunText.has("-", before: $0) }) else { return false }
+        let interpreter = RunFiles.name(file)
+        if RunText.has("qemu-", before: interpreter) { return isXless(runs) }
+        return ["sh", "bash", "dash", "zsh", "ksh", "busybox"].contains(interpreter) && RunFiles.name(runs) == "testflight.sh"
     }
 
     /// A line of the lock, for the run that takes it over if this one is killed.

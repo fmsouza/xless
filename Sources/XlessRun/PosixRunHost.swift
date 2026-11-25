@@ -1,5 +1,6 @@
 #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
 import CXlessProcess
+import Crypto
 import Foundation
 #if canImport(Darwin)
 import Darwin
@@ -55,6 +56,36 @@ public final class PosixRunHost: RunHost {
     }
 
     public var hostName: String { systemName { $0.nodename } }
+
+    /// By the machine's own ID, which stays as it is when its name follows the network. A container (it has a PID namespace of its
+    /// own) has none but what its image may have: it is known by the system it is on and its name.
+    public var machine: String {
+        #if os(macOS)
+        var id = [UInt8](repeating: 0, count: 16), wait = timespec(tv_sec: 1, tv_nsec: 0)
+        return gethostuuid(&id, &wait) == 0 ? Self.machine(id.map { String(format: "%02x", $0) }.joined()) : ""
+        #else
+        let firstNamespace = "pid:[4026531836]" // PROC_PID_INIT_INO, the same on every Linux
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/ns/pid")) == firstNamespace {
+            let id = Self.word("/etc/machine-id")
+            if id.wholeMatch(of: /[0-9a-f]{32}/) != nil { return Self.machine(id) }
+        }
+        let boot = Self.word("/proc/sys/kernel/random/boot_id")
+        return boot.isEmpty ? "" : Self.machine(boot, hostName)
+        #endif
+    }
+
+    /// A hash, as machine-id(5) asks for: the ID itself is nobody else's to know.
+    static func machine(_ ids: String...) -> String {
+        if ids == [""] { return "" }
+        let code = HMAC<SHA256>.authenticationCode(for: Data("xless: the machine of a work copy's lock".utf8), using: SymmetricKey(data: Data(ids.joined(separator: "\n").utf8)))
+        return String(code.map { String(format: "%02x", $0) }.joined().prefix(32))
+    }
+
+    /// The first word of a file; empty: there is none.
+    private static func word(_ file: String) -> String {
+        ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+    }
+
     public var architecture: String { ["arm64", "aarch64"].contains(systemName { $0.machine }) ? "arm64" : "amd64" }
 
     public var currentDirectory: String {
@@ -214,8 +245,8 @@ public final class PosixRunHost: RunHost {
         let start = xless_process_start(pid)
         guard start != 0 else { return "" }
         // On Linux it counts from the start of the system.
-        let boot = (try? String(contentsOfFile: "/proc/sys/kernel/random/boot_id", encoding: .utf8)) ?? ""
-        return (boot.split(whereSeparator: \.isWhitespace) + ["\(start)"]).joined(separator: " ")
+        let boot = Self.word("/proc/sys/kernel/random/boot_id")
+        return boot.isEmpty ? "\(start)" : "\(boot) \(start)"
     }
 
     public func programFile(_ pid: Int32) -> String {
