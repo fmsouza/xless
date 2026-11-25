@@ -74,7 +74,7 @@ public struct BuildSDKRecord: Codable, Sendable, Equatable {
 
     /// nil when the build wrote no record (an older build, or one without toolchain metadata).
     public static func load(in stageRoot: URL) -> BuildSDKRecord? {
-        guard let data = try? Data(contentsOf: url(in: stageRoot)) else { return nil }
+        guard let data = try? PlainFile.read(url(in: stageRoot)) else { return nil }
         return try? JSONDecoder().decode(BuildSDKRecord.self, from: data)
     }
 }

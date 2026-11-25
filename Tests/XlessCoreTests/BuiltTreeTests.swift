@@ -13,6 +13,8 @@ private func app() throws -> (strange: Strange, app: URL) {
     _ = try strange.link("A.app/Frameworks/F.framework/F", to: "Versions/Current/F")
     _ = try strange.link("A.app/Frameworks/F.framework/up", to: "../../A")
     _ = try strange.link("A.app/nowhere", to: "gone")
+    _ = try strange.link("A.app/Frameworks/F.framework/Headers", to: "Versions/Current/Headers") // stripped
+    _ = try strange.link("A.app/Frameworks/F.framework/back", to: "Versions/gone/../../F")
     return (strange, app)
 }
 
@@ -26,6 +28,7 @@ private func app() throws -> (strange: Strange, app: URL) {
 }
 
 @Test(arguments: [("pipe", "neither a file"), ("absolute", "leads out"), ("out", "leads out"), ("lexical", "leads out"), ("through", "leads out"), ("loop", "leads out"),
+                  ("absent", "leads out"), ("absentLater", "leads out"), ("absentAbsolute", "leads out"), ("mark", "leads out"), ("markUp", "leads out"), ("long", "leads out"),
                   ("newline", "control character"), ("escape", "control character"), ("deep", "nested deeper"), ("notDirectory", "is not a directory"), ("linked", "is not a directory")])
 func whatABuildMayNotLeaveInABundleIsRefused(_ what: String, _ why: String) throws {
     let (strange, app) = try app()
@@ -42,6 +45,19 @@ func whatABuildMayNotLeaveInABundleIsRefused(_ what: String, _ why: String) thro
         _ = try strange.file("secret")
         _ = try strange.link("A.app/x/y/top", to: "../..")
         _ = try strange.link("A.app/x/y/l", to: "top/../secret")
+    case "absent": // what is not there yet is beside the bundle, by way of a link that stays
+        _ = try strange.link("A.app/d", to: ".")
+        _ = try strange.link("A.app/l", to: "d/../name")
+    case "absentLater": _ = try strange.link("A.app/l", to: "gone/../../name")
+    case "absentAbsolute":
+        _ = try strange.link("A.app/x", to: "Frameworks/F.framework/Versions/Current/up")
+        _ = try strange.link("A.app/Frameworks/F.framework/Versions/A/up", to: "../../../..")
+        _ = try strange.link("A.app/l", to: "x/../name")
+    case "mark": _ = try strange.link("A.app/l", to: "/\u{301}abs") // a / that is another Character
+    case "markUp": _ = try strange.link("A.app/l", to: "../\u{301}x")
+    case "long": // each of them leads to the next, none of them out
+        for n in 0 ..< 100 { _ = try strange.link("A.app/l\(n)", to: "l\(n + 1)") }
+        _ = try strange.file("A.app/l100")
     case "loop": _ = try strange.link("A.app/l", to: "m"); _ = try strange.link("A.app/m", to: "l")
     case "newline": _ = try strange.file("A.app/a\n..b")
     case "escape": _ = try strange.file("A.app/a\u{1B}[2J")
@@ -80,4 +96,83 @@ func whatABuildMayNotLeaveInABundleIsRefused(_ what: String, _ why: String) thro
     try fm.createDirectory(at: paths.assets, withIntermediateDirectories: true)
     try fm.createSymbolicLink(at: paths.assets.appendingPathComponent("A.app"), withDestinationURL: other)
     #expect(throws: XlessError.self) { try paths.bundle(in: paths.assets, stage: .finalize) }
+}
+
+@Test func aTreeIsCopiedAsItIs() throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    let fm = FileManager.default, copy = strange.root.appendingPathComponent("B.app"), date = Date(timeIntervalSince1970: 1_000_000_000)
+    let run = app.appendingPathComponent("run"), bytes = Data((0 ..< 3_000_000).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+    try bytes.write(to: run)
+    for (path, mode) in [(run, 0o755), (app.appendingPathComponent("A"), 0o640), (app.appendingPathComponent("Frameworks"), 0o750)] {
+        try fm.setAttributes([.posixPermissions: mode, .modificationDate: date], ofItemAtPath: path.path)
+    }
+    try BuiltTree.copy(app, to: copy, stage: .sign)
+    #expect(try fm.subpathsOfDirectory(atPath: copy.path).sorted() == fm.subpathsOfDirectory(atPath: app.path).sorted())
+    #expect(try Data(contentsOf: copy.appendingPathComponent("run")) == bytes)
+    for (path, mode) in [("run", 0o755), ("A", 0o640), ("Frameworks", 0o750)] {
+        let attributes = try fm.attributesOfItem(atPath: copy.appendingPathComponent(path).path)
+        #expect(attributes[.posixPermissions] as? Int == mode && attributes[.modificationDate] as? Date == date, "\(path)")
+    }
+    #expect(try fm.destinationOfSymbolicLink(atPath: copy.appendingPathComponent("nowhere").path) == "gone")
+    try BuiltTree.check(copy, stage: .sign)
+    #expect(throws: XlessError.self) { try BuiltTree.copy(app, to: copy, stage: .sign) } // nothing is written over
+}
+
+@Test func whatIsNoPlainTreeIsNotCopied() throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    let to = strange.root.appendingPathComponent("B.app")
+    #expect(throws: XlessError.self) { try BuiltTree.copy(strange.link("L.app", to: "A.app"), to: to, stage: .sign) }
+    #expect(throws: XlessError.self) { try BuiltTree.copy(strange.root.appendingPathComponent("none"), to: to, stage: .sign) }
+    _ = try strange.pipe("A.app/pipe")
+    #expect { try BuiltTree.copy(app, to: to, stage: .sign) } throws: { "\($0)".contains("pipe in A.app: it is neither") }
+}
+
+/// A process that the build left makes a directory a link to the user's own again and again.
+@Test func nothingOfTheUsersOwnIsCopiedThroughALinkThatComesBetween() throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    let fm = FileManager.default, own = strange.root.appendingPathComponent("own")
+    try fm.createDirectory(at: own, withIntermediateDirectories: true)
+    for name in ["F", "key"] { _ = try strange.file("own/\(name)", "secret") }
+    let place = app.appendingPathComponent("Frameworks/F.framework/Versions/A").path, aside = strange.root.appendingPathComponent("aside").path
+    let swap = Thread {
+        while !Thread.current.isCancelled {
+            rename(place, aside)
+            symlink(own.path, place)
+            unlink(place)
+            rename(aside, place)
+        }
+    }
+    swap.start()
+    defer { swap.cancel(); while !swap.isFinished { usleep(1000) } }
+    for n in 0 ..< 400 {
+        let to = strange.root.appendingPathComponent("copy\(n)")
+        try? BuiltTree.copy(app, to: to, stage: .sign)
+        for case let file as URL in fm.enumerator(at: to, includingPropertiesForKeys: nil)! where (try? fm.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType) == .typeRegular {
+            #expect(try String(contentsOf: file, encoding: .utf8) != "secret")
+        }
+        try fm.removeItem(at: to)
+    }
+}
+
+@Test func aFileIsWrittenIntoATreeAndThroughNoLink() throws {
+    let (strange, app) = try app()
+    defer { strange.remove() }
+    func text(_ url: URL) throws -> String { try String(contentsOf: url, encoding: .utf8) }
+    let data = Data("new".utf8), own = try strange.file("own", "mine")
+    for target in [own.path, "A", "gone"] {
+        _ = try? FileManager.default.removeItem(at: app.appendingPathComponent("l"))
+        _ = try strange.link("A.app/l", to: target)
+        try BuiltTree.write(data, at: "l", in: app, stage: .sign)
+        #expect(try text(app.appendingPathComponent("l")) == "new")
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: app.appendingPathComponent("l").path)) == nil)
+    }
+    #expect(try text(own) == "mine" && text(app.appendingPathComponent("A")) == "x" && !FileManager.default.fileExists(atPath: app.appendingPathComponent("gone").path))
+    try BuiltTree.write(data, at: "Contents/deep/file", in: app, stage: .sign)
+    #expect(try text(app.appendingPathComponent("Contents/deep/file")) == "new")
+    _ = try strange.link("A.app/dir", to: "Frameworks")
+    for path in ["dir/file", "Frameworks", "A/file", ""] { #expect(throws: XlessError.self, "\(path)") { try BuiltTree.write(data, at: path, in: app, stage: .sign) } }
+    #expect(!FileManager.default.fileExists(atPath: app.appendingPathComponent("Frameworks/file").path))
 }

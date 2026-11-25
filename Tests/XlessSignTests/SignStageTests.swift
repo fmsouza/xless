@@ -243,3 +243,17 @@ func anAppThatLeadsOutOfItselfIsNotSigned(_ name: String) async throws {
     #expect(try String(contentsOf: own, encoding: .utf8) == "mine")
     #expect(f.leftApps.isEmpty && f.transport.requests.isEmpty)
 }
+
+/// A link that the app may have: its profile goes in its place, not where it leads.
+@Test(arguments: ["X", "gone", "Info.plist"])
+func theProfileIsWrittenThroughNoLink(_ target: String) async throws {
+    let f = try SignFixture(profileEntitlements: teamProfile())
+    defer { try? FileManager.default.removeItem(at: f.project.deletingLastPathComponent()) }
+    try FileManager.default.createSymbolicLink(atPath: f.input.appendingPathComponent("embedded.mobileprovision").path, withDestinationPath: target)
+    let before = try? Data(contentsOf: f.input.appendingPathComponent(target))
+    let signed = try await SignStage.run(input: f.input, outputDir: f.outputDir, platform: .ios, config: f.config, project: f.project,
+                                         secrets: Secrets(env: ["XLESS_DIST_KEY": f.key.pem]), client: ASCClient(credentials: testCreds, transport: f.transport, sleep: { _ in }),
+                                         manifest: nil, codesign: { _ in })
+    #expect((try? Data(contentsOf: signed.appendingPathComponent(target))) == before)
+    #expect(try Entitlements.extract(fromProfile: Data(contentsOf: signed.appendingPathComponent("embedded.mobileprovision"))).isEmpty == false)
+}

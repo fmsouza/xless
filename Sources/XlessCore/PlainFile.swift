@@ -28,7 +28,13 @@ public enum PlainFile {
 
     public static func read(_ url: URL, maxSize: Int = maxSize, followsLinks: Bool = false) throws(Unread) -> Data {
         #if os(Windows)
-        do { return try InputFile.read(url.path, limit: maxSize, throughLinks: followsLinks) } catch let refusal as PrivateFile.Refusal {
+        if followsLinks { // No secret and no trust hangs on it: it may be on another machine or in WSL, where `InputFile` reads nothing.
+            guard FileManager.default.fileExists(atPath: url.path) else { throw .absent }
+            guard let data = try? Data(contentsOf: url) else { throw .failed }
+            guard data.count <= maxSize else { throw .tooLarge }
+            return data
+        }
+        do { return try InputFile.read(url.path, limit: maxSize, throughLinks: false) } catch let refusal as PrivateFile.Refusal {
             switch refusal.kind {
             case .missing: throw .absent
             case .link: throw .link

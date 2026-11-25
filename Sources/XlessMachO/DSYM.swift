@@ -25,14 +25,18 @@ public enum DSYM {
         URL(fileURLWithPath: executable.path + ".dSYM", isDirectory: true)
     }
 
-    /// The UUIDs of a `.dSYM` bundle: those of every file in `Contents/Resources/DWARF`.
+    /// The UUIDs of a `.dSYM` bundle: those of every file in `Contents/Resources/DWARF`; symbolic links are not followed.
     public static func uuids(ofDSYM bundle: URL) -> Set<String> {
-        let files = (try? FileManager.default.contentsOfDirectory(at: bundle.appendingPathComponent(dwarfDir), includingPropertiesForKeys: nil)) ?? []
-        return Set(files.flatMap { url in (try? Data(contentsOf: url)).flatMap { try? MachO.uuids(in: $0) } ?? [] })
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: bundle.appendingPathComponent(dwarfDir), includingPropertiesForKeys: keys)) ?? []
+        return Set(files.filter { url in
+            let v = try? url.resourceValues(forKeys: Set(keys))
+            return v?.isRegularFile == true && v?.isSymbolicLink != true
+        }.flatMap { url in (try? Data(contentsOf: url, options: .alwaysMapped)).flatMap { try? MachO.uuids(in: $0) } ?? [] })
     }
 
     /// The UUIDs of every Mach-O image under `bundle` (the app's executable, its frameworks, extensions and dylibs).
-    /// Only files that start with a Mach-O magic are read whole; symbolic links are not followed.
+    /// Only files that start with a Mach-O magic are read; symbolic links are not followed.
     public static func imageUUIDs(in bundle: URL) -> Set<String> {
         guard let walk = FileManager.default.enumerator(at: bundle, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return [] }
         var out: Set<String> = []
@@ -41,7 +45,7 @@ public enum DSYM {
             guard v?.isRegularFile == true, v?.isSymbolicLink != true, let head = try? FileHandle(forReadingFrom: url) else { continue }
             let magic = (try? head.read(upToCount: 4)) ?? Data()
             try? head.close()
-            guard MachO.isMachO(magic), let data = try? Data(contentsOf: url), let ids = try? MachO.uuids(in: data) else { continue }
+            guard MachO.isMachO(magic), let data = try? Data(contentsOf: url, options: .alwaysMapped), let ids = try? MachO.uuids(in: data) else { continue }
             out.formUnion(ids)
         }
         return out
@@ -56,7 +60,7 @@ public enum DSYM {
             walk.skipDescendants()
             guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
             if let images, uuids(ofDSYM: url).isDisjoint(with: images) { continue }
-            found.append(String(url.standardizedFileURL.path.dropFirst(base.count + 1)))
+            found.append(String(decoding: url.standardizedFileURL.path.utf8.dropFirst(base.utf8.count + 1), as: UTF8.self))
         }
         return found.sorted()
     }
@@ -175,7 +179,7 @@ public enum DSYM {
         for plist in ["Contents/Info.plist", "Info.plist"] {
             if let data = FileManager.default.contents(atPath: app.appendingPathComponent(plist).path),
                let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-               let name = info["CFBundleExecutable"] as? String, !name.isEmpty, !name.contains("/") {
+               let name = info["CFBundleExecutable"] as? String, !name.isEmpty, !name.utf8.contains(UInt8(ascii: "/")) {
                 return name
             }
         }

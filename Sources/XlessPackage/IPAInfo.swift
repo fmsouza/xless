@@ -5,14 +5,14 @@ import XlessCore
 public enum IPAInfo {
     /// CFBundleShortVersionString and CFBundleVersion of the app's top-level Info.plist inside `ipa`.
     public static func versions(ipa: URL) throws -> (version: String, build: String) {
-        let entries = try Shell.run("unzip", ["-Z1", ipa.path], stage: .upload).stdout.split(separator: "\n").map(String.init)
-        guard let entry = entries.first(where: { $0.wholeMatch(of: /Payload\/[^\/]+\.app\/Info\.plist/) != nil }) else {
+        let entries = try Shell.run("unzip", ["-Z1", ipa.path], env: ["LC_ALL": "C"], stage: .upload).stdout.split(separator: "\n").map(String.init)
+        guard let entry = entries.first(where: { $0.wholeMatch(of: /Payload\/[^\/]+\.app\/Info\.plist/.matchingSemantics(.unicodeScalar)) != nil }) else {
             throw XlessError(.upload, "\(ipa.lastPathComponent) has no Payload/<App>.app/Info.plist", fix: "run `xless package --platform ios` again")
         }
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-ipa-\(UUID().uuidString).plist")
         defer { try? FileManager.default.removeItem(at: tmp) }
         // unzip -p writes raw bytes; go through a file because Shell captures text.
-        try Shell.run("sh", ["-c", "unzip -p \"$0\" \"$1\" > \"$2\"", ipa.path, pattern(of: entry), tmp.path], stage: .upload)
+        try Shell.run("sh", ["-c", "unzip -p \"$0\" \"$1\" > \"$2\"", ipa.path, pattern(of: entry), tmp.path], env: ["LC_ALL": "C"], stage: .upload)
         let info = try Plist.read(tmp, stage: .upload)
         guard let (version, build) = versions(info) else {
             throw XlessError(.upload, "\(entry) lacks CFBundleShortVersionString/CFBundleVersion", fix: "re-run from finalize (`xless ship --from finalize`)")
@@ -27,8 +27,9 @@ public enum IPAInfo {
         return (version, build)
     }
 
-    /// What `unzip` takes for this one entry: it takes patterns, and an app's name may look like one.
-    private static func pattern(of entry: String) -> String { entry.replacing(/[\\*?\[\]]/) { "\\" + $0.output } }
+    /// What `unzip` takes for this one entry: it takes patterns, and an app's name may look like one. The `unzip` of a Mac lists a "?"
+    /// for each byte that is not ASCII: it stays a pattern, of one byte.
+    private static func pattern(of entry: String) -> String { ["\\", "*", "[", "]"].reduce(entry) { $0.replacing(scalar: $1, with: "\\\($1)") } }
 
     /// The versions to declare to App Store Connect: always the ipa's. An explicit build-number override
     /// (`--build-number` / `XLESS_BUILD_NUMBER`) must agree with the ipa, because it is re-resolved on every run.

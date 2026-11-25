@@ -92,7 +92,7 @@ public enum SignTargets {
     static func extensions(in app: URL) throws -> [(path: String, bundleID: String)] {
         let fm = FileManager.default
         for dir in unsupportedDirs {
-            let found = ((try? fm.contentsOfDirectory(atPath: app.appendingPathComponent(dir).path)) ?? []).filter { $0.hasSuffix(".app") }
+            let found = ((try? fm.contentsOfDirectory(atPath: app.appendingPathComponent(dir).path)) ?? []).filter { $0.utf8.reversed().starts(with: ".app".utf8.reversed()) }
             if let name = found.sorted().first {
                 throw XlessError(.sign, "\(dir)/\(name) is a watch app or App Clip, which xless does not sign yet", fix: "build the app without it")
             }
@@ -104,14 +104,14 @@ public enum SignTargets {
             guard isRealDirectory(dirURL.path) else {
                 throw XlessError(.sign, "\(dir) in \(app.lastPathComponent) is not a directory (a symlink?)", fix: "check the build output: \(dir) must be a real directory")
             }
-            for name in ((try? fm.contentsOfDirectory(atPath: dirURL.path)) ?? []).sorted() where name.hasSuffix(".appex") {
+            for name in ((try? fm.contentsOfDirectory(atPath: dirURL.path)) ?? []).sorted() where name.utf8.reversed().starts(with: ".appex".utf8.reversed()) {
                 let path = "\(dir)/\(name)"
                 guard isRealDirectory(dirURL.appendingPathComponent(name).path) else {
                     throw XlessError(.sign, "app extension \(path) is not a directory (a symlink?)", fix: "check the build output: an app extension must be a real bundle directory")
                 }
                 // rcodesign 0.29 reads `<scope>:<file>` (the scope ends at the first colon) and `<path>@<int>` /
                 // `<path>@[cpu_type=…]` as a scope on a Mach-O slice.
-                if let c = name.first(where: { $0 == ":" || $0 == "@" }) {
+                if let c = name.unicodeScalars.first(where: { $0 == ":" || $0 == "@" }) {
                     throw XlessError(.sign, "app extension \(path) has a '\(c)' in its name, which rcodesign reads as scope syntax", fix: "rename the extension's product")
                 }
                 // rcodesign's help says a setting scoped to a nested bundle applies to everything within it, so a framework

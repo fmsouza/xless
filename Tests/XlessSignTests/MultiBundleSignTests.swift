@@ -352,7 +352,7 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
 
 /// What gets signed must be the extension bundle itself, named so that rcodesign's scope syntax cannot misread it. Each
 /// is refused before App Store Connect is called.
-@Test(arguments: ["symlinked appex", "symlinked PlugIns", "colon", "at", "frameworks", "foreign bundle ID"])
+@Test(arguments: ["symlinked appex", "symlinked PlugIns", "colon", "marked colon", "at", "frameworks", "foreign bundle ID"])
 func unsafeOrInvalidExtensionsAreRefusedBeforeAppStoreConnect(_ kind: String) async throws {
     let f = try MultiBundleFixture(app: [:], ext: [:], extBundleID: kind == "foreign bundle ID" ? "com.example.other" : extID)
     let fm = FileManager.default
@@ -369,6 +369,9 @@ func unsafeOrInvalidExtensionsAreRefusedBeforeAppStoreConnect(_ kind: String) as
     case "colon":
         try f.renameExtension(to: "E:x.appex")
         expected = "app extension PlugIns/E:x.appex has a ':' in its name, which rcodesign reads as scope syntax"
+    case "marked colon": // to Swift another Character
+        try f.renameExtension(to: "E:\u{301}x.appex")
+        expected = "app extension PlugIns/E:\u{301}x.appex has a ':' in its name, which rcodesign reads as scope syntax"
     case "at":
         try f.renameExtension(to: "E@0.appex")
         expected = "app extension PlugIns/E@0.appex has a '@' in its name, which rcodesign reads as scope syntax"

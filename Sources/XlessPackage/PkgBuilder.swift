@@ -130,10 +130,7 @@ public enum PkgBuilder {
     // MARK: - XML templates (productbuild's own output, verified 2026-10-31 · Build 26B123)
 
     static func escape(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
+        text.replacing(scalar: "&", with: "&amp;").replacing(scalar: "<", with: "&lt;").replacing(scalar: ">", with: "&gt;").replacing(scalar: "\"", with: "&quot;")
     }
 
     /// The App Store distribution productbuild synthesizes from the component: the default choice, the

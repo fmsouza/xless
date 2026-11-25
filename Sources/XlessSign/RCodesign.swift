@@ -61,7 +61,7 @@ public enum RCodesign {
     public static func hardenedRuntimePaths(in app: URL, mainExecutable: String) throws -> [String] {
         let root = app.standardizedFileURL.path
         let paths = Files.regularFiles(under: app).filter(isImage)
-            .map { String($0.standardizedFileURL.path.dropFirst(root.count + 1)) }
+            .map { String(decoding: $0.standardizedFileURL.path.utf8.dropFirst(root.utf8.count + 1), as: UTF8.self) }
             .filter { $0 != mainExecutable }.sorted()
         try requireScopes(paths)
         return paths
@@ -70,7 +70,7 @@ public enum RCodesign {
     /// rcodesign 0.29.0 ends a scope at the first colon, and reads `<path>@<int>` and `<path>@[cpu_type=…]` as a slice; a word that starts
     /// with a hyphen is an option.
     static func requireScopes(_ paths: [String]) throws {
-        for path in paths where path.contains(":") || path.hasPrefix("-") || path.hasPrefix("@") || path.firstMatch(of: /@([0-9]+|\[.*)$/) != nil {
+        for path in paths where path.contains(scalar: ":") || ["-", "@"].contains(path.unicodeScalars.first) || path.firstMatch(of: /@(\+?[0-9]+|\[.*)$/.matchingSemantics(.unicodeScalar)) != nil {
             throw XlessError(.sign, "the path of \(path) is one that rcodesign reads as an option, or as scope syntax", fix: "rename it in the app: no ':' in its path, no '-' or '@' first, no '@<number>' at the end")
         }
     }

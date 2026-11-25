@@ -51,10 +51,9 @@ public enum Finalizer {
             throw XlessError(.finalize, "ITSAppUsesNonExemptEncryption in the Info.plist is not a boolean (\(v))",
                              fix: kind.encryptionNotBooleanFix())
         }
-        try Plist.write(info, to: plistURL, stage: .finalize)
-        let pkgInfo = app.appendingPathComponent(layout.pkgInfo)
-        if !FileManager.default.fileExists(atPath: pkgInfo.path) {
-            try Data("APPL????".utf8).write(to: pkgInfo)   // Xcode writes it for every app; xtool omits it on iOS
+        try BuiltTree.write(try Plist.data(info, format: .binary, named: plistURL.path, stage: .finalize), at: layout.infoPlist, in: app, stage: .finalize)
+        if !FileManager.default.fileExists(atPath: app.appendingPathComponent(layout.pkgInfo).path) {
+            try BuiltTree.write(Data("APPL????".utf8), at: layout.pkgInfo, in: app, stage: .finalize)   // Xcode writes it for every app; xtool omits it on iOS
         }
 
         let frameworks = app.appendingPathComponent(layout.frameworksDir).standardizedFileURL.path

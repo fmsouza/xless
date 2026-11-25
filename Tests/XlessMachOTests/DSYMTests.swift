@@ -157,6 +157,15 @@ private func dSYM(in dir: URL, bin: String, dwarf: Data) throws -> URL {
     #expect(DSYM.imageUUIDs(in: app) == [uuid(0x11), uuid(0x22), uuid(0x33)])
 }
 
+/// (A build may have left a link to a file of the user's there, or a pipe.)
+@Test func theUUIDsOfADSYMAreThoseOfItsFiles() throws {
+    let root = try tmp(); defer { try? fm.removeItem(at: root) }
+    try write(image(uuid: 0x22), root.appendingPathComponent("other"))
+    let bundle = try dSYM(in: root, bin: "Hello", dwarf: dwarf(0x11))
+    try fm.createSymbolicLink(at: bundle.appendingPathComponent("Contents/Resources/DWARF/link"), withDestinationURL: root.appendingPathComponent("other"))
+    #expect(DSYM.uuids(ofDSYM: bundle) == [uuid(0x11)])
+}
+
 // MARK: dSYMs of Rust executables linked by cargo (the linker wrapper's debug link)
 
 /// A dSYM's DWARF file stand-in: an image whose LC_UUID is 16 times `byte`, as dsymutil writes it (MH_DSYM).
