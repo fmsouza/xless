@@ -13,6 +13,10 @@ private let share: URL = {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-plan-share-\(UUID())")
     try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     try! "XCODE_VERSION=27.0\nXCODE_BUILD=27A266a\n".write(to: dir.appendingPathComponent("versions.env"), atomically: true, encoding: .utf8)
+    for kit in Kit.allCases {
+        try! FileManager.default.createDirectory(at: kit.directory(share: dir), withIntermediateDirectories: true)
+        try! "FROM \(kit.rawValue)\n".write(to: kit.directory(share: dir).appendingPathComponent("Dockerfile"), atomically: true, encoding: .utf8)
+    }
     return dir
 }()
 private let cache = URL(fileURLWithPath: "/cache/xless")
@@ -21,8 +25,8 @@ private let xipSource: XcodeSource.Identified = (xcode27, .xip, URL(fileURLWithP
 
 private func plan(_ source: XcodeSource.Identified = xipSource, archs: [String] = ["arm64"], reexport: Bool = false, kits: [Kit] = [],
                   existing: @escaping (URL) -> Bool = { _ in false }) -> [SetupStep] {
-    SetupPlan.make(source: source, archs: archs, hostArch: "arm64", share: share, cacheRoot: cache, xlessBinaries: bins,
-                   reexport: reexport, kits: kits, existing: existing)
+    try! SetupPlan.make(source: source, archs: archs, hostArch: "arm64", share: share, cacheRoot: cache, xlessBinaries: bins,
+                        reexport: reexport, kits: kits, builder: "colima", existing: existing)
 }
 
 /// Each step's kind, from its argv: tools/image (docker-images.sh), export (xtool), meta, kit, rm.
@@ -70,7 +74,10 @@ private func kinds(_ steps: [SetupStep]) -> [String] {
     let steps = plan(kits: [.tauri, .reactNative])
     #expect(kinds(steps) == ["tools", "export", "meta", "image", "rm", "kit", "kit"])
     #expect(steps[5].action == .kit(.tauri, arch: "arm64", xcode: "27.0") && steps[6].action == .kit(.reactNative, arch: "arm64", xcode: "27.0"))
-    #expect(steps[6].argv == ["docker", "build", "--platform", "linux/arm64", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=xless:local-arm64-xcode27.0",
+    // all of the command that runs: the ID is known once the image is built
+    let recipe = try! Kit.reactNative.recipe(share: share)
+    #expect(steps[6].argv == ["docker", "build", "--builder", "colima", "--platform", "linux/arm64", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=xless:local-arm64-xcode27.0",
+                              "--label", "dev.xless.kit=react-native", "--label", "dev.xless.kit.base=<the ID of xless:local-arm64-xcode27.0>", "--label", "dev.xless.kit.recipe=\(recipe)",
                               "-t", "xless:local-arm64-xcode27.0-react-native", "\(share.path)/docker/react-native"])
     #expect(steps[6].title == "xless:local-arm64-xcode27.0-react-native: Node, pnpm, Ruby, Bundler and hermesc, for React Native and Expo apps")
 }

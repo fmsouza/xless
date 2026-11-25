@@ -28,12 +28,13 @@ if [[ "$1" == info ]]; then
   [[ -z "${DOCKER_ROOT:-}" ]] || echo "$DOCKER_ROOT|[]"
 fi
 # the images of $FAKE_IMAGES; a `build` adds the image its arguments name
+if [[ "$1 $2" == "context show" ]]; then echo here; fi
 if [[ -n "${FAKE_IMAGES:-}" ]]; then
   if [[ "$1" == image && "$2" != rm ]]; then exec "$FAKE" "$@"; fi
   if [[ "$1" == build && -z "${BUILD_LOST:-}" ]]; then
     for a in "$@"; do case "$a" in dev.xless.kit=*) kit="${a#dev.xless.kit=}" ;; esac; done
     "$FAKE" kit "$kit" "$XLESS_SHARE" arm64 27.0 27A266a >> "$FAKE_IMAGES"
-    echo "builder=${BUILDX_BUILDER-unset}" >> "$DOCKER_LOG"
+    echo "builder=${BUILDX_BUILDER-unset} buildkit=${DOCKER_BUILDKIT-unset}" >> "$DOCKER_LOG"
   fi
 fi
 exit 0
@@ -109,6 +110,7 @@ grep -q 'is not a supported Xcode (supported: Xcode 26.0.1 (17A400), Xcode 26.1 
 # --dry-run: a fake .xip (any name, a path with spaces) registered by its sha256 in a temp copy of versions.env.
 share="$t/share"
 mkdir -p "$share" "$t/my downloads"
+cp -R "$repo/docker" "$share/docker"
 xip="$t/my downloads/Xcode copy.xip"
 head -c 100000 /dev/zero | tr '\0' 'x' > "$xip"
 sum="$( (sha256sum "$xip" 2>/dev/null || shasum -a 256 "$xip") | cut -d' ' -f1)"
@@ -152,15 +154,17 @@ share="$repo" run ok --docker --xcode "$xip" --dry-run
 # there already is not built again. docker's own builder builds it: another could not see the local image.
 img="$repo/Tests/shell/fake-images.sh"; images="$t/images"
 { "$img" base arm64 27.0 27A266a; "$img" base arm64 26.6 17F113; } > "$images"
-extra=(FAKE_IMAGES="$images" BUILDX_BUILDER=other)
+extra=(FAKE_IMAGES="$images" BUILDX_BUILDER=other DOCKER_BUILDKIT=0)
 share="$repo" run ok --docker --arch arm64 --with tauri,expo --dry-run
+planned="$(sed -n 's/^    docker //p' "$t/out")"
 [[ $code == 0 ]] || fail "--with alone, dry run, exits $code: $(cat "$t/err")"
 [[ "$(sed -n 1p "$t/out")" == "==> on xless:local-arm64-xcode27.0" ]] || fail "--with alone is on: $(cat "$t/out")"
 grep -q '^build\|^run' "$log" && fail "--dry-run built: $(cat "$log")"
 share="$repo" run ok --docker --arch arm64 --with tauri,expo
 [[ $code == 0 ]] || fail "--with alone exits $code: $(cat "$t/err")"
-[[ "$(grep -c '^build ' "$log")" == 2 && "$(grep -c '^builder=unset$' "$log")" == 2 ]] || fail "--with alone runs: $(cat "$log")"
-grep -q "^build --platform linux/arm64 --pull=false --provenance=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 --label dev.xless.kit=tauri --label dev.xless.kit.base=sha256:base27.0 --label dev.xless.kit.recipe=[0-9a-f]* -t xless:local-arm64-xcode27.0-tauri $repo/docker/tauri$" "$log" || fail "the kit's build: $(cat "$log")"
+[[ "$(grep -c '^build ' "$log")" == 2 && "$(grep -c '^builder=unset buildkit=unset$' "$log")" == 2 ]] || fail "--with alone runs: $(cat "$log")"
+[[ "$(grep '^build ' "$log")" == "$planned" ]] || fail "the dry run shows: $planned"
+grep -q "^build --builder here --platform linux/arm64 --pull=false --provenance=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 --label dev.xless.kit=tauri --label dev.xless.kit.base=sha256:base27.0 --label dev.xless.kit.recipe=[0-9a-f]* -t xless:local-arm64-xcode27.0-tauri $repo/docker/tauri$" "$log" || fail "the kit's build: $(cat "$log")"
 grep -q -- '--push\|^pull\|^push\|^buildx' "$log" && fail "--with alone runs: $(cat "$log")"
 share="$repo" run ok --docker --arch arm64 --with tauri,expo
 [[ $code == 0 ]] && ! grep -q '^build ' "$log" || fail "built again: $code $(cat "$log")"
@@ -182,6 +186,10 @@ mkdir -p "$t/elf"; { printf '\177ELF\002\001\001'; head -c 11 /dev/zero; printf 
 run ok --docker --xcode "$xip" --arch arm64
 [[ $code == 11 ]] && grep -q 'xless:local-arm64-xcode27.0 is another build of Xcode 27.0 (27A1111, this is 27A266a)' "$t/err" && grep -q 'XLESS_XCODE_RETAG=1 .* stays as xless:local-arm64-xcode27.0-27A1111' "$t/err" || fail "another build: $code $(cat "$t/err")"
 grep -q '^run\|^buildx build' "$log" && fail "another build's image: docker was used: $(cat "$log")"
+# An older xless's image of that Xcode, which does not say of which build it is, is replaced: it says so.
+echo "xless:local-arm64-xcode27.0 sha256:old arm64 a org.xless.image=true" > "$images"
+run ok --docker --xcode "$xip" --arch arm64
+grep -qx "note: xless:local-arm64-xcode27.0 is an image of an older xless, which does not say which build of Xcode 27.0 it holds: this setup replaces it with Xcode 27A266a's" "$t/out" || fail "an older image is replaced without a word: $(cat "$t/out")"
 extra=()
 
 # Native (the default).

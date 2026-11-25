@@ -40,7 +40,7 @@ public enum SetupPlan {
     public static let estimateNote = "step times are rough: measured on an 8-core arm64 machine with a fast network; yours depend on your CPU and network"
 
     public static func make(source: XcodeSource.Identified, archs: [String], hostArch: String, share: URL, cacheRoot: URL,
-                            xlessBinaries: [String: URL], reexport: Bool, kits: [Kit] = [], existing: (URL) -> Bool) -> [SetupStep] {
+                            xlessBinaries: [String: URL], reexport: Bool, kits: [Kit] = [], builder: String? = nil, existing: (URL) -> Bool) throws -> [SetupStep] {
         let x = source.xcode
         let version = canonicalVersion(x.shortVersion)
         let sdkDir = self.sdkDir(source: source, cacheRoot: cacheRoot)
@@ -82,17 +82,17 @@ public enum SetupPlan {
             if let bin = xlessBinaries[a] { build += ["--xless-bin", bin.path] }
             steps.append(SetupStep(title: image, argv: build, estimate: est("~7 min", "")))
             if exports { steps.append(SetupStep(title: "remove \(tools)", argv: ["docker", "image", "rm", tools], estimate: "seconds", action: .tidy)) }
-            steps += kits.map { kit($0, arch: a, xcode: version, hostArch: hostArch, share: share) }
+            let built = LocalImage(name: image, id: "<the ID of \(image)>", architecture: a, labels: [ImageLabel.xcode: version], layers: [])
+            steps += try kits.map { try kit($0, on: built, hostArch: hostArch, share: share, builder: builder) }
         }
         return steps
     }
 
-    /// A kit's image on the image of `xcode`.
-    public static func kit(_ kit: Kit, arch: String, xcode: String, hostArch: String, share: URL) -> SetupStep {
-        let image = ImageName.base(arch: arch, xcode: xcode)
-        return SetupStep(title: "\(image)-\(kit.rawValue): \(kit.holds), for \(kit.apps)",
-                         argv: ["docker", "build", "--platform", "linux/\(arch)", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=\(image)", "-t", "\(image)-\(kit.rawValue)", kit.directory(share: share).path],
-                         estimate: estimate(kit.estimate, arch: arch, hostArch: hostArch), action: .kit(kit, arch: arch, xcode: xcode))
+    /// A kit's image on `base`. (The command is the one that runs, where `base` is built already.)
+    public static func kit(_ kit: Kit, on base: LocalImage, hostArch: String, share: URL, builder: String?) throws -> SetupStep {
+        let arch = base.architecture
+        return SetupStep(title: "\(kit.image(on: base)): \(kit.holds), for \(kit.apps)", argv: ["docker"] + (try kit.build(on: base, share: share, builder: builder)),
+                         estimate: estimate(kit.estimate, arch: arch, hostArch: hostArch), action: .kit(kit, arch: arch, xcode: base.xcode ?? ""))
     }
 
     private static func estimate(_ s: String, arch: String, hostArch: String) -> String {

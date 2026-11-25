@@ -53,7 +53,9 @@ struct SetupCommand: AsyncParsableCommand {
     @Flag(help: "Print the plan (each step's command) and run nothing.") var dryRun = false
 
     func run() async throws {
-        do { try setup() } catch let e as XlessError { throw e } catch {
+        do { try setup() } catch let e as XlessError { throw e } catch let problem as ImageProblem {
+            throw XlessError(.sdk, problem.cause, fix: problem.fix)
+        } catch {
             throw XlessError(.sdk, "\(error.localizedDescription)", fix: "see the output above, then run xless setup again")
         }
     }
@@ -211,8 +213,8 @@ struct SetupCommand: AsyncParsableCommand {
         for a in archs { binaries[a] = try binary(arch: a, host: host, env: env, exe: exe, cwd: cwd, home: home, work: work) }
 
         var steps = dryRun ? [] : try Self.retagSteps(xcode: x, archs: archs, env: env)
-        steps += SetupPlan.make(source: source, archs: archs, hostArch: host, share: share, cacheRoot: cacheRoot,
-                                xlessBinaries: binaries, reexport: reexport, kits: kits, existing: { fm.fileExists(atPath: $0.path) })
+        steps += try SetupPlan.make(source: source, archs: archs, hostArch: host, share: share, cacheRoot: cacheRoot,
+                                xlessBinaries: binaries, reexport: reexport, kits: kits, builder: kits.isEmpty ? nil : LocalImages.here.builder, existing: { fm.fileExists(atPath: $0.path) })
             // Rootless Docker already writes as the calling user from the container's root; `--user` would map to a subuid.
             .map { rootless ? Self.withoutUser($0) : $0 }
 
@@ -249,8 +251,9 @@ struct SetupCommand: AsyncParsableCommand {
 
     /// `--with` alone: the kits, on the images that are here.
     private func runKits(_ kits: [Kit], on bases: [LocalImage], share: URL) throws {
-        let steps = bases.flatMap { base in
-            kits.map { SetupPlan.kit($0, arch: base.architecture, xcode: base.xcode ?? "", hostArch: Self.hostArch, share: share) }
+        let builder = LocalImages.here.builder
+        let steps = try bases.flatMap { base in
+            try kits.map { try SetupPlan.kit($0, on: base, hostArch: Self.hostArch, share: share, builder: builder) }
         }
         say("==> on \(bases.map(\.name).joined(separator: " and "))")
         if dryRun {
@@ -271,11 +274,7 @@ struct SetupCommand: AsyncParsableCommand {
         for (n, s) in steps.enumerated() {
             say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
             let t0 = Date()
-            if case let .kit(kit, arch, version) = s.action {
-                do { try Self.build(kit, arch: arch, xcode: version, share: share) } catch let problem as ImageProblem {
-                    throw XlessError(.sdk, problem.cause, fix: problem.fix)
-                }
-            } else { try execute(s, xcode: xcode) }
+            if case let .kit(kit, arch, version) = s.action { try Self.build(kit, arch: arch, xcode: version, share: share) } else { try execute(s, xcode: xcode) }
             say("    done in \(Self.minutes(since: t0))")
         }
     }
@@ -286,10 +285,11 @@ struct SetupCommand: AsyncParsableCommand {
         let base = try images.base(arch: arch, pin: xcode).image
         let state = { try images.state(of: kit, on: base, share: share) }
         if case .current = try state() { return say("    it is there already") }
-        // `docker build` is docker's own builder unless this names another, which could not see the local image.
         var env = ProcessInfo.processInfo.environment
-        env["BUILDX_BUILDER"] = nil
-        try Shell.run("docker", kit.build(on: base, share: share), baseEnvironment: env, stage: .sdk, passthrough: true)
+        for name in LocalImages.builderVariables { env[name] = nil }
+        do { try Shell.run("docker", kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
+            throw ImageProblem("\(kit.image(on: base)) was not built: \(e.cause)", fix: "its output is above: it needs buildx (docker buildx version), the network and room on Docker's disk")
+        }
         guard case .current = try state() else {
             throw ImageProblem("\(kit.image(on: base)) is not what was built: it is not on \(base.name)", fix: "run xless setup again when nothing else builds it")
         }
@@ -421,7 +421,12 @@ struct SetupCommand: AsyncParsableCommand {
         var steps: [SetupStep] = []
         for a in archs {
             let name = ImageName.base(arch: a, xcode: version)
-            guard let old = LocalImages.here.image(name)?.sdk, old != xcode.build else { continue }
+            guard let image = LocalImages.here.image(name) else { continue }
+            guard let old = image.sdk else {
+                say("note: \(name) is an image of an older xless, which does not say which build of Xcode \(version) it holds: this setup replaces it with Xcode \(xcode.build)'s")
+                continue
+            }
+            guard old != xcode.build else { continue }
             guard env["XLESS_XCODE_RETAG"] == "1" else {
                 throw XlessError(.sdk, "\(name) is another build of Xcode \(version) (\(old), this is \(xcode.build)); a pin xcode: \"\(version)\" selects it",
                                  fix: "to point it at this build: XLESS_XCODE_RETAG=1 xless setup … (the \(old) image stays as \(ImageName.base(arch: a, xcode: version, build: old)))")
