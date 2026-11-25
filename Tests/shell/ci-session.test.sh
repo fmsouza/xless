@@ -41,4 +41,22 @@ kill -TERM "$p"; rc=0; wait "$p" || rc=$?
 [[ $rc -ne 0 ]] || fail "stopped, and says it succeeded"
 for _ in $(seq 50); do kill -0 "$(cat "$t/pid")" 2>/dev/null || break; sleep 0.1; done
 kill -0 "$(cat "$t/pid")" 2>/dev/null && fail "the command outlived the script"
+# ... also by a signal that comes right after it started the command: here the script is slow to go on from there.
+mkdir "$t/slow"
+cat > "$t/slow/python3" <<P
+#!$(command -v bash)
+[[ "\$1 \$2" == "-I -c" && "\$3" == *"child = os.fork()"* ]] || exec $(command -v python3) "\$@"
+code="\$3"; shift 3
+exec $(command -v python3) -I -c "\${code/child = os.fork()/child = os.fork()
+if child: import time; time.sleep(1.5)}" "\$@"
+P
+chmod +x "$t/slow/python3"; rm "$t/pid"
+PATH="$t/slow:$PATH" "$s" sh -c 'echo $$ > "$0/pid"; exec sleep 100' "$t" & p=$!
+for _ in $(seq 100); do [[ -s "$t/pid" ]] && break; sleep 0.1; done
+kill -TERM "$p"; rc=0; wait "$p" || rc=$?
+[[ $rc -ne 0 ]] || fail "stopped early, and says it succeeded"
+gone=no; for _ in $(seq 50); do kill -0 "$(cat "$t/pid")" 2>/dev/null || { gone=yes; break; }; sleep 0.1; done
+[[ $gone == yes ]] || { kill "$(cat "$t/pid")"; fail "the command outlived a script that was stopped early"; }   # this test's own sleep
+# A command does not inherit what the script does with signals.
+[[ "$("$s" python3 -I -c 'import signal; print(signal.pthread_sigmask(signal.SIG_BLOCK, []), signal.getsignal(signal.SIGTERM) == signal.SIG_DFL)')" == "set() True" ]] || fail "the command's signals"
 echo "ci-session.test.sh: OK"
