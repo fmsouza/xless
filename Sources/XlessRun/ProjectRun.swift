@@ -299,8 +299,8 @@ public final class ProjectRun {
         var code: Int32 = 0
         if docker {
             if images.areTwo { buildMounts = [try files.real(project)] }
-            try materialize()
             let configuration = try keepConfiguration(of: project, images)
+            try materialize()
             let run = dockerRun + ["--mount", RunText.bind(project, "/work")] + configuration, number = ["-e", "XLESS_BUILD_NUMBER"], platform = ["--platform", "ios"]
             let given = secrets.api + secrets.sign + storeMounts("sign") + origin(project)
             if images.areTwo {

@@ -186,6 +186,11 @@ import XlessImages
             try Data("name: App\nimage: mine:1\n".utf8).write(to: URL(fileURLWithPath: "\(directory)/xless.yml"))
             #expect(try refused([directory]).contains("would be mounted into the build container, and it is / or holds your home directory; keep the project in its own directory"), "\(directory)")
         }
+        try FileManager.default.createDirectory(atPath: "\(home.home)/.cache/xless", withIntermediateDirectories: true)
+        try home.write("home/.cache/xless/xless.yml", "name: App\nimage: mine:1\n")
+        let kept = FakeRunHost(answer: home.answer()) // (the secrets are in the store)
+        #expect(try home.run(["\(home.home)/.cache/xless"], docker: true, host: kept, environment: ["XLESS_DIST_KEY": "DIST-VALUE"], session: "/agent") == 2)
+        #expect(containers(kept).isEmpty && !home.exists(home.secrets) && kept.lines.last?.contains("which holds the xless.yml of this run, is inside the project") == true)
         let key = try home.write("proj/key.pem", "k")
         #expect(try refused([home.project], ["XLESS_DIST_KEY_FILE": key]).contains("is inside the project \(home.project), which is mounted into the build container"))
         let store = FakeRunHost(answer: home.answer())
