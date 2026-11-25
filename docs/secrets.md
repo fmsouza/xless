@@ -88,10 +88,11 @@ comes from that file; every other one the run needs comes from the store. The Ap
 come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_FILE` is refused).
 
 - **Natively**, xless reads the store itself. The script first checks, from the names alone (no passphrase), that
-  the store holds every secret the run needs, so a missing key stops the run before the build. A project directory is
-  one process: one passphrase. With `--config`, steps 1 and 3 are two processes on either side of the build, and each
-  asks it: nothing unlocked stays in a process while the build code runs. The build step runs with
-  `XLESS_NO_SECRET_STORE=1`: its xless never opens the store, and it leaves the session keyring, so the build code it
+  the store holds every secret the run needs, so a missing key stops the run before the build. Then it asks the
+  passphrase, once, before the first step and saying for which secrets, and every step of the run has the store: the run
+  is a script in [a session of its own](#one-unlock-for-a-script), which ends with it. (A dry run, and a run whose
+  secrets all come from files, ask nothing.) The build gets none of it: with `--config` its step runs with
+  `XLESS_NO_SECRET_STORE=1` and is not told of the session, and it leaves the session keyring, so the build code it
   runs cannot reach a held unlock. (Every tool any xless runs, in a project directory's single process too,
   starts in a POSIX session of its own and an empty session keyring, with `XLESS_NO_SECRET_STORE=1`:
   [security.md](security.md#the-build-and-your-secrets).) This keeps xless itself from handing out a secret there; it
@@ -129,9 +130,27 @@ error that says so; with `--no-input` it stops with exit code 23 even where ther
 
 ## Staying unlocked
 
-By default each command that needs the store asks the passphrase once, however many keys it reads and writes (the App
-Store Connect API key and a new certificate's key, say), and forgets the unlocked store when it exits.
-`xless unlock` keeps it unlocked instead, so a script asks nothing:
+A command asks the passphrase only when it reads or writes a secret, never to list or check names, and once however many
+it needs (the App Store Connect API key and a new certificate's key, say). It says which command asks, what for and how long
+it is kept: until the command ends, unless you keep it. After the passphrase, or a sign-in to Apple, xless offers that
+with one question:
+
+```text
+xless provision apply opens the secret store (the secret ASC_KEY_ID). The passphrase is asked once for this command, and forgotten when it ends unless you keep it.
+Secret store passphrase:
+The next commands of this terminal need not ask again: the secret store can stay unlocked, and the Apple ID session of a sign-in be kept, for 8 h (2 h without use). `xless lock` ends it.
+Keep both for this terminal? [y/N]
+```
+
+A yes covers both: the next commands of this terminal ask neither the passphrase nor a sign-in, for that long at most.
+Enter, or anything else, keeps nothing. It is not asked in CI, with `--no-input`, inside `xless session` or without a
+terminal, nor where nothing can be held. To be asked no more, say it in `~/.config/xless/config.yml`:
+
+```yaml
+unlock: { keep: ask }       # the default; always: keep both without the question (it says so); never: neither
+```
+
+`xless unlock` keeps the store unlocked beforehand (and asks whether a sign-in is to be kept too, once one is needed):
 
 ```sh
 xless unlock                # the passphrase, once: the store stays unlocked for this terminal
@@ -158,6 +177,31 @@ xless lock                  # forget everything held, now
   everywhere. Other users, and the tools xless
   runs (the build's plugins and scripts, npm), never reach it, nor does a container. The whole model, what it does not stop, and how to
   lock with a Linux screen locker: [security.md](security.md#holding-an-unlock-off-by-default-in-memory).
+
+### One unlock for a script
+<a id="one-unlock-for-a-script"></a>
+
+`xless session` runs a script whose xless commands ask for nothing: the passphrase once, before it starts, and with
+`--sign-in` at most one sign-in (none when a session is kept and Apple still takes it).
+
+```sh
+xless session -- ./release.sh
+xless session --sign-in -- sh -c 'xless provision apply --yes && xless run . && xless release submit --yes'
+```
+
+What was typed for it is held by an xless agent of its own, which ends with the script: when the command returns, when
+xless or the terminal goes away, on a signal (`SIGTERM` and `SIGHUP` are passed on to the script; Ctrl-C reaches it as
+without xless), even when xless is killed outright. `xless lock`, sleep and (macOS) a locked screen end it sooner, and it
+never outlives the maximum of config.yml. The exit code is the script's. Nothing is offered inside, and a session in a
+session asks nothing again. A store that was unlocked before stays so, for as long as it was. With `--no-input`, a locked
+store stops it (exit 23) before the script starts; with a credential helper there is nothing to hold, and the script runs.
+
+**Who else has it:** what `xless unlock` gives a terminal, for the time of the script: the xless commands that the script
+and the programs it starts run in its POSIX session, and only those told of it (`XLESS_SESSION`, a socket's path, in the
+script's environment; no secret). The tools that xless itself runs (compilers, SwiftPM plugins, npm, cargo, hooks) are in
+sessions of their own and refused, told of it or not. A tool that **the script runs directly** (`npm install`, `make`) is in
+the script's session, as it would be in your terminal's, and code it runs could run xless: keep those out of the script, or
+run them before it. `xless run` uses the same for its own steps, and runs no code of the project itself.
 
 ## Keeping the secrets in your keyring or pass (credential helpers)
 

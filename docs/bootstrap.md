@@ -31,8 +31,10 @@ xless team use ABCDE12345           # the default team of the account commands
 ```
 
 `--keep` keeps the Apple ID session in memory for the next commands of this terminal, for 8 hours (2 without use) unless
-you say otherwise; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). Without
-it, each command that needs the session signs in again.
+you say otherwise; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). It also
+asks whether to keep the store unlocked once its passphrase is typed: with a yes, the rest of this page asks the passphrase
+once and does not sign in again ([secrets.md](secrets.md#staying-unlocked)). Without `--keep`, each command that needs the
+session signs in, and offers to keep it.
 
 ## 2. App Store Connect API key
 <a id="1-app-store-connect-api-key"></a>
@@ -185,7 +187,7 @@ xless run <project-dir>                 # or, in the images: xless run --docker 
 
 A native build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own
 and without the secret variables, so a held unlock or a kept Apple ID session is out of their reach
-([security.md](security.md#the-build-and-your-secrets)). The keys come from the secret store: one passphrase per run, no secrets file
+([security.md](security.md#the-build-and-your-secrets)). The keys come from the secret store: one passphrase per run, before it starts (none while the store is kept unlocked), no secrets file
 ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight), which also covers the overlay apps and
 running `xless ship` in a container yourself).
 

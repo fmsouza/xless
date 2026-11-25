@@ -29,7 +29,7 @@ Linux machine: Apple's programs are macOS programs, and xless uses open-source r
 3. Give it to xless as it is: `xless setup --xcode ~/Downloads/Xcode_27.xip`. Do not unpack it.
 
 `xless xcode download 27.0 26.2` does steps 1 and 2 from the terminal, for as many versions as you name, in one sign-in
-that nothing is kept of ([xcode-download.md](xcode-download.md)).
+of which nothing is kept unless you say so ([xcode-download.md](xcode-download.md)).
 
 xless identifies the file by its SHA-256 (recorded in `versions.env` for each download it has been checked against),
 so renaming it changes nothing, and refuses any other file with the list of supported versions. An already unpacked

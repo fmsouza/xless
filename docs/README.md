@@ -13,7 +13,8 @@ build. The pages below go further.
 - [account.md](account.md): your Apple account from the terminal, by task: the first app from zero with
   `xless provision`, adding a device, rotating a certificate, inviting a tester, releasing.
 - [secrets.md](secrets.md): `xless secrets`, the encrypted store for Apple keys on your own machine, how the
-  pipeline reads it, and keeping it unlocked (`xless unlock`, `xless lock`).
+  pipeline reads it, and typing its passphrase once: keeping it unlocked (`xless unlock`, `xless lock`), one unlock for a
+  script (`xless session`).
 - [security.md](security.md): the threat model and what xless guarantees: the secret store's format, what
   `xless unlock` and `--keep` hold and who may use it, process hardening, what goes to which Apple host, the web-session commands, and how to wipe everything.
 - [apple-account.md](apple-account.md): the reference of every Apple account command (`xless auth`, `team`,

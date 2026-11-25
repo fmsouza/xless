@@ -65,7 +65,8 @@ project or overlay go to `xless ship`, for example `--from upload` to retry only
 `CONFIG=<overlay.yml>`, with `ARGS="…"`) runs the same script.
 
 - **Secrets.** With the keys in the encrypted store ([secrets.md](secrets.md#xless-run-and-docker-builds)), a run
-  needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run (with
+  needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run, before its
+  first step, or none while the store is kept unlocked ([staying unlocked](secrets.md#staying-unlocked)) (with
   `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload;
   `--allow-disk-secrets` where there is no tmpfs, as on macOS). Otherwise, or to override the store, the script reads
   the paths of your secret files from the environment, or from a local file that it sources first:

@@ -26,7 +26,7 @@ You do not need a Mac, and you do not need to unpack the `.xip`.
 ### Get Xcode
 
 The quickest way is to let xless download it: it asks for your Apple ID, password and two-factor code in the terminal,
-signs in to Apple once and downloads every version you name, keeping nothing of the sign-in
+signs in to Apple once and downloads every version you name, keeping nothing of the sign-in unless you say so
 ([docs/xcode-download.md](docs/xcode-download.md)):
 
 ```sh

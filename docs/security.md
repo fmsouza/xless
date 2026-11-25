@@ -120,12 +120,12 @@ a path asked on the terminal) with the `xless secrets import` command to run, ra
 <a id="caches-off-by-default-at-most-an-hour"></a>
 
 Without any of this, a command that needs the store asks its passphrase and a web-session command signs in, and both
-forget everything when they end. Holding is asked for by name, never a default:
+forget everything when they end. Holding is asked for, never a default:
 
 | What is held | Turned on by | What it is | Dropped by |
 |---|---|---|---|
-| Store unlock | `xless unlock`; `--remember [<duration>]` on `xless secrets unlock`, `init`, `import`, `export` | the store's data key, named after the store's random ID | `xless lock`, `xless secrets lock`, `passwd`, another store in its place, the end of its time, its idle time, and the [events below](#when-it-ends) |
-| Apple ID session | `xless auth login --keep [<duration>]` | the session's cookies, sealed with AES-256-GCM under a random key made for them; the sealed cookies and that key are two separate items | `xless lock`, `xless auth logout`, the end of its time (or the cookies' own expiry, if sooner), its idle time, and the same events |
+| Store unlock | `xless unlock`; a yes to [the offer](secrets.md#staying-unlocked) after the passphrase (or a sign-in), or `unlock: { keep: always }` in config.yml; `xless session` and a native `xless run`, for their script only; `--remember [<duration>]` on `xless secrets unlock`, `init`, `import`, `export` | the store's data key, named after the store's random ID | `xless lock`, `xless secrets lock`, `passwd`, another store in its place, the end of its time, its idle time, and the [events below](#when-it-ends) |
+| Apple ID session | `xless auth login --keep [<duration>]`; the same yes, or `keep: always`; `xless session --sign-in`, for its script only | the session's cookies, sealed with AES-256-GCM under a random key made for them; the sealed cookies and that key are two separate items | `xless lock`, `xless auth logout`, the end of its time (or the cookies' own expiry, if sooner), its idle time, and the same events |
 
 They are held in one of two places, in memory only; `xless auth status` says which:
 
@@ -142,7 +142,14 @@ unlock:
   maximum: 7d               # the most that can be asked for; never more than 7d
   lockOnSleep: true         # drop everything when the machine sleeps
   lockOnScreenLock: true    # … and when the screen is locked (macOS)
+  keep: ask                 # after a passphrase or a sign-in: ask whether to keep both; always, never
 ```
+
+The offer is one question, whose Enter is no; it is never asked, and nothing is ever kept by it, in CI, with `--no-input`,
+inside `xless session`, in the environment of build code (`XLESS_NO_SECRET_STORE=1`) or without a terminal. A yes is for both
+the unlock and the session, for this terminal, and lasts no longer than it was given for; what is kept by it is said each
+time, and `xless lock` forgets the yes too (the agent holds it as an item with no secret in it; `auth status` shows it).
+With `keep: always` the same is done without the question, and said.
 
 Nothing lives longer than the maximum counted from when the passphrase or the password was last **typed**: a renewal, or a
 move from the kernel keyring to the agent, takes that time along (and where it is not known, the passphrase is asked). The
@@ -204,6 +211,23 @@ environment, `/` as its directory, core dumps off; non-dumpable on Linux, `PT_DE
 in memory locked against swap (where the limit allows), left out of core dumps, and zeroed when dropped. It writes no
 log. It holds at most 8 items of 128 KiB, for at most 64 sessions, and gives a connection 10 seconds and 4 KiB before it
 knows who it is. An agent of another xless version is never misunderstood: the command says so, and `xless lock` ends it.
+
+### An agent for a script
+
+`xless session -- <command…>` (and `xless run` natively, for its steps) holds what was typed in an agent of its own, on a
+*lease*: it ends when the process that started it does, however that ends (the kernel closes the connection between the two,
+which nothing else has), besides everything that ends any agent. Its socket has a random name, and only a command that was
+told it, by `XLESS_SESSION` in the script's environment, asks it; a terminal's commands never find it by themselves. The
+rules above hold for it unchanged: the variable is no credential, and a process that has it and is not in a granted
+POSIX session is refused (`Tests/shell/session.test.sh`: the tools xless runs, another terminal, a process that left the
+session). It is granted the script's session, which is the terminal's: the script and every program it runs directly may
+run `xless`, as in a terminal with the store unlocked, and an `npm install` or a `make` in the script is such a program. So
+**run only what you would run in an unlocked terminal**; what xless runs for the script is refused as ever. A build that
+`xless run` starts is told nothing (the variable is taken out of its environment) and refused all the same.
+
+Ctrl-C is the terminal's, to the script and xless alike. SIGTERM and SIGHUP sent to xless are passed on to the script. A
+SIGINT sent to xless alone is passed on on Linux; on macOS nothing tells it from the terminal's, so it is not while the
+script is in the foreground (end the script, or send SIGTERM).
 
 ### When it ends
 

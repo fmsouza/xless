@@ -7,7 +7,8 @@ session. It does what you would do at <https://developer.apple.com/download/all/
 xless xcode download 26.2 27.0 --output-dir ~/Downloads
 ```
 
-It asks for your Apple ID (email), its password (not shown as you type) and the two-factor code, then downloads each
+It asks for your Apple ID (email), its password (not shown as you type) and the two-factor code, or nothing when a session
+is kept for this terminal ([`xless auth login --keep`](apple-account.md#the-apple-id-web-session)), then downloads each
 version in turn, showing progress. When it ends, each file's path is printed with whether it is one of the Xcodes xless
 supports. Then give each file to `xless setup --xcode <path>`.
 
@@ -30,7 +31,7 @@ Universal one is taken.
 Each file goes to `<output-dir>/<Apple's file name>` (`--output-dir` defaults to the current directory) through a
 `<name>.part` file. A dropped connection or a server error is retried twice, resuming
 the `.part`; if a file still fails, the others go on and the command ends with the list of failures. Run the same command
-again: it signs in again, keeps the files that are complete and resumes each `.part` (a `.part` that already holds the
+again: it signs in again (unless you kept the session), keeps the files that are complete and resumes each `.part` (a `.part` that already holds the
 whole file is finished without downloading). A resume Apple answers from the wrong byte is thrown away and downloaded
 from the start, never appended. Before it starts, it checks that the disk has room for what is left to download.
 
@@ -41,7 +42,7 @@ prints the `XCODE_XIP_SHA256_<build>` value to record for it ([maintainers.md](m
 
 ## What happens to your Apple ID and password
 
-Nothing of the sign-in is kept, and none of it leaves for anywhere but Apple:
+Nothing of the sign-in is kept unless you say so, and none of it leaves for anywhere but Apple:
 
 - The Apple ID, password and code are read from the terminal itself (`/dev/tty`), never from a pipe, a file, an
   argument or an environment variable; without a terminal the command refuses to run. The password is read with echo
@@ -54,7 +55,8 @@ Nothing of the sign-in is kept, and none of it leaves for anywhere but Apple:
   the Apple hosts that set them, over https.
 - Core dumps are turned off for the command, so a crash cannot write its memory to disk. On Linux the process is also
   marked non-dumpable, so another process of the same user cannot read its memory (ptrace, `/proc/<pid>/mem`).
-- When the command ends, the session is gone; the next run signs in again.
+- When the command ends, the session is gone, and the next run signs in again, unless you answered yes to the question
+  whether to keep it ([in memory, for how long and for whom](secrets.md#staying-unlocked)).
 
 ## What it does not do
 
