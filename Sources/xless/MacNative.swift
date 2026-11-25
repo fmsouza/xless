@@ -86,8 +86,8 @@ struct MacNative: Sendable {
     }
 
     /// What `xless run` needs, before it asks anything or builds.
-    @Sendable static func prepare(pin: String?, signs: Bool) throws {
-        _ = try XcodeFinder().find(pin: pin, stage: .build)
+    @Sendable static func prepare(pin: String?, builds: Bool, signs: Bool) throws {
+        if builds { _ = try XcodeFinder().find(pin: pin, stage: .build) }
         if signs { try prepareSigner() }
     }
 

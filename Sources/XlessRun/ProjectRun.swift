@@ -17,12 +17,12 @@ public struct RunContext: Sendable {
     public var session: String?
     /// This is the start inside `xless session`.
     public var unlocked: Bool
-    /// What a native run on a Mac needs before it asks anything or builds: an Xcode (the pin's, where there is one), and the signer
-    /// when it signs.
-    public var prepareMac: (@Sendable (_ pin: String?, _ signs: Bool) throws -> Void)?
+    /// What a native run on a Mac needs before it asks anything or builds: an Xcode (the pin's, where there is one) when it
+    /// builds, and the signer when it signs.
+    public var prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)?
 
     public init(environment: [String: String], xless: String, again: [String], share: String, useDocker: String, session: String?, unlocked: Bool,
-                prepareMac: (@Sendable (_ pin: String?, _ signs: Bool) throws -> Void)? = nil) {
+                prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil) {
         self.environment = environment
         self.xless = xless
         self.again = again
@@ -294,7 +294,10 @@ public final class ProjectRun {
             span.extra = request.rest + ["--destination", "simulator"]
         }
         let signs = span.to >= .sign
-        if !docker, host.isMac, !dryRun { try context.prepareMac?(xcodePin, signs) }
+        if !docker, host.isMac, !dryRun {
+            let stages = try RunSpan.overlay(request)
+            try context.prepareMac?(xcodePin, stages.from <= .finalize, stages.from <= .sign && signs)
+        }
         if docker, kindOfConfiguration() == .typeSymbolicLink {
             throw RunStop.usage("\(pinFile) is a link, and the containers get the xless.yml of a project as a file of its own: put the file itself there")
         }

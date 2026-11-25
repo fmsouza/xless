@@ -150,15 +150,17 @@ import XlessCore
 
     @Test func onAMacWhatANativeRunNeedsIsThereBeforeAnythingIsAsked() throws {
         struct Asked: Error {}
-        for (mac, docker, arguments, expected) in [(true, false, ["--to", "finalize"], ["- false"]), (true, false, [], ["- true"]), (true, true, ["--to", "finalize"], []),
-                                                   (false, false, ["--to", "finalize"], []), (true, false, ["--dry-run"], [])] as [(Bool, Bool, [String], [String])] {
+        for (mac, docker, arguments, expected) in [(true, false, ["--to", "finalize"], ["- builds"]), (true, false, [], ["- builds signs"]), (true, true, ["--to", "finalize"], []),
+                                                   (true, false, ["--from", "finalize"], ["- builds signs"]), (true, false, ["--from", "sign"], ["- signs"]),
+                                                   (true, false, ["--from=package"], ["-"]), (true, false, ["--from", "upload"], ["-"]),
+                                                   (true, false, ["--destination", "simulator"], ["- builds"]), (false, false, ["--to", "finalize"], []), (true, false, ["--dry-run"], [])] as [(Bool, Bool, [String], [String])] {
             let notes = Notes()
             _ = try home.run([home.project] + arguments, docker: docker, host: FakeRunHost(isMac: mac, answer: home.answer()), environment: home.files(), session: "/agent",
-                             prepareMac: { pin, signs in notes.add("\(pin ?? "-") \(signs)") })
+                             prepareMac: { pin, builds, signs in notes.add((pin ?? "-") + (builds ? " builds" : "") + (signs ? " signs" : "")) })
             #expect(notes.lines == expected)
         }
         let host = FakeRunHost(isMac: true, answer: home.answer())
-        #expect(throws: Asked.self) { try home.run([home.project], docker: false, host: host, prepareMac: { _, _ in throw Asked() }) }
+        #expect(throws: Asked.self) { try home.run([home.project], docker: false, host: host, prepareMac: { _, _, _ in throw Asked() }) }
         #expect(host.allSteps.isEmpty && host.became == nil)
     }
 
