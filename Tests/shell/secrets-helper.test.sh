@@ -16,7 +16,7 @@ if [[ -z "$x" ]]; then
 fi
 
 mkdir -p "$t/bin" "$t/tools" "$t/home/.config/xless" "$t/run"
-chmod 700 "$t/run"
+chmod 700 "$t/run"; chmod 755 "$t/bin" "$t/tools"   # whatever the umask: a helper others could change is refused
 install -m 755 "$repo/scripts/credential-helpers/xless-credential-pass" "$t/bin/xless-credential-pass"
 cat > "$t/tools/pass" <<'P'
 #!/bin/sh
