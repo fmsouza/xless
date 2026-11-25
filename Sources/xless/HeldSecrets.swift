@@ -134,7 +134,7 @@ struct HeldKeyCache: VaultKeyCache {
             try agents.put([AgentSeed(name: name, label: place, secret: key, hold: hold, typedAgo: typedAgo)]) { AgentWitness(item: name, key: key) }
             try keyring.forget(id: id)
         } catch let e as AgentError {
-            guard keyring.isAvailable else {
+            guard e.kind == .unavailable, keyring.isAvailable else {
                 throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(agents.obstacle == nil ? e.cause : HeldSecrets.reason(agents))", fix: e.fix)
             }
             if hold.idleAsked { throw Self.noIdle(e) }
@@ -203,7 +203,7 @@ struct HeldSessionStore: SessionKeyStore {
             if let obstacle = agents.obstacle { throw obstacle }
             try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], witness: witness)
         } catch let e as AgentError {
-            guard keyring.isAvailable, keyring.allowed(hold) == hold.seconds else { throw e }
+            guard e.kind == .unavailable, keyring.isAvailable, keyring.allowed(hold) == hold.seconds else { throw e }
             say(HeldSecrets.fallback("the Apple ID session", seconds: hold.seconds, because: e.cause))
             try keyring.put(name, secret, hold: hold)
         }

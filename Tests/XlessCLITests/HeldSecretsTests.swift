@@ -16,6 +16,8 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     var obstacle: AgentError?
     var problem: AgentError?
     var refuses = false
+    /// What an agent that can run says of what it is given.
+    var failure: AgentError?
     var needsWitness = false
 
     var names: [String] { lock.withLock { items.keys.sorted() } }
@@ -34,6 +36,7 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     }
     func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws {
         if let obstacle { throw obstacle }
+        if let failure { throw failure }
         if refuses { throw AgentError(.unavailable, "no agent today", fix: "-") }
         lock.withLock {
             for seed in seeds {
@@ -160,6 +163,19 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         let error = #expect(throws: VaultError.self) { try nowhere.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0) }
         #expect(error?.kind == .cacheUnavailable)
         #expect(error?.cause.contains("no session here") == true)
+    }
+
+    /// A directory that somebody else made, say: put right, not worked round with what keeps less.
+    @Test func whereAnAgentCanRunTheKeyringIsNotItsStandIn() throws {
+        for kind in [.unsafePath, .limit, .malformed, .refused, .version] as [AgentError.Kind] {
+            let agents = FakeAgents(), keyring = FakeKeyring(), notes = Notes()
+            agents.failure = AgentError(kind, "what is wrong", fix: "put it right")
+            let error = #expect(throws: VaultError.self) { try cache(agents, keyring, notes).store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0) }
+            #expect(error?.cause.contains("what is wrong") == true && error?.fix == "put it right")
+            let s = HeldSessionStore(agents: agents, keyring: keyring, isOff: false, witness: { nil }, say: notes.say)
+            #expect(throws: AgentError.self) { try s.put("xless-apple-session", key(1), hold: half) }
+            #expect(keyring.names.isEmpty && notes.lines.isEmpty)
+        }
     }
 
     @Test func anIdleTimeAskedForIsRefusedWhereItIsNotKept() throws {
