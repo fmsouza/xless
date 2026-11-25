@@ -123,8 +123,9 @@ int xless_peer_of(int fd, struct xless_peer *out);
 /// Linux: asks for the sender's credentials on each message received on `fd`. Elsewhere nothing. 0, or an errno value.
 int xless_unix_passcred(int fd);
 /// recv(2): the bytes received (0: the other end closed), or -errno. Linux: with the pid and uid of the process that
-/// sent them, which the kernel vouches for (pid 0: it is in another PID namespace, or said nothing); descriptors sent
-/// along are not taken. Elsewhere `*pid` is 0 and `*uid` is the effective uid of the other end.
+/// sent them, which the kernel vouches for (pid 0: it is in another PID namespace, or said nothing). Elsewhere `*pid`
+/// is 0 and `*uid` is the effective uid of the other end. Descriptors sent along are not kept: Linux opens none, macOS
+/// does and they are closed at once.
 long xless_unix_recv(int fd, void *bytes, size_t length, int *pid, unsigned int *uid);
 /// The effective uid of the process that connected the other end, or listened for it; -errno on failure.
 long xless_unix_peer_uid(int fd);

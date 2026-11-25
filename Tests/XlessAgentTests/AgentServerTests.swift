@@ -491,21 +491,34 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
 
 @Test func descriptorsSentToTheAgentAreNotKept() throws {
     let agent = try TestAgent()
-    func open() -> Int { (0..<1024).filter { fcntl(Int32($0), F_GETFD) >= 0 }.count }
-    _ = try agent.link().get("a")
+    let box = ScratchBox()
+    let file = box.path + "/sent"
+    #expect(FileManager.default.createFile(atPath: file, contents: Data()))
+    var sent = stat()
+    try #require(stat(file, &sent) == 0)
+    // Of that file only: other tests open and close theirs meanwhile.
+    func kept() -> Int {
+        (0..<1024).filter {
+            var st = stat()
+            return fstat(Int32($0), &st) == 0 && st.st_dev == sent.st_dev && st.st_ino == sent.st_ino
+        }.count
+    }
     let said = try inAnotherSession("""
-    import socket, struct, sys, os, array
-    for _ in range(50):
+    import socket, sys, os, array
+    fd = os.open(sys.argv[2], os.O_RDONLY)
+    def send(data, count):
         s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
-        fds = array.array('i', [0, 1, 2])
-        s.sendmsg([b'XLAG'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)])
+        try: s.sendmsg([data], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [fd] * count))])
+        except OSError as e: print(count, e)
+        else: print('sent', count)
         s.close()
-    print('sent')
-    """, [agent.path])
-    #expect(said.contains("sent"))
-    let before = open()
+    for _ in range(50): send(b'XLAG', 2)
+    for count in (100, 250, 500): send(b'XLAG', count)
+    for count in (1, 250): send(b'', count)
+    """, [agent.path, file])
+    #expect(said.contains("sent 2\n") && said.contains("sent 250\n"), "\(said)")
     for _ in 0..<20 { _ = try agent.link().get("a") }
-    #expect(open() < before + 40) // other tests open files meanwhile; 150 leaked ones would show
+    #expect(kept() == 0)
 }
 
 // MARK: versions

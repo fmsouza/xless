@@ -680,9 +680,30 @@ long xless_unix_recv(int fd, void *bytes, size_t length, int *pid, unsigned int 
     *pid = 0;
     if (getpeereid(fd, &euid, &egid) != 0) return -errno;
     *uid = euid;
+    // Descriptors sent along are opened here also when there is no room to be told of them, and what is not told of can
+    // not be closed: room for more than one send carries (2048 bytes), and everything is closed.
+    struct iovec iov = { bytes, length };
+    union { char bytes[8192]; struct cmsghdr align; } control;
+    struct msghdr m;
+    memset(&m, 0, sizeof m);
+    m.msg_iov = &iov;
+    m.msg_iovlen = 1;
+    m.msg_control = control.bytes;
+    m.msg_controllen = sizeof control.bytes;
     ssize_t n;
-    do { n = recv(fd, bytes, length, 0); } while (n < 0 && errno == EINTR);
-    return n < 0 ? -errno : (long)n;
+    do { n = recvmsg(fd, &m, 0); } while (n < 0 && errno == EINTR);
+    if (n < 0) return -errno;
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c != NULL; c = CMSG_NXTHDR(&m, c)) {
+        if (c->cmsg_level != SOL_SOCKET || c->cmsg_type != SCM_RIGHTS || c->cmsg_len < CMSG_LEN(0)) continue;
+        // A header that was cut short says the length it had.
+        const char *end = (const char *)c + c->cmsg_len, *room = control.bytes + m.msg_controllen;
+        for (const char *at = (const char *)CMSG_DATA(c); at + sizeof(int) <= (end < room ? end : room); at += sizeof(int)) {
+            int sent;
+            memcpy(&sent, at, sizeof sent);
+            close(sent);
+        }
+    }
+    return (m.msg_flags & MSG_CTRUNC) ? -EBADMSG : (long)n;
 }
 
 long xless_unix_peer_uid(int fd) {
