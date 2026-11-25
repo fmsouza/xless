@@ -2,6 +2,7 @@
 """The Windows release package: a zip of xless.exe, of the Swift runtime's DLLs that it needs, and of their licences.
 
   windows-package.py closure <xless.exe> <runtime-dir>     the DLLs of <runtime-dir> that go beside xless.exe, one per line
+  windows-package.py harden <library>...                   has Windows take what these need from beside xless.exe and System32
   windows-package.py pack <stage> <zip>                    <stage>/<name>/ as <name>/... in <zip>
   windows-package.py check <version> <arch> <zip> <root>   refuses a package that holds too much, too little or something else;
                                                            third-party-licenses.sh --os windows --list comes on stdin
@@ -10,6 +11,7 @@ A program or library of the package needs nothing but the package's other files 
 System32; the Visual C++ runtime (VC_RUNTIME) is the one thing a person may have to install (docs/native-install.md#windows).
 Nothing of Microsoft's is packed. XLESS_STUB=true: the programs may be anything (tests). Standard library only.
 """
+import array
 import hashlib
 import os
 import re
@@ -36,10 +38,17 @@ API_SET = re.compile(r"api-ms-win-(core|crt)-[a-z0-9-]+\.dll")
 # Microsoft's Visual C++ runtime: not Windows' own, and not ours to give away.
 VC_RUNTIME = {"vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"}
 
-# What would start a program: xless on Windows starts none (docs/security.md).
-STARTS_PROGRAMS = re.compile(r"CreateProcess|ShellExecute|WinExec|_?w?(system|popen|exec[lv]p?e?|spawn[lv]p?e?)$")
+# What Microsoft's own need of each other, without load flags: where a part of it is missing, msvcp140.dll would bring in another's of that name.
+# xless.exe needs them itself, whose load flags are asked first.
+VC_RUNTIME_FIRST = {"vcruntime140.dll", "vcruntime140_1.dll"}
 
-LOAD_FLAGS = 0xA00  # LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32: xless.exe's own libraries
+# What would start a program: xless on Windows starts none (docs/security.md).
+STARTS_PROGRAMS = re.compile(r"CreateProcess|ShellExecute|WinExec|(Nt|Zw|Rtl)Create(User)?Process|\$s10Foundation7Process|_?w?(system|popen|exec[lv]p?e?|spawn[lv]p?e?)$")
+BY_NUMBER = {"ws2_32.dll"}  # the only library whose functions a program names by their numbers, which says nothing of what they are
+
+# LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32. They are those of the program or library that has them, and not of
+# what that one needs in turn: each has its own.
+LOAD_FLAGS = 0xA00
 
 
 class Refused(Exception):
@@ -82,7 +91,7 @@ class PE:
         for i in range(sections):
             size, address, raw_size, raw = self._at("IIII", optional + optional_size + 40 * i + 8)
             self.sections.append((address, max(size, raw_size), raw))
-        self.imports = {}
+        self.imports, self.by_number = {}, set()
         self._descriptors(1, 20, name_at=12, thunks_at=(0, 16))
         self._descriptors(13, 32, name_at=4, thunks_at=(16,))  # what is loaded when it is first called
 
@@ -111,7 +120,8 @@ class PE:
             name, = self._at("I", at + name_at)
             if not name:
                 return
-            functions = self.imports.setdefault(self._string(name).lower(), set())
+            library = self._string(name).lower()
+            functions = self.imports.setdefault(library, set())
             thunks = next((t for t in (self._at("I", at + offset)[0] for offset in thunks_at) if t), 0)
             if thunks:
                 entry = self._offset(thunks)
@@ -119,14 +129,24 @@ class PE:
                     value, = self._at("Q", entry)
                     if not value:
                         break
-                    if not value >> 63:  # else by its number
+                    if value >> 63:
+                        self.by_number.add(library)
+                    else:
                         functions.add(self._string((value & 0x7FFFFFFF) + 2))
                     entry += 8
             at += size
 
-    def load_flags(self):
+    def load_flags_at(self):
+        """Where the load flags are in the file; None: it has no room for them."""
         rva, size = self.directory(10)
-        return self._at("H", self._offset(rva) + 78)[0] if rva and size >= 80 else 0
+        if not rva or size < 80:
+            return None
+        at = self._offset(rva)
+        return at + 78 if self._at("I", at)[0] >= 80 else None
+
+    def load_flags(self):
+        at = self.load_flags_at()
+        return 0 if at is None else self._at("H", at)[0]
 
     def has_codeview(self):
         rva, size = self.directory(6)
@@ -156,6 +176,33 @@ def closure(program, directory):
             found[name] = present[name]
             waiting.append(PE(open(os.path.join(directory, present[name]), "rb").read(), present[name]))
     return sorted(found.values())
+
+
+def harden(path):
+    """The library with LOAD_FLAGS, as the linker would have set them: Windows looks for what it needs where those say, and nowhere else."""
+    with open(path, "rb") as file:
+        data = bytearray(file.read())
+    image = PE(bytes(data), os.path.basename(path))
+    at = image.load_flags_at()
+    if at is None:
+        refuse(f"{image.name} has no room for load flags")
+    if image.load_flags() not in (0, LOAD_FLAGS):
+        refuse(f"{image.name} has load flags of its own ({image.load_flags():#x})")
+    if image.directory(4) != (0, 0):
+        refuse(f"{image.name} is signed, and would not be any more")
+    struct.pack_into("<H", data, at, LOAD_FLAGS)
+    pe, = struct.unpack_from("<I", data, 0x3C)
+    if struct.unpack_from("<I", data, pe + 88)[0]:  # a checksum: of all words, with its own as 0
+        struct.pack_into("<I", data, pe + 88, 0)
+        words = array.array("H", bytes(data) + bytes(len(data) % 2))
+        if sys.byteorder != "little":
+            words.byteswap()
+        total = sum(words)
+        while total >> 16:
+            total = (total & 0xFFFF) + (total >> 16)
+        struct.pack_into("<I", data, pe + 88, total + len(data))
+    with open(path, "wb") as file:
+        file.write(data)
 
 
 def pack(stage, target):
@@ -263,6 +310,8 @@ def check(version, arch, path, root, licences):
             for flag, what in ((0x20, "HIGH_ENTROPY_VA"), (0x40, "DYNAMIC_BASE"), (0x100, "NX_COMPAT")):
                 if not image.dll_characteristics & flag:
                     refuse(f"{image.name} is without {what}")
+            if image.load_flags() != LOAD_FLAGS:
+                refuse(f"{image.name} takes its libraries from elsewhere than xless.exe's directory and System32 ({image.load_flags():#x})")
             for needed in image.imports:
                 if needed not in images and not of_system(needed):
                     refuse(f"{image.name} needs {needed}, which is neither in the package nor Windows'")
@@ -277,13 +326,15 @@ def check(version, arch, path, root, licences):
         xless = images["xless.exe"]
         if xless.subsystem != 3:
             refuse("xless.exe is no program of a console")
-        if xless.load_flags() != LOAD_FLAGS:
-            refuse(f"xless.exe takes its libraries from elsewhere than its own directory and System32 ({xless.load_flags():#x})")
         if xless.has_codeview():
             refuse("xless.exe names a file of debug information")
         starts = sorted(f for functions in xless.imports.values() for f in functions if STARTS_PROGRAMS.match(f))
         if starts:
             refuse("xless.exe can start programs: " + " ".join(starts))
+        if any(set(image.imports) & VC_RUNTIME for image in images.values()) and VC_RUNTIME_FIRST - set(xless.imports):
+            refuse("xless.exe does not itself need " + " ".join(sorted(VC_RUNTIME_FIRST - set(xless.imports))))
+        if xless.by_number - BY_NUMBER:
+            refuse("xless.exe names functions by their numbers: " + " ".join(sorted(xless.by_number - BY_NUMBER)))
     for name in sorted(files):
         print(name)
 
@@ -292,6 +343,9 @@ def main(arguments):
     try:
         if len(arguments) == 3 and arguments[0] == "closure":
             print("\n".join(closure(*arguments[1:])))
+        elif len(arguments) >= 2 and arguments[0] == "harden":
+            for path in arguments[1:]:
+                harden(path)
         elif len(arguments) == 3 and arguments[0] == "pack":
             pack(*arguments[1:])
         elif len(arguments) == 5 and arguments[0] == "check":

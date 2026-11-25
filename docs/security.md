@@ -513,11 +513,11 @@ On Windows xless has its account commands only ([what is there](native-install.m
   counterpart there. Each command asks, and forgets. There are no credential helpers and no security keys.
 - **Requests** go through Windows' own HTTP (WinHTTP) and TLS (Schannel, TLS 1.2 or later), with the certificates that Windows trusts, and
   through the proxy of `HTTPS_PROXY` (plain `http://` proxies, without a name and a password in the address), else the system's. No cookie is
-  kept by it, no redirect followed, and no sign-in of your Windows account offered to a server or a proxy.
+  kept by it, no redirect followed, and no sign-in of your Windows account offered to a server or a proxy. Whether a certificate was
+  revoked is not asked.
 - **Programs and libraries.** xless starts no program there. Its libraries are the Swift runtime's, beside `xless.exe` in a directory that only
-  you may write, and System32's: never the current directory's or `PATH`'s. One case is left: Windows looks for what those libraries need
-  in turn where it looks for any program's. All of it is beside them or in System32, unless a part of the Visual C++ runtime is missing there
-  (`install.ps1` says so): install it, and run xless in no directory that others may write until then.
+  you may write, and System32's: never the current directory's or `PATH`'s. That holds for what those libraries need in turn too: the
+  packaging sets the same load flags in each of them. Without a part of the Visual C++ runtime in System32, xless does not start.
 
 ### In WSL
 

@@ -37,7 +37,8 @@ A Windows package holds the Swift runtime's DLLs beside `xless.exe` (`scripts/wi
 needs, and what that needs). They are `swift` (`swiftCore.dll`, `swift_Concurrency.dll`, ...), `swift-corelibs-libdispatch`
 (`dispatch.dll`, `BlocksRuntime.dll`), `swift-foundation`, `swift-foundation-icu` with ICU, and `swift-corelibs-foundation`, whose
 `FoundationNetworking.dll` has curl 8.9.1 (with Schannel), zlib 1.3.1 and brotli 1.2.0 in it (the versions of the toolchain's
-`utils/update_checkout/update-checkout-config.json`; curl's notice is the same but for the last year of its copyright line).
+`utils/update_checkout/update-checkout-config.json`). xless makes no request with that curl (it uses WinHTTP), but the library has it in it.
+The DLLs are changed in one respect, of which `licenses/windows-swift-runtime-CHANGES.txt` is the notice.
 `FoundationXML.dll`, and libxml2 with it, is not there. In `xless.exe` itself is what is in a macOS one. The Visual C++ runtime is
 Microsoft's and not packed.
 libyaml is not in the SDK: SwiftPM's Yams 6.2.2 bundles its source (`Sources/CYaml`), and the notice is libyaml 0.2.5's
@@ -58,6 +59,7 @@ their own checkouts, in `scripts/third-party-licenses.sh`.
 | `musl-COPYRIGHT.txt` | musl | 1.2.5 | <https://git.musl-libc.org/cgit/musl/plain/COPYRIGHT?h=v1.2.5> | `f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af` |
 | `musl-fts-COPYING.txt` | musl-fts | 1.2.7 | <https://raw.githubusercontent.com/void-linux/musl-fts/v1.2.7/COPYING> | `55af87e4017668f54467a3380e7ebbac5e672d8c763bfe95e6fc882a6fdc4046` |
 | `curl-COPYING.txt` | curl | 8.15.0 | <https://raw.githubusercontent.com/curl/curl/curl-8_15_0/COPYING> | `e18f1989333b70044b2adfb7dc2f905d0119dbdcac3bc9f4bc9d540e3a29de5b` |
+| `curl-8.9.1-COPYING.txt` | curl-windows | 8.9.1 | <https://raw.githubusercontent.com/curl/curl/curl-8_9_1/COPYING> | `adb1fc06547fd136244179809f7b7c2d2ae6c4534f160aa513af9b6a12866a32` |
 | `libxml2-Copyright.txt` | libxml2 | 2.14.5 | <https://raw.githubusercontent.com/GNOME/libxml2/v2.14.5/Copyright> | `5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626` |
 | `zlib-LICENSE.txt` | zlib | 1.3.1 | <https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE> | `845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243` |
 | `brotli-LICENSE.txt` | brotli | 1.2.0 | <https://raw.githubusercontent.com/google/brotli/v1.2.0/LICENSE> | `3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94` |

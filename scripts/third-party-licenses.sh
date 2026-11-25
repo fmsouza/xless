@@ -35,7 +35,10 @@ for id in $ids; do
 done
 
 # In-repo third-party code: AssetKit (and the LZFSE it embeds), built into xless from ThirdParty/ (not on Windows: no builds there).
-if [[ "$os" == windows ]]; then :
+if [[ "$os" == windows ]]; then
+  # What scripts/windows-package.py changes in the runtime's DLLs (the Swift licence asks for a notice).
+  changes=licenses/windows-swift-runtime-CHANGES.txt
+  if [[ "$out" == --list ]]; then echo "swift-runtime-CHANGES.txt $changes"; else cp "$root/$changes" "$out/swift-runtime-CHANGES.txt"; fi
 elif [[ "$out" == --list ]]; then
   printf '%s\n' "assetkit.txt ThirdParty/AssetKit/LICENSE" "lzfse.txt ThirdParty/AssetKit/Sources/CLZFSE/LICENSE"
 else
@@ -54,9 +57,9 @@ while IFS=$'\t' read -r name component _version _url want; do
   if [[ "$os" == macos ]]; then case "$component" in swift|compiler-rt|boringssl|libyaml) ;; *) continue ;; esac; fi
   # Windows: the DLLs of the Swift runtime and what is in them, and the same as on macOS in xless.exe.
   if [[ "$os" == windows ]]; then
-    case "$component" in swift*|icu|curl|zlib|brotli|compiler-rt|boringssl|libyaml) ;; *) continue ;; esac
-  # There alone: the curl of the other systems has no brotli.
-  elif [[ "$component" == brotli ]]; then continue; fi
+    case "$component" in swift*|icu|curl-windows|zlib|brotli|compiler-rt|boringssl|libyaml) ;; *) continue ;; esac
+  # There alone: the curl of the other systems is another, and has no brotli.
+  elif [[ "$component" == brotli || "$component" == curl-windows ]]; then continue; fi
   if [[ "$out" == --list ]]; then echo "$name $want"; continue; fi
   [[ -f "$vendored/$name" ]] || { echo "third-party-licenses: $vendored/$name is missing" >&2; exit 1; }
   if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$vendored/$name" | cut -d' ' -f1); else got=$(shasum -a 256 "$vendored/$name" | cut -d' ' -f1); fi

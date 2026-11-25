@@ -50,7 +50,11 @@ if [[ "$os" == windows ]]; then
   if [[ "${XLESS_STUB:-}" != true ]]; then
     [[ -d "${XLESS_RUNTIME:-}" ]] || { echo "package-release: XLESS_RUNTIME is not the directory of the Swift runtime's DLLs" >&2; exit 1; }
     tool closure "$bin" "$XLESS_RUNTIME" > "$work/libraries"
-    while IFS= read -r f; do cp "$XLESS_RUNTIME/$f" "$stage/bin/$f"; done < "$work/libraries"
+    while IFS= read -r f; do
+      cp "$XLESS_RUNTIME/$f" "$stage/bin/$f"
+      chmod u+w "$stage/bin/$f"
+      tool harden "$stage/bin/$f"
+    done < "$work/libraries"
   fi
   cp "$root/LICENSE" "$stage/LICENSE"
   echo "$version" > "$stage/share/xless/VERSION"

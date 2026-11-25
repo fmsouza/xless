@@ -49,10 +49,16 @@ build there, so most of the package is left out.
 `share\xless\{VERSION,licenses\}`. `package-release.sh --os windows` makes it (in Git Bash, with Python) and `scripts/windows-package.py` checks
 it, there and again on every system that handles it: the names, no links, the licences by sha256, each program's and library's imports (the
 zip's own, or a list of what every Windows has in System32, or the Visual C++ runtime), its architecture and its ASLR and NX flags, and that
-`xless.exe` takes its own libraries from its directory and System32 only (`/DEPENDENTLOADFLAG:0xA00`) and can start no program.
+`xless.exe` can start no program.
 
+- **No library from anywhere else:** Windows' load flags are those of the program or library that has them, and say nothing of what that one
+  needs in turn. So each has them (0xA00, `xless.exe`'s directory and System32): `xless.exe` from the linker (`/DEPENDENTLOADFLAG`), the
+  runtime's DLLs, which the toolchain has without, from `windows-package.py harden`, which sets that one field of their load configuration
+  (they are not signed; one that is is refused). `licenses/windows-swift-runtime-CHANGES.txt` is the notice of it that the zip has.
+  Microsoft's runtime has none and needs `vcruntime140_1.dll` too, so `xless.exe` needs it itself, first. `Tests/windows/installed.test.ps1`
+  takes libraries away and puts others in the current directory and on `PATH`.
 - **Nothing of Microsoft's is in it:** not the Visual C++ runtime (`vcruntime140*.dll`, `msvcp140.dll`: a person installs it, and `install.ps1`
-  says so), not the UCRT (Windows' own), nothing of the SDK, no `.lib`, no `.pdb` (`-debug-info-format none`).
+  refuses without), not the UCRT (Windows' own), nothing of the SDK, no `.lib`, no `.pdb` (`-debug-info-format none`).
 - **The Swift runtime is dynamic:** the static one crashes there (swift #94100, #91442, #91520).
 - **Not signed:** there is no certificate in CI. `SHA256SUMS`, which `install.ps1` always checks, and the attestation vouch for it.
 - `scripts/install.ps1` is for Windows PowerShell 5.1 and PowerShell 7, plain ASCII, and one function called by its last line, so that a

@@ -77,6 +77,24 @@ public sealed class XlessConsole {
         thread.Start();
     }
 
+    [DllImport("kernel32", SetLastError = true)] static extern bool SetHandleInformation(SafeFileHandle handle, int mask, int flags);
+
+    // Its exit code with a standard output and error that nobody reads any more.
+    public static int Unread(string line) {
+        SafeFileHandle read, write;
+        if (!CreatePipe(out read, out write, IntPtr.Zero, 0) || !SetHandleInformation(write, 1, 1)) throw new Win32Exception();
+        read.Dispose();
+        var startup = new Startup { cb = Marshal.SizeOf(typeof(Startup)) - IntPtr.Size, flags = 0x100, output = write.DangerousGetHandle(), error = write.DangerousGetHandle() };
+        Information information;
+        if (!CreateProcessW(null, new StringBuilder(line), IntPtr.Zero, IntPtr.Zero, true, 0x08000000, IntPtr.Zero, null, ref startup, out information)) throw new Win32Exception();
+        write.Dispose();
+        int code = -1;
+        if (WaitForSingleObject(information.process, 60000) == 0) GetExitCodeProcess(information.process, out code); else TerminateProcess(information.process, 1);
+        CloseHandle(information.thread);
+        CloseHandle(information.process);
+        return code;
+    }
+
     public string Shown { get {
         lock (all) return Regex.Replace(Regex.Replace(all.ToString(), "\x1b\\[[0-9]*C", " "), "\x1b\\[[0-9;?]*[ -/]*[@-~]|\x1b\\][^\x07]*\x07", "");
     } }
@@ -178,24 +196,50 @@ Assert 'it is listed, without its value' ($LASTEXITCODE -eq 0 -and $listed.Conta
 $said = $passphrase | & $xless secrets export MADE_UP --out $taken --no-input 2>&1 | Out-String
 Assert 'a passphrase is not read from standard input' ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $taken)) "$LASTEXITCODE $said"
 
-# Its libraries are its own directory's and System32's, whatever is on PATH and in the current directory.
+# Whose output nobody reads any more ends as any program does, without a fault.
+foreach ($arguments in 'build', 'secrets list') {
+    $code = [XlessConsole]::Unread("`"$xless`" $arguments")
+    Assert "xless $arguments ends when nobody reads what it says" ($code -eq 1) "$code"
+}
+
+# Its libraries are its own directory's and System32's, whatever is on PATH and in the current directory: those that xless.exe asks for,
+# those that only its libraries ask for, and the Visual C++ runtime of System32.
 $bin = Split-Path -Parent $xless
-$elsewhere = Join-Path ([IO.Path]::GetTempPath()) "xless-elsewhere-$([Guid]::NewGuid().ToString('N'))"
-New-Item -ItemType Directory -Path $elsewhere | Out-Null
-Move-Item -LiteralPath (Join-Path $bin 'swiftCore.dll') -Destination $elsewhere
-$here = [Environment]::CurrentDirectory
-$path = $env:PATH
-try {
-    [Environment]::CurrentDirectory = $elsewhere
-    $env:PATH = "$elsewhere;$path"
-    $console = New-Object XlessConsole "`"$xless`" --version"
-    [int]$code = $console.Finish(60)
-    Assert 'a library on PATH and in the current directory is not taken' ($code -eq -1073741515) "$code $($console.Shown)"
-} finally {
-    [Environment]::CurrentDirectory = $here
-    $env:PATH = $path
-    Move-Item -LiteralPath (Join-Path $elsewhere 'swiftCore.dll') -Destination $bin
-    Remove-Item -LiteralPath $elsewhere -Recurse
+function Assert-NotTaken([string]$name, [string]$from, [string]$aside) {
+    $elsewhere = Join-Path ([IO.Path]::GetTempPath()) "xless-elsewhere-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $elsewhere | Out-Null
+    Copy-Item -LiteralPath (Join-Path $from $name) -Destination $elsewhere
+    $here = [Environment]::CurrentDirectory
+    $path = $env:PATH
+    [IO.File]::Move((Join-Path $from $name), $aside)
+    try {
+        [Environment]::CurrentDirectory = $elsewhere
+        $env:PATH = "$elsewhere;$path"
+        $console = New-Object XlessConsole "`"$xless`" --version"
+        [int]$code = $console.Finish(60)
+    } finally {
+        [Environment]::CurrentDirectory = $here
+        $env:PATH = $path
+        [IO.File]::Move($aside, (Join-Path $from $name))
+        Remove-Item -LiteralPath $elsewhere -Recurse
+    }
+    Assert "$name on PATH and in the current directory is not taken" ($code -eq -1073741515) "$code $($console.Shown)"
+}
+foreach ($name in 'swiftCore.dll', '_FoundationICU.dll', 'swiftCRT.dll') {
+    if (-not (Test-Path -LiteralPath (Join-Path $bin $name))) { continue }
+    Assert-NotTaken $name $bin (Join-Path $bin 'aside.tmp')
+}
+$system = [Environment]::GetFolderPath('System')
+foreach ($name in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') {
+    $aside = Join-Path $system 'xless-test-aside.tmp'
+    try {
+        [IO.File]::Move((Join-Path $system $name), $aside)
+        [IO.File]::Move($aside, (Join-Path $system $name))
+    } catch {
+        Write-Host "$name of System32 cannot be moved by this user: not tried"
+        continue
+    }
+    Assert-NotTaken $name $system $aside
 }
 $said = & $xless --version
 Assert 'with it it starts' ($LASTEXITCODE -eq 0) "$said"
