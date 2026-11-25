@@ -188,7 +188,9 @@ public enum XcodePackageBuilder {
             try delete(slice.paths, thin)
             return try Data(contentsOf: thin)
         }
+        let mode = try FileManager.default.attributesOfItem(atPath: executable.path)[.posixPermissions]
         try MachO.makeFat(done).write(to: executable, options: .atomic)
+        if let mode { try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: executable.path) } // (Foundation on Linux does not keep it)
     }
 
     static func isForeign(_ path: String) -> Bool { path.hasPrefix("/") && path != "/usr/lib/swift" }
