@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/xcode-tools.sh: an image chain is made only from an Xcode whose actool/ibtool/copypng formats are measured
+# scripts/xcode-tools.sh: an image is made only from an Xcode whose actool/ibtool/copypng formats are measured
 # (an XcodeToolsProfile entry); anything else is refused with the measuring commands.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -27,8 +27,8 @@ test_build_images_calls_it() {
   # before anything is built: ahead of the first image build
   local gate make
   gate=$(grep -n 'xcode-tools.sh' "$repo/scripts/build-images.sh" | head -1 | cut -d: -f1)
-  make=$(grep -n '^images base' "$repo/scripts/build-images.sh" | head -1 | cut -d: -f1)
-  [[ "$gate" -lt "$make" ]] || fail "the gate runs after make"
+  make=$(grep -n 'docker-images.sh" '  "$repo/scripts/build-images.sh" | head -1 | cut -d: -f1)
+  [[ "$gate" -lt "$make" ]] || fail "the gate runs after a build"
 }
 test_rn_reference_refuses_unprofiled() {
   grep -q 'xcode-tools.sh' "$repo/scripts/rn-reference.sh" || fail "rn-reference.sh does not call xcode-tools.sh"

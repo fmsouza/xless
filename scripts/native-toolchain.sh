@@ -1,10 +1,10 @@
 #!/bin/sh
 # Ruling R10, natively: fits an open-source Swift toolchain that `xless setup` unpacked (not the user's own Swift) to the
-# installed Darwin SDK, as docker/Dockerfile.sdk fits the image's, with the same helpers (docker/toolchain: clang-driver,
+# installed Darwin SDK, as docker/Dockerfile fits the image's, with the same helpers (docker/toolchain: clang-driver,
 # target-os-check, the target-os fixtures, record-flags.py), then writes the toolchain record (XlessCore SwiftToolchain).
 #   scripts/native-toolchain.sh <toolchain root> own|separate <darwin.artifactbundle> <toolchain-meta.json> <docker/toolchain> <record>
-# own: the toolchain is the release the image chain runs as its own Swift (SWIFT_VERSION): the SDK keeps the Xcode's clang
-#   resource directory. separate: another release (Dockerfile.sdk's APP_SWIFT_VERSION case): the SDK's resource directory
+# own: the toolchain is the release the image runs as its own Swift (SWIFT_VERSION): the SDK keeps the Xcode's clang
+#   resource directory. separate: another release (docker/Dockerfile's APP_SWIFT_VERSION case): the SDK's resource directory
 #   becomes the toolchain's own, with the Xcode's Darwin runtimes beside its headers, and its ld64.lld runs the SDK's.
 # Then, in both, the clang driver is wrapped when it lacks the Apple clang defaults the Xcode's fixture records, and the
 # flags it adds go to the record and to the SDK's toolsets. Safe to re-run (after the SDK was installed again): the

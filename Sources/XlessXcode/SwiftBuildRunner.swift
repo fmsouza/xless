@@ -38,7 +38,7 @@ public enum SwiftBuildRunner {
         } catch let e as XlessError {
             throw e
         } catch {
-            throw XlessError(stage, "cannot run swbuild: \(error)", fix: "run in the xless-rn image, which has Swift Build's swbuild on PATH")
+            throw XlessError(stage, "cannot run swbuild: \(error)", fix: "run in an image that xless setup --docker builds: it has Swift Build's swbuild on PATH")
         }
         let data = (try? Data(contentsOf: log)) ?? Data()
         var summary = SwiftBuildOutput.summarize(data)

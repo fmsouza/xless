@@ -3,13 +3,13 @@
 # Kept as executable documentation of the sequence DmgBuilder automates. It is not part of xless and is not run by
 # CI. Findings: docs/research/tauri-ios-contract.md, "macOS DMG — spike findings".
 #
-# Runs inside xless-tauri:<tag> (mkfs.hfsplus from hfsprogs, dmg + hfsplus from libdmg-hfsplus, rcodesign). Nothing
+# Runs inside xless:<tag> (mkfs.hfsplus from hfsprogs, dmg + hfsplus from libdmg-hfsplus, rcodesign). Nothing
 # is written into the repo: the input .app is mounted read-only and every output goes to $SPIKE_OUT.
 #
 #   docker --context colima-xless run --rm \
 #     -v <dir holding the unsigned .app>:/in:ro -v <scratch out dir>:/out \
 #     -v <Developer ID key PEM>:/secrets/devid-key.pem:ro -v <Developer ID cert PEM>:/secrets/devid-cert.pem:ro \
-#     -v "$PWD/scripts/spikes":/spike:ro xless-tauri:local-arm64 /spike/dmg-linux.sh
+#     -v "$PWD/scripts/spikes":/spike:ro xless:local-arm64-xcode27.0 /spike/dmg-linux.sh
 #
 # The key is mounted only into this container, which runs nothing but this script, rcodesign and the DMG tools on
 # our own sample app (no third-party build code). Notarization is NOT done here; see the contract doc.

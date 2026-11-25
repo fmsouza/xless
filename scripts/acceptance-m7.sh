@@ -766,11 +766,11 @@ step7() {
 }
 
 step8() {
-  local rc watch="$DIR/watch.8" containers="$DIR/containers.8" ok=1 image="xless:local-$ARCH"
+  local rc watch="$DIR/watch.8" containers="$DIR/containers.8" ok=1
   command -v docker >/dev/null 2>&1 || { result 8 FAIL "docker is not installed"; return 1; }
-  while ! docker image inspect "$image" >/dev/null 2>&1; do
-    note "The image $image is missing."
-    pause "Build the images once: xless setup --docker --xcode <Xcode.xip> (README.md#build-in-docker-instead)" || { result 8 FAIL "no xless images"; return 1; }
+  while [[ -z "$(docker image ls --quiet --filter "reference=xless:local-$ARCH*" 2>/dev/null)" ]]; do
+    note "There is no xless image for $ARCH."
+    pause "Build it once: xless setup --docker --xcode <Xcode.xip> (README.md#build-in-docker-instead)" || { result 8 FAIL "no xless image"; return 1; }
   done
   [[ -n "$(state_get build.8)" ]] || state_set build.8 "$(next_build)"
   local build; build="$(state_get build.8)"

@@ -2,7 +2,7 @@
 # `xless tauri report` of `xcodebuild -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO`).
 # One compare key per line; `#` starts a comment (xless tauri compare --allow-file).
 #
-# None: with the xless-rn image's actool shim (m3 Task 6a), Assets.car, the loose icons and CFBundleIcons are built too.
+# None: with the image's actool shim (m3 Task 6a), Assets.car, the loose icons and CFBundleIcons are built too.
 # scripts/spikes/hellopif-swbuild-linux.sh still uses the gate-G2 stand-in, which compiles nothing; compare its output
 # with these five keys allowed: file:Assets.car file:AppIcon60x60@2x.png file:AppIcon76x76@2x~ipad.png
 # plist:CFBundleIcons plist:CFBundleIcons~ipad

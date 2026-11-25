@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Ruling R10: the TARGET_OS_* macros an Xcode's own clang predefines for each triple xless compiles for, measured
 # black-box (the compiler's output for an empty input: `clang -target <triple> -dM -E -x c /dev/null`; no Apple file is
-# read or copied). Prints docker/toolchain/target-os/<Xcode build>.txt, which docker/Dockerfile.sdk checks the image's
+# read or copied). Prints docker/toolchain/target-os/<Xcode build>.txt, which docker/Dockerfile checks the image's
 # clang against (docker/toolchain/target-os-check):
 #   scripts/target-os-macros.sh <Xcode.app> > docker/toolchain/target-os/<Xcode build>.txt
 # One "<triple> <macro> <value>" line per macro; "<triple> -" for a triple with none (Linux: Apple clang predefines no

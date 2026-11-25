@@ -32,7 +32,7 @@ private func refuse(_ error: any Error) -> Never {
     Foundation.exit(70)
 }
 
-/// `xcodebuild` (docker/shims/rn/xcodebuild; XcodebuildShim): `-version`, and Swift package builds run from build phases.
+/// `xcodebuild` (docker/shims/xcodebuild; XcodebuildShim): `-version`, and Swift package builds run from build phases.
 struct XcodebuildShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "xcodebuild")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
@@ -64,7 +64,7 @@ struct XcodebuildShimCommand: ParsableCommand {
     }
 }
 
-/// `clang` during a React Native prepare (docker/shims/rn/prepare/clang; PrepareClangShim): Darwin-only stub compiles
+/// `clang` during a React Native prepare (docker/shims/prepare/clang; PrepareClangShim): Darwin-only stub compiles
 /// retargeted to iOS, everything else passed to the host clang unchanged.
 struct PrepareClangShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "prepare-clang")
@@ -76,7 +76,7 @@ struct PrepareClangShimCommand: ParsableCommand {
     }
 }
 
-/// `strip` where Swift Build looks for it first (docker/shims/rn/swift-build/strip; StripShim): LLVM's `llvm-strip`,
+/// `strip` where Swift Build looks for it first (docker/shims/swift-build/strip; StripShim): LLVM's `llvm-strip`,
 /// then the string pool alignment dyld requires.
 struct StripShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "strip")
@@ -89,7 +89,7 @@ struct StripShimCommand: ParsableCommand {
     }
 }
 
-/// The linker in Swift Build's toolset (docker/shims/rn/xless-ld64; LinkerShim): the SDK's `ld64.lld` trampoline,
+/// The linker in Swift Build's toolset (docker/shims/xless-ld64; LinkerShim): the SDK's `ld64.lld` trampoline,
 /// with archives that stand for `-r` objects force-loaded.
 struct LinkerShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "ld64")
@@ -111,7 +111,7 @@ struct LinkerShimCommand: ParsableCommand {
 }
 
 /// `embeddedBinaryValidationUtility` where Swift Build looks for it first
-/// (docker/shims/rn/swift-build/embeddedBinaryValidationUtility; EmbeddedBinaryValidation).
+/// (docker/shims/swift-build/embeddedBinaryValidationUtility; EmbeddedBinaryValidation).
 struct EmbeddedBinaryValidationShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "embedded-binary-validation")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
@@ -122,7 +122,7 @@ struct EmbeddedBinaryValidationShimCommand: ParsableCommand {
     }
 }
 
-/// `ditto <source> <destination>` for build phases (docker/shims/rn/ditto; DittoShim).
+/// `ditto <source> <destination>` for build phases (docker/shims/ditto; DittoShim).
 struct DittoShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "ditto")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
@@ -133,7 +133,7 @@ struct DittoShimCommand: ParsableCommand {
     }
 }
 
-/// `copypng` for Swift Build's CopyPNGFile rule (docker/shims/rn/copypng; CopyPNGShim).
+/// `copypng` for Swift Build's CopyPNGFile rule (docker/shims/copypng; CopyPNGShim).
 struct CopyPNGShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "copypng")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
@@ -208,7 +208,7 @@ private func finish(stdout: String, stderr: String, exitCode: Int32) -> Never {
     Foundation.exit(exitCode)
 }
 
-/// `actool` for Swift Build on Linux (docker/shims/rn/actool; ActoolShim).
+/// `actool` for Swift Build on Linux (docker/shims/actool; ActoolShim).
 struct ActoolShimCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "actool")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
@@ -218,7 +218,7 @@ struct ActoolShimCommand: AsyncParsableCommand {
     }
 }
 
-/// `ibtool` for Swift Build on Linux (docker/shims/rn/ibtool; IbtoolShim).
+/// `ibtool` for Swift Build on Linux (docker/shims/ibtool; IbtoolShim).
 struct IbtoolShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "ibtool")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
@@ -228,7 +228,7 @@ struct IbtoolShimCommand: ParsableCommand {
     }
 }
 
-/// `/usr/libexec/PlistBuddy` for build phases on Linux (docker/shims/rn/PlistBuddy; PlistBuddyShim).
+/// `/usr/libexec/PlistBuddy` for build phases on Linux (docker/shims/PlistBuddy; PlistBuddyShim).
 struct PlistBuddyShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "plistbuddy")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []

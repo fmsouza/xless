@@ -122,7 +122,7 @@ public enum DmgBuilder {
             do { try run(argv) } catch {
                 if "\(error)".contains("cannot start "), ["dmg", "hfsplus", "mkfs.hfsplus"].contains(argv[0]) {
                     throw XlessError(.package, "cannot start \(argv[0]) to build the DMG",
-                                     fix: "install libdmg-hfsplus and hfsprogs (use the xless-tauri image)")
+                                     fix: "install libdmg-hfsplus and hfsprogs (xless's Docker images have them)")
                 }
                 throw error
             }

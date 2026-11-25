@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The asset and storyboard tools gate: an image chain is made only from an Xcode build whose actool, ibtool and copypng
-# output formats xless has measured (an entry in Sources/XlessCore/XcodeToolsProfile.swift). The xless-rn image's
+# The asset and storyboard tools gate: an image is made only from an Xcode build whose actool, ibtool and copypng
+# output formats xless has measured (an entry in Sources/XlessCore/XcodeToolsProfile.swift). The image's
 # actool/ibtool shims refuse a build without an entry (exit 70) and never write another Xcode's formats, so an image made
 # from an unprofiled Xcode could not compile an asset catalog or a storyboard: refuse it here, before anything is built.
 # Usage: scripts/xcode-tools.sh <Xcode build>        (scripts/build-images.sh and scripts/rn-reference.sh run it)
@@ -22,7 +22,7 @@ if grep -Fq "xcodeBuild: \"$build\"" "$file"; then exit 0; fi
 known="$(sed -nE 's/.*xcodeBuild: "([^"]+)".*/\1/p' "$file" | sort -u | tr '\n' ' ')"
 cat >&2 <<MSG
 xcode-tools: Xcode build $build has no asset/storyboard tools profile (measured: ${known:-none}).
-An image made from it could not compile asset catalogs or storyboards, so no image chain is built.
+An image made from it could not compile asset catalogs or storyboards, so no image is built.
 Measure that Xcode's actool, ibtool and copypng black-box (DEVELOPER_DIR selects the Xcode), then add an
 XcodeToolsProfile entry (Sources/XlessCore/XcodeToolsProfile.swift) with the measured values:
   DEVELOPER_DIR=<Xcode.app>/Contents/Developer scripts/assetkit-golden.sh

@@ -116,7 +116,7 @@ public enum NativeSetupPlan {
                                    argv: ["xless", "sdk", "install", "--xtoolsdk", xtoolSDK.path, "--meta", meta.path],
                                    estimate: "~1 min", action: .sdkInstall(xtoolSDK: xtoolSDK, meta: meta, toolchain: layout.toolchain(version: swift))))
             // The image's own Swift (SWIFT_VERSION) keeps the Xcode's clang resource directory; another release gets
-            // its own, with the Xcode's runtimes (docker/Dockerfile.sdk's two cases).
+            // its own, with the Xcode's runtimes (docker/Dockerfile's two cases).
             let mode = swift == table["SWIFT_VERSION"] ? "own" : "separate"
             steps.append(SetupStep(title: "fit the Swift \(swift) toolchain to the SDK and record it in \(layout.record.path)",
                                    argv: [share.appendingPathComponent("scripts/native-toolchain.sh").path, layout.toolchain(version: swift).path, mode,

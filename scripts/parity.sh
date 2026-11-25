@@ -11,13 +11,14 @@ S="$ROOT/samples/HelloShip"; W="$ROOT/.xless/parity"; rm -rf "$W"; mkdir -p "$W"
 ALLOW="$ROOT/scripts/parity-allowlist.txt"
 (cd "$ROOT" && swift build -c release --product xless >/dev/null); X="$(cd "$ROOT" && swift build -c release --show-bin-path)/xless"
 status=0
+image="${XLESS_IMAGE:-xless:local-arm64-xcode$(sed -n 's/^XCODE_VERSION=//p' "$ROOT/versions.env")}"
 
 for P in ios macos; do
   if [[ $P == ios ]]; then SCHEME=HelloShip-iOS; DEST='generic/platform=iOS'; else SCHEME=HelloShip-macOS; DEST='generic/platform=macOS'; fi
   (cd "$S" && xcodegen generate -q && xcodebuild -project HelloShipParity.xcodeproj -scheme "$SCHEME" -destination "$DEST" \
      -configuration Release CODE_SIGNING_ALLOWED=NO -derivedDataPath "$W/dd-$P" build -quiet)
   XAPP=$(find "$W/dd-$P/Build/Products" -maxdepth 2 -name HelloShip.app | head -1)
-  docker run --rm -v "$S":/work xless:local-arm64 bash -c "for s in build assets finalize; do xless \$s --platform $P || exit 1; done" >/dev/null
+  docker run --rm --pull=never -v "$S":/work "$image" bash -c "for s in build assets finalize; do xless \$s --platform $P || exit 1; done" >/dev/null
   LAPP="$S/.xless/build/$P/final/HelloShip.app"
 
   "$X" inspect "$XAPP" --platform "$P" > "$W/xcode-$P.json"

@@ -1,7 +1,7 @@
 import Foundation
 import XlessCore
 
-/// The released Linux xless binaries `xless setup` puts into xless-base for an arch it is not running on (Ruling R1):
+/// The released Linux xless binaries `xless setup` puts into the image for an arch it is not running on (Ruling R1):
 /// `xless-<version>-linux-<x86_64|arm64>.tar.gz` (top directory `xless-<version>-linux-<arch>/`, binary at `bin/xless`)
 /// with `SHA256SUMS` beside it in the GitHub release `v<version>`.
 public enum XlessRelease {

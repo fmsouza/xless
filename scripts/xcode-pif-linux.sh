@@ -4,7 +4,7 @@
 # "Swift Build on Linux — spike G2"). Not part of xless's pipeline (Task 8 wires the build stage); kept as executable
 # documentation and for re-running the check.
 #
-#   docker --context colima-xless run --rm -v "$PWD":/repo:ro -v xless-m3-t5:/scratch -w /repo xless-rn:local-arm64 \
+#   docker --context colima-xless run --rm -v "$PWD":/repo:ro -v xless-m3-t5:/scratch -w /repo xless:local-arm64-xcode27.0 \
 #     scripts/xcode-pif-linux.sh samples/HelloPIF/HelloPIF.xcodeproj HelloPIF /scratch/dd-hellopif
 #   … then: xless tauri compare samples/HelloPIF/reference/reference.json /scratch/dd-hellopif/Products/Release-iphoneos/HelloPIF.app \
 #             --allow-file samples/HelloPIF/reference/allowed-gaps.txt   (no gaps: the image's actool shim builds the catalog)
@@ -36,6 +36,6 @@ mapfile -t files < <("$XLESS" xcode pif "$ws" --scheme "$scheme" --configuration
   --override STRIP_BITCODE_FROM_COPIED_FILES=NO --override SWIFT_STDLIB_TOOL_STRIP_BITCODE=NO)
 
 unset SDKROOT
-# actool/ibtool are the image's shims (docker/shims/rn, on PATH).
+# actool/ibtool are the image's shims (docker/shims, on PATH).
 export XCODE_EXTRA_PLATFORM_FOLDERS="$B/Developer/Platforms" PATH="$B/toolset/bin:$PATH"
 swbuild build "${files[0]}" --derivedDataPath "$dd" --buildRequestFile "${files[1]}"

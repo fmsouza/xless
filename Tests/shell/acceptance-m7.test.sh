@@ -91,7 +91,7 @@ cat > "$t/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 S="$STUB_DIR"
 case "$1" in
-  image) exit 0 ;;
+  image) echo c0ffee; exit 0 ;;
   ps) [[ -e "$S/container" ]] && echo "c0ffee$(cat "$S/container")" ; exit 0 ;;
   inspect)
     if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi

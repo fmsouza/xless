@@ -5,7 +5,7 @@
 # docs/research/react-native-ios-contract.md, "Swift Build on Linux — spike G2".
 #
 #   mac$  cd samples/HelloPIF && xcodegen generate && xcodebuild -project HelloPIF.xcodeproj -dumpPIF /tmp/HelloPIF.pif
-#   linux (xless-rn, repo at /repo):
+#   linux (the xless image, repo at /repo):
 #         scripts/spikes/hellopif-swbuild-linux.sh /tmp/HelloPIF.pif <mac samples/HelloPIF dir> <derived data> \
 #           [--implicit]
 #

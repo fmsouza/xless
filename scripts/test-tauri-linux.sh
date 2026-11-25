@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds samples/HelloTauri on Linux (in the xless-tauri image) through build, assets and finalize, then compares the
+# Builds samples/HelloTauri on Linux (in the tauri kit's image) through build, assets and finalize, then compares the
 # finalize output with samples/HelloTauri/reference/reference.json, ignoring the known gaps in
 # samples/HelloTauri/reference/allowed-gaps.txt. Exits non-zero on any other difference or on any failed stage.
 # No signing, no App Store Connect: the build number is explicit, so no dated-build lookup happens.
@@ -14,7 +14,7 @@
 # (host build) reads them and the reference's recorded catalogs with `xcrun assetutil --info` (Opaque, colour space,
 # pixel size, … per rendition; docs/research/parity-known-gaps.md, "Asset catalog comparison"). Elsewhere it is skipped.
 # Variables: ARCH (arm64 or amd64; default the host's: ARCH=amd64 on an arm64 Mac runs the amd64 chain under emulation),
-#   XLESS_IMAGE (default xless-tauri:local-<arch>), DOCKER_CONTEXT (default colima-xless if it exists).
+#   XLESS_IMAGE (default xless:local-<arch>-xcode<versions.env's>-tauri), DOCKER_CONTEXT (default colima-xless if it exists).
 # The repository is mounted read-only; the work copy lives in the xless-work volume, Rust toolchains in xless-rustup and
 # xless-cargo (the first run downloads them and builds the Rust code, which takes a few minutes; later runs are faster).
 set -euo pipefail
@@ -28,7 +28,8 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's work copy and Rust toolchains stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-image="${XLESS_IMAGE:-xless-tauri:local-$arch}"
+xcode="$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")"
+image="${XLESS_IMAGE:-xless:local-$arch-xcode$xcode-tauri}"   # xless setup --docker --with tauri builds it
 platform=ios
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,7 +44,7 @@ args=(docker)
 
 # The in-container script reads the same XLESS_BUILD_NUMBER from the environment, never contacting App Store Connect. The overlay
 # is `build: dated`, so the override is a dated build of the sample's version (1.0.0).
-"${args[@]}" run --rm -i ${plat[@]+"${plat[@]}"} -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
+"${args[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
   -e XLESS_BUILD_NUMBER="$([[ $platform == macos ]] && echo 1.0.0.202601010000 || echo 1.0.0.2026010101)" -e PLATFORM="$platform" \
   "$image" bash -s <<'IN'
 set -euo pipefail

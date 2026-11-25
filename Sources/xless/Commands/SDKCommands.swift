@@ -82,7 +82,7 @@ struct SDKExportCommand: AsyncParsableCommand {
 
     @Option(help: "Path to Xcode.app.") var xcode: String = "/Applications/Xcode.app"
     @Option(help: "Output directory.") var out: String = "dist/sdk"
-    @Option(help: "Base image: '{arch}' in it is replaced by the architecture, else '-<arch>' is appended.") var baseImage: String = "xless-base:local"
+    @Option(help: "The image with xtool (scripts/docker-images.sh tools): '{arch}' in it is replaced by the architecture, else '-<arch>' is appended.") var baseImage: String = "xless:local-{arch}-setup"
     @Option(parsing: .upToNextOption, help: "Docker architectures.") var arch: [String] = ["arm64", "amd64"]
     @Option(help: "BuildMachineOSBuild value (default: the supported-Xcode table's).") var buildMachineOSBuild: String?
 
@@ -96,14 +96,14 @@ struct SDKExportCommand: AsyncParsableCommand {
 
         for a in arch {
             let image = baseImage.contains("{arch}") ? baseImage.replacingOccurrences(of: "{arch}", with: a) : "\(baseImage)-\(a)"
-            let probe = try? Shell.run("docker", ["run", "--rm", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
+            let probe = try? Shell.run("docker", ["run", "--rm", "--pull=never", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
                                                   "test", "-d", "/xcode/Contents/Developer"], stage: .sdk)
             guard probe != nil else {
                 throw XlessError(.sdk, "the Docker VM cannot see \(xcode)",
                                  fix: "Colima: `colima stop && colima start --mount /Applications:r --mount $HOME:w`; Docker Desktop: add /Applications to File Sharing, or clone Xcode.app under $HOME (cp -cR) and pass --xcode")
             }
             let dir = try Files.fresh(outDir.appendingPathComponent(a))
-            try Shell.run("docker", ["run", "--rm", "--platform", "linux/\(a)",
+            try Shell.run("docker", ["run", "--rm", "--pull=never", "--platform", "linux/\(a)",
                                      "-v", "\(xcode):/xcode:ro", "-v", "\(dir.path):/out", image,
                                      "xtool", "sdk", "build", "/xcode", "/out"], stage: .sdk, passthrough: true)
             guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("darwin.xtoolsdk").path) else {
