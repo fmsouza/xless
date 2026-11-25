@@ -146,7 +146,7 @@ struct NativeOverlay {
         let command = try sandbox(executable: executable, reads: reads).command(executable.path, words)
         Self.say(xcode.summary)
         Self.say("the app's build code runs in a sandbox: of your files it reads \(checkout.first ?? source.path), \(overlay.deletingLastPathComponent().path) and the tools on PATH, and writes \(work.path) and \(buildHome.path) (docs/security.md, \"An overlay's build on a Mac\")")
-        let out = try OutputRelay(to: output), err = try OutputRelay(to: FileHandle.standardError)
+        let out = OutputRelay(to: output), err = OutputRelay(to: FileHandle.standardError)
         let status: Int32
         do {
             defer { for relay in [out, err] { relay.finish() } }
@@ -168,7 +168,7 @@ final class OutputRelay: @unchecked Sendable {
 
     var input: Int32 { pipe.fileHandleForWriting.fileDescriptor }
 
-    init(to output: FileHandle) throws {
+    init(to output: FileHandle) {
         pipe = Pipe()
         let from = pipe.fileHandleForReading.fileDescriptor
         Thread.detachNewThread { [self] in
