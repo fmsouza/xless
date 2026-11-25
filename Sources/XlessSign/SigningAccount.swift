@@ -139,7 +139,7 @@ public struct APISigningAccount: SigningAccount {
             return nil
         }
         do {
-            return try await resources.settled(lookup: made, create: {
+            return try await resources.settled(.shared, lookup: made, create: {
                 let p = try await profiles.create(name: name, type: type, bundleIDResourceID: bundleResourceID, certificateIDs: [certificateID])
                 return SigningProfile(id: p.id, name: p.name, type: p.profileType, state: p.attributes.profileState, expires: p.expires,
                                       bundleID: bundleResourceID, certificateIDs: [certificateID], content: p.content)

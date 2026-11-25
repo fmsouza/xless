@@ -4,8 +4,8 @@ import XlessCore
 // TestFlight on the App Store Connect API key, for `xless testflight` (docs/apple-account.md#xless-testflight) and the
 // `testflight:` block of xless.yml: beta groups, beta testers and their invitations, the builds each group gets, a build's
 // "What to Test", the app's beta information (betaAppLocalizations, betaAppReviewDetail, betaLicenseAgreement), the
-// beta app review submission and public links. A create is sent again only after reading shows nothing was made, and a lost
-// answer or a 409 is settled by reading (`ASCResources.settled`); an invitation, which cannot be read back, is sent once.
+// beta app review submission and public links. A create is sent again only after reading shows nothing was made (a group, whose
+// name is not unique, once at most), and a lost answer or a 409 is settled by reading (`ASCResources.settled`); an invitation, which cannot be read back, is sent once.
 
 public struct ASCBetaGroupAttributes: ASCAttributes, Equatable {
     public var name: String?
@@ -293,7 +293,7 @@ public struct ASCTestFlight: Sendable {
         struct Attributes: Encodable, Sendable { var name: String; var isInternalGroup: Bool; var hasAccessToAllBuilds: Bool?; var feedbackEnabled: Bool? }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
         let attributes = Attributes(name: name, isInternalGroup: !external, hasAccessToAllBuilds: external ? nil : allBuilds, feedbackEnabled: feedback)
-        return Self.outcome(try await resources.settle(lookup: { try await groups(app: appID).first { $0.name == name && $0.isInternal == !external } }, create: {
+        return Self.outcome(try await resources.settle(.shared, lookup: { try await groups(app: appID).first { $0.name == name && $0.isInternal == !external } }, create: {
             let created: ASCSingle<ASCBetaGroup> = try await resources.create("/v1/betaGroups", type: "betaGroups", attributes: attributes,
                                                                              relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
             return created.data
@@ -413,7 +413,7 @@ public struct ASCTestFlight: Sendable {
         }
         struct Attributes: Encodable, Sendable { var email: String; var firstName: String?; var lastName: String? }
         struct Relationships: Encodable, Sendable { var betaGroups: ASCToMany }
-        let settled = try await resources.settle(lookup: { try await findTester(email: request.email, app: appID) }, create: {
+        let settled = try await resources.settle(.unique, lookup: { try await findTester(email: request.email, app: appID) }, create: {
             let created: ASCSingle<ASCBetaTester> = try await resources.create(
                 "/v1/betaTesters", type: "betaTesters", attributes: Attributes(email: request.email, firstName: request.firstName, lastName: request.lastName),
                 relationships: Relationships(betaGroups: ASCToMany([ASCRef(type: "betaGroups", id: group.id)])))
@@ -516,7 +516,7 @@ public struct ASCTestFlight: Sendable {
         }
         if let loc = try await existing() { return try await update(loc) }
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
-        let settled = try await resources.settle(lookup: existing, create: {
+        let settled = try await resources.settle(.unique, lookup: existing, create: {
             let created: ASCSingle<ASCBetaBuildLocalization> = try await resources.create(
                 "/v1/betaBuildLocalizations", type: "betaBuildLocalizations", attributes: ["locale": locale, "whatsNew": text],
                 relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))
@@ -565,7 +565,7 @@ public struct ASCTestFlight: Sendable {
         guard !attributes.isEmpty else { return nil }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
         attributes["locale"] = locale
-        let settled = try await resources.settle(lookup: { try await localizations(app: appID).first { $0.attributes.locale == locale } }, create: { [attributes] in
+        let settled = try await resources.settle(.unique, lookup: { try await localizations(app: appID).first { $0.attributes.locale == locale } }, create: { [attributes] in
             let created: ASCSingle<ASCBetaAppLocalization> = try await resources.create(
                 "/v1/betaAppLocalizations", type: "betaAppLocalizations", attributes: attributes,
                 relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
@@ -638,7 +638,7 @@ public struct ASCTestFlight: Sendable {
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
         struct Inner: Encodable, Sendable { var type = "betaAppReviewSubmissions"; var relationships: Relationships }
         struct Body: Encodable, Sendable { var data: Inner }
-        return Self.outcome(try await resources.settle(lookup: { try await submission(build: buildID) }, create: {
+        return Self.outcome(try await resources.settle(.unique, lookup: { try await submission(build: buildID) }, create: {
             let created: ASCSingle<ASCBetaSubmission> = try await resources.client.postOnce(
                 "/v1/betaAppReviewSubmissions", body: Body(data: Inner(relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))))
             return created.data

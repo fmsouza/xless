@@ -195,7 +195,7 @@ public struct ASCBundleIDs: Sendable {
     public func create(identifier: String, name: String, platform: BundleIDPlatform) async throws -> Creation {
         if let existing = try await find(identifier: identifier) { return .existing(existing) }
         struct Attributes: Encodable, Sendable { var identifier: String; var name: String; var platform: String }
-        let settled = try await resources.settle(lookup: { try await find(identifier: identifier) }, create: {
+        let settled = try await resources.settle(.unique, lookup: { try await find(identifier: identifier) }, create: {
             let created: ASCSingle<ASCBundleID> = try await resources.create(
                 Self.path, type: "bundleIds", attributes: Attributes(identifier: identifier, name: name, platform: platform.rawValue))
             return created.data
@@ -232,7 +232,7 @@ public struct ASCBundleIDs: Sendable {
         struct Relationships: Encodable, Sendable { var bundleId: ASCToOne }
         let sent = settings.isEmpty ? CapabilitySetting.defaults(for: type) : settings
         let attributes = Attributes(capabilityType: type.rawValue, settings: sent.isEmpty ? nil : sent)
-        let settled = try await resources.settle(lookup: { try await capabilities(of: bundleIDResourceID).first { $0.capabilityType == type.rawValue } }, create: {
+        let settled = try await resources.settle(.unique, lookup: { try await capabilities(of: bundleIDResourceID).first { $0.capabilityType == type.rawValue } }, create: {
             let created: ASCSingle<ASCBundleIDCapability> = try await resources.create(
                 Self.capabilitiesPath, type: "bundleIdCapabilities", attributes: attributes,
                 relationships: Relationships(bundleId: ASCToOne(ASCRef(type: "bundleIds", id: bundleIDResourceID))))

@@ -251,10 +251,26 @@ private func isPlain(_ text: String) -> Bool { TerminalText.escaped(text) == tex
 @Test func aFailedCreateIsSentAgainAfterReadingShowsNothingWasMade() async throws {
     let s = Signing()
     try s.registered { $0.certificates = ["OLD"] }
-    s.asc.failures = ["POST /v1/profiles": [(500, false), (503, false)]]
+    s.asc.failures = ["POST /v1/profiles": [(500, false)]]
     _ = try await s.apply(try await s.plan())
-    #expect(s.writes == ["DELETE /v1/profiles/P0", "POST /v1/profiles", "POST /v1/profiles", "POST /v1/profiles"])
-    #expect(s.asc.log.suffix(5) == ["POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles"])
+    #expect(s.writes == ["DELETE /v1/profiles/P0", "POST /v1/profiles", "POST /v1/profiles"])
+    #expect(s.asc.log.suffix(3) == ["POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles"])
+}
+
+/// That Apple refuses a second profile of one name was never seen: an unclear create is sent again once at most.
+@Test func aProfileWhoseCreateStaysUnclearIsNotSentAThirdTime() async throws {
+    let s = Signing()
+    try s.registered(profile: false)
+    s.asc.failures = ["POST /v1/profiles": [(500, false), (503, false)]]
+    do { _ = try await s.apply(try await s.plan()); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.cause.hasPrefix("cannot create IOS_APP_STORE profile for com.example.app: App Store Connect HTTP 503")) }
+    #expect(s.asc.log.suffix(4) == ["POST /v1/profiles", "GET /v1/profiles", "POST /v1/profiles", "GET /v1/profiles"])
+    // The failure was an answer lost on the way: what it made is found, not made again.
+    let t = Signing()
+    try t.registered(profile: false)
+    t.asc.failures = ["POST /v1/profiles": [(500, false), (503, true)]]
+    _ = try await t.apply(try await t.plan())
+    #expect(t.asc.profiles.count == 1)
 }
 
 /// A listing may show a deleted profile a little longer: it is never taken for the new one.

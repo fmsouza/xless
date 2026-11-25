@@ -371,6 +371,21 @@ private let textConfig = TestFlightConfig(groups: ["Internal"], whatToTest: "hel
     catch let e as XlessError { #expect(e.stage == .upload && e.cause.contains("looking up")) }
 }
 
+/// Two groups may have one name: a create whose answer is unclear is read for after the wait, and sent again once at most.
+@Test func aGroupIsNotMadeASecondTime() async throws {
+    func create(_ t: MockTransport, waits: (@Sendable () -> Void)? = nil) async throws -> ASCTestFlight.Outcome<ASCBetaGroup> {
+        let client = ASCClient(credentials: testCreds, transport: t, sleep: { _ in waits?() })
+        return try await ASCTestFlight(resources: ASCResources(client: client)).createGroup(name: "Internal", app: "1", external: false, existing: [])
+    }
+    // Apple finishes it during the wait.
+    let late = MockTransport([(504, ""), (200, noGroups), (201, #"{"data":\#(group("G2", "Internal"))}"#)])
+    guard case .created(let g) = try await create(late, waits: { late.steps[0] = .response(200, groups(group("G1", "Internal"))) }) else { Issue.record("expected created"); return }
+    #expect(g.id == "G1" && late.requests.map(path) == ["POST /v1/betaGroups", "GET /v1/betaGroups"])
+    let twice = MockTransport([(504, ""), (200, noGroups), (502, ""), (200, noGroups), (201, #"{"data":\#(group("G3", "Internal"))}"#)])
+    do { _ = try await create(twice); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 502) }
+    #expect(twice.requests.map(path) == ["POST /v1/betaGroups", "GET /v1/betaGroups", "POST /v1/betaGroups", "GET /v1/betaGroups"])
+}
+
 /// Two groups may have one name: a create whose answer is lost is not sent again when the groups cannot be read.
 @Test func aGroupCreateIsNotSentAgainWithoutReading() async throws {
     let t = MockTransport([(200, appJSON), (200, noGroups), (503, ""), (403, "{}")])

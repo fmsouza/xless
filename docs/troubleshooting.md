@@ -143,7 +143,8 @@ and must be one `versions.env` supports. Nothing is exported, so the disk check 
 
 `xless upload` maps App Store Connect errors to explanations; unknown codes are printed verbatim. Network calls retry
 only on HTTP 5xx, 429 and transport errors (at most 5 attempts); nothing else is retried. A create is sent again only
-after reading shows nothing was made, and one that could not be found again (a certificate, a key, an invitation) never is.
+after a wait and a reading that shows nothing was made (a TestFlight group or a profile, of which Apple may make two, once at
+most after an unclear answer), and one that could not be found again (a certificate, a key, an invitation) never is.
 
 | Symptom | Meaning and fix |
 |---|---|

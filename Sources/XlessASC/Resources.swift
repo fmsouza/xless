@@ -116,6 +116,14 @@ enum ASCSettled<R: Sendable>: Sendable {
     var existed: Bool { if case .found(_, ours: false) = self { true } else { false } }
 }
 
+/// What Apple does with a second create that asks for the same thing.
+public enum ASCNames: Sendable {
+    /// It refuses it (409): one identifier, one address, one locale, one submission of a build.
+    case unique
+    /// It makes a second one, or nobody has seen it refuse: sent again after an unclear answer once at most.
+    case shared
+}
+
 /// The JSON:API operations every App Store Connect resource shares, on top of `ASCClient` (JWT, retries, rate limits):
 /// listings that follow `links.next`, reads with `include`, creates, updates, deletes and relationship linkage. Untyped
 /// resources decode as `ASCAnyResource` / `JSONValue`.
@@ -162,8 +170,8 @@ public struct ASCResources: Sendable {
         try await client.get(path, query: query.items)
     }
 
-    /// POST `{ data: { type, attributes, relationships } }` to a collection: one request. A create is sent again only after
-    /// reading shows nothing was made (`settled`, `settle`): a blind retry of one that went through could make a second
+    /// POST `{ data: { type, attributes, relationships } }` to a collection: one request. A create is sent again only right
+    /// after reading shows nothing was made (`settled`, `settle`): a blind retry of one that went through could make a second
     /// resource, or burn a scarce one (a certificate slot).
     public func create<A: Encodable & Sendable, R: Encodable & Sendable, D: Decodable & Sendable>(
         _ path: String, type: String, attributes: A, relationships: R?) async throws -> ASCSingle<D> {
@@ -174,36 +182,40 @@ public struct ASCResources: Sendable {
         try await create(path, type: type, attributes: attributes, relationships: ASCNoRelationships?.none)
     }
 
-    /// A create that is sent again after a failure that says nothing (a lost connection, 429, 5xx) only once `lookup` shows
-    /// it was not made (at most `ASCClient.maxAttempts` requests in all); one that was made by the request whose answer was
-    /// lost or cannot be read, or refused (409) because it exists, is what `lookup` found. When `lookup` fails, nothing is
-    /// sent again. `create` sends one request (`create(_:type:attributes:)`). For creates that can be found again by what
-    /// they ask for (a name, an identifier); never for certificates and keys.
-    public func settled<T: Sendable>(lookup: () async throws -> T?, create: () async throws -> T) async throws -> T {
-        var attempt = 0
+    /// A create that is sent again after a failure that says nothing (a lost connection, 429, 5xx) only right after `lookup`
+    /// shows that it was not made: the wait comes before the reading, for what Apple finishes meanwhile. At most
+    /// `ASCClient.maxAttempts` requests in all; for `.shared` names one more at most after an unclear answer (any but a 429,
+    /// which made nothing), as Apple may be later still. One that was made by the request whose answer was lost or cannot be
+    /// read, or refused (409) because it exists, is what `lookup` found. When `lookup` fails, nothing is sent again. `create`
+    /// sends one request (`create(_:type:attributes:)`). For creates that can be found again by what they ask for (a name, an
+    /// identifier); never for certificates and keys.
+    public func settled<T: Sendable>(_ names: ASCNames, lookup: () async throws -> T?, create: () async throws -> T) async throws -> T {
+        var attempt = 0, most = ASCClient.maxAttempts
         while true {
             attempt += 1
             do { return try await create() } catch {
                 let e = error as? ASCError
                 let silent = error is URLError || e.map { $0.status == 429 || $0.status >= 500 } ?? false
                 guard silent || e?.status == 409 || error is DecodingError else { throw error }
+                if silent, names == .shared, e?.status != 429 { most = min(most, attempt + 1) }
+                let wait = e?.retryAfter ?? (1 << (attempt - 1))
+                let waits = silent && wait <= ASCClient.maxRetryAfter
+                if waits { try await client.sleep(.seconds(wait)) }
                 let found: T?
                 do { found = try await lookup() } catch let failed {
                     if failed is CancellationError { throw failed }
                     throw error
                 }
                 if let found { return found }
-                let wait = e?.retryAfter ?? (1 << (attempt - 1))
-                guard silent, attempt < ASCClient.maxAttempts, wait <= ASCClient.maxRetryAfter else { throw error }
-                try await client.sleep(.seconds(wait))
+                guard waits, attempt < most else { throw error }
             }
         }
     }
 
     /// `settled`, telling what was made from what was found.
-    func settle<R: Sendable>(lookup: () async throws -> R?, create: () async throws -> R) async throws -> ASCSettled<R> {
+    func settle<R: Sendable>(_ names: ASCNames, lookup: () async throws -> R?, create: () async throws -> R) async throws -> ASCSettled<R> {
         var lost = false
-        return try await settled(lookup: { try await lookup().map { .found($0, ours: lost) } }, create: {
+        return try await settled(names, lookup: { try await lookup().map { .found($0, ours: lost) } }, create: {
             do { return .made(try await create()) } catch {
                 if (error as? ASCError)?.status != 409 { lost = true }
                 throw error

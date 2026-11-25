@@ -68,8 +68,8 @@ otherwise it creates one; the text it already has sends nothing. The first call 
 ## Error mapping
 All calls run inside the upload stage's error wrapper, so every failure prints `[upload] <step>: <cause> — <fix>` and exits 17.
 401/403 get the API-key hints; 429, 5xx and lost connections are retried (at most 5 attempts). A create
-(What to Test, a group, a tester, the beta texts, the submission) is sent again only after reading shows nothing was made: one
-whose answer was lost is found and used, and one that cannot be looked up fails with its own error. The fix text always says the build itself is already uploaded and processed.
+(What to Test, a group, a tester, the beta texts, the submission) is sent again only right after a wait and a reading that shows nothing was made (a group, whose name
+is not unique, once at most after an unclear answer): one whose answer was lost is found and used, and one that cannot be looked up fails with its own error. The fix text always says the build itself is already uploaded and processed.
 
 ## Not verifiable from the spec
 - Whether `POST .../relationships/builds` on a group with `hasAccessToAllBuilds: true` is accepted or answers `409` because the
