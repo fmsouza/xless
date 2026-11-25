@@ -95,7 +95,7 @@ or the `.pkg`. xless uploads nothing: App Store Connect gets no dSYM from it.
 |---|---|---|
 | `xless.yml`, macOS | Swift Build's `<name>.dSYM` next to each architecture's executable, merged into one universal dSYM | When Swift Build writes one (it does for the release build in the xless image) |
 | `xless.yml`, iOS | xtool's build: Swift Build's `<Product>-App.dSYM` (xtool builds with Swift Build from Swift 6.4), else `dsymutil` on the app's executable | When the executable has a debug map (SwiftPM's release builds have debug info) |
-| `xless.yml` on a Mac with Xcode | The `.dSYM`s Swift Build wrote next to the products | When Swift Build writes one (it does for a release build) |
+| `xless.yml` on a Mac with Xcode | The `.dSYM` Swift Build wrote next to the executable, and to each library of the packages that the app loads | When Swift Build writes one (it does for a release build) |
 | React Native | Every `.dSYM` Swift Build wrote ([react-native.md](react-native.md#dsyms)) | `DEBUG_INFORMATION_FORMAT = dwarf-with-dsym` (Expo's Release default) |
 | Cargo (iOS, macOS), Tauri macOS | The linker wrapper's debug link ([below](#dsyms-of-rust-apps)), one per architecture | When the release profile has debug info |
 | Tauri iOS | `dsymutil` on the executable xless links | When the release profile has debug info for the app crate |

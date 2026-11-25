@@ -81,6 +81,10 @@ private func temporary() throws -> URL {
     #expect(XcodePackageBuilder.isForeign("/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/iphoneos"))
     #expect(XcodePackageBuilder.isForeign("/var/run/com.apple.security.cryptexd/mnt/x"))
     for path in ["/usr/lib/swift", "@loader_path", "@executable_path/Frameworks"] { #expect(!XcodePackageBuilder.isForeign(path)) }
+    // of a library in Frameworks, only what names this Mac's Xcode
+    let xcode = InstalledXcode(app: URL(fileURLWithPath: "/Applications/Xcode.app"), version: "27.2", build: "27B52", source: "-")
+    for path in ["/Applications/Xcode.app/Contents/Developer/x", "/var/run/com.apple.security.cryptexd/mnt/x"] { #expect(XcodePackageBuilder.isOfXcode(path, xcode)) }
+    for path in ["/Applications/Xcode.app.other/x", "/vendor/lib", "/usr/lib/swift", "@loader_path"] { #expect(!XcodePackageBuilder.isOfXcode(path, xcode)) }
 }
 
 @Test func theFrameworksAnAppLoadsAreEmbeddedWithWhatTheyLoad() throws {
@@ -97,8 +101,17 @@ private func temporary() throws -> URL {
     _ = try write("PackageFrameworks/B.framework/Versions/A/B", [])
     _ = try write("libC.dylib", [])
     _ = try write("Unused.framework/Unused", [])
-    #expect(try XcodePackageBuilder.embedded(exe, products: products).map(\.lastPathComponent).sorted() == ["A.framework", "B.framework", "libC.dylib"])
+    #expect(try XcodePackageBuilder.embedded(exe, products: products).map(\.item.lastPathComponent).sorted() == ["A.framework", "B.framework", "libC.dylib"])
 
+    #expect(try XcodePackageBuilder.embedded(exe, products: products).map(\.library).sorted() == ["A.framework/A", "B.framework/Versions/A/B", "libC.dylib"])
+
+    for library in ["", "/", "/A", "../A.framework/A", "./libC.dylib", "A.framework//A", "A.framework/../libC.dylib", "..", "libC.dylib/"] {
+        let bad = try write("Bad", ["@rpath/\(library)"])
+        do {
+            _ = try XcodePackageBuilder.embedded(bad, products: products)
+            Issue.record("not refused: \(library)")
+        } catch let e as XlessError { #expect(e.cause == "Bad loads @rpath/\(library), which is no place in the app") }
+    }
     for (library, fix) in [("libswift_Concurrency.dylib", "minimumOS"), ("Gone.framework/Gone", "binaryTarget")] {
         let bad = try write("Bad", ["@rpath/\(library)"])
         do {

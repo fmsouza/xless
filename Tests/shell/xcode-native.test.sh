@@ -70,6 +70,21 @@ app="$build/macos/final/HelloShip.app"
 for arch in arm64 x86_64; do [[ " $(lipo -archs "$app/Contents/MacOS/HelloShip") " == *" $arch "* ]] || fail "the macOS app is of $(lipo -archs "$app/Contents/MacOS/HelloShip")"; done
 [[ -f "$app/Contents/Resources/AppIcon.icns" ]] || fail "no AppIcon.icns"
 
+# A library that the app loads is in it, without a path of this Mac's Xcode, and its dSYM is kept.
+mkdir -p "$t/l/Sources/Demo" "$t/l/Dyn/Sources/Dyn"
+echo 'public func word() -> String { "hi" }' > "$t/l/Dyn/Sources/Dyn/d.swift"
+printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' \
+  'let package = Package(name: "Dyn", platforms: [.macOS(.v14)], products: [.library(name: "Dyn", type: .dynamic, targets: ["Dyn"])], targets: [.target(name: "Dyn")])' > "$t/l/Dyn/Package.swift"
+printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' \
+  'let package = Package(name: "Demo", platforms: [.macOS(.v14)], products: [.library(name: "Demo", targets: ["Demo"])], dependencies: [.package(path: "Dyn")], targets: [.target(name: "Demo", dependencies: ["Dyn"])])' > "$t/l/Package.swift"
+printf '%s\n' 'import SwiftUI' 'import Dyn' '@main struct Demo: App { var body: some Scene { WindowGroup { Text(word()) } } }' > "$t/l/Sources/Demo/a.swift"
+printf '%s\n' 'bundleID: com.example.demo' 'teamID: ABCDE12345' 'version: 1.0.0' 'build: 1' 'platforms:' '  macos: { minimumOS: "14.0", product: Demo, distribution: developer-id }' > "$t/l/xless.yml"
+ok build --project "$t/l" --platform macos
+dylib="$t/l/.xless/build/macos/app/Demo.app/Contents/Frameworks/libDyn.dylib"
+[[ -f "$dylib" ]] || fail "no libDyn.dylib in the app"
+! xcrun otool -l "$dylib" | grep -A2 LC_RPATH | grep -q 'path .*\(Xcode\|cryptexd\)' || fail "libDyn.dylib names a path of this Mac's Xcode"
+[[ -d "$t/l/.xless/build/macos/dSYMs/libDyn.dylib.dSYM" ]] || fail "no dSYM of libDyn.dylib: $(find "$t/l/.xless/build/macos/dSYMs" -maxdepth 1)"
+
 # A package that the app no longer has leaves nothing in it.
 mkdir -p "$t/q/Sources/Demo" "$t/q/Dep/Sources/Dep"
 printf '%s\n' 'public func word() -> String { "hi" }' > "$t/q/Dep/Sources/Dep/d.swift"

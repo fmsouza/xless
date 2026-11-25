@@ -77,10 +77,10 @@ public enum XcodePackageBuilder {
             throw XlessError(.build, "no \(pc.product)App executable under \(products.path)",
                              fix: "check the swift build output above, and that platforms.\(platform.rawValue).product matches a library product in Package.swift")
         }
-        let frameworks = try embedded(executable, products: products)
+        let images = try embedded(executable, products: products)
         let resources = bundles(of: products)
         let built = try Files.atomicOutput(paths.app) { partial in
-            let app = try PackageApp.assemble(in: partial, executable: try Data(contentsOf: executable), resources: resources, frameworks: frameworks,
+            let app = try PackageApp.assemble(in: partial, executable: try Data(contentsOf: executable), resources: resources, frameworks: images.map(\.item),
                                               project: project, config: config, platform: platform)
             let directory = BundleLayout(platform: platform).executableDir
             if destination == .simulator { // (finalize, which stamps a device's, does not run)
@@ -89,11 +89,22 @@ public enum XcodePackageBuilder {
                 info["CFBundleSupportedPlatforms"] = ["iPhoneSimulator"]
                 try Plist.write(info, to: plist, stage: .build)
             }
-            try removeForeignRunPaths(of: app.appendingPathComponent(directory.isEmpty ? pc.product : "\(directory)/\(pc.product)"), xcode: xcode, environment: environment)
+            try removeRunPaths(of: app.appendingPathComponent(directory.isEmpty ? pc.product : "\(directory)/\(pc.product)"), xcode: xcode, environment: environment, where: isForeign)
+            // Those of a vendor's are the vendor's: only what names this Mac's Xcode goes.
+            let frameworks = app.appendingPathComponent(BundleLayout(platform: platform).frameworksDir)
+            for image in images {
+                try removeRunPaths(of: frameworks.appendingPathComponent(image.library), xcode: xcode, environment: environment) { isOfXcode($0, xcode) }
+            }
             return app
         }
         let dSYMs = try DSYM.keep(executables: [executable], app: built, into: paths.dSYMs)
         FileHandle.standardError.write(Data("xless: dSYMs: \(dSYMs.summary)\n".utf8))
+        for image in images { // a library of the app's own packages, which Swift Build wrote one for
+            let dSYM = DSYM.companion(of: products.appendingPathComponent(image.item.lastPathComponent))
+            guard case .kept = dSYMs, FileManager.default.fileExists(atPath: dSYM.path) else { continue }
+            try FileManager.default.copyItem(at: dSYM, to: paths.dSYMs.appendingPathComponent(dSYM.lastPathComponent))
+            FileHandle.standardError.write(Data("xless: dSYMs: \(dSYM.lastPathComponent)\n".utf8))
+        }
         return built
     }
 
@@ -135,11 +146,16 @@ public enum XcodePackageBuilder {
 
     /// The frameworks and dynamic libraries of the build that `executable` loads, and those that they load. One that is neither of
     /// the build nor of the system would not be there on the device.
-    static func embedded(_ executable: URL, products: URL) throws -> [URL] {
-        var found: [String: URL] = [:], open = [executable]
+    /// Each is what is put into Frameworks (`item`) and the path there of what is loaded (`library`).
+    static func embedded(_ executable: URL, products: URL) throws -> [(item: URL, library: String)] {
+        var found: [String: (item: URL, library: String)] = [:], open = [executable]
         while let image = open.popLast() {
             for library in try rpathLibraries(of: image) {
-                let item = String(library.split(separator: "/", maxSplits: 1)[0]) // X.framework or libX.dylib
+                let parts = library.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+                guard !parts.contains(where: { ["", ".", ".."].contains($0) }) else {
+                    throw XlessError(.build, "\(image.lastPathComponent) loads @rpath/\(library), which is no place in the app", fix: "fix the install name of that library, or ask who made it")
+                }
+                let item = parts[0] // X.framework or libX.dylib
                 guard found[item] == nil else { continue }
                 let places = [products, products.appendingPathComponent("PackageFrameworks")].map { $0.appendingPathComponent(item) }
                 guard let place = places.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
@@ -147,11 +163,11 @@ public enum XcodePackageBuilder {
                                      fix: item.hasPrefix("libswift") ? "raise minimumOS in xless.yml: the systems before it do not have this part of Swift"
                                          : "make it a product of one of the app's packages (a binaryTarget, or a library)")
                 }
-                found[item] = place
+                found[item] = (place, library)
                 open.append(place.deletingLastPathComponent().appendingPathComponent(library))
             }
         }
-        return found.values.sorted { $0.path < $1.path }
+        return found.values.sorted { $0.item.path < $1.item.path }
     }
 
     /// What `image` loads by @rpath, without that.
@@ -164,19 +180,24 @@ public enum XcodePackageBuilder {
                 out += try MachO.linkedLibraries(in: data, slice: range).filter { $0.hasPrefix("@rpath/") }.map { String($0.dropFirst("@rpath/".count)) }
             }
         } catch { throw XlessError(.build, "cannot read the libraries of \(image.path): \(error)", fix: "report it to the xless maintainers") }
-        return out.filter { !$0.isEmpty }
+        return out
     }
 
     /// Swift Build adds directories of the Xcode to where the app looks for its libraries: they name this Mac's files, and are not on
     /// the device. `install_name_tool` takes them out.
-    static func removeForeignRunPaths(of executable: URL, xcode: InstalledXcode, environment: [String: String?]) throws {
+    static func removeRunPaths(of executable: URL, xcode: InstalledXcode, environment: [String: String?], where goes: (String) -> Bool) throws {
         let data = try Data(contentsOf: executable)
         var paths: Set<String> = []
-        for (_, _, range) in try MachO.sliceArchitectures(in: data) { paths.formUnion(try MachO.rpaths(in: data, slice: range).filter(isForeign)) }
+        for (_, _, range) in try MachO.sliceArchitectures(in: data) { paths.formUnion(try MachO.rpaths(in: data, slice: range).filter(goes)) }
         guard !paths.isEmpty else { return }
         try Shell.run(try xcode.require(.installNameTool, stage: .build).path, paths.sorted().flatMap { ["-delete_rpath", $0] } + [executable.path],
                       env: environment, stage: .build)
     }
 
     static func isForeign(_ path: String) -> Bool { path.hasPrefix("/") && path != "/usr/lib/swift" }
+
+    /// (The cryptex is where macOS has the libraries of its newest Swift.)
+    static func isOfXcode(_ path: String, _ xcode: InstalledXcode) -> Bool {
+        [xcode.app.path + "/", "/var/run/com.apple.security.cryptexd/"].contains { path.hasPrefix($0) }
+    }
 }

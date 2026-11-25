@@ -91,8 +91,9 @@ rcodesign (about 9 MB, pinned by SHA-256) is fetched once, by the first command 
 
 **What it builds.** Swift packages (`xless.yml`), for iOS devices, the iOS simulator and macOS. React Native, Tauri and Cargo
 apps build in the images, on a Mac too (`--docker`), except for the React Native simulator builds that
-[react-native.md](react-native.md) describes. A pre-built or dynamic library that the app loads is put in its `Frameworks`;
-where an app's lowest system needs Swift libraries that Apple ships with Xcode for older systems, the build stops and says to
+[react-native.md](react-native.md) describes. A framework that the app loads is put in its `Frameworks`, and on macOS a
+dynamic library (`lib….dylib`) too; on iOS, where the App Store takes no loose one, `finalize` stops, so make that library
+product static there. Where an app's lowest system needs Swift libraries that Apple ships with Xcode for older systems, the build stops and says to
 raise `minimumOS`. A simulator build has no entitlements.
 
 Build products are in the project's `.xless/` (`xcode-pkg-*`, `xcode-build-*`, and `build/` as on Linux). They are deleted with
