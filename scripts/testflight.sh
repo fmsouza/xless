@@ -111,6 +111,9 @@
 set -euo pipefail
 arguments=("$@")
 unlocked="${XLESS_RUN_UNLOCKED:-}"; unset XLESS_RUN_UNLOCKED   # this run's own second start, below
+# Where what an `xless session` holds is (a path, no secret): the xless commands that read the store are told, and no
+# other program this script runs is.
+told=(); [[ -z "${XLESS_SESSION:-}" ]] || told=(env "XLESS_SESSION=$XLESS_SESSION"); unset XLESS_SESSION
 
 die() { echo "testflight: $*" >&2; exit 2; }
 
@@ -622,7 +625,7 @@ if [[ ${#store_sets[@]} -gt 0 && $use_docker == 0 ]]; then
   # drops the unlock when it ends. The build (step 2, and the tools of every step) is outside: its xless does not look for
   # an unlock, and its tools are in POSIX sessions of their own, which the session's agent refuses.
   run "$xself" secrets materialize --check ${team_arg[@]+"${team_arg[@]}"} "${store_sets[@]}" || exit $?
-  if [[ -z "$unlocked" && -z "${XLESS_SESSION:-}" && "${store_sets[*]}" =~ [=,][^?] && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
+  if [[ -z "$unlocked" && ${#told[@]} -eq 0 && "${store_sets[*]}" =~ [=,][^?] && "${XLESS_TESTFLIGHT_DRY_RUN:-0}" != 1 ]]; then
     needs=()
     for s in "${store_sets[@]}"; do
       IFS=, read -r -a words <<<"${s#*=}"
@@ -657,7 +660,7 @@ build_mounts=()   # the host folders the build container (step 2) mounts: no sec
 materialise() {   # docker: write the store's sets (one passphrase), after every check that could still stop the run
   [[ $use_docker == 1 && ${#store_sets[@]} -gt 0 ]] || return 0
   [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]] || prune_optional || return 0
-  local mat=("$xself" secrets materialize ${team_arg[@]+"${team_arg[@]}"}) base d code=0
+  local mat=(${told[@]+"${told[@]}"} "$xself" secrets materialize ${team_arg[@]+"${team_arg[@]}"}) base d code=0
   [[ $ALLOW_DISK == 0 ]] || mat+=(--allow-disk)
   mat+=("${store_sets[@]}")
   if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
@@ -767,7 +770,7 @@ if [[ -z "$OVERLAY" ]]; then
       "$image" xless ship --platform ios "$@"
   else
     cd "$PROJECT"
-    run "$xself" ship --platform ios "$@"
+    run ${told[@]+"${told[@]}"} "$xself" ship --platform ios "$@"
   fi
   code=$?
   set -e
@@ -818,7 +821,6 @@ else
   # (the list is xless's SecretEnvironment.entries; a test keeps them equal), and with the secret store closed to it
   scrub=(env); for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8 XLESS_DIST_KEY XLESS_DEVID_KEY XLESS_INSTALLER_KEY XLESS_DEMO_PASSWORD; do scrub+=(-u "$v" -u "${v}_FILE"); done
   for v in ${demo_names[@]+"${demo_names[@]}"}; do scrub+=(-u "$v" -u "${v}_FILE"); done   # a passwordSecret of the user's own
-  scrub+=(-u XLESS_SESSION)   # what a session holds, the build does not
   scrub+=(XLESS_NO_SECRET_STORE=1)
 fi
 bn=(); [[ -z "${XLESS_BUILD_NUMBER:-}" ]] || bn=(-e XLESS_BUILD_NUMBER)
@@ -866,7 +868,7 @@ materialise
 if [[ $step1 == 1 ]]; then
   echo "==> TestFlight: step 1/3, next build number (App Store Connect, read-only)" >&2
   if [[ $use_docker == 1 ]]; then cmd=("${docker_run[@]}" "${app[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${next_store[@]+"${next_store[@]}"} "$key_image" "${next_build[@]}" "${xl[@]}")
-  else cmd=("$xself" "${next_build[@]:1}" "${xl[@]}"); fi
+  else cmd=(${told[@]+"${told[@]}"} "$xself" "${next_build[@]:1}" "${xl[@]}"); fi
   if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
     run "${cmd[@]}"; XLESS_BUILD_NUMBER="<next-build>"
   else
@@ -968,7 +970,7 @@ if [[ $step3 == 1 ]]; then
     # native (a macOS host run): the same two channels, xless straight from the env.
     set +e
     shiplog="$(mktemp)"; shipout="$(mktemp)"; tmpfiles+=("$shiplog" "$shipout")
-    waited "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
+    waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
     code=$?
     [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code" >&2; exit "$code"; }
     dmg="$(grep '\.dmg$' "$shipout" | tail -1 || true)"
@@ -976,7 +978,7 @@ if [[ $step3 == 1 ]]; then
     echo "==> DMG build finished" >&2
     if [[ "$(index "$to")" -ge 6 ]]; then
       : > "$shiplog"
-      waited "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
+      waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"
       code=$?
       [[ $code -eq 0 ]] || { set -e; cat "$shiplog" >&2; echo "==> xless exited with code $code (the TestFlight upload)" >&2; exit "$code"; }
       pkg="$(grep '\.pkg$' "$shipout" | tail -1 || true)"
@@ -990,7 +992,7 @@ if [[ $step3 == 1 ]]; then
     run "${docker_run[@]}" "${app[@]}" "${sign_caches[@]}" ${asc_secrets[@]+"${asc_secrets[@]}"} ${dist_secret[@]+"${dist_secret[@]}"} ${sign_store[@]+"${sign_store[@]}"} ${bn[@]+"${bn[@]}"} \
       "$key_image" xless ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
   else
-    run "$xself" ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
+    run ${told[@]+"${told[@]}"} "$xself" ship --platform "$PLATFORM" "${xl[@]}" --from "$sfrom" --to "$to" ${extra[@]+"${extra[@]}"}
   fi
   code=$?
   set -e

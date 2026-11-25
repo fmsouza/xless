@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import XlessCore
 
 /// The command this process runs, as what it asks is announced: `xless certs create`.
 enum RunningCommand {
@@ -27,11 +28,16 @@ enum RunningCommand {
 /// `xless session -- <command…>`, as the commands inside see it.
 enum XlessSession {
     /// The path of the session's agent.
-    static let variable = "XLESS_SESSION"
+    static let variable = ChildProcess.session
 
     /// The session this command was told of.
-    static var agent: String? {
+    nonisolated(unsafe) private(set) static var agent: String?
+
+    /// Takes it out of this process's environment, which whatever it starts is given (the shims' tools too): what is to
+    /// have it is given it (`SessionCommand`, `TestflightScript`).
+    static func take() {
         let path = ProcessInfo.processInfo.environment[variable] ?? ""
-        return path.isEmpty ? nil : path
+        agent = path.isEmpty ? nil : path
+        unsetenv(variable)
     }
 }

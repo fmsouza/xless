@@ -114,11 +114,12 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
     }
 
     @Test func itIsNotAskedInCINoInputASessionOrBuildCode() {
-        #expect(!KeepOffer.isOff(env: [:]))
-        for env in [["CI": "true"], ["CI": "1"], ["XLESS_NO_INPUT": "1"], ["XLESS_SESSION": "/x"], ["XLESS_NO_SECRET_STORE": "1"]] {
-            #expect(KeepOffer.isOff(env: env), "\(env)")
+        #expect(!KeepOffer.isOff(env: [:], inSession: false))
+        #expect(KeepOffer.isOff(env: [:], inSession: true))
+        for env in [["CI": "true"], ["CI": "1"], ["XLESS_NO_INPUT": "1"], ["XLESS_NO_SECRET_STORE": "1"]] {
+            #expect(KeepOffer.isOff(env: env, inSession: false), "\(env)")
         }
-        for env in [["CI": ""], ["CI": "false"], ["CI": "0"], ["XLESS_NO_INPUT": "0"], ["XLESS_SESSION": ""]] { #expect(!KeepOffer.isOff(env: env), "\(env)") }
+        for env in [["CI": ""], ["CI": "false"], ["CI": "0"], ["XLESS_NO_INPUT": "0"]] { #expect(!KeepOffer.isOff(env: env, inSession: false), "\(env)") }
     }
 
     @Test func anUnlockOffersToKeepTheSignInTooAndTheOtherWayRound() {

@@ -34,7 +34,7 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     ///   - isOff: nothing may be asked or kept here.
     ///   - command: the command that asks, e.g. `xless certs create`.
     init(agents: any AgentHolding = HeldSecrets.agents, cache: HeldKeyCache = SecretStoreCLI.cache, settings: UnlockSettings? = try? HeldSecrets.settings.get(),
-         isOff: Bool = KeepOffer.isOff(env: ProcessInfo.processInfo.environment), command: @escaping @autoclosure @Sendable () -> String = RunningCommand.name) {
+         isOff: Bool = KeepOffer.isOff(env: ProcessInfo.processInfo.environment, inSession: XlessSession.agent != nil), command: @escaping @autoclosure @Sendable () -> String = RunningCommand.name) {
         self.agents = agents
         self.cache = cache
         self.settings = settings
@@ -47,9 +47,9 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
 
     /// CI, `--no-input`, inside `xless session` (which keeps what its script needs, for as long as it runs) and the
     /// environment of build code.
-    static func isOff(env: [String: String]) -> Bool {
+    static func isOff(env: [String: String], inSession: Bool) -> Bool {
         func on(_ name: String) -> Bool { !["", "0", "false"].contains(env[name] ?? "") }
-        return on("CI") || on(InputGate.variable) || on("XLESS_NO_SECRET_STORE") || !(env[XlessSession.variable] ?? "").isEmpty
+        return on("CI") || on(InputGate.variable) || on("XLESS_NO_SECRET_STORE") || inSession
     }
 
     /// `xless session`: what is typed is kept while `name` runs, and nothing is offered.

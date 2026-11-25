@@ -14,8 +14,20 @@ if [[ -z "$x" ]]; then
   x="$(cd "$repo" && env -u DEVELOPER_DIR swift build --show-bin-path)/xless"
 fi
 
-python3 -I - "$x" "$t" <<'PY'
-import json, os, pty, re, select, signal, subprocess, sys, termios, time
+# Nothing may reach Apple: a Mac's URL loading heeds no proxy variable, so there the whole test runs in a sandbox without
+# network (but `ps`, which is setuid); elsewhere the proxy it is told of is a closed port.
+guard=()
+if [[ "$(uname)" == Darwin ]]; then
+  guard=(sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip "*:*"))(deny network-outbound (literal "/private/var/run/mDNSResponder"))(allow process-exec* (with no-sandbox) (literal "/bin/ps"))')
+fi
+${guard[@]+"${guard[@]}"} python3 -I - "$x" "$t" <<'PY'
+import json, os, pty, re, select, signal, socket, subprocess, sys, termios, time
+
+if sys.platform == "darwin":
+    with socket.create_server(("127.0.0.1", 0)) as here:
+        try: socket.create_connection(here.getsockname(), 2).close()
+        except PermissionError: pass
+        else: sys.exit("FAIL the sandbox lets the network through: nothing was run")
 
 xless, t = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
 PROMPT = rb"(assphrase|again): |\[y/N\] |Apple ID \(email\): "
@@ -184,10 +196,17 @@ script("who.sh", f'#!/bin/sh\nPATH=$T/bin:$PATH $X clean >/dev/null 2>&1\n{probe
 rc, shown, n = a.run("$X session -- $T/bin/who.sh", PASS)
 tool = [json.loads(l) for l in open(t + "/probe-tool.log")]
 own = {l["name"]: l for l in map(json.loads, open(t + "/probe-own.log"))}
+tool_env = open(t + "/tool-env").read()
+check("XLESS_SESSION" not in tool_env and "XLESS_NO_SECRET_STORE=1" in tool_env, "a tool that xless runs in a session is not told of it", tool_env)
 check(len(tool) == 2 and all(l["rc"] != 0 and not l["stolen"] and VALUE not in l["err"] for l in tool), "a tool that xless runs in a session is refused, told of it or not", tool)
 check(own["child"]["stolen"], "(the same probe run by the script itself is served: the test can tell)", own)
 check(not own["setsid"]["stolen"], "a process that leaves the script's POSIX session is refused", own)
 check(not own["untold"]["stolen"], "a command that was not told of the session does not use it", own)
+
+script("swiftc", '#!/bin/sh\nenv > "$T/shim-env"\n')
+rc, shown, n = a.run("$X session -- sh -c 'PATH=$T/bin:$PATH XLESS_SHIM_DIR= $X shim xcrun swiftc --version'", PASS)
+shim_env = open(t + "/shim-env").read() if os.path.exists(t + "/shim-env") else ""
+check("PATH=" in shim_env and "XLESS_SESSION" not in shim_env, "nor is one that a shim runs", (rc, shown, shim_env))
 
 a.type("$X session -- sh -c 'echo started > $T/up; while [ ! -e $T/stop ]; do sleep 0.2; done'")
 a.answer(PASS)

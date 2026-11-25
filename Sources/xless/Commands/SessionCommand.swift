@@ -53,7 +53,7 @@ struct SessionCommand: AsyncParsableCommand {
         SecretStoreCLI.forgetUnlock()
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = ScriptProcess.path
-        if let lease { environment[XlessSession.variable] = lease.path }
+        environment[XlessSession.variable] = lease?.path ?? XlessSession.agent
         let end = script.run(file, environment: environment)
         lease?.end()
         switch end {

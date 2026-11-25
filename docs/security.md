@@ -222,8 +222,9 @@ rules above hold for it unchanged: the variable is no credential, and a process 
 POSIX session is refused (`Tests/shell/session.test.sh`: the tools xless runs, another terminal, a process that left the
 session). It is granted the script's session, which is the terminal's: the script and every program it runs directly may
 run `xless`, as in a terminal with the store unlocked, and an `npm install` or a `make` in the script is such a program. So
-**run only what you would run in an unlocked terminal**; what xless runs for the script is refused as ever. A build that
-`xless run` starts is told nothing (the variable is taken out of its environment) and refused all the same.
+**run only what you would run in an unlocked terminal**; what xless runs for the script is refused as ever. No tool that
+xless runs is told of the lease (every xless takes the variable out of its own environment, and `xless run`'s script out of
+its own), and each is refused all the same.
 
 Ctrl-C is the terminal's, to the script and xless alike. SIGTERM and SIGHUP sent to xless are passed on to the script. A
 SIGINT sent to xless alone is passed on on Linux; on macOS nothing tells it from the terminal's, so it is not while the

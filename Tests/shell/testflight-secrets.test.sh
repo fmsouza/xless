@@ -179,7 +179,10 @@ grep -q -- "-e XLESS_DIST_KEY " "$t/dlog" && fail "a secret value reached a cont
 
 # natively nothing is written: xless reads the store itself; the script checks it holds them first (no passphrase),
 # and the build step (2) cannot open it
-native=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 XDG_RUNTIME_DIR="$t/run" XLOG="$t/xlog")
+# a program the script itself runs (dirname, mktemp): it logs whether it is told of the session
+mkdir -p "$t/own"
+for c in dirname mktemp; do printf '#!/bin/sh\necho "%s${XLESS_SESSION+ HELD}" >> "%s/own.log"\nexec /usr/bin/%s "$@"\n' "$c" "$t" "$c" > "$t/own/$c"; chmod +x "$t/own/$c"; done
+native=(env -i HOME="$t/home" PATH="$t/bin:$t/own:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 XDG_RUNTIME_DIR="$t/run" XLOG="$t/xlog")
 reset
 "${native[@]}" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native overlay from the store: $(cat "$t/err")"
 check="secrets materialize --check --team ABCDE12345 next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY | NOSTORE=unset"
@@ -192,6 +195,7 @@ grep -q -- "--from sign --to upload | NOSTORE=unset HELD$" "$t/xlog" || fail "na
 [[ "$(sed -n 2p "$t/xlog")" == "session --if-possible --purpose xless run --reason reading ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID, XLESS_DIST_KEY -- bash $S --config $t/ov/app.yml | NOSTORE=unset" ]] \
   || fail "native session: $(cat "$t/xlog")"
 [[ $(grep -c "^session" "$t/xlog") -eq 1 ]] || fail "one session: $(cat "$t/xlog")"
+grep -q "^mktemp" "$t/own.log" && ! grep -q HELD "$t/own.log" || fail "the script's own programs are told of the session: $(cat "$t/own.log")"
 grep -q "next-build.* HELD$" "$t/xlog" || fail "step 1 is not in the session: $(cat "$t/xlog")"
 reset
 "${native[@]}" "$S" "$t/proj" --verbose >/dev/null 2>"$t/err" || fail "native project from the store: $(cat "$t/err")"
