@@ -99,13 +99,15 @@ private struct Raw: Decodable {
     var entitlements: Entitlements?
     var identifiers: Identifiers?
     var xcode: String?
+    /// For `xless run`, which reads it itself (XlessRun): the image the app is built in.
+    var image: String?
     var provisioningUpdates: Bool?
 }
 
 extension ReactNativeOverlay {
     static let keys: Set<String> = ["type", "source", "app", "env", "scheme", "configuration", "bundleIDs", "teamID", "version", "build",
                                     "prepare", "allowMissingCommands", "testflight", "usesNonExemptEncryption", "privacyManifest", "entitlements",
-                                    "identifiers", "xcode", "provisioningUpdates"]
+                                    "identifiers", "xcode", "image", "provisioningUpdates"]
     static let nestedKeys: [String: Set<String>] = ["app": ["dir"], "prepare": ["run"], "entitlements": ["remove"], "identifiers": ["replace"]]
 
     public static func parse(yaml: String, name: String) throws -> ReactNativeOverlay {

@@ -207,7 +207,7 @@ public enum ReactNativeBuilder {
         return h.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }
 
-    /// What builds the app, hashed: the image (`XLESS_IMAGE_ID`, baked in by docker/Dockerfile.rn), the Darwin SDK (its
+    /// What builds the app, hashed: the image (`XLESS_IMAGE_ID`, baked in by the Dockerfiles), the Darwin SDK (its
     /// toolchain metadata: images made from another Xcode share the image ID's commit; Ruling R8), the Swift toolchain that
     /// compiles (Ruling R10), the running xless executable, and the tool versions (`tools`: Node, the JS package manager,
     /// Ruby, Bundler).
@@ -371,7 +371,7 @@ public enum ReactNativeBuilder {
         if aliases > 0 { log("\(aliases) lowercase framework aliases in XCFrameworkIntermediates") }
 
         guard fm.isExecutableFile(atPath: ReactNativeEnvironment.hermesc) else {
-            throw XlessError(.build, "\(ReactNativeEnvironment.hermesc) is missing", fix: "run in the xless-rn image, which builds hermesc from source")
+            throw XlessError(.build, "\(ReactNativeEnvironment.hermesc) is missing", fix: "run in xless's React Native image, which builds hermesc from source (xless run builds that image)")
         }
         let pif = try PIFWriter.write(built, to: xlessDir, packages: packages)
         let request = xlessDir.appendingPathComponent("request.json")

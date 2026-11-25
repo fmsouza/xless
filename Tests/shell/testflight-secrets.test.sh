@@ -57,10 +57,13 @@ X
 # The fake docker: each `run` logs its command and, for each /secrets/store mount, which files it can see, and what the
 # run directory holds at that moment. DSLEEP: a run whose command has that word sleeps (to be stopped). DHANG: asked
 # for the run's containers, it never answers.
+case "$(uname -m)" in arm64|aarch64) A=arm64 ;; *) A=amd64 ;; esac
+fake="$repo/Tests/shell/fake-images.sh"
+{ "$fake" base "$A" 27.0 27A266a; "$fake" kit tauri "$repo" "$A" 27.0 27A266a; } > "$t/images"
 cat > "$t/bin/docker" <<'D'
 #!/usr/bin/env bash
 [[ -z "${DHANG:-}" || "$*" != "ps "*label=xless.run=* ]] || { echo $$ > "$DHANG"; exec sleep 60; }
-case "$1" in context|image|ps|rm) exit 0 ;; esac
+case "$1" in image) exec "$FAKE" "$@" ;; context|ps|rm) exit 0 ;; esac
 [[ "$1" == run ]] || exit 0
 { echo "run $*"
   for a in "$@"; do
@@ -73,7 +76,7 @@ exit 0
 D
 chmod +x "$t/bin/xless" "$t/bin/docker"
 docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
-        XDG_RUNTIME_DIR="$t/run" RUN="$RUN" XLOG="$t/xlog" DLOG="$t/dlog" DPID="$t/dpid" MPID="$t/mpid")
+        XDG_RUNTIME_DIR="$t/run" RUN="$RUN" XLOG="$t/xlog" DLOG="$t/dlog" FAKE="$fake" FAKE_IMAGES="$t/images" DPID="$t/dpid" MPID="$t/mpid")
 reset() { : > "$t/xlog"; : > "$t/xlog.named"; : > "$t/dlog"; rm -rf "$t/run/xless" "$t/dpid" "$t/mpid"; }
 
 # A project directory with nothing set: one materialisation (with the project's team), one container gets the set

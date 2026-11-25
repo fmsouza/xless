@@ -104,9 +104,8 @@ import Testing
         let out = try home.write("out", "\(secrets)\n")
         try leave(pid: 77, more: "secrets_out=\(out)\njob=88 Mon Nov 23 10:00:01 2026\n")
         // 77 is another process by now
-        let host = FakeRunHost(processes: [77: .init(), 88: .init(started: "Mon Nov 23 10:00:01 2026", children: [89]), 89: .init()]) { _, step in
-            step.line.contains("label=xless.work=") ? (0, "c0ffee dead\n") : (0, "")
-        }
+        let host = FakeRunHost(processes: [77: .init(), 88: .init(started: "Mon Nov 23 10:00:01 2026", children: [89]), 89: .init()],
+                               answer: home.answer { $0.line.contains("label=xless.work=") ? (0, "c0ffee dead\n") : nil })
         #expect(try run(host, docker: true) == 0)
         #expect(host.killed == [89, 88] && !home.exists(secrets))
         #expect(host.allSteps.contains { $0.line == "docker rm -f c0ffee dead" })

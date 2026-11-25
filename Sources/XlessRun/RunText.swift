@@ -5,19 +5,26 @@ import Yams
 /// The top-level values of an xless.yml or an overlay that a run needs before any xless step reads it.
 struct RunTop {
     private let values: [String: String]
+    /// The keys with a list or a mapping.
+    private let others: Set<String>
 
     /// `nil` scalars, and everything that is not one, count as absent. Throws what YAML says is wrong with the file.
     init(yaml: String) throws {
-        var values: [String: String] = [:]
+        var values: [String: String] = [:], others: Set<String> = []
         if case .mapping(let mapping)? = try Yams.compose(yaml: yaml) {
             for (key, value) in mapping {
-                guard let name = key.scalar?.string, case .scalar(let scalar) = value, !scalar.string.isEmpty else { continue }
+                guard let name = key.scalar?.string else { continue }
+                guard case .scalar(let scalar) = value else { others.insert(name); continue }
+                guard !scalar.string.isEmpty else { continue }
                 if scalar.style == .plain, ["~", "null", "Null", "NULL"].contains(scalar.string) { continue }
                 values[name] = scalar.string
             }
         }
         self.values = values
+        self.others = others
     }
+
+    func isNotOneValue(_ key: String) -> Bool { others.contains(key) }
 
     subscript(_ key: String) -> String? { values[key] }
 }

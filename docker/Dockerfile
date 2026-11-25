@@ -8,7 +8,7 @@
 # SWIFT_IMAGE: versions.env's swift:<SWIFT_VERSION>-jammy@sha256:… (pinned by digest)
 ARG SWIFT_IMAGE
 # XLESS_FROM=prebuilt takes the xless binary from the build context xlessbin (a directory holding a file named xless;
-# scripts/docker-images.sh base --xless-bin) instead of compiling it: no source checkout needed.
+# scripts/docker-images.sh image --xless-bin) instead of compiling it: no source checkout needed.
 ARG XLESS_FROM=source
 # Runs natively on the build host and cross-compiles with the Static Linux SDK
 # (swift build under Rosetta/QEMU emulation crashes intermittently).

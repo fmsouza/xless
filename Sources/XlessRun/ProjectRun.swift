@@ -65,7 +65,6 @@ public final class ProjectRun {
     var xcodePin: String?
     var xcodeTag: String?
     var pinFile = ""
-    var pinMissing: [String] = []
 
     public init(_ arguments: [String], context: RunContext, host: any RunHost) {
         self.arguments = arguments
@@ -212,12 +211,13 @@ public final class ProjectRun {
     /// A step: to its exit code, and what it printed when that is `captured` or `both`. A dry run prints it instead.
     @discardableResult
     func step(_ words: [String], _ sees: Sees, told: Bool = false, directory: String? = nil, output: RunStep.Output = .shown, shown: [String]? = nil,
-              adding: [String: String] = [:]) -> (code: Int32, output: String) {
+              adding: [String: String] = [:], without: [String] = []) -> (code: Int32, output: String) {
         if dryRun {
             host.show(RunText.commandLine(shown ?? words))
             return (0, "")
         }
-        let step = RunStep(words, environment: environment(sees, told: told).merging(adding) { $1 }, directory: directory, output: output)
+        let environment = environment(sees, told: told).merging(adding) { $1 }.filter { !without.contains($0.key) }
+        let step = RunStep(words, environment: environment, directory: directory, output: output)
         let started: StartedStep
         do { started = try cleanup.start(step) } catch {
             host.say("testflight: cannot run \(words[0]): \(error)")
@@ -253,7 +253,7 @@ public final class ProjectRun {
         if name == nil, RunText.lines(ask(["docker", "context", "ls", "--format", "{{.Name}}"], quiet: true).output).contains("colima-xless") { name = "colima-xless" }
         architecture = host.architecture
         if let name { dockerCLI += ["--context", name] }
-        // --pull=never: a missing local image is need(images:)'s message, not a Docker Hub "pull access denied".
+        // --pull=never: an image is one of this machine (chooseImages says which is missing), never a registry's.
         // --init: an init process forwards the stop signal docker run proxies to xless (which, as PID 1, would ignore it).
         // The label lets the clean-up find this run's containers.
         let label = "xless.run=\(host.processID).\(Int(host.now.timeIntervalSince1970))"
@@ -264,38 +264,6 @@ public final class ProjectRun {
         }
     }
 
-    func imageExists(_ image: String) -> Bool { ask(dockerCLI + ["image", "inspect", image], quiet: true).code == 0 }
-
-    /// The image `name`, for the pinned Xcode: NAME-xcode<pin>, made by `xless setup --docker --xcode <Xcode.xip>`. The plain
-    /// images are versions.env's Xcode's, so they serve that pin when no such image exists.
-    func pinned(_ name: String) -> String {
-        guard let tag = xcodeTag else { return name }
-        let wanted = "\(name)-xcode\(tag)"
-        if imageExists(wanted) { return wanted }
-        let versions = (try? String(contentsOfFile: "\(context.share)/versions.env", encoding: .utf8)) ?? ""
-        let shipped = RunText.lines(versions).lazy.compactMap { RunText.value(of: "XCODE_VERSION=", in: $0) }.first
-        if let shipped, RunText.xcodeTag(shipped) == tag, imageExists(name) { return name }
-        pinMissing.append(wanted)
-        return name
-    }
-
-    /// Refuses missing images with the command that builds them.
-    func checkPin(_ what: String) throws {
-        guard let pin = xcodePin, let tag = xcodeTag else { return }
-        guard pinMissing.isEmpty else {
-            throw RunStop.usage("\(pinFile) pins xcode: \"\(pin)\", but these images are missing: \(pinMissing.joined(separator: " ")); build them from Xcode \(tag): xless setup --docker --xcode <path to Xcode \(tag)'s .app or .xip> --arch \(architecture)")
-        }
-        host.say("==> xcode: \"\(pin)\" (pinned): \(what)")
-    }
-
-    /// A run that is not a dry one needs the images built here (docker run never pulls them).
-    func need(images: [String]) throws {
-        guard !dryRun else { return }
-        for image in images where !imageExists(image) {
-            throw RunStop.usage("the image \(image) is not built on this machine (xless images are never pulled from a registry); build it with: xless setup --docker --xcode <Xcode.xip> --arch \(architecture)")
-        }
-    }
-
     /// Where the overlay, or the project, is on this machine, for a container that uploads: the command it prints after that
     /// names it.
     func origin(_ path: String) -> [String] { ["-e", "XLESS_PROJECT_ORIGIN=\(path)"] }
@@ -303,40 +271,58 @@ public final class ProjectRun {
     // MARK: - A project directory
 
     /// One `xless ship`. Secrets are mounted, and xless scrubs them from the environment of the tools it runs, but the files stay
-    /// readable to package code (SwiftPM plugins and macros) built in the same container.
+    /// readable to package code (SwiftPM plugins and macros) built in the same container. In containers, with an image of the
+    /// project's own (`image:`, XLESS_IMAGE), it is two: the build in that one without a secret, the rest in xless's own.
     private func run(project: String, top: RunTop) throws -> Int32 {
         let span = try RunSpan.project(request)
         let signs = span.to >= .sign
         try chooseDocker()
         try findSecrets(RunSecrets.Needs(next: false, signs: signs, uploads: span.to >= .upload), top: top)
         if setting("XLESS_BUILD_NUMBER") == nil { environment["XLESS_BUILD_NUMBER"] = "\(Int(host.now.timeIntervalSince1970) / 60)" }
+        var images = RunImages(build: "", secrets: ""), split = span
         if docker {
             try prepareDocker()
             try mountFiles(platform: .ios)
+            split = try RunSpan.overlay(request)
+            images = try chooseImages(top, builds: split.from <= .finalize, other: signs)
+            if images.areTwo { try refuseSecretsInBuild(project) }
         } else { try unlockStore() }
 
         try holdWorkCopy(host.realPath(project) ?? project) // the project is its own work copy
         host.say("==> TestFlight: build number " + (span.buildNumberGiven ? "from --build-number" : environment["XLESS_BUILD_NUMBER"] ?? ""))
-        let ship = ["ship", "--platform", "ios"] + span.extra
-        let code: Int32
+        var code: Int32 = 0
         if docker {
-            let image = setting("XLESS_IMAGE") ?? pinned("xless:local-\(architecture)")
-            try checkPin(image)
-            try need(images: [image])
+            if images.areTwo { buildMounts = [try files.real(project)] }
             try materialize()
-            let words = dockerRun + ["--mount", RunText.bind(project, "/work"), "-w", "/work"] + secrets.api + secrets.sign + storeMounts("sign")
-                + origin(project) + ["-e", "XLESS_BUILD_NUMBER", image, "xless"] + ship
-            code = step(words, signs ? .identifiers : .nothing).code
+            let run = dockerRun + ["--mount", RunText.bind(project, "/work"), "-w", "/work"], number = ["-e", "XLESS_BUILD_NUMBER"], ship = ["xless", "ship", "--platform", "ios"]
+            let given = secrets.api + secrets.sign + storeMounts("sign") + origin(project)
+            if images.areTwo {
+                func stages(_ from: RunStage, _ to: RunStage) -> [String] { ["--from", from.name, "--to", to.name] + split.extra }
+                if split.from <= .finalize {
+                    code = step(run + number + [images.build] + ship + stages(split.from, min(split.to, .finalize)), .nothing).code
+                }
+                if code == 0, signs { code = step(run + given + number + [images.secrets] + ship + stages(max(split.from, .sign), split.to), .identifiers).code }
+            } else {
+                code = step(run + given + number + [images.secrets] + ship + span.extra, signs ? .identifiers : .nothing).code
+            }
         } else if signs {
-            code = step([xself] + ship, .everything, told: true, directory: project).code
+            code = step([xself, "ship", "--platform", "ios"] + span.extra, .everything, told: true, directory: project).code
         } else {
-            code = step([xself] + ship, .nothing, directory: project, adding: ["XLESS_NO_SECRET_STORE": "1"]).code
+            code = step([xself, "ship", "--platform", "ios"] + span.extra, .nothing, directory: project, adding: ["XLESS_NO_SECRET_STORE": "1"]).code
         }
         if code == 0, !signs {
             host.say("==> TestFlight: stopped after \(span.to.name) (--to), nothing delivered")
             return 0
         }
         return finished(code)
+    }
+
+    /// The container that builds it without the secrets mounts the whole project.
+    private func refuseSecretsInBuild(_ project: String) throws {
+        let directory = try files.real(project)
+        for (name, path) in secretFiles() where try files.file(path, isIn: directory) {
+            throw RunStop.usage("\(name) (\(path)) is inside the project \(project), which is mounted into the build container; keep secrets out of it")
+        }
     }
 }
 

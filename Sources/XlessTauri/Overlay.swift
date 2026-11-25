@@ -121,6 +121,8 @@ private struct Raw: Decodable {
     var usesNonExemptEncryption: Bool?
     var testflight: TestFlightConfig?
     var xcode: String?
+    /// For `xless run`, which reads it itself (XlessRun): the image the app is built in.
+    var image: String?
     var provisioningUpdates: Bool?
 }
 

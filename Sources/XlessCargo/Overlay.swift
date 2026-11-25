@@ -138,6 +138,8 @@ private struct Raw: Decodable {
     var privacyManifest: String?
     var testflight: TestFlightConfig?
     var xcode: String?
+    /// For `xless run`, which reads it itself (XlessRun): the image the app is built in.
+    var image: String?
     var provisioningUpdates: Bool?
     var rust: Rust?
     var env: [String: String]?
@@ -149,7 +151,7 @@ private struct Raw: Decodable {
 
 extension CargoOverlay {
     static let keys: Set<String> = ["type", "source", "bundleID", "teamID", "version", "build", "usesNonExemptEncryption", "privacyManifest",
-                                    "testflight", "xcode", "provisioningUpdates", "rust", "env", "inputs", "plistVars", "ios", "macos"]
+                                    "testflight", "xcode", "image", "provisioningUpdates", "rust", "env", "inputs", "plistVars", "ios", "macos"]
     static let platformKeys: Set<String> = ["package", "bin", "features", "product", "minimumOS", "bundleID", "infoPlist", "assets", "icon",
                                             "entitlements", "resources", "architectures", "extensions"]
     static let extensionKeys: Set<String> = ["path", "bundleID", "entitlements"]
