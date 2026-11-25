@@ -187,8 +187,19 @@ struct SecretsInitCommand: ParsableCommand {
             // An unlock of a store that was here before opens nothing any more.
             do { try SecretStoreCLI.cache.forget(place: location.file.path) } catch { SecretStoreCLI.say("warning: \(error)") }
             print("created the secret store at \(location.file.path)")
-            if let hold = remember ?? KeepOffer.shared.offer(terminal) {
+            func keep(_ hold: SecretHold) throws {
                 try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: hold, typedAgo: 0)
+            }
+            if let remember {
+                try keep(remember)
+            } else if let hold = KeepOffer.shared.offer(terminal) {
+                do {
+                    try keep(hold)
+                    KeepOffer.shared.kept(true, terminal)
+                } catch {
+                    KeepOffer.shared.kept(false, terminal)
+                    terminal.say("note: the store is not kept unlocked: \(error)")
+                }
             }
         }
     }

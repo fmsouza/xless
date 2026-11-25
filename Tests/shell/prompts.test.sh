@@ -77,6 +77,7 @@ class Terminal:
     def answer(self, text):
         """`text` at the next prompt; what was shown until then."""
         shown = self.until(PROMPT)
+        if callable(text): text = text()
         if not re.search(rb"\[y/N\] $|email\): $", shown.encode()):
             for _ in range(100): # the prompt is written before the echo is turned off: wait for that
                 if not termios.tcgetattr(self.fd)[3] & termios.ECHO: break
@@ -191,6 +192,20 @@ for ahead in ("y\n", "y"):
 write(t + "/ahead", VALUE)
 rc, shown = a.run_ahead("XDG_CONFIG_HOME=$T/never $X secrets import AHEAD --file $T/ahead", "y\n", "")
 check(rc == 0 and "Delete" in shown and os.path.exists(t + "/ahead"), "nor a question whose yes deletes something", shown)
+def yes_to_what_cannot_be():
+    """A yes, when the agents' directory has become one that others can use: nothing can be held any more."""
+    os.makedirs(t + "/run/xless-agent", exist_ok=True)
+    os.chmod(t + "/run/xless-agent", 0o755)
+    return "y"
+for command, answers in ((EXPORT, (PASS,)), ("XDG_DATA_HOME=$T/init.$RANDOM $X secrets init", (PASS, PASS))):
+    rc, shown, n = a.run(command, *answers, yes_to_what_cannot_be)
+    check(rc == 0 and "note: the store is not kept unlocked" in shown and "Kept." not in shown, "nothing is said to be kept that is not, and the command goes on", (rc, shown))
+    rc, shown, n = a.run(EXPORT, PASS)
+    check(rc == 0 and len(asked(shown)) == 1, "where nothing can be held nothing is offered", shown)
+    os.chmod(t + "/run/xless-agent", 0o700)
+write(t + "/always/xless/config.yml", "unlock: { keep: always }\n")
+rc, shown, n = a.run("XDG_CONFIG_HOME=$T/always XDG_RUNTIME_DIR=$T/nowhere " + EXPORT, PASS)
+check(rc == 0 and "Kept" not in shown, "also with keep: always", shown)
 rc, shown, n = a.run("CI=1 " + EXPORT, PASS)
 check(rc == 0 and len(asked(shown)) == 1 and not agents(), "in CI it is not offered", shown)
 rc, shown, n = a.run("XLESS_NO_INPUT=1 " + EXPORT)

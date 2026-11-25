@@ -36,14 +36,24 @@ private func offer(_ agents: FakeAgents, _ keep: KeepAnswer = .ask, isOff: Bool 
               settings: UnlockSettings(keep: keep), isOff: isOff, command: "xless certs create")
 }
 
+extension KeepOffer {
+    /// What is agreed to is held, as the unlock or the sign-in does after the question.
+    fileprivate func keep(store terminal: ScriptedTerminal) -> SecretHold? { made(offer(terminal), terminal) }
+    fileprivate func keep(session terminal: ScriptedTerminal) -> SecretHold? { made(session(terminal), terminal) }
+    private func made(_ hold: SecretHold?, _ terminal: ScriptedTerminal) -> SecretHold? {
+        if hold != nil { kept(true, terminal) }
+        return hold
+    }
+}
+
 private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 * 86400)
 
 @Suite struct KeepOfferTests {
     @Test func oneQuestionCoversTheStoreAndTheSignIn() {
         let agents = FakeAgents(), terminal = ScriptedTerminal(["y"])
         let o = offer(agents)
-        #expect(o.offer(terminal) == standard)
-        #expect(o.session(terminal) == standard)
+        #expect(o.keep(store: terminal) == standard)
+        #expect(o.keep(session: terminal) == standard)
         #expect(terminal.questions.count == 1)
         #expect(terminal.questions.first?.hasSuffix("[y/N] ") == true)
         let said = terminal.said.joined(separator: "\n")
@@ -54,70 +64,109 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
     func anythingButYesKeepsNothingAndIsNotAskedTwice(answer: String) {
         let agents = FakeAgents(), terminal = ScriptedTerminal([answer])
         let o = offer(agents)
-        #expect(o.session(terminal) == nil)
-        #expect(o.offer(terminal) == nil)
+        #expect(o.keep(session: terminal) == nil)
+        #expect(o.keep(store: terminal) == nil)
         #expect(terminal.questions.count == 1)
         #expect(agents.names.isEmpty)
         #expect(terminal.said.contains { $0.contains("keep: never") })
     }
 
     @Test func aTerminalThatClosesKeepsNothing() {
-        #expect(offer(FakeAgents()).offer(ScriptedTerminal([])) == nil)
+        #expect(offer(FakeAgents()).keep(store: ScriptedTerminal([])) == nil)
     }
 
     @Test func theNextCommandOfTheTerminalIsNotAskedAgainAndSaysThatItKeeps() {
         let agents = FakeAgents()
-        _ = offer(agents).session(ScriptedTerminal(["yes"]))
+        _ = offer(agents).keep(session: ScriptedTerminal(["yes"]))
         #expect(agents.names == ["xless-keep"])
         let terminal = ScriptedTerminal()
-        #expect(offer(agents).offer(terminal) == standard)
+        #expect(offer(agents).keep(store: terminal) == standard)
         #expect(terminal.questions.isEmpty)
         #expect(terminal.said.contains { $0.contains("stays unlocked") && $0.contains("xless lock") })
     }
 
     @Test func aYesLastsNoLongerThanWhatItWasGivenFor() {
         let agents = FakeAgents()
-        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        _ = offer(agents).keep(session: ScriptedTerminal(["y"]))
         agents.age(by: 7 * 3600)
-        #expect(offer(agents).offer(ScriptedTerminal()) == SecretHold(seconds: 3600, idle: 3600, maximum: 7 * 86400))
+        #expect(offer(agents).keep(store: ScriptedTerminal()) == SecretHold(seconds: 3600, idle: 3600, maximum: 7 * 86400))
         agents.age(by: 3600 - 30) // too little left to be worth holding: asked again
-        #expect(offer(agents).offer(ScriptedTerminal(["n"])) == nil)
+        #expect(offer(agents).keep(store: ScriptedTerminal(["n"])) == nil)
+    }
+
+    @Test func nothingIsSaidToBeKeptBeforeItIs() {
+        for keep in [KeepAnswer.ask, .always] {
+            let agents = FakeAgents(), terminal = ScriptedTerminal(["y"]), o = offer(agents, keep)
+            #expect(o.offer(terminal) == standard)
+            #expect(!terminal.said.contains { $0.contains("Kept") } && agents.names.isEmpty)
+            o.kept(true, terminal)
+            #expect(terminal.said.filter { $0.contains("Kept") }.count == 1 && agents.names == ["xless-keep"])
+            // The sign-in that follows in the same command.
+            #expect(o.session(terminal) == standard)
+            #expect(!terminal.said.contains { $0.contains("as you agreed") })
+            o.kept(true, terminal)
+            #expect(terminal.said.last?.contains("Apple ID session is kept") == true)
+        }
+    }
+
+    @Test func whatCouldNotBeHeldIsNotSaidToBeNorAskedForAgain() {
+        for keep in [KeepAnswer.ask, .always] {
+            let agents = FakeAgents(), terminal = ScriptedTerminal(["y"]), o = offer(agents, keep)
+            #expect(o.offer(terminal) == standard)
+            o.kept(false, terminal)
+            #expect(!terminal.said.contains { $0.contains("Kept") } && agents.names.isEmpty)
+            #expect(o.session(terminal) == nil && terminal.questions.count <= 1)
+        }
+    }
+
+    @Test func aYesForLaterIsSaidToBeKeptOnlyWhenItIs() {
+        let agents = FakeAgents(), terminal = ScriptedTerminal(["y"])
+        agents.failure = AgentError(.failed, "the agent did not start", fix: "try again")
+        offer(agents).also(.session, terminal)
+        #expect(terminal.questions.count == 1 && !terminal.said.contains { $0.contains("Kept") })
+        #expect(terminal.said.contains { $0.contains("not kept") && $0.contains("the agent did not start") }, "\(terminal.said)")
+        // The keyring holds no yes: not asked.
+        agents.failure = nil
+        agents.obstacle = AgentError(.unavailable, "no session here", fix: "-")
+        let none = ScriptedTerminal()
+        offer(agents, keyring: FakeKeyring()).also(.session, none)
+        #expect(none.questions.isEmpty && none.said.isEmpty)
     }
 
     @Test func aYesIsOfTheTerminalItWasGivenIn() {
         let agents = FakeAgents()
-        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        _ = offer(agents).keep(session: ScriptedTerminal(["y"]))
         agents.needsWitness = true // they are another terminal's, which a command that has the store's key could use
         let no = ScriptedTerminal(["n"])
-        #expect(offer(agents).session(no) == nil)
+        #expect(offer(agents).keep(session: no) == nil)
         #expect(no.questions.count == 1)
         #expect(offer(agents).agreedUntil() == nil)
     }
 
     @Test func aYesOfThisTerminalLastsNoLongerForALongerOneOfAnother() {
         let agents = FakeAgents()
-        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        _ = offer(agents).keep(session: ScriptedTerminal(["y"]))
         agents.age(by: 7 * 3600)
         let item = AgentItemStatus(name: "xless-keep", label: "", remaining: 8 * 3600, idle: 1, idleRemaining: 1)
         agents.elsewhere = [AgentStatus(isGranted: true, count: 1, remaining: 8 * 3600, sessions: 2, items: [item], isSameSession: false)]
-        #expect(offer(agents).session(ScriptedTerminal())?.seconds == 3600)
+        #expect(offer(agents).keep(session: ScriptedTerminal())?.seconds == 3600)
     }
 
     @Test func theConfigurationAnswersIt() {
         let agents = FakeAgents(), terminal = ScriptedTerminal()
-        #expect(offer(agents, .always).offer(terminal) == standard)
+        #expect(offer(agents, .always).keep(store: terminal) == standard)
         #expect(terminal.said.contains { $0.contains("8 h") && $0.contains("keep: always") }) // never silently
-        #expect(offer(FakeAgents(), .never).offer(terminal) == nil)
+        #expect(offer(FakeAgents(), .never).keep(store: terminal) == nil)
         #expect(terminal.questions.isEmpty)
         // `never` is also the answer to an earlier yes.
-        #expect(offer(agents, .never).offer(terminal) == nil)
+        #expect(offer(agents, .never).keep(store: terminal) == nil)
     }
 
     @Test func whereNothingMayBeAskedNothingIsKept() {
         for keep in [KeepAnswer.ask, .always] {
             let agents = FakeAgents(), terminal = ScriptedTerminal()
-            #expect(offer(agents, keep, isOff: true).offer(terminal) == nil)
-            #expect(offer(agents, keep, isOff: true).session(terminal) == nil)
+            #expect(offer(agents, keep, isOff: true).keep(store: terminal) == nil)
+            #expect(offer(agents, keep, isOff: true).keep(session: terminal) == nil)
             #expect(terminal.questions.isEmpty && terminal.said.isEmpty && agents.names.isEmpty)
         }
     }
@@ -125,11 +174,11 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
     @Test func whereNothingCanBeHeldNothingIsOffered() {
         let agents = FakeAgents(), terminal = ScriptedTerminal()
         agents.obstacle = AgentError(.unavailable, "no leader", fix: "-")
-        #expect(offer(agents).offer(terminal) == nil)
+        #expect(offer(agents).keep(store: terminal) == nil)
         #expect(terminal.questions.isEmpty)
         // The keyring holds for an hour, without an idle time: that is what the question says.
         let asked = ScriptedTerminal(["y"])
-        #expect(offer(agents, keyring: FakeKeyring()).offer(asked)?.seconds == 8 * 3600)
+        #expect(offer(agents, keyring: FakeKeyring()).keep(store: asked)?.seconds == 8 * 3600)
         #expect(asked.said.contains { $0.contains("1 h") && !$0.contains("without use") })
     }
 
@@ -146,7 +195,7 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
         let agents = FakeAgents(), terminal = ScriptedTerminal(["y"])
         offer(agents).also(.session, terminal)
         #expect(terminal.questions.count == 1 && terminal.questions[0].contains("Apple ID"))
-        #expect(offer(agents).session(ScriptedTerminal()) == standard)
+        #expect(offer(agents).keep(session: ScriptedTerminal()) == standard)
         // Already answered for this terminal.
         offer(agents).also(.store, ScriptedTerminal())
         let other = ScriptedTerminal(["n"])
@@ -157,7 +206,7 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
     @Test func theStatusShowsAYes() throws {
         let agents = FakeAgents(), now = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(offer(agents).agreedUntil(now: now) == nil)
-        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        _ = offer(agents).keep(session: ScriptedTerminal(["y"]))
         let until = try #require(offer(agents).agreedUntil(now: now))
         #expect(until == now.addingTimeInterval(8 * 3600))
         let r = AuthStatusReport.build(env: [:], storeKey: .success(nil), teamFlag: nil, savedTeam: nil, canKeep: true, session: nil, agreedUntil: until, now: now)
@@ -188,7 +237,7 @@ private let standard = SecretHold(seconds: 8 * 3600, idle: 2 * 3600, maximum: 7 
 
     @Test func aYesCanBeWithdrawn() {
         let agents = FakeAgents()
-        _ = offer(agents).session(ScriptedTerminal(["y"]))
+        _ = offer(agents).keep(session: ScriptedTerminal(["y"]))
         offer(agents).withdraw()
         #expect(agents.names.isEmpty)
     }

@@ -263,11 +263,14 @@ private final class Manner: UnlockManner, @unchecked Sendable {
     private(set) var reasons: [String] = []
     private(set) var remembered: [SecretHold?] = []
     private(set) var offered = 0
+    /// Whether what it offered was kept.
+    private(set) var kept: [Bool] = []
 
     init(hold: SecretHold?) { self.hold = hold }
 
     func announcement(reason: String, remember: SecretHold?) -> String? { reasons.append(reason); remembered.append(remember); return "opens it: \(reason)" }
     func offer(_ prompter: any PassphrasePrompter) -> SecretHold? { offered += 1; return hold }
+    func kept(_ held: Bool, _ prompter: any PassphrasePrompter) { kept.append(held) }
 }
 
 @Test func thePassphrasesQuestionSaysWhyAndATypedOneIsOfferedToBeKept() throws {
@@ -281,6 +284,7 @@ private final class Manner: UnlockManner, @unchecked Sendable {
     #expect(manner.reasons == ["exporting NOTE"]) // once, not per attempt
     #expect(prompter.said.first == "opens it: exporting NOTE")
     #expect(manner.offered == 1)
+    #expect(manner.kept == [true]) // told once it is
     #expect(cache.stored.map(\.1) == [900])
     #expect(cache.typed == [0])
     // Held now: another command's store says and offers nothing.
@@ -295,7 +299,7 @@ private final class Manner: UnlockManner, @unchecked Sendable {
     let (file, _) = try t.make()
     let cache = MemoryCache(), no = Manner(hold: nil)
     _ = try VaultSecretStore(store: t.store, cache: cache, manner: no, prompter: { ScriptedPrompter(["correct horse battery"]) }).key(for: file, remember: nil, reason: "test")
-    #expect(no.offered == 1 && cache.stored.isEmpty)
+    #expect(no.offered == 1 && cache.stored.isEmpty && no.kept.isEmpty)
     // --remember: it is kept already.
     let hold = SecretHold(seconds: 1800, idle: 600, maximum: 7200)
     _ = try VaultSecretStore(store: t.store, cache: cache, manner: no, prompter: { ScriptedPrompter(["correct horse battery"]) }).key(for: file, remember: hold, reason: "test")
@@ -321,8 +325,9 @@ private final class Manner: UnlockManner, @unchecked Sendable {
     let t = try TempStore()
     defer { t.cleanup() }
     let (file, _) = try t.make()
-    let prompter = ScriptedPrompter(["correct horse battery"])
-    let store = VaultSecretStore(store: t.store, cache: Full(), manner: Manner(hold: SecretHold(seconds: 900, idle: 600, maximum: 7200)), prompter: { prompter })
+    let prompter = ScriptedPrompter(["correct horse battery"]), manner = Manner(hold: SecretHold(seconds: 900, idle: 600, maximum: 7200))
+    let store = VaultSecretStore(store: t.store, cache: Full(), manner: manner, prompter: { prompter })
     _ = try store.key(for: file, remember: nil, reason: "test")
+    #expect(manner.kept == [false])
     #expect(prompter.said.contains { $0.contains("no room") })
 }

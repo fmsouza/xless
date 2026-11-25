@@ -476,11 +476,14 @@ final class AppleWebSessionTests: XCTestCase {
         let cache = AppleSessionCache(store: store)
         let prompter = ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password)
         let offered = Box(0)
-        let session = try await AppleWebSession.open(web: AppleWebClient(transport: signingIn(), stage: .account), cache: cache, prompter: { prompter }) {
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: signingIn(), stage: .account), cache: cache, prompter: { prompter }, keep: {
             offered.value += 1
             return hold(900)
-        }
-        XCTAssertEqual(offered.value, 1)
+        }, kept: { held in
+            XCTAssertTrue(held && store.names.count == 2) // told once it is
+            offered.value += 10
+        })
+        XCTAssertEqual(offered.value, 11)
         XCTAssertNotNil(session.kept)
         XCTAssertEqual(store.timeouts["xless-apple-session"], 900)
         let later = MockTransport { r in r.url?.path == "/olympus/v1/session" ? .json(200, [:]) : .json(200, PortalWebClientTests.teams) }
@@ -502,10 +505,11 @@ final class AppleWebSessionTests: XCTestCase {
     func testASignInThatCannotBeKeptIsSaidAndTheCommandGoesOn() async throws {
         let store = MemoryKeyStore(clock: TestClock(Date()))
         store.available = false
-        let prompter = ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password)
+        let prompter = ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password), held = Box([Bool]())
         let session = try await AppleWebSession.open(web: AppleWebClient(transport: signingIn(), stage: .account), cache: AppleSessionCache(store: store),
-                                                     prompter: { prompter }, keep: { hold(900) })
+                                                     prompter: { prompter }, keep: { hold(900) }, kept: { held.value.append($0) })
         XCTAssertNil(session.kept)
+        XCTAssertEqual(held.value, [false])
         XCTAssertTrue(prompter.said.contains { $0.contains("cannot be kept here") }, "\(prompter.said)")
     }
 

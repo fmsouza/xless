@@ -26,6 +26,8 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// What this process was answered; nil: nothing yet.
     private var answer: Answer?
     private var script: String?
+    /// What is about to be held: what is said once it is, and the yes to remember (nil: remembered already).
+    private var pending: (said: String, agreed: SecretHold?)?
 
     private enum Answer { case no, yes(SecretHold) }
 
@@ -96,29 +98,47 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// Signed in, on `prompter`: how long to keep the session, when the person agrees.
     func session(_ prompter: any PassphrasePrompter) -> SecretHold? { hold(.session, prompter) }
 
+    /// What was agreed to is held now (it is said), or could not be: then this command keeps nothing, and asks no more.
+    func kept(_ held: Bool, _ prompter: any PassphrasePrompter) {
+        lock.withLock {
+            guard let made = pending else { return }
+            pending = nil
+            guard held else {
+                if made.agreed != nil { answer = .no }
+                return
+            }
+            if let agreed = made.agreed {
+                answer = .yes(agreed)
+                // Only for the next commands: where no agent can run, the yes is for this one.
+                try? remember(agreed)
+            }
+            prompter.say(made.said)
+        }
+    }
+
     private func hold(_ kind: Kind, _ prompter: any PassphrasePrompter) -> SecretHold? {
         guard canOffer, let settings, let standard = try? settings.hold(nil, option: "", stage: .config) else { return nil }
         return lock.withLock {
             switch answer {
             case .no: return nil
             case .yes(let hold):
-                prompter.say(Self.kept(kind, text(hold)))
+                pending = (Self.kept(kind, text(hold)), nil)
                 return hold
             case nil: break
             }
             if let left = consented() {
                 let hold = Self.within(left, standard)
-                prompter.say(Self.kept(kind, text(hold)))
+                pending = (Self.kept(kind, text(hold)), nil)
                 answer = .yes(hold)
                 return hold
             }
             if settings.keep == .always {
-                prompter.say("Kept for the commands of this terminal, \(text(standard)), as `unlock: { keep: always }` in config.yml says: the secret store's unlock and the Apple ID session. `xless lock` ends it.")
+                pending = ("Kept for the commands of this terminal, \(text(standard)), as `unlock: { keep: always }` in config.yml says: the secret store's unlock and the Apple ID session. `xless lock` ends it.", standard)
             } else {
                 prompter.say("The next commands of this terminal need not ask again: the secret store can stay unlocked, and the Apple ID session of a sign-in be kept, \(text(standard)). `xless lock` ends it.")
                 guard yes("Keep both for this terminal? [y/N] ", prompter) else { return nil }
+                pending = (Self.done, standard)
             }
-            agree(standard)
             return standard
         }
     }
@@ -126,14 +146,22 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
     /// What `xless unlock` and `xless auth login --keep` ask once they have kept theirs: whether the other is kept too, when
     /// a command asks for it.
     func also(_ kind: Kind, _ prompter: any PassphrasePrompter) {
-        guard canOffer, let settings, let standard = try? settings.hold(nil, option: "", stage: .config) else { return }
+        // The yes is held by an agent.
+        guard canOffer, agents.obstacle == nil, let settings, let standard = try? settings.hold(nil, option: "", stage: .config) else { return }
         lock.withLock {
             guard answer == nil, consented() == nil else { return }
             if settings.keep == .ask {
                 let what = kind == .session ? "Keep the Apple ID session too, once a command signs in" : "Keep the secret store unlocked too, once a command asks its passphrase"
                 guard yes("\(what) (\(text(standard)))? [y/N] ", prompter) else { return }
             }
-            agree(standard)
+            do {
+                try remember(standard)
+                answer = .yes(standard)
+                if settings.keep == .ask { prompter.say(Self.done) }
+            } catch {
+                answer = .no
+                prompter.say("note: that is not kept: \(error)")
+            }
         }
     }
 
@@ -154,15 +182,15 @@ final class KeepOffer: UnlockManner, @unchecked Sendable {
             prompter.say("Nothing is kept. (`unlock: { keep: never }` in config.yml: never asked.)")
             return false
         }
-        prompter.say("Kept. (`unlock: { keep: always }` in config.yml: always, without the question.)")
         return true
     }
 
-    private func agree(_ hold: SecretHold) {
-        answer = .yes(hold)
-        // It is only for the next commands: where no agent can run, the yes is for this one.
+    private static let done = "Kept. (`unlock: { keep: always }` in config.yml: always, without the question.)"
+
+    /// Has the next commands of this terminal know of the yes.
+    private func remember(_ hold: SecretHold) throws {
         let mark = AgentSeed(name: Self.consent, label: "", secret: SecretBytes(copying: [1]), hold: SecretHold(seconds: hold.seconds, idle: hold.seconds, maximum: hold.maximum))
-        try? agents.put([mark]) { nil }
+        try agents.put([mark]) { nil }
     }
 
     /// The seconds left of a yes given in this terminal: one that another terminal's agent holds is no answer here, also

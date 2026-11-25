@@ -24,7 +24,7 @@ public final class AppleWebSession: Sendable {
     /// The kept session when there is one (`cache`), else a sign-in through `prompter` (asked for only then).
     /// - Parameter keep: asked after a sign-in: how long to keep the session (nil: for this command).
     public static func open(web: AppleWebClient, cache: AppleSessionCache?, prompter: () throws -> any SignInPrompter,
-                            keep: () -> SecretHold? = { nil }) async throws -> AppleWebSession {
+                            keep: () -> SecretHold? = { nil }, kept: (Bool) -> Void = { _ in }) async throws -> AppleWebSession {
         let terminal: any SignInPrompter
         let session: AppleWebSession
         if let cache, let kept = try await cache.restore(into: web) {
@@ -38,8 +38,11 @@ public final class AppleWebSession: Sendable {
         }
         guard session.kept == nil, let cache, let hold = keep() else { return session }
         do {
-            return AppleWebSession(web: web, appleID: session.appleID, kept: try await cache.keep(web, appleID: session.appleID, hold: hold))
+            let info = try await cache.keep(web, appleID: session.appleID, hold: hold)
+            kept(true)
+            return AppleWebSession(web: web, appleID: session.appleID, kept: info)
         } catch {
+            kept(false)
             terminal.say("note: \(error)")
             return session
         }

@@ -73,7 +73,7 @@ enum AppleWebCLI {
         }, keep: {
             guard offering, let signedInOn else { return nil }
             return offer.session(signedInOn)
-        })
+        }, kept: { held in signedInOn.map { offer.kept(held, $0) } })
         if signedInOn != nil { say("Signed in to Apple as \(session.appleID).") }
         return (session, signedInOn)
     }
