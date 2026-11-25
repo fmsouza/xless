@@ -48,13 +48,13 @@ function Get-Files([string]$version) {
     return $files
 }
 # Runs the installer in a PowerShell of its own, as `irm | iex` does; what it said, its exit code after it.
-function Invoke-Install([hashtable]$variables) {
+function Invoke-Install([hashtable]$variables, [string]$script = $installer) {
     $all = @{ XLESS_RELEASE_BASE = ([Uri](Join-Path $dir 'release')).AbsoluteUri; XLESS_VERSION = ''; XLESS_UNINSTALL = ''; XLESS_ALLOW_ELEVATED = '1' }
     foreach ($name in $variables.Keys) { $all[$name] = $variables[$name] }
     foreach ($name in $all.Keys) { [Environment]::SetEnvironmentVariable($name, $all[$name]) }
     $before = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'   # a word on standard error is no exception
-    $said = & $shell -NoProfile -NonInteractive -Command "Invoke-Expression ([IO.File]::ReadAllText('$installer'))" 2>&1 | Out-String
+    $said = & $shell -NoProfile -NonInteractive -Command "Invoke-Expression ([IO.File]::ReadAllText('$script'))" 2>&1 | Out-String
     $ErrorActionPreference = $before
     return "$said`nexit $LASTEXITCODE"
 }
@@ -62,11 +62,11 @@ function Assert([string]$what, [bool]$holds, [string]$more = '') {
     if (-not $holds) { throw "FAIL: $what $more" }
     Write-Host "ok: $what"
 }
-# Wrapped to the width of a terminal that is none.
-function Get-Plain([string]$text) { return ($text -replace '\s+', ' ') }
-function Assert-Refused([string]$what, [hashtable]$variables, [string]$why) {
-    $said = Get-Plain (Invoke-Install $variables)
-    Assert $what (($said -match 'exit 1') -and ($said -match $why)) $said
+# An error is wrapped to the width of a terminal that is none, also within a word, with bars before the lines.
+function Get-Plain([string]$text) { return ($text -replace '[\s|]+', '') }
+function Assert-Refused([string]$what, [hashtable]$variables, [string]$why, [string]$script = $installer) {
+    $said = Get-Plain (Invoke-Install $variables $script)
+    Assert $what (($said -match 'exit1') -and ($said -match $why.Replace(' ', ''))) $said
 }
 $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
 $had = @($key.GetValueNames()) -contains 'Path'
@@ -88,6 +88,16 @@ try {
     Assert-Refused 'http is refused' @{ XLESS_RELEASE_BASE = 'http://localhost:9/releases' } 'is not https'
     Assert-Refused 'what is no version is refused' @{ XLESS_VERSION = '../1.2.3' } 'is no version'
     Assert-Refused 'a version that there is not is refused' @{ XLESS_VERSION = '9.9.9' } 'SHA256SUMS'
+    Assert-Refused 'nor a version with a line more' @{ XLESS_VERSION = "1.2.3`n" } 'is no version'
+    # A Windows without a part of the Visual C++ runtime: an installer that asks for one that there is not.
+    $text = [IO.File]::ReadAllText($installer)
+    $lacking = Join-Path $dir 'lacking.ps1'
+    foreach ($part in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') {
+        Assert "the installer asks for $part once" ([regex]::Matches($text, "'$([regex]::Escape($part))'").Count -eq 1)
+        [IO.File]::WriteAllText($lacking, $text.Replace("'$part'", "'xless-no-$part'"))
+        Assert-Refused "a Windows without $part is refused" @{} "lacks xless-no-$([regex]::Escape($part)); nothing was installed.*winget install Microsoft\.VCRedist\.2015\+\.x64" $lacking
+    }
+    [IO.File]::WriteAllText($lacking, $text.Replace("'msvcp140.dll'", "'xless-no.dll'").Replace("if (`$machine -ne 'AMD64'", "`$machine = 'ARM64'; if (`$machine -ne 'AMD64'"))
     Assert 'nothing was installed' (-not (Test-Path -LiteralPath $target))
     Assert 'and nothing left' (@(Get-Leftover).Count -eq 0)
 
@@ -103,6 +113,18 @@ try {
     $sids = @($inner.Access | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } | Sort-Object -Unique)
     Assert 'nor its program' ("$sids" -eq "$want") "$sids"
     Assert 'nothing is left' (@(Get-Leftover).Count -eq 0)
+
+    # On ARM64 nobody can tell by the files, and it says what is needed.
+    $said = Invoke-Install @{} $lacking
+    if ([Environment]::OSVersion.Version.Build -ge 22000) { Assert 'on ARM64 it installs and says what it needs' ($said -match 'exit 0' -and $said -match 'under emulation' -and $said -match 'VCRedist') $said }
+    else { Assert 'an ARM64 Windows that is too old is refused' ($said -match 'exit 1' -and $said -match 'from Windows 11 on') $said }
+    [IO.File]::WriteAllText($lacking, $text.Replace("'msvcp140.dll'", "'xless-no.dll'"))
+    Assert-Refused 'one that is there is not replaced without the runtime' @{} 'lacks xless-no\.dll' $lacking
+    Assert 'and works as before' ([IO.File]::ReadAllText("$bin\swiftCore.dll") -eq 'core 1.2.3' -and @(Get-Leftover).Count -eq 0)
+    $said = Invoke-Install @{ XLESS_UNINSTALL = '1' } $lacking
+    Assert 'it is taken away without the runtime too' ($said -match 'exit 0' -and -not (Test-Path -LiteralPath $target)) $said
+    $said = Invoke-Install @{}
+    Assert 'and installed again' ($said -match 'exit 0' -and (Test-Path -LiteralPath $exe)) $said
 
     # Another one over it, while a program of it runs.
     Write-Package '1.3.0' (Get-Files '1.3.0')
@@ -160,6 +182,26 @@ try {
     Assert 'what it leads to is as it was' (Test-Path -LiteralPath "$away\bin\xless.exe")
     Move-Item -LiteralPath $away -Destination $target
 
+    # Nor is it put through a link, or into what is another user's.
+    $aside = Join-Path $local "Programs-xless-test-$([Guid]::NewGuid().ToString('N'))"
+    [IO.Directory]::Move($programs, $aside)
+    try {
+        New-Item -ItemType Junction -Path $programs -Value $aside | Out-Null
+        Assert-Refused 'a link for the directory of programs is refused' @{} 'Programs is a link'
+        Assert-Refused 'also to take away' @{ XLESS_UNINSTALL = '1' } 'Programs is a link'
+        [IO.Directory]::Delete($programs)
+        [IO.File]::WriteAllText($programs, 'a file')
+        Assert-Refused 'and a file' @{} 'is no directory'
+        [IO.File]::Delete($programs)
+        New-Item -ItemType Directory -Path $programs | Out-Null
+        & "$env:SystemRoot\System32\icacls.exe" $programs /setowner '*S-1-5-32-546' /q | Out-Null   # the guests
+        if ($LASTEXITCODE -ne 0) { throw 'cannot give a directory to the guests' }
+        Assert-Refused 'and a directory of another user' @{} 'is another user.s \(S-1-5-32-546\)'
+    } finally {
+        if (Test-Path -LiteralPath $programs) { if ((Get-Item -LiteralPath $programs -Force) -is [IO.DirectoryInfo]) { [IO.Directory]::Delete($programs) } else { [IO.File]::Delete($programs) } }
+        [IO.Directory]::Move($aside, $programs)
+    }
+
     # Taken away: the program and its PATH entry, and nothing else.
     $running = Start-Process -FilePath $exe -ArgumentList '-n', '600', '127.0.0.1' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 2
@@ -183,7 +225,6 @@ try {
     Assert 'a PATH of plain text stays so' ((Get-UserPath) -ceq 'C:\x' -and $key.GetValueKind('Path') -eq 'String') (Get-UserPath)
 
     # A download that was cut, wherever, runs nothing.
-    $text = [IO.File]::ReadAllText($installer)
     foreach ($part in 0.3, 0.6, 0.95) {
         $cut = $text.Substring(0, [int]($text.Length * $part))
         [IO.File]::WriteAllText((Join-Path $dir 'cut.ps1'), $cut)

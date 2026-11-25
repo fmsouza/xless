@@ -123,15 +123,14 @@ try {
         @('a self-signed certificate', (New-Certificate 'localhost' $null -1 20 $false), $tls12, $false, '^error -120[0-9] .*not from an authority that Windows trusts'),
         @('another name', (New-Certificate 'other.example' $authority -1 20 $false), $tls12, $false, '^error -120[0-9] .*another name'),
         @('an expired certificate', (New-Certificate 'localhost' $authority -20 -2 $false), $tls12, $false, '^error -120[0-9] .*expired'),
-        @('a certificate that is not yet valid', (New-Certificate 'localhost' $authority 5 20 $false), $tls12, $false, '^error -120[0-9] .*expired, or is not yet valid'),
-        @('TLS 1.1', $good, [Security.Authentication.SslProtocols]::Tls11, $false, '^error ')
+        @('a certificate that is not yet valid', (New-Certificate 'localhost' $authority 5 20 $false), $tls12, $false, '^error -120[0-9] .*expired, or is not yet valid')
     )
     foreach ($case in $cases) {
         $what, $certificate, $protocols, $ask, $expected = $case
         $server = New-Object XlessTestServer -ArgumentList $certificate, $protocols, $ask
         try {
             if (-not $server.Reachable($protocols)) {
-                # Not to be served on this machine at all (TLS 1.1 where it is turned off): nothing to tell.
+                # Not to be served by this Windows at all (TLS 1.3 on an old one): nothing to tell.
                 Write-Host "$what`: cannot be tried here"
                 if ($protocols -eq $tls12) { Fail "$what`: the test server does not work" }
                 continue
@@ -147,6 +146,44 @@ try {
         }
     }
 
+    # TLS 1.1 is no secure connection, of a server that speaks nothing else (OpenSSL's, of Git for Windows: Windows' own does not here). The same
+    # server with TLS 1.2 is taken, and a client that takes TLS 1.1 gets it.
+    $openssl = @(Get-ChildItem -Path (Join-Path $env:ProgramFiles 'Git\*\bin\openssl.exe') | Where-Object { $_.FullName -notmatch '\\usr\\' } | Select-Object -First 1)
+    if ($openssl.Count -ne 1) { throw 'no OpenSSL of Git for Windows' }
+    $openssl = $openssl[0].FullName
+    $pem = Join-Path ([IO.Path]::GetTempPath()) "xless-tls-$([Guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $pem | Out-Null
+    $key = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($good)
+    [IO.File]::WriteAllText("$pem\cert.pem", $good.ExportCertificatePem())
+    [IO.File]::WriteAllText("$pem\key.pem", $key.ExportRSAPrivateKeyPem())
+    [IO.File]::WriteAllText("$pem\none", '')
+    foreach ($case in @('tls1_2', '^status 200$'), @('tls1_1', '^error -\d+ .*no secure connection')) {
+        $protocol, $expected = $case
+        $free = New-Object Net.Sockets.TcpListener -ArgumentList ([Net.IPAddress]::Loopback), 0
+        $free.Start()
+        $port = $free.LocalEndpoint.Port
+        $free.Stop()
+        $arguments = 's_server', '-accept', "127.0.0.1:$port", '-cert', "$pem\cert.pem", '-key', "$pem\key.pem", "-$protocol", '-cipher', 'ALL:@SECLEVEL=0', '-www'
+        $server = Start-Process -FilePath $openssl -ArgumentList $arguments -NoNewWindow -PassThru -RedirectStandardInput "$pem\none" -RedirectStandardOutput "$pem\$protocol.out" -RedirectStandardError "$pem\$protocol.err"
+        try {
+            $spoken = ''
+            foreach ($i in 1..50) {
+                $spoken = Get-Content "$pem\none" | & $openssl s_client -connect "127.0.0.1:$port" "-$protocol" -cipher 'ALL:@SECLEVEL=0' 2>&1 | Out-String
+                if ($spoken -match 'Cipher is [A-Z0-9-]+') { break }
+                Start-Sleep -Milliseconds 200
+            }
+            if ($spoken -notmatch 'New, TLSv1[.0-9]*, Cipher is (?!\(NONE)' ) { Fail "${protocol}: the test server does not work: $spoken $(Get-Content -Raw "$pem\$protocol.err")" }
+            $said = & $probe get "https://localhost:$port/"
+            Write-Host "${protocol}: $said"
+            if ($said -notmatch $expected) { Fail "${protocol}: $said" }
+            if ($server.HasExited) { Fail "${protocol}: the test server ended" }
+        } finally {
+            if (-not $server.HasExited) { $server.Kill() }
+            $server.WaitForExit()
+        }
+    }
+    Remove-Item -LiteralPath $pem -Recurse -Force
+
     # The installer: from a trusted server only, and through no redirect to something else than https.
     $env:XLESS_ALLOW_ELEVATED = '1'
     $env:XLESS_VERSION = '1.2.3'
@@ -155,9 +192,10 @@ try {
     $plain.Start()
     $away = "HTTP/1.1 302 Found`r`nLocation: http://localhost:$($plain.LocalEndpoint.Port)/x`r`nContent-Length: 0`r`nConnection: close`r`n`r`n"
     $installs = @(
-        @('a trusted server', $good, "HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`nConnection: close`r`n`r`n", 1, '404'),
-        @('a self-signed certificate', (New-Certificate 'localhost' $null -1 20 $false), $away, 0, 'SSL|TLS|trust'),
-        @('another name', (New-Certificate 'other.example' $authority -1 20 $false), $away, 0, 'SSL|TLS|trust'),
+        @('a trusted server', $good, "HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`nConnection: close`r`n`r`n", 1, 'install.ps1: there is no https://localhost:\d+/download/v1\.2\.3/SHA256SUMS \(404\)'),
+        @('a server that fails', $good, "HTTP/1.1 503 Service Unavailable`r`nContent-Length: 0`r`nConnection: close`r`n`r`n", 1, 'install.ps1: localhost answered 503'),
+        @('a self-signed certificate', (New-Certificate 'localhost' $null -1 20 $false), $away, 0, 'install.ps1: cannot get https.*(SSL|TLS|trust)'),
+        @('another name', (New-Certificate 'other.example' $authority -1 20 $false), $away, 0, 'install.ps1: cannot get https.*(SSL|TLS|trust)'),
         @('a redirect to http', $good, $away, 1, 'is not https')
     )
     foreach ($case in $installs) {
@@ -171,7 +209,7 @@ try {
                 $said = & $shell -NoProfile -NonInteractive -Command "[Net.ServicePointManager]::ServerCertificateValidationCallback = { `$true }; Invoke-Expression ([IO.File]::ReadAllText('$installer'))" 2>&1 | Out-String
                 $code = $LASTEXITCODE
                 Write-Host "install.ps1 with $shell, ${what}: exit $code, $($server.Requests) requests: $(($said -replace '\s+', ' ').Trim())"
-                if ($code -eq 0 -or ($said -replace '\s+', ' ') -notmatch $expected) { Fail "install.ps1 with $shell, $what" }
+                if ($code -eq 0 -or ($said -replace '[\s|]+', '') -notmatch $expected.Replace(' ', '')) { Fail "install.ps1 with $shell, $what" }
                 if ($server.Requests -ne $requests) { Fail "install.ps1 with $shell, ${what}: $($server.Requests) requests were sent" }
             } finally {
                 $server.Stop()

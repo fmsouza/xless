@@ -59,7 +59,17 @@ function Install-Xless([string]$Version, [bool]$Uninstall) {
         }
     }
 
+    # The directory of the user's programs: a directory of the user's (or, as everything of it, of SYSTEM or the administrators).
+    function Test-Programs {
+        if (-not (Test-Path -LiteralPath $programs)) { return }
+        if (Test-Link $programs) { Stop-Install "$programs is a link, which xless does not install through: make it a directory, or unpack the zip of the release by hand" }
+        if (-not [IO.Directory]::Exists($programs)) { Stop-Install "$programs is no directory" }
+        $owner = (Get-Acl -LiteralPath $programs).GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if (@($sid, 'S-1-5-18', 'S-1-5-32-544') -notcontains $owner) { Stop-Install "$programs is another user's ($owner)" }
+    }
+
     function Test-Installed {
+        Test-Programs
         if (-not (Test-Path -LiteralPath $target)) { return $false }
         if (Test-Link $target) { Stop-Install "$target is a link" }
         if (-not [IO.Directory]::Exists($target)) { Stop-Install "$target is no directory" }
@@ -164,7 +174,18 @@ function Install-Xless([string]$Version, [bool]$Uninstall) {
             $request.UserAgent = 'xless-install'
             $request.Timeout = 60000
             $request.ReadWriteTimeout = 60000
-            $response = $request.GetResponse()
+            try { $response = $request.GetResponse() } catch {
+                $inner = $_.Exception
+                while ($inner -and $inner -isnot [Net.WebException]) { $inner = $inner.InnerException }
+                if (-not $inner) { throw }
+                if ($inner.Response) {
+                    $status = [int]$inner.Response.StatusCode
+                    $inner.Response.Close()
+                    if ($status -eq 404) { Stop-Install "there is no $url (404): is there such a release, and has it a package for Windows?" }
+                    Stop-Install "$($uri.Host) answered $status for $url"
+                }
+                Stop-Install "cannot get ${url}: $($inner.Message)"
+            }
             if ([int]$response.StatusCode -lt 300) { return $response }
             $next = $response.Headers['Location']
             $response.Close()
@@ -227,10 +248,23 @@ function Install-Xless([string]$Version, [bool]$Uninstall) {
         }
     }
 
+    # What xless needs of System32 and Windows may not have, before anything is touched. Not on ARM64, where the files that are there do not
+    # say whether an x64 program has them.
+    $redistributable = 'winget install Microsoft.VCRedist.2015+.x64'
+    if ($machine -ne 'ARM64') {
+        # The real System32, for a 32-bit PowerShell too.
+        $real = if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { Join-Path ([Environment]::GetFolderPath('Windows')) 'Sysnative' } else { $system }
+        $missing = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll' | Where-Object { -not [IO.File]::Exists((Join-Path $real $_)) })
+        if ($missing.Count -gt 0) {
+            Stop-Install ("xless needs the Visual C++ runtime of Microsoft, and this Windows lacks $($missing -join ', '); nothing was installed. " +
+                "Install the runtime ($redistributable; or https://aka.ms/vs/17/release/vc_redist.x64.exe), then run this again.")
+        }
+    }
+
     $there = Test-Installed
     $Version = $Version -replace '^v', ''
     if ($Version -eq 'latest') { $Version = '' }
-    if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') { Stop-Install "'$Version' is no version (x.y.z)" }
+    if ($Version -and $Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?\z') { Stop-Install "'$Version' is no version (x.y.z)" }
     if ($base -notmatch '^(https|file)://') { Stop-Install "$base is not https" }
 
     [void][IO.Directory]::CreateDirectory($programs)
@@ -286,14 +320,9 @@ function Install-Xless([string]$Version, [bool]$Uninstall) {
     if (Set-UserPath $true) { Write-Host 'It is on your PATH in terminals that you open from now on.' }
     if (@($env:Path -split ';') -notcontains $bin) { $env:Path = $env:Path.TrimEnd(';') + ';' + $bin }
 
-    # The real System32, for a 32-bit PowerShell too.
-    $windows = [Environment]::GetFolderPath('Windows')
-    $real = if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { Join-Path $windows 'Sysnative' } else { $system }
-    $missing = @('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll' | Where-Object { -not [IO.File]::Exists((Join-Path $real $_)) })
-    if ($missing.Count -gt 0 -or $machine -eq 'ARM64') {
-        if ($machine -eq 'ARM64') { Write-Host 'This is the x64 program, under emulation. It needs the x64 Visual C++ runtime of Microsoft; if you have not got that:' }
-        else { Write-Host 'xless needs the Visual C++ runtime of Microsoft, which this Windows has not got. Install it:' }
-        Write-Host '  winget install Microsoft.VCRedist.2015+.x64'
+    if ($machine -eq 'ARM64') {
+        Write-Host 'This is the x64 program, under emulation. It needs the x64 Visual C++ runtime of Microsoft; if you have not got that:'
+        Write-Host "  $redistributable"
     }
     Write-Host 'next: the account commands (xless auth login, xless secrets init, xless provision, xless store, ...).'
     Write-Host 'Builds run inside WSL2 (install xless for Linux there) or on a Mac or Linux.'

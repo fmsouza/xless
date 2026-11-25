@@ -151,8 +151,8 @@ x64 program runs under Windows 11's emulation.
   and the installer's provenance can be checked with [`gh attestation verify`](../README.md#install).
 - **What it does not do.** It needs no administrator and refuses an elevated terminal, whose user may be another one (a machine without
   another kind, such as a CI runner, sets `XLESS_ALLOW_ELEVATED=1`). It changes no execution policy, and installs nothing else.
-- **The Visual C++ runtime** of Microsoft is the one thing xless needs that Windows may not have. The installer says when it is
-  missing: `winget install Microsoft.VCRedist.2015+.x64`.
+- **The Visual C++ runtime** of Microsoft is the one thing xless needs that Windows may not have. Without it the installer
+  installs nothing and says so: `winget install Microsoft.VCRedist.2015+.x64`, then the line again. (On ARM64 it cannot tell, and only says it.)
 - **Upgrade:** run the line again (an xless that runs meanwhile goes on). **A given release:** `$env:XLESS_VERSION = 'x.y.z'` first.
 - **Remove it:** `$env:XLESS_UNINSTALL = '1'`, then the line. It takes away the program and its `PATH` entry, and keeps your secret store
   and settings.
