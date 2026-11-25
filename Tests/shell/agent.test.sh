@@ -15,7 +15,7 @@ if [[ -z "$x" ]]; then
 fi
 
 python3 -I - "$x" "$t" <<'PY'
-import fcntl, json, os, pty, re, select, shutil, signal, subprocess, sys, termios, time
+import atexit, fcntl, json, os, pty, re, select, shutil, signal, subprocess, sys, termios, time
 
 xless, t = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
 PROMPT = rb"(assphrase|again): |\[y/N\] "
@@ -269,9 +269,16 @@ check(gone(12), "ends by itself", agents())
 
 # ---- an agent that does not answer ----------------------------------------------------------------------------------------
 mac = os.uname().sysname == "Darwin"
+were_stopped = []
+def end_stopped(): # a stopped agent ends by nothing that ends others: not with its terminal, its directory or this test
+    for pid in were_stopped:
+        if any(p[0] == pid for p in agent_pids()): os.kill(pid, signal.SIGKILL)
+atexit.register(end_stopped)
+for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM): signal.signal(number, lambda number, frame: sys.exit(128 + number))
 def stopped():
     b.run("$X unlock --for 2h", PASS)
     pid = next(p[0] for p in agent_pids() if os.getsid(p[0]) == b.pid)
+    were_stopped.append(pid)
     os.kill(pid, signal.SIGSTOP)
     return pid
 def alive(pid):
