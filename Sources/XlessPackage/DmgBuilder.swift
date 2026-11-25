@@ -143,23 +143,12 @@ public enum DmgBuilder {
         return try Files.atomicOutput(outputDir) { out in
             let dmg = try buildInto(out, signedApp: signedApp, volumeName: product, version: config.version, architectures: built,
                                     dSYMs: dSYMs, run: DmgBuilder.shell)
-            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xless-notary-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            defer { try? FileManager.default.removeItem(at: tmp) }
-            let keyURL = tmp.appendingPathComponent("key.pem"), certURL = tmp.appendingPathComponent("cert.pem")
-            let p8 = tmp.appendingPathComponent("key.p8"), keyJSON = tmp.appendingPathComponent("key.json")
-            guard FileManager.default.createFile(atPath: keyURL.path, contents: Data(key.pem.utf8), attributes: [.posixPermissions: 0o600]),
-                  FileManager.default.createFile(atPath: p8.path, contents: try Packager.p8Contents(secrets), attributes: [.posixPermissions: 0o600]) else {
-                throw XlessError(.package, "cannot write temporary key files", fix: "check free space and permissions of the temp directory")
+            try PrivateFiles.with(stage: .package) { files in
+                let signer = try files.signer(key: key, certificate: cert.der)
+                try Shell.run("rcodesign", signArguments(dmg: dmg, keyPEM: signer.key, certPEM: signer.certificate), stage: .package)
             }
-            let certPEM = "-----BEGIN CERTIFICATE-----\n\(cert.der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed]))\n-----END CERTIFICATE-----\n"
-            try certPEM.write(to: certURL, atomically: true, encoding: .utf8)
-            try Shell.run("rcodesign", RCodesign.encodeKeyArguments(issuerID: secrets.identifier("ASC_ISSUER_ID", stage: .package),
-                                                                    keyID: secrets.identifier("ASC_KEY_ID", stage: .package),
-                                                                    p8: p8, out: keyJSON), stage: .package)
-            try Shell.run("rcodesign", signArguments(dmg: dmg, keyPEM: keyURL, certPEM: certURL), stage: .package)
-            try notarize(dmg: dmg, apiKeyJSON: keyJSON)
-            try checkStapled(dmg: dmg)
+            try Notary.notarize(dmg, secrets: secrets)
+            try Notary.checkStapled(dmg: dmg)
             return dmg
         }
     }
@@ -167,65 +156,5 @@ public enum DmgBuilder {
     /// The DMG's signature: Developer ID key and certificate, no entitlements, no runtime flag (those belong to the app).
     static func signArguments(dmg: URL, keyPEM: URL, certPEM: URL) -> [String] {
         ["sign", "--pem-file", keyPEM.path, "--pem-file", certPEM.path, dmg.path]
-    }
-
-    /// One `rcodesign notary-submit` run: its full output and, when it exited non-zero, the error.
-    struct NotaryRun { var log: String; var failure: XlessError? }
-
-    static func runNotary(_ args: [String]) throws -> NotaryRun {
-        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("xless-notary-\(UUID().uuidString).log")
-        defer { try? FileManager.default.removeItem(at: logURL) }
-        do {
-            try Shell.run("rcodesign", args, stage: .package, captureTo: logURL)
-            return NotaryRun(log: (try? String(contentsOf: logURL, encoding: .utf8)) ?? "", failure: nil)
-        } catch let e as XlessError where !e.cause.hasPrefix("cannot start ") {
-            return NotaryRun(log: (try? String(contentsOf: logURL, encoding: .utf8)) ?? "", failure: e)
-        }
-    }
-
-    /// rcodesign streams its output to the terminal (see `runNotary`); this logs the submission id and the final status, and
-    /// reports a rejection only when Rejected/Invalid was parsed. Any other failure (network, auth, wait timeout, staple after
-    /// Accepted) is rethrown as it is, with the id when known.
-    static func notarize(dmg: URL, apiKeyJSON: URL, run: ([String]) throws -> NotaryRun = runNotary) throws {
-        let r = try run(RCodesign.notarizeArguments(bundle: dmg, apiKeyJSON: apiKeyJSON))
-        let id = submissionID(in: r.log), status = notaryStatus(in: r.log)
-        FileHandle.standardError.write(Data("notary submission \(id ?? "unknown"): \(status ?? (r.failure == nil ? "status unknown (rcodesign exited 0)" : "status unknown"))\n".utf8))
-        if let status, status == "Rejected" || status == "Invalid" { throw rejection(file: dmg.lastPathComponent, status: status) }
-        if let f = r.failure {
-            throw XlessError(f.stage, f.cause + (id.map { " (notary submission \($0))" } ?? ""), fix: f.fix)
-        }
-    }
-
-    /// Fails unless the DMG's signature carries a stapled notarization ticket (read back with `rcodesign print-signature-info`).
-    static func checkStapled(dmg: URL, signatureInfo: (URL) throws -> String = { try Shell.run("rcodesign", ["print-signature-info", $0.path], stage: .package).stdout }) throws {
-        let info = try signatureInfo(dmg)
-        guard hasStapledTicket(signatureInfo: info) else {
-            throw XlessError(.package, "\(dmg.lastPathComponent) has no stapled notarization ticket after notary-submit --staple",
-                             fix: "re-run from package; if notarization was accepted, `rcodesign staple \(dmg.lastPathComponent)` staples the ticket")
-        }
-        FileHandle.standardError.write(Data("notarization ticket stapled to \(dmg.lastPathComponent)\n".utf8))
-    }
-
-    /// A stapled DMG's embedded signature has a `Ticket` blob (slot 65538), listed by `rcodesign print-signature-info` as
-    /// `- slot: Ticket (65538)` among the superblob's blobs; an unstapled one has CodeDirectory, RequirementSet and CMS only
-    /// (rcodesign 0.29.0, checked against the spike's stapled and unstapled DMGs).
-    static func hasStapledTicket(signatureInfo: String) -> Bool {
-        signatureInfo.contains(/(?m)^\s*-\s*slot:\s*Ticket\s*\(65538\)\s*$/)
-    }
-
-    static func rejection(file: String, status: String) -> XlessError {
-        XlessError(.package, "notarization of \(file) was rejected (\(status))",
-                   fix: "read the notary log printed above, fix the reported binaries, then re-run from package")
-    }
-
-    /// The first "submission ID" in rcodesign's output.
-    static func submissionID(in text: String) -> String? {
-        text.firstMatch(of: /(?i)submission ID[: ]+([0-9a-f-]{36})/).map { String($0.1).lowercased() }
-    }
-
-    /// The last status from rcodesign's poll or status lines (`poll state after …: Accepted`, `status: Invalid`), never from
-    /// words inside the notary log's issue text.
-    static func notaryStatus(in text: String) -> String? {
-        text.matches(of: /(?im)^\s*(?:poll state after[^\n]*?|status)[: ]+(Accepted|Rejected|Invalid|InProgress)\s*$/).last.map { String($0.1) }
     }
 }

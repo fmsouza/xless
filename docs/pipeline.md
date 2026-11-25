@@ -73,6 +73,9 @@ Config errors exit 10, SDK errors exit 11 and the Apple account commands' errors
 `xless run` itself exits 2 for a usage or configuration error of its own
 (a missing project, overlay or secret file). Errors are printed as `[stage] cause — fix`.
 
+A notarization the service rejects is a `package` error (16) that names the status and, when it is known, the
+submission; so is a zipped app or a DMG that holds no ticket after it was stapled.
+
 All stage commands take `--platform ios|macos`, `--project <dir>` (default `.`) and `--build-number`; overlays take
 `--config <overlay.yml>` and `--source <dir>` instead of `--project`. Sign, package and upload need an Apple Developer
 account and its keys ([signing-and-testflight.md](signing-and-testflight.md)); the stages before them need none.

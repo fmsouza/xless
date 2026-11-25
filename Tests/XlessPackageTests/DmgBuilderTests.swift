@@ -180,8 +180,8 @@ private func macApp(_ root: URL, executable: Data) throws -> URL {
 private let notaryID = "12345678-1234-1234-1234-123456789abc"
 private let longIssues = "notary log> {\n  \"status\": \"Invalid\",\n  \"issues\": [{\"message\": \"The binary is not signed. Accepted\\nStatus: Accepted by nobody\"}]\n}\n"
 private func notary(_ log: String, failure: XlessError? = nil) throws {
-    try DmgBuilder.notarize(dmg: URL(fileURLWithPath: "/x/X.dmg"), apiKeyJSON: URL(fileURLWithPath: "/k.json")) { _ in
-        DmgBuilder.NotaryRun(log: log, failure: failure)
+    try Notary.submit(URL(fileURLWithPath: "/x/X.dmg"), apiKeyJSON: URL(fileURLWithPath: "/k.json")) { _ in
+        Notary.Run(log: log, failure: failure)
     }
 }
 private let exit1 = XlessError(.package, "`rcodesign notary-submit` exited with 1:\nlast line", fix: "see the tool output above")
@@ -189,8 +189,8 @@ private let exit1 = XlessError(.package, "`rcodesign notary-submit` exited with 
 @Test func notaryRejectionAfterLongIssuesLogIsReportedWithTheStatusFromPollLines() {
     let log = "created submission ID: \(notaryID)\n" + String(repeating: "waiting\n", count: 50)
         + "poll state after 10s: Invalid\n" + longIssues
-    #expect(DmgBuilder.submissionID(in: log) == notaryID)
-    #expect(DmgBuilder.notaryStatus(in: log) == "Invalid")
+    #expect(Notary.submissionID(in: log) == notaryID)
+    #expect(Notary.status(in: log) == "Invalid")
     do { try notary(log, failure: exit1); Issue.record("expected throw") } catch let e as XlessError {
         #expect(e.description == "[package] notarization of X.dmg was rejected (Invalid) — read the notary log printed above, fix the reported binaries, then re-run from package")
     } catch { Issue.record("\(error)") }
@@ -291,12 +291,12 @@ private let stapledInfo = unstapledInfo.replacingOccurrences(of: "blob_count: 3"
     + "\n        - slot: Ticket (65538)\n          magic: fade0b01\n          length: 1703\n"
 
 @Test func stapledTicketIsDetectedInTheSignatureBlobs() throws {
-    #expect(DmgBuilder.hasStapledTicket(signatureInfo: stapledInfo))
-    #expect(!DmgBuilder.hasStapledTicket(signatureInfo: unstapledInfo))
-    #expect(!DmgBuilder.hasStapledTicket(signatureInfo: "identifier: Ticket (65538)\n"))   // only a blob slot line counts
+    #expect(Notary.hasStapledTicket(signatureInfo: stapledInfo))
+    #expect(!Notary.hasStapledTicket(signatureInfo: unstapledInfo))
+    #expect(!Notary.hasStapledTicket(signatureInfo: "identifier: Ticket (65538)\n"))   // only a blob slot line counts
     let dmg = URL(fileURLWithPath: "/x/X_1.0.0_universal.dmg")
-    try DmgBuilder.checkStapled(dmg: dmg) { _ in stapledInfo }
-    do { try DmgBuilder.checkStapled(dmg: dmg) { _ in unstapledInfo }; Issue.record("expected throw") } catch let e as XlessError {
+    try Notary.checkStapled(dmg: dmg) { _ in stapledInfo }
+    do { try Notary.checkStapled(dmg: dmg) { _ in unstapledInfo }; Issue.record("expected throw") } catch let e as XlessError {
         #expect(e.stage == .package && e.cause == "X_1.0.0_universal.dmg has no stapled notarization ticket after notary-submit --staple")
     }
 }
@@ -311,8 +311,8 @@ func signedButUnstapledRealDmgFailsTheStapleCheck() throws {
     try Shell.run("rcodesign", ["sign", "--pem-file", pem.path, dmg.path], stage: .package)
     let info = try Shell.run("rcodesign", ["print-signature-info", dmg.path], stage: .package).stdout
     #expect(info.contains("slot: CodeDirectory (0)"))   // the format the check reads
-    #expect(!DmgBuilder.hasStapledTicket(signatureInfo: info))
-    #expect(throws: XlessError.self) { try DmgBuilder.checkStapled(dmg: dmg) }
+    #expect(!Notary.hasStapledTicket(signatureInfo: info))
+    #expect(throws: XlessError.self) { try Notary.checkStapled(dmg: dmg) }
 }
 
 @Test func buildZipsTheDSYMsNextToTheDMG() throws {
