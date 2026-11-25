@@ -102,7 +102,7 @@ public enum SignStage {
         // hardened runtime like the main executable.
         let info = try Plist.read(app.appendingPathComponent(layout.infoPlist), stage: .sign)
         let main = [layout.executableDir, info["CFBundleExecutable"] as? String ?? pc.product].filter { !$0.isEmpty }.joined(separator: "/")
-        let runtimePaths = distribution == .developerID ? RCodesign.hardenedRuntimePaths(in: app, mainExecutable: main) : []
+        let runtimePaths = distribution == .developerID ? try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: main) : []
 
         try PrivateFiles.with(stage: .sign) { files in
             let signer = try files.signer(key: key, certificate: cert.der)

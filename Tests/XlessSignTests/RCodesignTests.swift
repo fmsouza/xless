@@ -94,6 +94,25 @@ private func u(_ p: String) -> URL { URL(fileURLWithPath: p) }
     try FileManager.default.createDirectory(at: resources.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("t".utf8).write(to: resources)
     try FileManager.default.createSymbolicLink(atPath: app.appendingPathComponent("Contents/Frameworks/Y.framework/Y").path, withDestinationPath: "Versions/A/Y")
-    #expect(RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "Contents/MacOS/X")
+    #expect(try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "Contents/MacOS/X")
             == ["Contents/Frameworks/Y.framework/Versions/A/Y", "Contents/Frameworks/libx.dylib", "Contents/Resources/lib/a.dylib"])
+}
+
+/// `--code-signature-flags <path>:runtime` is read by rcodesign's rules: a scope ends at the first colon, `@0` is a slice, and a path
+/// that starts with a hyphen is an option.
+@Test func aMachOWhosePathIsNoScopeIsRefused() throws {
+    try RCodesign.requireScopes(["Contents/Resources/a.dylib", "Contents/Resources/node_modules/@scope/a@2x.node", "Contents/a-b c.dylib", "Contents/-x"])
+    for path in ["Contents/a:b.dylib", "-x", "--pem-file", "Contents/a@0", "Contents/a@12", "Contents/a@[cpu_type=12]", "@0", "@main"] {
+        #expect { try RCodesign.requireScopes(["Contents/ok", path]) } throws: { ($0 as? XlessError)?.stage == .sign && "\($0)".contains(path) }
+    }
+}
+
+@Test func theRuntimePathsOfAnAppAreScopes() throws {
+    let app = FileManager.default.temporaryDirectory.appendingPathComponent("scopes-\(UUID())/X.app")
+    defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
+    try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+    try miniMachO(filetype: 6).write(to: app.appendingPathComponent("Contents/a.dylib"))
+    #expect(try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "") == ["Contents/a.dylib"])
+    try miniMachO(filetype: 6).write(to: app.appendingPathComponent("Contents/a:b.dylib"))
+    #expect(throws: XlessError.self) { try RCodesign.hardenedRuntimePaths(in: app, mainExecutable: "") }
 }
