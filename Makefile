@@ -37,7 +37,7 @@ SDK_BUILD_ARGS = --build-arg APP_SWIFT_VERSION=$(APP_SWIFT_VERSION) \
 .PHONY: images
 # make images [XCODE=<Xcode.app | Xcode_*.xip>] [ARCHS="arm64"]: the whole image chain (xless-base, xless, xless-tauri,
 # xless-rn) from one Xcode's SDK and the Swift toolchain that Xcode ships (Ruling R10), tagged *:local-<arch>-xcode<version>
-# (and the plain local-<arch> tags when it is versions.env's XCODE_VERSION/XCODE_BUILD). A project pins it with `xcode: "<version>"`; scripts/testflight.sh selects
+# (and the plain local-<arch> tags when it is versions.env's XCODE_VERSION/XCODE_BUILD). A project pins it with `xcode: "<version>"`; xless run selects
 # the images from the pin. Mac only (scripts/build-images.sh; a .xip is expanded with `xip --expand` first).
 images:
 	scripts/build-images.sh "$(XCODE)" $(ARCHS)
@@ -60,22 +60,25 @@ sdk-push:
 	R=$$(scripts/check-private-registry.sh) && docker buildx build --platform linux/arm64,linux/amd64 --push \
 	  -t $$R/xless:$(XLESS_TAG) -f docker/Dockerfile.sdk --build-context sdk=dist/sdk --build-arg BASE=$$R/xless-base:v$(XLESS_VERSION) $(SDK_BUILD_ARGS) .
 
+# `xless run` of this machine's xless (XLESS_SELF, else PATH), as scripts/testflight.sh has it: in the images, unless an SDK is
+# installed natively (XLESS_USE_DOCKER=1 or 0 decides).
+XLESS_RUN = XLESS_RUN_AS_SCRIPT=1 "$${XLESS_SELF:-xless}" run
+
 .PHONY: testflight
 # make testflight PROJECT=<dir> | CONFIG=<overlay.yml> [ARGS="…"]: build, sign, upload and deliver an iOS project (or an app
 # described by an overlay: Tauri, docs/tauri.md; React Native, docs/react-native.md; plain Cargo, docs/cargo.md) to TestFlight
-# (see scripts/testflight.sh). A cargo overlay's path inputs are listed with the host's `xless` (XLESS_SELF, else PATH).
-# ARGS go to the script, e.g. ARGS="--build-number 1.0.0.2026101601 --to finalize" (offline, no secrets) or "--from upload".
+# (docs/signing-and-testflight.md). ARGS go to xless run, e.g. ARGS="--build-number 1.0.0.2026101601 --to finalize" (offline, no secrets) or "--from upload".
 testflight:
 	@test -n "$(PROJECT)$(CONFIG)" || { echo "usage: make testflight PROJECT=<dir>  or  make testflight CONFIG=<overlay.yml> [ARGS=…]" >&2; exit 2; }
 	@test -z "$(PROJECT)" -o -z "$(CONFIG)" || { echo "give PROJECT or CONFIG, not both" >&2; exit 2; }
-	@if test -n "$(CONFIG)"; then scripts/testflight.sh --config "$(CONFIG)" $(ARGS); else scripts/testflight.sh "$(PROJECT)" $(ARGS); fi
+	@if test -n "$(CONFIG)"; then $(XLESS_RUN) --config "$(CONFIG)" $(ARGS); else $(XLESS_RUN) "$(PROJECT)" $(ARGS); fi
 
 .PHONY: simulator sim-launch
 # make simulator CONFIG=<overlay.yml> [ARGS=…]: a React Native app built for the iOS Simulator on Linux (docker), ad-hoc
-# signed, no secrets (scripts/testflight.sh --destination simulator); it prints the sim-launch command for the app.
+# signed, no secrets (xless run --destination simulator); it prints the sim-launch command for the app.
 simulator:
 	@test -n "$(CONFIG)" || { echo "usage: make simulator CONFIG=<overlay.yml> [ARGS=…]" >&2; exit 2; }
-	scripts/testflight.sh --config "$(CONFIG)" --destination simulator $(ARGS)
+	$(XLESS_RUN) --config "$(CONFIG)" --destination simulator $(ARGS)
 
 # make sim-launch APP=<App.app | volume:<volume>:<path>> [ARGS="--seconds 20"]: install and launch it on this Mac's
 # simulator, check it is still running, and save its console, log, screenshot and crash reports (scripts/sim-launch.sh).
@@ -85,10 +88,10 @@ sim-launch:
 
 .PHONY: dmg
 # make dmg CONFIG=<overlay.yml>: build, sign (Developer ID), notarize and staple a Tauri or cargo macOS app's DMG, universal
-# unless a cargo overlay's macos.architectures picks one (scripts/testflight.sh --platform macos; docs/tauri.md#macos). Like testflight, a cargo overlay needs `xless` on PATH.
+# unless a cargo overlay's macos.architectures picks one (xless run --platform macos; docs/tauri.md#macos).
 dmg:
 	@test -n "$(CONFIG)" || { echo "usage: make dmg CONFIG=<overlay.yml>" >&2; exit 2; }
-	scripts/testflight.sh --config "$(CONFIG)" --platform macos
+	$(XLESS_RUN) --config "$(CONFIG)" --platform macos
 
 .PHONY: test-tauri-linux
 # Build samples/HelloTauri on Linux (docker) and compare it with the Mac reference (scripts/test-tauri-linux.sh).
