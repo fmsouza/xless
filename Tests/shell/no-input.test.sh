@@ -36,6 +36,9 @@ env = {**keep, "PATH": os.environ["PATH"], "HOME": t + "/home", "XDG_DATA_HOME":
        "https_proxy": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9"}
 for d in ("home", "data", "config", "run", "cache", "work", "tmp", "app", "appstore"):
     os.mkdir(f"{t}/{d}", 0o700)
+if sys.platform == "darwin":   # what signs is there already (nothing is fetched here)
+    subprocess.run([repo + "/Tests/shell/fake-signer.sh", repo, t + "/share", t + "/data/xless-native"], check=True)
+    env["XLESS_SHARE"] = t + "/share"
 
 failures = 0
 def check(ok, what, detail=""):

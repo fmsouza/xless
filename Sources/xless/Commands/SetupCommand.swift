@@ -4,7 +4,8 @@ import XlessCore
 import XlessImages
 import XlessSDK
 
-/// `xless setup`: on Linux, by default, a native install of what the images carry (`NativeSetupPlan`: xtool, rcodesign,
+/// `xless setup`: on a Mac, by default, a check of the Xcode that is installed there, which a native build uses (nothing is
+/// downloaded or changed); on Linux, by default, a native install of what the images carry (`NativeSetupPlan`: xtool, rcodesign,
 /// the Xcode's open-source Swift, the Darwin SDK exported from the Xcode), with no Docker and no sudo. With `--docker`,
 /// the image xless:local-<arch>-xcode<version> from an Xcode .xip or Xcode.app, with Docker and nothing else: no Mac, no Apple
 /// binary executed (xtool reads the Xcode in a container), no checkout. `--with` adds the kits: what Tauri, Cargo, React Native
@@ -12,8 +13,12 @@ import XlessSDK
 struct SetupCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup",
-        abstract: "Install xless's toolchain and Apple's SDK natively from an Xcode .xip (or, with --docker, build the xless image).",
+        abstract: "Install xless's toolchain and Apple's SDK natively from an Xcode .xip (on a Mac: check the installed Xcode), or build the xless image with --docker.",
         discussion: """
+        On a Mac, without --docker, it checks the Xcode that native builds use (DEVELOPER_DIR, xcode-select or /Applications; \
+        --xcode <Xcode.app> checks that one) and says which tools they run. It downloads and changes nothing. The rest is for \
+        Linux and for --docker.
+
         The Xcode is identified by its content (a .xip's SHA-256, an Xcode.app's version.plist), never by its name. The Darwin \
         SDK is exported into $XDG_CACHE_HOME/xless/sdk/xcode<V>-<B>/ (default ~/.cache/xless) and reused by later runs \
         (--reexport exports again).
@@ -85,10 +90,7 @@ struct SetupCommand: AsyncParsableCommand {
                 throw XlessError(.sdk, "--arch \(arch.joined(separator: " ")) needs --docker: a native setup installs for this machine (\(Self.hostArch)) only",
                                  fix: "drop --arch, or add --docker to build the images for those architectures")
             }
-            guard Self.isLinux else {
-                throw XlessError(.sdk, "a native setup runs on Linux only; on macOS xless builds in Docker",
-                                 fix: "install Docker Desktop or colima and run xless setup --docker\(sourceArgs), then xless run --docker; the account commands (xless auth, provision, store, testflight, release, …) need no setup")
-            }
+            guard Self.isLinux else { return try macSetup() }
         }
         var archs: [String] = []
         for a in docker && !arch.isEmpty ? arch : [Self.hostArch] where !archs.contains(a) {
@@ -131,6 +133,33 @@ struct SetupCommand: AsyncParsableCommand {
     }
 
     // MARK: - Native
+
+    /// A Mac builds with its own Xcode: there is nothing to install, so this checks it and says what a build would use.
+    private func macSetup() throws {
+        var env = ProcessInfo.processInfo.environment
+        guard sdk == nil, !reexport, xcode?.hasSuffix(".xip") != true else {
+            throw XlessError(.sdk, "on a Mac xless builds with the Xcode that is installed, not with an exported SDK\(xcode.map { " (\($0))" } ?? "")",
+                             fix: "xless setup checks it (an Xcode .xip: open it, and move the Xcode to /Applications); to build in Docker: xless setup --docker\(sourceArgs)")
+        }
+        let given = xcode.map { XcodeSource.absolute($0, cwd: URL(fileURLWithPath: FileManager.default.currentDirectoryPath), home: URL(fileURLWithPath: env["HOME"] ?? NSHomeDirectory())).path }
+        let chosen = try? XcodeFinder(environment: env).find(pin: nil, stage: .sdk)
+        if let given { env["DEVELOPER_DIR"] = given }
+        let native = try MacNative.find(pin: nil, stage: .sdk, env: env)
+        for p in Platform.allCases { try Requirements.checkSDK(native.meta.sdk(for: p), platform: p, stage: .sdk) }
+        let xcodebuild = try native.xcode.require(.xcodebuild, stage: .sdk)
+        let launched = (try? Shell.run(xcodebuild.path, ["-checkFirstLaunchStatus"], env: native.xcode.environment(env), stage: .sdk)) != nil
+        say("==> \(native.xcode.summary)")
+        say("    " + (try Platform.allCases.map { let s = try native.meta.sdk(for: $0); return "\(s.sdkName) SDK (\(s.sdkBuild))" }).joined(separator: ", ") + "; \(native.compiler)")
+        say("    \(native.tools.summary(of: native.xcode))")
+        let signer = try MacNative.signer(env: env)
+        say("    rcodesign, which signs: " + (signer.isInstalled ? "in \(signer.download.final.path)" : "the first run that signs fetches it (\(signer.download.url.lastPathComponent), checked against its SHA-256)"))
+        if given != nil, chosen?.app != native.xcode.app {
+            say("note: a build uses \(chosen?.summary ?? "no Xcode yet"): to build with this one, export DEVELOPER_DIR=\(Self.quote(native.xcode.developer.path))")
+        }
+        if !launched { say("note: this Xcode has not finished its first launch: if a tool of it fails, open it once (it installs what is missing and asks for its license)") }
+        say("==> ready: nothing to install")
+        say("next: xless run <project-dir> --build-number 1 --to finalize")
+    }
 
     private func nativeSetup(source: XcodeSource.Identified, env: [String: String], share: URL, table: [String: String], cacheRoot: URL) throws {
         let fm = FileManager.default

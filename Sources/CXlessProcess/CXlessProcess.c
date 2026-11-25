@@ -28,6 +28,8 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <bsm/libbsm.h>
+#include <membership.h>
+#include <sys/acl.h>
 #include <crt_externs.h>
 #include <dlfcn.h>
 #include <libproc.h>
@@ -949,6 +951,8 @@ int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
     return 0;
 }
 
+int xless_acl_lets_others_write(const char *path, unsigned int uid) { (void)path; (void)uid; return 0; }
+
 int xless_peer_of(int fd, struct xless_peer *out) { (void)fd; memset(out, 0, sizeof *out); return ENOTSUP; }
 
 int xless_own_token(struct xless_peer *out) { memset(out, 0, sizeof *out); return ENOTSUP; }
@@ -1058,6 +1062,35 @@ int xless_process_file(int pid, uint64_t *device, uint64_t *inode) {
         at = region.prp_prinfo.pri_address + region.prp_prinfo.pri_size;
     }
     return ENOENT;
+}
+
+int xless_acl_lets_others_write(const char *path, unsigned int uid) {
+    static const acl_perm_t writing[] = { ACL_WRITE_DATA, ACL_APPEND_DATA, ACL_DELETE, ACL_DELETE_CHILD, ACL_WRITE_EXTATTRIBUTES, ACL_WRITE_SECURITY, ACL_CHANGE_OWNER };
+    errno = 0;
+    acl_t list = acl_get_link_np(path, ACL_TYPE_EXTENDED);
+    if (!list) return errno == ENOENT || errno == ENOTSUP || errno == EOPNOTSUPP ? 0 : -(errno ? errno : EIO); // (ENOENT: it has none)
+    int result = 0, which = ACL_FIRST_ENTRY;
+    acl_entry_t entry;
+    while (result == 0 && acl_get_entry(list, which, &entry) == 0) {
+        which = ACL_NEXT_ENTRY;
+        acl_tag_t tag;
+        acl_permset_t permissions;
+        if (acl_get_tag_type(entry, &tag) != 0 || acl_get_permset(entry, &permissions) != 0) { result = -EIO; break; }
+        if (tag != ACL_EXTENDED_ALLOW) continue;
+        int writes = 0;
+        for (size_t i = 0; i < sizeof writing / sizeof *writing; i++) writes |= acl_get_perm_np(permissions, writing[i]) != 0;
+        if (!writes) continue;
+        void *who = acl_get_qualifier(entry);
+        if (!who) { result = -EIO; break; }
+        uid_t id = 0;
+        int kind = -1, known = mbr_uuid_to_id(who, &id, &kind) == 0;
+        acl_free(who);
+        if (known && kind == ID_TYPE_UID && (id == 0 || id == uid)) continue;
+        if (known && kind == ID_TYPE_GID && (id == 0 || id == 80)) continue;
+        result = 1;
+    }
+    acl_free(list);
+    return result;
 }
 
 int xless_peer_of(int fd, struct xless_peer *out) {

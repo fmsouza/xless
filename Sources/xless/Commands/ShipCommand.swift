@@ -1,6 +1,7 @@
 import ArgumentParser
 import XlessASC
 import XlessCore
+import XlessRun
 
 extension Stage: ExpressibleByArgument {}
 
@@ -11,19 +12,24 @@ struct ShipCommand: AsyncParsableCommand {
     @Option(help: "Stop after this stage (default: upload, or package for macOS, where --to upload uploads an app-store build; build with --destination simulator).") var to: Stage?
     @Option(help: "Distribution for this run, overriding the config's `distribution`: app-store or developer-id (macOS; iOS is always app-store). Sign/package/upload all see it; the config file is untouched.") var distribution: Distribution?
 
+    /// Given by `xless run` (`RunConfiguration`).
+    @Option(help: .hidden) var expectConfig: String?
+
     @OptionGroup var updatesOff: ProvisioningUpdatesOption
 
     /// The last stage: `--to`, else upload (build for a simulator build, which has no later stage).
     var last: Stage { StagePolicy.lastStage(to: to, simulator: options.destination == .simulator) }
 
     func validate() throws {
+        if expectConfig != nil, options.configURL != nil { throw ValidationError("\(RunConfiguration.option) is of a project's xless.yml") }
         if let problem = StagePolicy.shipRangeProblem(from: from, last: last, simulator: options.destination == .simulator) {
             throw ValidationError(problem)
         }
     }
 
     func run() async throws {
-        var ctx = try await Context.load(options, distribution: distribution, fresh: DatedBuildNumber.isFreshRun(command: "ship", from: from))
+        var ctx = try await Context.load(options, distribution: distribution, fresh: DatedBuildNumber.isFreshRun(command: "ship", from: from),
+                                         expecting: expectConfig)
         let steps: [(Stage, (Context) async throws -> String)] = [
             (.prepare, { try await StageRunner.prepare($0) }),
             (.build, { try await StageRunner.build($0).path }),

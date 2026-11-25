@@ -61,10 +61,25 @@ Natively (the default):
 | `… has sha256 …, not versions.env's …: nothing was installed` | The download is not the pinned file (cut short by a proxy, or changed upstream). Run `xless setup` again; if it persists, report it. |
 | `… GB free under … for the native install (…)` | Free some space, or put the native install on a larger disk: `XLESS_NATIVE_HOME=/big/disk/xless-native xless setup …` (set it for `xless run` too). |
 | `--arch … needs --docker` | A native setup installs for this machine's architecture only. Drop `--arch`, or build the images with `--docker`. |
-| `a native setup runs on Linux only` | On a Mac, build the images: `xless setup --docker --xcode …` (Docker Desktop or colima), then `xless run --docker`. The account commands (`xless auth`, `provision`, `store`, `testflight`, `release` and so on) need no setup. |
-| `note: xless installs no build tools on macOS yet` | `xless run` without `--docker` uses the build tools you installed yourself, and found no `xtool`. Build in Docker: `xless run --docker …`. |
+| `on a Mac xless builds with the Xcode that is installed, not with an exported SDK` (with a `.xip`, `--sdk` or `--reexport`) | Run `xless setup` with no source, or with `--xcode <Xcode.app>`. With `--docker` it takes the `.xip`. |
 | `xcode: "…" is pinned, but … SDK from Xcode …` when building | The native install holds another Xcode. Run `xless setup --xcode <that Xcode's .xip>` (it replaces the installed one), or build in its images with `--docker`. |
 | `a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images` | Overlays build in Docker only: `xless setup --docker --xcode …` once, then `xless run --docker --config …`. |
+
+On a Mac, natively ([native-install.md](native-install.md#on-a-mac)):
+
+| Symptom | What to do |
+|---|---|
+| `no Xcode on this Mac` | Install Xcode from the App Store (or a `.xip` from <https://developer.apple.com/download>) and open it once. The Command Line Tools alone have no iOS SDK. Without Xcode: `xless run --docker`. The account commands (`xless auth`, `provision`, `store`, `testflight`, `release` and so on) need none. |
+| `Xcode … is not used: … is not signed by Apple`, `… is no program`, `it has no swift-build` | It was changed, or is no Xcode. Install it again, or choose another one with `DEVELOPER_DIR`. |
+| `Xcode … is not used: … can be written by other users`, `… belongs to another user` | Another user of the Mac could change it. `chmod go-w <that path>`, or give it to root or to yourself. Where the message names the access control list: `ls -led <that path>` shows it and `chmod -N <that path>` removes it. |
+| `Xcode … is not used: the volume of … ignores who owns its files` | It is on a disk on which every user can write everything (Finder, Get Info: "Ignore ownership on this volume"). Turn that off, or move Xcode to `/Applications`. |
+| `rcodesign, which signs, is not used from …: … can be written by other users` | Another user of the Mac could change the program that gets your signing key. `chmod go-w <that path>`, or set `XLESS_NATIVE_HOME` to a directory that only you can write. |
+| `DEVELOPER_DIR=… is not in an Xcode` | Set it to `<Xcode.app>/Contents/Developer`, or unset it. |
+| `xcode: "…" is pinned, but this Mac has …`, `… but DEVELOPER_DIR names …` | Install that Xcode next to the other (any name `/Applications/Xcode*.app`), change the pin, or build with `--docker`. |
+| `Xcode … cannot build: …` | Open that Xcode once: it asks for its license and installs what is missing. |
+| `XLESS_TOOLS has '…'` | `xcode`, `xless`, or one for each tool: `actool=xless,ibtool=xcode`. |
+| `… loads @rpath/…, which the build did not make` (a `libswift…` library) | The app's lowest system needs a Swift library that only newer ones have. Raise `minimumOS` in xless.yml and the platform in Package.swift. |
+| `xless.yml is not what it was when this run began, so nothing is signed` | The build changed xless.yml, or you did meanwhile. Look at it (`git diff`), then run again, or `--from sign`. |
 
 With `--docker`:
 

@@ -57,6 +57,18 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     #expect(!steps.contains { $0.argv.first == "docker" })
 }
 
+@Test func aMacGetsTheSignersOwnReleaseByItsOwnPin() throws {
+    var t = table
+    #expect(throws: XlessError.self) { try NativeSetupPlan.rcodesign(arch: "arm64", mac: true, table: t, layout: layout) } // never Linux's pin
+    t["RCODESIGN_SHA256_DARWIN_AARCH64"] = "da"
+    t["RCODESIGN_SHA256_DARWIN_X86_64"] = "dx"
+    let arm = try NativeSetupPlan.rcodesign(arch: "arm64", mac: true, table: t, layout: layout)
+    #expect(arm.url.absoluteString == "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/apple-codesign-0.29.0-aarch64-apple-darwin.tar.gz")
+    #expect(arm.sha256 == "da" && arm.kind == .rcodesign && arm.final.path == "/n/tools/rcodesign-0.29.0")
+    let x86 = try NativeSetupPlan.rcodesign(arch: "amd64", mac: true, table: t, layout: layout)
+    #expect(x86.url.lastPathComponent == "apple-codesign-0.29.0-x86_64-apple-darwin.tar.gz" && x86.sha256 == "dx")
+}
+
 @Test func amd64DownloadsTheX86Pins() throws {
     let d = downloads(try plan(arch: "amd64"))
     #expect(d[0].url.lastPathComponent == "xtool-x86_64.AppImage" && d[0].sha256 == "xx")

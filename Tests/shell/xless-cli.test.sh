@@ -41,10 +41,10 @@ done
 expect 64 "Error: --to build comes before --from sign" ship "${rn[@]}" --destination simulator --from sign
 # Nothing was built or signed: only the build number record exists in the work copy.
 [[ -z "$(find "$t/work" -type f ! -name build-number)" ]] || fail "files written: $(find "$t/work" -type f)"
-# The simulator is for React Native overlays only.
+# The simulator is for React Native overlays only (and for xless.yml projects, on a Mac with Xcode).
 printf 'type: tauri\nsource: .\n' > "$t/tauri.yml"
 expect 10 "error: [config] --destination simulator builds React Native overlays only" build --config "$t/tauri.yml" --platform ios --destination simulator
-expect 10 "error: [config] --destination simulator builds React Native overlays only" ship --project "$repo/samples/HelloShip" --platform ios --destination simulator
+[[ "$(uname)" == Darwin ]] || expect 10 "error: [config] --destination simulator builds React Native overlays only" ship --project "$repo/samples/HelloShip" --platform ios --destination simulator
 # xless run and xless docker: the run's steps. Printed (--dry-run), or run by a fake docker that logs what it is asked.
 mkdir -p "$t/p" "$t/bin" "$t/home" "$t/share"
 cp "$repo/samples/HelloShip/xless.yml" "$t/p/xless.yml"

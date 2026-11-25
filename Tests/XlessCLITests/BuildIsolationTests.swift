@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import XlessASC
 import XlessCore
+import XlessRun
 @testable import xless
 
 /// A secret store that has the API key only for team ABCDE12345, as the store does for a key recorded `@ABCDE12345`
@@ -22,6 +23,25 @@ private struct TeamStore: SecretFallback {
     // Another team's run finds no key: no query.
     let none = try await InspectNextBuild.query(dated: true, team: "ZZZZZ99999", secrets: secrets) { _ in "queried" }
     #expect(none == nil)
+}
+
+/// What `xless run` read when it began is what a ship of it is made with, or there is none.
+@Test func aShipTakesOnlyTheXlessYmlThatItIsToldToExpect() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xless-expect-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("xless.yml"), text = "bundleID: com.example.demo\nteamID: ABCDE12345\nversion: 1.0.0\nbuild: 7\nplatforms:\n  ios: { minimumOS: \"17.0\", product: Demo }\n"
+    try Data(text.utf8).write(to: file)
+    let options = try ProjectOptions.parse(["--project", dir.path, "--platform", "ios"])
+    let digest = RunConfiguration.digest(Data(text.utf8))
+    #expect(try await Context.load(options, env: [:], expecting: digest).config.bundleID == "com.example.demo")
+    try Data(text.replacingOccurrences(of: "demo", with: "other").utf8).write(to: file)
+    do {
+        _ = try await Context.load(options, env: [:], expecting: digest)
+        Issue.record("another xless.yml was taken")
+    } catch let e as XlessError { #expect(e.stage == .config && e.cause == "\(file.path) is not what it was when this run began") }
+    #expect(throws: (any Error).self) { try ShipCommand.parse(["--config", "/o.yml", "--platform", "ios", RunConfiguration.option, digest]) }
+    #expect(try ShipCommand.parse(["--project", dir.path, "--platform", "ios", RunConfiguration.option, digest]).expectConfig == digest)
 }
 
 @Test func inspectMakesNoQueryForAFixedBuildAndReportsAFailedOne() async throws {

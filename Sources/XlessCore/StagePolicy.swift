@@ -1,6 +1,6 @@
 import Foundation
 
-/// Which stages a run may reach. A simulator build (`--destination simulator`, React Native overlays only) ends at
+/// Which stages a run may reach. A simulator build (`--destination simulator`: React Native overlays, and xless.yml projects on a Mac) ends at
 /// `build`: its app is signed ad hoc there, and every later stage (the assets copy-through, finalize's App Store metadata
 /// and checks, signing with a distribution identity, packaging, upload) is for device builds. The CLI (`ship`, the
 /// stage commands, `Context`) asks this type, so the refusals are tested here (Tests/XlessCoreTests/StagePolicyTests).
@@ -44,10 +44,11 @@ public enum StagePolicy {
                          fix: "install \(appDir.path)/<App>.app with `xcrun simctl install`, or drop --destination simulator for a device build")
     }
 
-    /// `--destination simulator` for anything but a React Native overlay (a Tauri overlay, xless.yml) is refused.
-    public static func requireReactNativeForSimulator(simulator: Bool, isReactNative: Bool) throws {
-        guard simulator, !isReactNative else { return }
-        throw XlessError(.config, "--destination simulator builds React Native overlays only",
+    /// `--destination simulator` for anything but a React Native overlay is refused; a Mac's Xcode builds xless.yml projects for it
+    /// too (`builds`).
+    public static func requireReactNativeForSimulator(simulator: Bool, isReactNative: Bool, builds: Bool = false) throws {
+        guard simulator, !isReactNative, !builds else { return }
+        throw XlessError(.config, "--destination simulator builds React Native overlays only (and xless.yml projects, on a Mac with Xcode)",
                          fix: "drop --destination, or build a type: react-native overlay")
     }
 }

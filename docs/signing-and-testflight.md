@@ -107,7 +107,7 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
 
 - **Native or image.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
   ([native-install.md](native-install.md)); a project pinning another Xcode with `xcode:` is refused until you run
-  `xless setup` with that Xcode. With `--docker`: the image of the Xcode the project
+  `xless setup` with that Xcode. On a Mac it uses the Xcode that is installed, and a pin chooses among several. With `--docker`: the image of the Xcode the project
   pins, `xless:local-<arch>-xcode<version>`, or without a pin that of the newest Xcode there is an image of. `image:`
   in xless.yml or the overlay, or `XLESS_IMAGE`, names another image for the build step
   ([images.md](images.md#an-image-of-your-own)). The Docker context is `DOCKER_CONTEXT` when set, else `colima-xless` when that context exists, else the

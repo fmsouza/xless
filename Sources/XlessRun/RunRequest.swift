@@ -82,7 +82,6 @@ public struct RunRequest: Sendable, Equatable {
             request = RunRequest(target: .project(first))
             words.removeFirst()
             if words.contains(where: { $0 == "--config" || RunText.has("--config=", before: $0) }) { throw RunStop.usage("--config replaces <project-dir>; give one or the other") }
-            if destination == "simulator" { throw RunStop.usage("--destination simulator needs --config <overlay.yml> (a React Native app)") }
             if platform == "macos" { throw RunStop.usage("--platform macos needs --config <overlay.yml> (a Tauri or cargo app)") }
         }
         // `--` introduces ship's arguments; ship itself would take what follows it as operands, and has none.

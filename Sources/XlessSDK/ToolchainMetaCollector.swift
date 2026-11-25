@@ -10,7 +10,8 @@ public enum ToolchainMetaCollector {
         return String(format: "%02d%d%d", v.parts[0], v.parts[1], v.parts[2])
     }
 
-    public static func collect(xcodeApp: URL, buildMachineOSBuild: String) throws -> ToolchainMeta {
+    /// `environment`: what its `swift` finds changed in xless's own (nil: removed).
+    public static func collect(xcodeApp: URL, buildMachineOSBuild: String, environment: [String: String?] = [:]) throws -> ToolchainMeta {
         let version = try Plist.read(xcodeApp.appendingPathComponent("Contents/version.plist"), stage: .sdk)
         guard let short = version["CFBundleShortVersionString"] as? String,
               let build = version["ProductBuildVersion"] as? String else {
@@ -20,7 +21,7 @@ public enum ToolchainMetaCollector {
                                           fix: "pass the path to a full Xcode.app with the %@ platform installed")
         return ToolchainMeta(xcodeVersion: try xcodeVersionCode(short), xcodeBuild: build,
                              buildMachineOSBuild: buildMachineOSBuild, compiler: ToolchainMeta.clangCompiler,
-                             platforms: platforms, swiftVersion: try swiftVersion(xcodeApp: xcodeApp))
+                             platforms: platforms, swiftVersion: try swiftVersion(xcodeApp: xcodeApp, environment: environment))
     }
 
     /// The same metadata from an xtool SDK (`darwin.xtoolsdk`), whose `Developer/` tree mirrors Xcode's. The Xcode's
@@ -61,10 +62,10 @@ public enum ToolchainMetaCollector {
 
     /// The Swift the Xcode ships (Ruling R10), black-box: its default toolchain's `swift --version`, e.g. "Apple Swift
     /// version 6.2.3 (swiftlang-6.2.3.3.21 clang-1700.6.3.2)" → "6.2.3".
-    public static func swiftVersion(xcodeApp: URL) throws -> String {
+    public static func swiftVersion(xcodeApp: URL, environment: [String: String?] = [:]) throws -> String {
         let swift = xcodeApp.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift")
         let out: String
-        do { out = try Shell.run(swift.path, ["--version"], stage: .sdk).stdout } catch {
+        do { out = try Shell.run(swift.path, ["--version"], env: environment, stage: .sdk).stdout } catch {
             throw XlessError(.sdk, "cannot run \(swift.path) --version: \(error)", fix: "pass the path to a full Xcode.app")
         }
         guard let v = SwiftToolchain.parseVersion(out) else {

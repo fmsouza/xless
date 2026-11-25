@@ -155,6 +155,10 @@ int xless_deny_attach(void);
 /// Linux: of this process. 0, or an errno value.
 int xless_process_file(int pid, uint64_t *device, uint64_t *inode);
 
+/// Whether the access control list of `path` (not of what a link names) lets anybody else than root, `uid` and the administrators of
+/// the Mac (the groups wheel and admin) change it. 1 or 0, or a negative errno value when it cannot be told. Linux has none: 0.
+int xless_acl_lets_others_write(const char *path, unsigned int uid);
+
 /// Who is at the other end of a connected Unix socket, as the kernel says.
 struct xless_peer {
     int pid;

@@ -38,6 +38,11 @@ enum StageRunner {
         if let mac = ctx.tauriMacBuild { return try await TauriBuilder.buildMac(ctx: mac) }
         if let tauri = ctx.tauriBuild { return try await TauriBuilder.build(ctx: tauri) }
         return try await withStage(.build) {
+            if let mac = try MacNative.here(for: ctx, stage: .build) {
+                if ctx.simulator { return try await mac.buildForSimulator(ctx) }
+                return try XcodePackageBuilder.build(project: ctx.project, config: ctx.config, paths: ctx.paths,
+                                                     destination: ctx.platform == .ios ? .device : .mac, xcode: mac.xcode)
+            }
             switch ctx.platform {
             case .ios: return try IOSBuilder.build(project: ctx.project, config: ctx.config, paths: ctx.paths)
             case .macos: return try MacBuilder.build(project: ctx.project, config: ctx.config, paths: ctx.paths)
@@ -52,7 +57,14 @@ enum StageRunner {
     /// and printed with the SDK, and put on this process's PATH before the image's own Swift (`activate`), so every
     /// compile the build runs uses it (Swift Build also gets it through its toolset: `SwiftBuildEnvironment`).
     /// The checks and the record are `BuildSDKCheck`'s (tested there).
+    /// On a Mac it is the Xcode's SDK and Swift, the pinned one's where there is a pin (`XcodeFinder`).
     static func checkSDK(_ ctx: Context) throws {
+        if let mac = try MacNative.here(for: ctx, stage: .build) {
+            let record = mac.record(pin: ctx.config.xcode)
+            try record.write(in: ctx.paths.root)
+            FileHandle.standardError.write(Data("xless: SDK: \(record.summary(platform: ctx.platform)); \(mac.compiler) (recorded in \(BuildSDKRecord.url(in: ctx.paths.root).path))\n".utf8))
+            return
+        }
         let (result, sdk) = try BuildSDKCheck.checkAndRecord(stageRoot: ctx.paths.root, pin: ctx.config.xcode, platform: ctx.platform, file: pinFile(ctx))
         result.toolchain?.activate()
         if let sdk {
@@ -72,8 +84,10 @@ enum StageRunner {
             // Swift Build compiled the asset catalogs and storyboards (actool/ibtool shims); cargo on macOS without an
             // asset catalog: the build copied `icon`'s .icns, or there is no icon. Copy through.
             if ctx.tauriMac != nil || ctx.isReactNative || cargoMacWithoutCatalog(ctx) { return try Files.atomicOutput(ctx.paths.assets) { try Files.copyBundle(input, intoFreshDir: $0) } }
+            let mac = try MacNative.here(for: ctx, stage: .assets)
             return try await AssetsStage.run(input: input, outputDir: ctx.paths.assets, platform: ctx.platform, config: ctx.config, project: ctx.project,
-                                             profile: { try XcodeToolsProfile.forImage(stage: .assets) })
+                                             xcode: mac?.assets(simulator: false),
+                                             profile: { try mac.map { try XcodeToolsProfile.forImage(meta: $0.meta, stage: .assets) } ?? XcodeToolsProfile.forImage(stage: .assets) })
         }
     }
 
@@ -87,7 +101,7 @@ enum StageRunner {
         try await withStage(.finalize) {
             try ctx.requireDevice(.finalize)
             let input = try ctx.paths.bundle(in: ctx.paths.assets, stage: .finalize)
-            let meta = try ToolchainMeta.load(from: ToolchainMeta.defaultLocation())
+            let meta = try MacNative.here(for: ctx, stage: .finalize)?.meta ?? ToolchainMeta.load(from: ToolchainMeta.defaultLocation())
             let kind: ProjectKind = ctx.isReactNative ? .reactNative : ctx.isCargo ? .cargo : ctx.isTauri ? .tauri : .xlessYML
             let built = BuildSDKRecord.load(in: ctx.paths.root)
             // Ruling R10: the compiler the build recorded (DTCompiler stays Xcode's compiler identifier for every Swift).
@@ -101,6 +115,7 @@ enum StageRunner {
     static func sign(_ ctx: Context, noUpdates: Bool = false) async throws -> URL {
         try await withStage(.sign) {
             try ctx.requireDevice(.sign)
+            try MacNative.prepareSigner() // before anything secret is read
             SecretScope.enter() // reads signing / notary / App Store Connect keys
             let input = try ctx.paths.bundle(in: ctx.paths.final, stage: .sign)
             // The Info.plists carry the map finalize applied: an overlay edited since (`--from sign`) is refused.
@@ -117,6 +132,7 @@ enum StageRunner {
     static func package(_ ctx: Context) async throws -> URL {
         try await withStage(.package) {
             try ctx.requireDevice(.package)
+            if ctx.platform == .macos { try MacNative.prepareSigner() } // it also notarizes, and signs what is packaged
             SecretScope.enter() // reads signing / notary / App Store Connect keys
             let input = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
             switch ctx.platform {
