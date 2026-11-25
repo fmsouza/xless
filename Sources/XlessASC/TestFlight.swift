@@ -4,7 +4,8 @@ import XlessCore
 // TestFlight on the App Store Connect API key, for `xless testflight` (docs/apple-account.md#xless-testflight) and the
 // `testflight:` block of xless.yml: beta groups, beta testers and their invitations, the builds each group gets, a build's
 // "What to Test", the app's beta information (betaAppLocalizations, betaAppReviewDetail, betaLicenseAgreement), the
-// beta app review submission and public links. Creates are sent once (postOnce); a 409 is settled by reading again.
+// beta app review submission and public links. A create is sent again only after reading shows nothing was made, and a lost
+// answer or a 409 is settled by reading (`ASCResources.settled`); an invitation, which cannot be read back, is sent once.
 
 public struct ASCBetaGroupAttributes: ASCAttributes, Equatable {
     public var name: String?
@@ -243,6 +244,31 @@ public struct ASCTestFlight: Sendable {
         }
     }
 
+    /// What became of a create.
+    private enum Settled<R: Sendable>: Sendable {
+        case made(R)
+        /// Found by reading: `ours` when an answer of this create was lost (this request made it), else it was there.
+        case found(R, ours: Bool)
+
+        var outcome: Outcome<R> {
+            switch self {
+            case .made(let r), .found(let r, ours: true): .created(r)
+            case .found(let r, ours: false): .unchanged(r)
+            }
+        }
+    }
+
+    /// `ASCResources.settled`, telling what was made from what was found.
+    private func settle<R: Sendable>(lookup: () async throws -> R?, create: () async throws -> R) async throws -> Settled<R> {
+        var lost = false
+        return try await resources.settled(lookup: { try await lookup().map { .found($0, ours: lost) } }, create: {
+            do { return .made(try await create()) } catch {
+                if (error as? ASCError)?.status != 409 { lost = true }
+                throw error
+            }
+        })
+    }
+
     // MARK: Groups
 
     /// Every group of the app, sorted by name, then ID. No `filter[name]`: ASC splits it on commas.
@@ -287,14 +313,11 @@ public struct ASCTestFlight: Sendable {
         struct Attributes: Encodable, Sendable { var name: String; var isInternalGroup: Bool; var hasAccessToAllBuilds: Bool?; var feedbackEnabled: Bool? }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
         let attributes = Attributes(name: name, isInternalGroup: !external, hasAccessToAllBuilds: external ? nil : allBuilds, feedbackEnabled: feedback)
-        do {
+        return try await settle(lookup: { try await groups(app: appID).first { $0.name == name && $0.isInternal == !external } }, create: {
             let created: ASCSingle<ASCBetaGroup> = try await resources.create("/v1/betaGroups", type: "betaGroups", attributes: attributes,
                                                                              relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            if let found = try await groups(app: appID).first(where: { $0.name == name && $0.isInternal == !external }) { return .unchanged(found) }
-            throw e
-        }
+            return created.data
+        }).outcome
     }
 
     /// The settings `updateGroup` changes; nil leaves one as it is.
@@ -393,7 +416,7 @@ public struct ASCTestFlight: Sendable {
     }
 
     /// Adds someone to the group: nothing when they are among `members` already; a tester of the app is linked; a new
-    /// one is created with the group (sent once; a 409 is settled by looking the address up and linking it).
+    /// one is created with the group (a lost answer or a 409 is settled by looking the address up, and linking it).
     /// - Parameters:
     ///   - appID: the group's app: only its own tester records can be linked.
     ///   - members: the group's testers (`members(of:)`), read once for several additions.
@@ -410,14 +433,16 @@ public struct ASCTestFlight: Sendable {
         }
         struct Attributes: Encodable, Sendable { var email: String; var firstName: String?; var lastName: String? }
         struct Relationships: Encodable, Sendable { var betaGroups: ASCToMany }
-        do {
+        let settled = try await settle(lookup: { try await findTester(email: request.email, app: appID) }, create: {
             let created: ASCSingle<ASCBetaTester> = try await resources.create(
                 "/v1/betaTesters", type: "betaTesters", attributes: Attributes(email: request.email, firstName: request.firstName, lastName: request.lastName),
                 relationships: Relationships(betaGroups: ASCToMany([ASCRef(type: "betaGroups", id: group.id)])))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            guard let tester = try await findTester(email: request.email, app: appID) else { throw e }
-            if try await self.members(of: group).contains(where: { $0.id == tester.id }) { return .alreadyInGroup(tester) }
+            return created.data
+        })
+        switch settled {
+        case .made(let tester): return .created(tester)
+        case .found(let tester, let ours):
+            if try await self.members(of: group).contains(where: { $0.id == tester.id }) { return ours ? .created(tester) : .alreadyInGroup(tester) }
             try await link(tester, to: group)
             return .added(tester)
         }
@@ -511,15 +536,14 @@ public struct ASCTestFlight: Sendable {
         }
         if let loc = try await existing() { return try await update(loc) }
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
-        do {
+        let settled = try await settle(lookup: existing, create: {
             let created: ASCSingle<ASCBetaBuildLocalization> = try await resources.create(
                 "/v1/betaBuildLocalizations", type: "betaBuildLocalizations", attributes: ["locale": locale, "whatsNew": text],
                 relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            guard let loc = try await existing() else { throw e }
-            return try await update(loc)
-        }
+            return created.data
+        })
+        if case .found(let loc, _) = settled, loc.attributes.whatsNew != text { return try await update(loc) }
+        return settled.outcome
     }
 
     // MARK: Beta information
@@ -549,29 +573,27 @@ public struct ASCTestFlight: Sendable {
                                 existing: [ASCBetaAppLocalization]? = nil) async throws -> Outcome<ASCBetaAppLocalization>? {
         var all = existing ?? []
         if existing == nil { all = try await localizations(app: appID) }
-        let current = all.first { $0.attributes.locale == locale }
-        let diff = Self.infoDiff(text, have: current?.attributes)
-        if let current {
+        func update(_ current: ASCBetaAppLocalization) async throws -> Outcome<ASCBetaAppLocalization> {
+            let diff = Self.infoDiff(text, have: current.attributes)
             guard !diff.isEmpty else { return .unchanged(current) }
             let updated: ASCSingle<ASCBetaAppLocalization> = try await resources.update(
                 "/v1/betaAppLocalizations/\(current.id)", type: "betaAppLocalizations", id: current.id, attributes: diff)
             return .updated(updated.data)
         }
-        guard !diff.isEmpty else { return nil }
+        if let current = all.first(where: { $0.attributes.locale == locale }) { return try await update(current) }
+        var attributes = Self.infoDiff(text, have: nil)
+        guard !attributes.isEmpty else { return nil }
         struct Relationships: Encodable, Sendable { var app: ASCToOne }
-        var attributes = diff
         attributes["locale"] = locale
-        do {
+        let settled = try await settle(lookup: { try await localizations(app: appID).first { $0.attributes.locale == locale } }, create: { [attributes] in
             let created: ASCSingle<ASCBetaAppLocalization> = try await resources.create(
                 "/v1/betaAppLocalizations", type: "betaAppLocalizations", attributes: attributes,
                 relationships: Relationships(app: ASCToOne(ASCRef(type: "apps", id: appID))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            // Lost a race with a localization made meanwhile: set that one.
-            let again = try await localizations(app: appID)
-            guard again.contains(where: { $0.attributes.locale == locale }) else { throw e }
-            return try await setLocalization(app: appID, locale: locale, text, existing: again)
-        }
+            return created.data
+        })
+        // Another one (a race, or Apple's) gets what differs.
+        if case .found(let loc, _) = settled, !Self.infoDiff(text, have: loc.attributes).isEmpty { return try await update(loc) }
+        return settled.outcome
     }
 
     /// The app's beta App Review details, without the demo account's password.
@@ -636,13 +658,10 @@ public struct ASCTestFlight: Sendable {
         struct Relationships: Encodable, Sendable { var build: ASCToOne }
         struct Inner: Encodable, Sendable { var type = "betaAppReviewSubmissions"; var relationships: Relationships }
         struct Body: Encodable, Sendable { var data: Inner }
-        do {
+        return try await settle(lookup: { try await submission(build: buildID) }, create: {
             let created: ASCSingle<ASCBetaSubmission> = try await resources.client.postOnce(
                 "/v1/betaAppReviewSubmissions", body: Body(data: Inner(relationships: Relationships(build: ASCToOne(ASCRef(type: "builds", id: buildID))))))
-            return .created(created.data)
-        } catch let e as ASCError where e.status == 409 {
-            if let existing = try await submission(build: buildID) { return .unchanged(existing) }
-            throw e
-        }
+            return created.data
+        }).outcome
     }
 }

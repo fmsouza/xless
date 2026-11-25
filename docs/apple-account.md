@@ -803,7 +803,7 @@ by its ID or `<version>+<build number>`, as in [`xless builds`](#xless-builds) (
   kind is an error). `update` renames a group or turns its feedback on or off, sending only what differs. `delete`
   asks first (or needs `--yes`).
 - **Testers.** `add` adds each address to the group: someone already in it is reported and nothing is sent; an
-  existing tester is linked to the group; a new one is created with it (sent once; Apple emails them). The testers of an
+  existing tester is linked to the group; a new one is created with it (Apple emails them). The testers of an
   internal group must be App Store Connect users of the team: an address that is not one is refused, with the
   [`xless users invite`](#xless-users) to run. That check reads `/v1/users`, which needs an Admin key; without one, a
   note says so and Apple decides. `--first-name` and `--last-name` name a new tester (one address at a time).

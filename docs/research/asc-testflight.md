@@ -25,7 +25,7 @@ https://developer.apple.com/sample-code/app-store-connect/app-store-connect-open
 |---|---|---|
 | An app's (or a group's) testers | `GET /v1/betaTesters?filter[apps]=<app>[&filter[betaGroups]=<group>]&include=betaGroups` | `fields[betaGroups]=name`, `limit[betaGroups]=50`. |
 | An app's tester by address | `GET /v1/betaTesters?filter[email]=<email>&filter[apps]=<app>` | An address has one tester record per app; linking another app's answers `409 STATE_ERROR` ("Tester(s) cannot be assigned", #105). Compared again client-side without regard to case; addresses with a comma are refused (array filter). |
-| Create a tester in a group | `POST /v1/betaTesters` | `BetaTesterCreateRequest`: `email*`, `firstName`, `lastName`, relationships `betaGroups`; sent once, a `409` is settled by looking the address up. |
+| Create a tester in a group | `POST /v1/betaTesters` | `BetaTesterCreateRequest`: `email*`, `firstName`, `lastName`, relationships `betaGroups`; a lost answer or a `409` is settled by looking the address up. |
 | Add / remove testers of a group | `POST` / `DELETE /v1/betaGroups/{id}/relationships/betaTesters` | `[ {type: betaTesters, id} ]`. |
 | Remove testers from an app | `DELETE /v1/apps/{id}/relationships/betaTesters` | Every group and build of the app. |
 | Send an invitation again | `POST /v1/betaTesterInvitations` | Relationships `app*`, `betaTester`; no attributes. |
@@ -67,8 +67,9 @@ otherwise it creates one; the text it already has sends nothing. The first call 
 
 ## Error mapping
 All calls run inside the upload stage's error wrapper, so every failure prints `[upload] <step>: <cause> — <fix>` and exits 17.
-401/403 get the API-key hints; 429/5xx are retried (at most 5 attempts) except group creation (single attempt, so a retry cannot
-leave a duplicate group). The fix text always says the build itself is already uploaded and processed.
+401/403 get the API-key hints; 429, 5xx and lost connections are retried (at most 5 attempts). A create
+(What to Test, a group, a tester, the beta texts, the submission) is sent again only after reading shows nothing was made: one
+whose answer was lost is found and used, and one that cannot be looked up fails with its own error. The fix text always says the build itself is already uploaded and processed.
 
 ## Not verifiable from the spec
 - Whether `POST .../relationships/builds` on a group with `hasAccessToAllBuilds: true` is accepted or answers `409` because the

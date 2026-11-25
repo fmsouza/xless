@@ -105,6 +105,56 @@ private func query(_ r: URLRequest, _ name: String) -> String? {
     #expect(data["id"] as? String == "L1" && (data["attributes"] as! [String: Any])["whatsNew"] as? String == "new")
 }
 
+// MARK: - A create that fails, or whose answer is lost, does not lose the delivery
+
+private let madeText = #"{"type":"betaBuildLocalizations","id":"L1","attributes":{"locale":"en-US","whatsNew":"hello"}}"#
+private let afterText: [MockTransport.Step] = [.response(200, groups(group("G1", "Internal"))), .response(200, nowhere), .response(204, ""), .response(200, testers(1))]
+private let textConfig = TestFlightConfig(groups: ["Internal"], whatToTest: "hello")
+
+@Test func aFailedWhatToTestIsSentAgainOnceReadingShowsThatItWasNotMade() async throws {
+    for failure: MockTransport.Step in [.response(503, ""), .response(429, ""), .response(500, ""), .failure(.networkConnectionLost)] {
+        let t = MockTransport(steps: [.response(200, appJSON), .response(200, noLocalizations), failure, .response(200, noLocalizations),
+                                      .response(201, #"{"data":\#(madeText)}"#)] + afterText)
+        let result = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: textConfig)
+        #expect(result.whatToTestSet && result.groups.map(\.id) == ["G1"])
+        #expect(t.requests[1...4].map(path) == ["GET /v1/builds/B1/betaBuildLocalizations", "POST /v1/betaBuildLocalizations",
+                                                "GET /v1/builds/B1/betaBuildLocalizations", "POST /v1/betaBuildLocalizations"])
+    }
+}
+
+@Test func aWhatToTestMadeByTheRequestWhoseAnswerWasLostIsNotSentAgain() async throws {
+    for failure: MockTransport.Step in [.response(503, ""), .failure(.timedOut), .response(201, "not json")] {
+        let t = MockTransport(steps: [.response(200, appJSON), .response(200, noLocalizations), failure,
+                                      .response(200, #"{"data":[\#(madeText)]}"#)] + afterText)
+        let result = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: textConfig)
+        #expect(result.whatToTestSet && t.steps.isEmpty)
+        #expect(t.requests.filter { $0.httpMethod == "POST" }.map(path) == ["POST /v1/betaBuildLocalizations", "POST /v1/betaGroups/G1/relationships/builds"])
+    }
+}
+
+/// What reading finds after a lost answer may be someone else's (or Apple's, empty): it gets the text.
+@Test func aWhatToTestFoundWithAnotherTextIsUpdated() async throws {
+    let other = #"{"type":"betaBuildLocalizations","id":"L1","attributes":{"locale":"en-US"}}"#
+    let t = MockTransport(steps: [.response(200, appJSON), .response(200, noLocalizations), .response(503, ""),
+                                  .response(200, #"{"data":[\#(other)]}"#), .response(200, #"{"data":\#(madeText)}"#)] + afterText)
+    _ = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: textConfig)
+    #expect(path(t.requests[4]) == "PATCH /v1/betaBuildLocalizations/L1" && t.steps.isEmpty)
+}
+
+@Test func aGroupWhoseCreateFailedIsLookedUpThenMade() async throws {
+    let made = group("G1", "Internal")
+    let again = MockTransport(steps: [.response(200, appJSON), .response(200, noGroups), .response(503, ""), .response(200, noGroups),
+                                      .response(201, #"{"data":\#(made)}"#), .response(200, nowhere), .response(204, ""), .response(200, testers(1))])
+    let config = TestFlightConfig(groups: ["Internal"])
+    let result = try await publisher(again).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config)
+    #expect(result.groups.map(\.created) == [true] && again.steps.isEmpty)
+    let lost = MockTransport(steps: [.response(200, appJSON), .response(200, noGroups), .failure(.networkConnectionLost), .response(200, groups(made)),
+                                     .response(200, nowhere), .response(204, ""), .response(200, testers(1))])
+    let found = try await publisher(lost).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: config)
+    #expect(found.groups.map(\.created) == [true], "this run made it")
+    #expect(lost.requests.filter { $0.httpMethod == "POST" }.map(path) == ["POST /v1/betaGroups", "POST /v1/betaGroups/G1/relationships/builds"])
+}
+
 @Test func localeComesFromConfig() async throws {
     let t = MockTransport([
         (200, appJSON), (200, noLocalizations),
@@ -321,11 +371,12 @@ private func query(_ r: URLRequest, _ name: String) -> String? {
     catch let e as XlessError { #expect(e.stage == .upload && e.cause.contains("looking up")) }
 }
 
-@Test func groupCreateIsNeverRetried() async throws {
-    let t = MockTransport([(200, appJSON), (200, noGroups), (503, "")])
+/// Two groups may have one name: a create whose answer is lost is not sent again when the groups cannot be read.
+@Test func aGroupCreateIsNotSentAgainWithoutReading() async throws {
+    let t = MockTransport([(200, appJSON), (200, noGroups), (503, ""), (403, "{}")])
     do { _ = try await publisher(t).publish(bundleID: "a.b", buildID: "B1", buildNumber: "7", config: TestFlightConfig(groups: ["Internal"])); Issue.record("expected throw") }
-    catch is XlessError {}
-    #expect(t.requests.count == 3)
+    catch let e as XlessError { #expect(e.cause == "creating group Internal: App Store Connect HTTP 503") }
+    #expect(t.requests.filter { $0.httpMethod == "POST" }.count == 1 && t.steps.isEmpty)
 }
 
 // MARK: testers and external testing (#100)
