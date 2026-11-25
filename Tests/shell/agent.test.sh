@@ -197,7 +197,7 @@ if os.path.isdir("/proc/self/fd"):
     except PermissionError:
         check(True, "its descriptors and environment are closed to its own user (not dumpable)")
     lim = open(f"/proc/{pid}/limits").read() if os.access(f"/proc/{pid}/limits", os.R_OK) else ""
-    check(not lim or re.search(r"Max core file size\s+0\s+0", lim), "it dumps no core", lim)
+    check(not lim or re.search(r"Max core file size\s+([01])\s+\1\s", lim), "it dumps no core", lim)
     check(os.stat(f"/proc/{pid}/mem").st_uid == 0, "it is not dumpable: its memory belongs to root", os.stat(f"/proc/{pid}/mem"))
 else:
     out = subprocess.run(["ps", "-Eww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()

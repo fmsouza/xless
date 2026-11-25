@@ -6,7 +6,7 @@ import CXlessProcess
 #endif
 
 /// The process hardening every command that reads a secret enters before it does (Apple ID sign-in, API keys, signing
-/// keys): no core file (`RLIMIT_CORE` 0, inherited by the tools it runs, which get keys too) and, on Linux, not dumpable
+/// keys): no core file (`RLIMIT_CORE` 0, on Linux 1, inherited by the tools it runs, which get keys too) and, on Linux, not dumpable
 /// (`PR_SET_DUMPABLE` 0), so no crash and no other process of the same user (ptrace, /proc/<pid>/mem) can read its memory.
 ///
 /// There is no way out of the scope: secrets are not kept longer than the command, and neither is the process. Entering

@@ -4,8 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/// Sets RLIMIT_CORE to 0 and, on Linux, marks the process non-dumpable (PR_SET_DUMPABLE 0: no core file, no same-user
-/// ptrace or /proc/<pid>/mem). Returns 0 when both took effect. prctl is variadic, so Swift cannot call it directly.
+/// No core dump of this process nor of what it starts: RLIMIT_CORE 0, and on Linux 1, which makes no file either (the kernel
+/// wants room for a page at least) and is the one value with which a core_pattern that is a program (`|…`) is not started: the
+/// kernel gives such a program the dump whatever other limit there is, 0 too. A hard limit of 0 that this process may not raise
+/// stays 0. On Linux this process is not dumpable either (PR_SET_DUMPABLE 0: no core dump at all, no same-user ptrace or
+/// /proc/<pid>/mem), which what it starts does not inherit. Returns 0 when both took effect. prctl is variadic, so Swift cannot
+/// call it directly.
 int xless_disable_core_dumps(void);
 
 /// The soft RLIMIT_CORE, or -1 for unlimited or on error.
@@ -49,6 +53,34 @@ long xless_key_join_new_session(void);
 /// than Linux. Where a run's materialised secrets may go without touching a disk.
 int xless_is_memory_fs(const char *path);
 
+// --- On the kernel of WSL ---
+
+/// A seccomp filter, as the kernel takes it.
+struct xless_instruction { uint16_t code; uint8_t if_true, if_false; uint32_t value; };
+struct xless_filter { const struct xless_instruction *program; unsigned short length; };
+
+/// What keeps a process on the kernel of WSL, and all that it starts, from Windows' own sockets (AF_VSOCK), over which a Windows
+/// program is started and a Windows drive is mounted. EACCES for socket(AF_VSOCK) and for io_uring_setup (a ring opens sockets
+/// without socket(2)); a system call of another architecture (a 32-bit program has socketcall(2)) or of the x32 ABI kills the
+/// process; everything else is as it was. One for each processor xless is built for; on another one, and on another system, a
+/// filter without a program, which cannot be set.
+const struct xless_filter *xless_windows_filter(void);
+const struct xless_filter *xless_windows_filter_x86_64(void);
+const struct xless_filter *xless_windows_filter_arm64(void);
+
+/// From here on (`on`), or no more: this process is the parent of what its descendants leave behind when they end
+/// (PR_SET_CHILD_SUBREAPER). 0, or -1 (always, but on Linux).
+int xless_keep_orphans(int on);
+/// Whether this process has any child, one that has ended and was not waited for too. -1: it cannot be told (but on Linux).
+int xless_has_children(void);
+/// Waits for `pid`, a child, if it has ended: 1 when it had. Of any kind (one that was cloned with another signal too), on Linux.
+int xless_reap_orphan(int pid);
+
+/// Whether the release of a kernel, as uname(2) has it, says that it is WSL's.
+int xless_is_wsl_release(const char *release);
+/// Whether this system's kernel is WSL's, as the kernel says (a container's too).
+int xless_is_wsl_kernel(void);
+
 /// Starts `path` with `argv` and `envp` (NULL-terminated) in a process group of its own (its pid), with every signal at
 /// its default disposition and none blocked. Its stdin and stdout are pipes whose other ends come back in `*in_fd` and
 /// `*out_fd` (close-on-exec, non-blocking); its stderr is this process's; every other descriptor is closed in it.
@@ -73,12 +105,16 @@ int xless_reap(int pid, int nohang, int *code);
 /// Its stdin is this process's, or /dev/null when that is a terminal; stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor
 /// is closed in it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
 /// On Linux the child gets the calling thread's credentials (its session keyring).
+/// `filter`: NULL, or the seccomp filter that it, and all that it starts, runs under, for good, and with it without the
+/// privileges that a file may have (setuid, file capabilities). One that cannot be set is an error, and nothing is started: the
+/// errno value's negative.
 /// A signal that ends this process is passed on to its process group from here to `xless_wait` (its session gets none from a
 /// terminal): this process's handlers (installed where the disposition is the default, not where it is ignored) tell every
 /// tool that runs, SIGINT, SIGTERM and SIGHUP as they are and SIGTERM for any other, and then take the signal's default
 /// action. The same for a fault of this process's own (SIGSEGV, SIGABRT, ...), also where a handler of another's is (which
 /// comes after).
-int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
+int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd,
+                        const struct xless_filter *filter, int *pid);
 
 /// waitpid(2) for `pid`: 1 when it ended (`*status`: its exit status, or the signal that killed it), -1 on error.
 int xless_wait(int pid, int *status);
@@ -114,8 +150,10 @@ void xless_end_by_signal(int sig);
 /// process group, so that it may ask on the terminal and has what is held for the session; with nothing to read
 /// (/dev/null), SIGINT and SIGQUIT ignored (the run stops its steps itself), every other signal at its default disposition
 /// and none blocked. stdout and stderr are `out_fd` and `err_fd` (-1: this process's); every other descriptor is closed in
-/// it. `cwd`: its directory, or NULL. Returns 0 (`*pid`), or an errno value (nothing left running).
-int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
+/// it. `cwd`: its directory, or NULL. `filter`: as of xless_spawn_session. Returns 0 (`*pid`), or an errno value (nothing left
+/// running; of the filter, its negative).
+int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd,
+                     const struct xless_filter *filter, int *pid);
 
 /// From here on the signals that end a process are noted instead of ending this one (those that are ignored stay ignored): the
 /// descriptor returned gives one byte, the signal's number, for each. A fault of this process's own is noted too, and ends it

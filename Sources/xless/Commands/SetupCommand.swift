@@ -317,7 +317,7 @@ struct SetupCommand: AsyncParsableCommand {
         if case .current = try state() { return say("    it is there already") }
         var env = ProcessInfo.processInfo.environment
         for name in LocalImages.builderVariables { env[name] = nil }
-        do { try Shell.run("docker", kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
+        do { try Shell.docker(kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
             throw ImageProblem("\(kit.image(on: base)) was not built: \(e.cause)", fix: "its output is above: it needs buildx (docker buildx version), the network and room on Docker's disk")
         }
         guard case .current = try state() else {
@@ -328,8 +328,8 @@ struct SetupCommand: AsyncParsableCommand {
     /// What an older xless left, in one line.
     private static func oldImages() -> String? {
         let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
-        guard let all = try? Shell.run("docker", ls, stage: .sdk).stdout,
-              let labelled = try? Shell.run("docker", ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout else { return nil }
+        guard let all = try? Shell.docker(ls, stage: .sdk).stdout,
+              let labelled = try? Shell.docker(ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout else { return nil }
         let old = CleanPlan.old(fromListing: all, labelled: labelled)
         return old.isEmpty ? nil : "note: \(old.count) image tag\(old.count == 1 ? "" : "s") of an older xless (as \(old[0])) \(old.count == 1 ? "is" : "are") not used any more: xless clean --old removes \(old.count == 1 ? "it" : "them")"
     }
@@ -341,9 +341,9 @@ struct SetupCommand: AsyncParsableCommand {
         switch s.action {
         case .kit: break // run(_:xcode:share:) builds it
         case .tidy:
-            _ = try? Shell.run(s.argv[0], Array(s.argv.dropFirst()), stage: .sdk)
+            _ = try? s.start()
         case .run:
-            try Shell.run(s.argv[0], Array(s.argv.dropFirst()), stage: .sdk, passthrough: true)
+            try s.start(passthrough: true)
         case let .export(partial, final):
             // A fresh, empty directory the user owns (docker would create a missing one as root); a leftover of an
             // interrupted export is removed first and never reused.
@@ -354,7 +354,7 @@ struct SetupCommand: AsyncParsableCommand {
                 }
             }
             try fm.createDirectory(at: partial, withIntermediateDirectories: true)
-            try Shell.run(s.argv[0], Array(s.argv.dropFirst()), stage: .sdk, passthrough: true)
+            try s.start(passthrough: true)
             guard fm.fileExists(atPath: partial.appendingPathComponent("darwin.xtoolsdk").path) else {
                 throw XlessError(.sdk, "xtool did not produce \(partial.path)/darwin.xtoolsdk", fix: "see xtool's output above")
             }
@@ -474,7 +474,7 @@ struct SetupCommand: AsyncParsableCommand {
     private static func preflight(cacheRoot: URL, need: (cache: SetupDisk.Need, docker: SetupDisk.Need)) throws -> Bool {
         let root: String, rootless: Bool
         do {
-            let info = try Shell.run("docker", ["info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"], stage: .sdk).stdout
+            let info = try Shell.docker(["info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"], stage: .sdk).stdout
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             root = String(info.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
             rootless = info.contains("name=rootless")
@@ -495,7 +495,7 @@ struct SetupCommand: AsyncParsableCommand {
             }
             throw XlessError(.sdk, "`docker info` failed\(detail)", fix: "check that `docker info` works, then run xless setup again")
         }
-        do { try Shell.run("docker", ["buildx", "version"], stage: .sdk) } catch {
+        do { try Shell.docker(["buildx", "version"], stage: .sdk) } catch {
             throw XlessError(.sdk, "docker buildx is not available", fix: "install Docker's buildx plugin (e.g. the docker-buildx-plugin package)")
         }
         if need.cache.totalGB > 0 {
@@ -633,11 +633,19 @@ private func say(_ line: String) {
     FileHandle.standardOutput.write(Data((line + "\n").utf8))
 }
 
+private extension SetupStep {
+    /// Runs its command: docker's are the client's, any other is a tool's.
+    func start(passthrough: Bool = false) throws {
+        let arguments = Array(argv.dropFirst())
+        if argv[0] == "docker" { try Shell.docker(arguments, stage: .sdk, passthrough: passthrough) } else { try Shell.run(argv[0], arguments, stage: .sdk, passthrough: passthrough) }
+    }
+}
+
 extension LocalImages {
     /// Those of this machine's docker.
     static var here: LocalImages {
         LocalImages { arguments in
-            guard let answer = try? Shell.run("docker", arguments, stage: .sdk) else { return (1, "") }
+            guard let answer = try? Shell.docker(arguments, stage: .sdk) else { return (1, "") }
             return (0, answer.stdout)
         }
     }

@@ -22,6 +22,7 @@
 #include <spawn.h>
 #include <pthread.h>
 #include <sys/resource.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -49,9 +50,13 @@
 
 int xless_disable_core_dumps(void) {
     struct rlimit none = { 0, 0 };
-    int result = setrlimit(RLIMIT_CORE, &none);
 #ifdef __linux__
+    struct rlimit no_handler = { 1, 1 };
+    int result = setrlimit(RLIMIT_CORE, &no_handler);
+    if (result != 0) result = setrlimit(RLIMIT_CORE, &none); // the hard limit is 0 already, and raising it is not allowed
     if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) result = -1;
+#else
+    int result = setrlimit(RLIMIT_CORE, &none);
 #endif
     return result;
 }
@@ -143,6 +148,126 @@ int xless_is_memory_fs(const char *path) {
     (void)path;
     errno = ENOSYS;
     return -1;
+#endif
+}
+
+// --- On the kernel of WSL ---
+
+// The kernel's numbers (linux/filter.h, linux/seccomp.h, linux/audit.h, the system call tables: not every sysroot has them).
+enum {
+    LOAD = 0x20 /* BPF_LD | BPF_W | BPF_ABS */, IF_EQUAL = 0x15 /* BPF_JMP | BPF_JEQ | BPF_K */,
+    IF_NOT_BELOW = 0x35 /* BPF_JMP | BPF_JGE | BPF_K, unsigned */, RETURN = 0x06 /* BPF_RET | BPF_K */,
+    NUMBER = 0, ARCHITECTURE = 4, FIRST_ARGUMENT = 16, // in struct seccomp_data; of an argument its low half (both are little-endian)
+    AF_OF_VSOCK = 40,
+    IO_URING_SETUP = 425, // the same on every architecture
+};
+#define RET_KILL_PROCESS 0x80000000u
+#define RET_ALLOW 0x7fff0000u
+#define RET_EACCES (0x00050000u | 13u)
+#define X32 0x40000000u
+#define NO_CALL 0xffffffffu // what a tracer makes of a call that it skips: no system call
+
+// The two numbers after a jump are how many instructions it skips, when it holds and when it does not. The kernel takes socket's
+// family as an int, so the high half of the register means nothing, here as there.
+static const struct xless_instruction windows_x86_64[] = {
+    { LOAD, 0, 0, ARCHITECTURE },
+    { IF_EQUAL, 0, 8, 0xc000003eu },        // AUDIT_ARCH_X86_64, else killed
+    { LOAD, 0, 0, NUMBER },
+    { IF_EQUAL, 7, 0, NO_CALL },            // allowed
+    { IF_NOT_BELOW, 5, 0, X32 },            // killed
+    { IF_EQUAL, 3, 0, IO_URING_SETUP },     // refused
+    { IF_EQUAL, 0, 4, 41 },                 // socket, else allowed
+    { LOAD, 0, 0, FIRST_ARGUMENT },
+    { IF_EQUAL, 0, 2, AF_OF_VSOCK },        // refused, else allowed
+    { RETURN, 0, 0, RET_EACCES },
+    { RETURN, 0, 0, RET_KILL_PROCESS },
+    { RETURN, 0, 0, RET_ALLOW },
+};
+static const struct xless_instruction windows_arm64[] = {
+    { LOAD, 0, 0, ARCHITECTURE },
+    { IF_EQUAL, 0, 6, 0xc00000b7u },        // AUDIT_ARCH_AARCH64, else killed
+    { LOAD, 0, 0, NUMBER },
+    { IF_EQUAL, 3, 0, IO_URING_SETUP },     // refused
+    { IF_EQUAL, 0, 4, 198 },                // socket, else allowed
+    { LOAD, 0, 0, FIRST_ARGUMENT },
+    { IF_EQUAL, 0, 2, AF_OF_VSOCK },        // refused, else allowed
+    { RETURN, 0, 0, RET_EACCES },
+    { RETURN, 0, 0, RET_KILL_PROCESS },
+    { RETURN, 0, 0, RET_ALLOW },
+};
+static const struct xless_filter filter_x86_64 = { windows_x86_64, sizeof windows_x86_64 / sizeof *windows_x86_64 };
+static const struct xless_filter filter_arm64 = { windows_arm64, sizeof windows_arm64 / sizeof *windows_arm64 };
+
+const struct xless_filter *xless_windows_filter_x86_64(void) { return &filter_x86_64; }
+const struct xless_filter *xless_windows_filter_arm64(void) { return &filter_arm64; }
+const struct xless_filter *xless_windows_filter(void) {
+#if defined(__linux__) && defined(__x86_64__) && defined(__LP64__)
+    return &filter_x86_64;
+#elif defined(__linux__) && defined(__aarch64__) && defined(__LP64__) && defined(__AARCH64EL__)
+    return &filter_arm64;
+#else
+    static const struct xless_filter none = { NULL, 0 };
+    return &none;
+#endif
+}
+
+int xless_keep_orphans(int on) {
+#ifdef __linux__
+    return prctl(36 /* PR_SET_CHILD_SUBREAPER */, (unsigned long)(on != 0), 0ul, 0ul, 0ul);
+#else
+    (void)on;
+    return -1;
+#endif
+}
+
+#ifdef __linux__
+enum { ANY_CHILD = 0x40000000 /* __WALL */ };
+#endif
+
+int xless_has_children(void) {
+#ifdef __linux__
+    siginfo_t info;
+    int r;
+    do { r = waitid(P_ALL, 0, &info, WEXITED | WNOHANG | WNOWAIT | ANY_CHILD); } while (r < 0 && errno == EINTR);
+    return r == 0 ? 1 : errno == ECHILD ? 0 : -1;
+#else
+    return -1;
+#endif
+}
+
+int xless_reap_orphan(int pid) {
+#ifdef __linux__
+    int status;
+    return pid > 0 && waitpid((pid_t)pid, &status, WNOHANG | ANY_CHILD) == (pid_t)pid;
+#else
+    (void)pid;
+    return 0;
+#endif
+}
+
+int xless_is_wsl_release(const char *release) { return strcasestr(release, "microsoft") != NULL; }
+
+int xless_is_wsl_kernel(void) {
+#ifdef __linux__
+    struct utsname system;
+    return uname(&system) == 0 && xless_is_wsl_release(system.release);
+#else
+    return 0;
+#endif
+}
+
+/// Puts this process, a child between fork and exec, under `filter`: 0, or an errno value. Async-signal-safe: two system calls,
+/// of a thread that is the only one.
+static int confine(const struct xless_filter *filter) {
+#ifdef __linux__
+    struct { unsigned short length; const struct xless_instruction *program; } program = { filter->length, filter->program }; // struct sock_fprog
+    // Without it only root may set a filter, and a setuid program would run with more rights than whoever filtered it.
+    if (prctl(38 /* PR_SET_NO_NEW_PRIVS */, 1ul, 0ul, 0ul, 0ul) != 0) return errno ? errno : EINVAL;
+    if (prctl(22 /* PR_SET_SECCOMP */, 2ul /* SECCOMP_MODE_FILTER */, &program, 0ul, 0ul) != 0) return errno ? errno : EINVAL;
+    return 0;
+#else
+    (void)filter;
+    return ENOSYS;
 #endif
 }
 
@@ -574,18 +699,22 @@ void xless_signal_default(int sig) {
     else signal(sig, SIG_DFL);
 }
 
-static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid);
+static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd,
+                         const struct xless_filter *filter, int *pid);
 
-int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+int xless_spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd,
+                        const struct xless_filter *filter, int *pid) {
     tool_starts();
     // A signal that another thread took before it could know of this start: no tool is started any more.
-    int e = atomic_load(&deferred) ? EINTR : spawn_session(path, argv, envp, cwd, out_fd, err_fd, pid);
+    int e = atomic_load(&deferred) ? EINTR : spawn_session(path, argv, envp, cwd, out_fd, err_fd, filter, pid);
     tool_started(e == 0 ? *pid : 0);
     return e;
 }
 
-static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+static int spawn_session(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd,
+                         const struct xless_filter *filter, int *pid) {
 #if defined(__APPLE__)
+    if (filter != NULL) return -confine(filter);
     posix_spawnattr_t attr;
     posix_spawn_file_actions_t actions;
     int e;
@@ -645,6 +774,8 @@ static int spawn_session(const char *path, char *const argv[], char *const envp[
         }
         if (cwd != NULL && chdir(cwd) != 0) { e = errno; goto failed; }
         close_from_3(report);
+        // The last thing: from here it and what it starts are under it.
+        if (filter != NULL && (e = confine(filter)) != 0) { e = -e; goto failed; }
         execve(path, argv, envp);
         e = errno;
     failed:
@@ -827,7 +958,8 @@ int xless_take_stop_signals(void) {
     return stop_pipe[0];
 }
 
-int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd, int *pid) {
+int xless_spawn_step(const char *path, char *const argv[], char *const envp[], const char *cwd, int out_fd, int err_fd,
+                     const struct xless_filter *filter, int *pid) {
     int status[2], e;
     if ((e = cloexec_pipe(status)) != 0) return e;
     // Blocked until the child has its own dispositions: a signal must not run this process's handlers in it.
@@ -861,6 +993,8 @@ int xless_spawn_step(const char *path, char *const argv[], char *const envp[], c
         if (null < 0 || (null != 0 && dup2(null, 0) < 0)) { e = errno; goto failed; }
         if (cwd != NULL && chdir(cwd) != 0) { e = errno; goto failed; }
         close_from_3(report);
+        // The last thing: from here it and what it starts are under it.
+        if (filter != NULL && (e = confine(filter)) != 0) { e = -e; goto failed; }
         execve(path, argv, envp);
         e = errno;
     failed:
