@@ -30,7 +30,7 @@ public enum DmgBuilder {
         let found = names.compactMap(MacArchitecture.init(rawValue:))
         guard !found.isEmpty, found.count == names.count else {
             let listed = names.isEmpty ? "" : " (\(names.joined(separator: ", ")))"
-            throw XlessError(.package, "cannot read the architectures of \(app.lastPathComponent)'s executable \(name)\(listed)",
+            throw XlessError(.package, "cannot read the architectures of \(app.lastPathComponent)'s executable \(TerminalText.escaped(name))\(listed)",
                              fix: "re-run from build: the executable must be an arm64 and/or x86_64 Mach-O")
         }
         return MacArchitecture.allCases.filter(found.contains)

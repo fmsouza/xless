@@ -14,9 +14,16 @@ public enum IPAInfo {
         // unzip -p writes raw bytes; go through a file because Shell captures text.
         try Shell.run("sh", ["-c", "unzip -p \"$0\" \"$1\" > \"$2\"", ipa.path, pattern(of: entry), tmp.path], stage: .upload)
         let info = try Plist.read(tmp, stage: .upload)
-        guard let version = info["CFBundleShortVersionString"] as? String, let build = info["CFBundleVersion"] as? String else {
+        guard let (version, build) = versions(info) else {
             throw XlessError(.upload, "\(entry) lacks CFBundleShortVersionString/CFBundleVersion", fix: "re-run from finalize (`xless ship --from finalize`)")
         }
+        return (version, build)
+    }
+
+    /// They are sent to App Store Connect and printed: text that drives a terminal is no version.
+    private static func versions(_ info: [String: Any]) -> (version: String, build: String)? {
+        guard let version = info["CFBundleShortVersionString"] as? String, let build = info["CFBundleVersion"] as? String,
+              [version, build].allSatisfy({ !$0.isEmpty && TerminalText.escaped($0) == $0 }) else { return nil }
         return (version, build)
     }
 
@@ -38,7 +45,7 @@ public enum IPAInfo {
     /// (a mac App Store pkg is a cpio payload: the plist the pkg carries is the signed app's).
     public static func versions(app: URL) throws -> (version: String, build: String) {
         let info = try Plist.read(app.appendingPathComponent("Contents/Info.plist"), stage: .upload)
-        guard let version = info["CFBundleShortVersionString"] as? String, let build = info["CFBundleVersion"] as? String else {
+        guard let (version, build) = versions(info) else {
             throw XlessError(.upload, "\(app.lastPathComponent)/Contents/Info.plist lacks CFBundleShortVersionString/CFBundleVersion",
                              fix: "re-run from finalize (`xless ship --from finalize`)")
         }

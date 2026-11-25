@@ -192,10 +192,18 @@ enum StageRunner {
                 throw XlessError(.upload, "multiple .ipa files in \(ctx.paths.out.path) and none is named \(product).ipa",
                                  fix: "remove stale .ipa files, or run `xless package --platform ios` again")
             }
+            try requireFile(ipa)
             // Declare what the ipa carries, not the current config: the build number is re-resolved on every run.
             let versions = try IPAInfo.uploadVersions(ipa: ipa, buildOverride: ctx.buildOverride)
             return try await uploadPackage(ctx: ctx, asset: ipa, name: ipa.lastPathComponent, bundleID: ctx.config.bundleID(for: .ios),
                                            version: versions.version, build: versions.build, platform: .ios)
+        }
+    }
+
+    /// What a link leads to is never uploaded: it may be any file of this user's.
+    private static func requireFile(_ artifact: URL) throws {
+        guard (try? FileManager.default.attributesOfItem(atPath: artifact.path))?[.type] as? FileAttributeType == .typeRegular else {
+            throw XlessError(.upload, "\(artifact.lastPathComponent) in \(artifact.deletingLastPathComponent().path) is not a file", fix: "look at what put it there, then package again")
         }
     }
 
@@ -244,6 +252,7 @@ enum StageRunner {
             throw XlessError(.upload, "no \(product).pkg in \(ctx.paths.out.path)",
                              fix: "run `xless package --platform macos --distribution app-store` first")
         }
+        try requireFile(pkg)
         let versions = try IPAInfo.uploadVersions(app: app, buildOverride: ctx.buildOverride)
         return try await uploadPackage(ctx: ctx, asset: pkg, name: pkg.lastPathComponent, bundleID: bundleID,
                                        version: versions.version, build: versions.build, platform: .macos)
