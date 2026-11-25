@@ -72,7 +72,7 @@ mkdir -p "$outdir"
 tarball="$outdir/$name.tar.gz"
 if tar --version 2>/dev/null | grep -qi 'gnu tar'; then tar_opts=(--owner=0 --group=0 --numeric-owner --sort=name "$name")
 else
-  (cd "$work" && find "$name" | LC_ALL=C sort) > "$work/names"
+  (cd "$work" && find "$name" | tr / '\001' | LC_ALL=C sort | tr '\001' /) > "$work/names"   # GNU tar's order
   tar_opts=(--uid 0 --gid 0 --numeric-owner --no-mac-metadata --no-xattrs --no-acls --no-fflags -n -T "$work/names")
 fi
 # To its own name once it is checked: nothing else takes it up.

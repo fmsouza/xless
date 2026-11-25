@@ -67,7 +67,7 @@ mac="$t/out/xless-1.2.3-macos-arm64.tar.gz" mactop=xless-1.2.3-macos-arm64
 [[ "$(wc -l < "$t/out/SHA256SUMS" | tr -d ' ')" == 3 ]] || fail "SHA256SUMS should have three lines"
 tar -tzf "$mac" > "$t/maclist"
 diff <(tar -tzf "$tb" | sed "s#^$top##" | grep -v /licenses/ | sort) <(tar -tzf "$mac" | sed "s#^$mactop##" | grep -v /licenses/ | sort) || fail "the macOS package has another layout"
-sed 's#/$##' "$t/maclist" | LC_ALL=C sort -c || fail "the names in the macOS package are not sorted"
+sed 's#/$##' "$t/maclist" | tr / '\001' | LC_ALL=C sort -c || fail "the names in the macOS package are not sorted"
 grep -qE '(^|/)(\._[^/]*|\.DS_Store|__MACOSX|_CodeSignature)(/|$)' "$t/maclist" && fail "macOS metadata in the package"
 for id in swift-LICENSE llvm-compiler-rt boringssl libyaml swift-crypto yams assetkit; do grep -q "/licenses/$id" "$t/maclist" || fail "no notice for $id on macOS"; done
 for id in musl curl icu zlib libxml2 swift-corelibs; do grep -q "/licenses/$id" "$t/maclist" && fail "a notice for $id, which a macOS xless has not in it"; done
