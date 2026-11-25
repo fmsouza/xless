@@ -33,7 +33,7 @@ grep -q '::warning::.*killed by signal 11' "$t/out" || fail "no warning for the 
 [[ "$(run segv 1)" == "1 2" ]] || fail "the rerun's failure is the result"
 [[ "$(run segv segv)" == "139 2" ]] || fail "two crashes: one rerun only"
 
-# pr.yml: every swift test step goes through the script.
-grep -nE '^[[:space:]]*run: .*swift test' "$root/.github/workflows/pr.yml" | grep -v 'scripts/ci-swift.sh test' && fail "a swift test step of pr.yml without scripts/ci-swift.sh"
+# pr.yml: every swift test step goes through the script, but the one of Windows (pwsh), whose build is a step of its own.
+grep -nE '^[[:space:]]*run: .*swift test' "$root/.github/workflows/pr.yml" | grep -vE 'scripts/ci-swift.sh test|run: swift test --build-system native --skip-build$' && fail "a swift test step of pr.yml without scripts/ci-swift.sh"
 [[ $(grep -c 'run: sh scripts/ci-swift.sh test' "$root/.github/workflows/pr.yml") -eq 2 ]] || fail "pr.yml does not run its two swift test steps through scripts/ci-swift.sh"
 echo PASS
