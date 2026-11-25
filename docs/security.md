@@ -644,10 +644,12 @@ What the build has:
   that is in a proxy variable is one that the build has.
 
 What it does not have: `~/.config/xless`, the store, the keychains, `~/.ssh`, `~/.aws`, `~/.npmrc`, `~/.docker`, `~/.gnupg` and the
-rest of every home directory (it does not see that they are there), other volumes, the directories for temporary files; sockets (the
-xless agent's, Docker's, an ssh agent's), the terminal, the keychain's services, the pasteboard, Apple events, launchd (it cannot
-leave a job behind), starting an app (`open`), `sudo` and other programs that run as another user, other programs' memory and signals
-to them. What it starts and leaves running is in the sandbox as well.
+rest of every home directory, other volumes, the directories for temporary files (it can neither read what is there nor list it;
+whether a path that it guesses is there, it can tell); sockets (the xless agent's, Docker's, an ssh agent's), the terminal, the
+keychain's services, the pasteboard, Apple events, launchd (it cannot leave a job behind), starting an app (`open`), `sudo` and other
+programs that run as another user, other programs' memory and signals to them, mounting (a second `/dev`, or something else over its
+own directories), drivers (IOKit's, the Secure Enclave's key store among them). What it starts and leaves running is in the sandbox as
+well.
 
 What the sandbox is not:
 

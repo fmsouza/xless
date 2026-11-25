@@ -68,7 +68,7 @@ private final class Sandboxed {
         #expect(answer.status != 0 && answer.out.lowercased().contains("not permitted"), "\(denied): \(answer.status) \(answer.out)")
     }
     #expect(!FileManager.default.fileExists(atPath: "/private/tmp/xless-sandbox-test"))
-    // what is closed is not there, the way to what is open is
+    // what is closed cannot be looked at, the way to what is open can
     #expect(try box.sh("test -e ../private || test -e secret").status == 1)
     #expect(try box.sh("test -d .. && test -d ../../ && cd ../r && pwd -P").out == box.root + "/r\n")
     // a tool that asks the system for a directory for temporary files makes do with the build's
@@ -110,6 +110,28 @@ private final class Sandboxed {
     #expect(try box.sh("kill -0 \(getpid())").status != 0)
     // its own it can end
     #expect(try box.sh("sleep 30 & kill $!").status == 0)
+}
+
+@Test func theSandboxMountsNothingAndOpensNoDriver() throws {
+    let box = try Sandboxed()
+    let source = box.work + "/probe.c", probe = box.work + "/probe", mounted = box.work + "/mounted"
+    try FileManager.default.createDirectory(atPath: mounted, withIntermediateDirectories: true)
+    // what mounts a second /dev (with a terminal that no rule knows) over a directory of the user's, and opens a driver that every process may
+    try Data("""
+        #include <IOKit/IOKitLib.h>
+        #include <string.h>
+        #include <sys/mount.h>
+        int main(int argc, char **argv) {
+            if (!strcmp(argv[1], "mount")) return mount("devfs", argv[2], MNT_NOSUID | MNT_DONTBROWSE, 0) ? 3 : unmount(argv[2], 0) ? 4 : 0;
+            io_connect_t driver = 0;
+            return IOServiceOpen(IOServiceGetMatchingService(0, IOServiceMatching(argv[2])), mach_task_self(), 0, &driver) ? 3 : 0;
+        }
+        """.utf8).write(to: URL(fileURLWithPath: source))
+    try Shell.run("/usr/bin/cc", ["-o", probe, source, "-framework", "IOKit"], stage: .build)
+    for words in [["mount", mounted], ["open", "IOPMrootDomain"]] {
+        try Shell.run(probe, words, stage: .build) // outside, it can
+        #expect(try box.run(probe, words[0], words[1]).status == 3, "\(words)")
+    }
 }
 
 @Test func socketsOfOthersAreClosedAndTheBuildsOwnOpen() throws {

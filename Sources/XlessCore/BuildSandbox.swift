@@ -23,8 +23,9 @@ public struct BuildSandbox: Sendable, Equatable {
     public var fixed: [String]
     /// Never readable or writable, wherever it is.
     public var secrets: [String]
-    /// Closed for reading, but for those, and not there for whoever looks: where users keep their files (and tools look for the
-    /// settings of a user, in every directory above the work copy). Nothing is writable anywhere, but for `writes`.
+    /// Closed for reading, listing and looking at, but for those: where users keep their files (and tools look for the settings of a
+    /// user, in every directory above the work copy). Whether a path is there can still be told (`access`). Nothing is writable
+    /// anywhere, but for `writes`.
     public var closed: [String]
 
     public static let tool = "/usr/bin/sandbox-exec"
@@ -52,7 +53,8 @@ public struct BuildSandbox: Sendable, Equatable {
         func paths(_ all: [String]) throws -> String {
             try all.map { "(subpath \(try Self.quoted(Self.real($0))))" }.joined(separator: " ")
         }
-        var rules = ["(version 1)", "(allow default)", "(deny file-write*)"]
+        // (a file system that is mounted is one that no rule below knows: a second /dev, or another tree over a directory of the build's)
+        var rules = ["(version 1)", "(allow default)", "(deny file-write*)", "(deny file-mount file-mount-update file-unmount)", "(deny iokit-open*)"]
         func add(_ words: String, _ all: [String]) throws { if !all.isEmpty { rules.append("(\(words) \(try paths(all)))") } }
         try add("allow file-write*", writes)
         try add("deny file-write*", readOnly)
