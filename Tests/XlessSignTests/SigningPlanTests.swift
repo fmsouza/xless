@@ -102,9 +102,25 @@ func newIdentifiersAreUniversalWithANameAppleTakes(platform: Platform) async thr
     try await check("it is INVALID") { $0.state = "INVALID" }
     try await check("it expires on 2026-11-29") { $0.expires = "2026-11-29T00:00:00.000+0000" }
     try await check("it expires on 2026-10-01") { $0.expires = "2026-10-01T00:00:00.000+0000" }
+    try await check("App Store Connect gives no expiry date for it") { $0.expires = "soon" }
     try await check("it does not hold the Apple Distribution certificate C1") { $0.certificates = ["OLD"] }
     try await check("it is for another bundle ID") { $0.bundleResource = "OTHER" }
     try await check("App Store Connect gives no content for it") { $0.content = Data() }
+}
+
+/// What App Store Connect does not say is not taken for good: neither the day it expires nor whose profile it is.
+@Test func aProfileThatDoesNotSayWhenItExpiresOrWhoseItIsIsNotUsable() throws {
+    let target = SigningTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: [:])
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func problems(expires: Date?, bundleID: String?) -> [String] {
+        target.problems(of: SigningProfile(id: "P", name: name, type: "IOS_APP_STORE", state: "ACTIVE", expires: expires, bundleID: bundleID,
+                                           certificateIDs: ["C1"]), bundle: "B0", certificate: "C1", now: now)
+    }
+    let later = now.addingTimeInterval(300 * 86_400)
+    #expect(problems(expires: later, bundleID: "B0") == [])
+    #expect(problems(expires: nil, bundleID: "B0") == ["App Store Connect gives no expiry date for it"])
+    #expect(problems(expires: later, bundleID: nil) == ["App Store Connect gives no bundle ID for it"])
+    #expect(problems(expires: nil, bundleID: nil).count == 2)
 }
 
 /// What a terminal or a reader could be misled by, in a value that the project, the built app or Apple chose.

@@ -35,8 +35,10 @@ public struct SigningTarget: @unchecked Sendable {
     public func problems(of profile: SigningProfile, bundle: String, certificate: String?, now: Date) -> [String] {
         var out: [String] = []
         if profile.state != "ACTIVE" { out.append("it is \(profile.state ?? "not active")") }
-        if let e = profile.expires, e < now.addingTimeInterval(7 * 86_400) { out.append("it expires on \(ASCDate.day(e))") }
-        if let b = profile.bundleID, b != bundle { out.append("it is for another bundle ID") }
+        if let e = profile.expires { if e < now.addingTimeInterval(7 * 86_400) { out.append("it expires on \(ASCDate.day(e))") } }
+        else { out.append("App Store Connect gives no expiry date for it") }
+        if let b = profile.bundleID { if b != bundle { out.append("it is for another bundle ID") } }
+        else { out.append("App Store Connect gives no bundle ID for it") }
         if let certificate, !profile.certificateIDs.contains(certificate) {
             out.append("it does not hold the \(signingKind.certificateType.displayName) certificate \(certificate)")
         } else if certificate == nil {

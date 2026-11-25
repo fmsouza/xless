@@ -210,8 +210,8 @@ xless: sign: 3 changes on the account:
 - It asks nothing and needs no Apple ID: the App Store Connect API key makes these changes, in CI too.
 - It registers bundle IDs, enables capabilities (a capability that is enabled keeps its settings) and creates
   profiles. The only thing it ever deletes is a profile of that name, which xless made, when the profile cannot be
-  used: expired or about to (within 7 days), invalid, for another certificate or bundle ID, or made before a capability
-  the app uses. The plan gives the reason.
+  used: expired or about to (within 7 days), invalid, for another certificate or bundle ID, made before a capability
+  the app uses, or one App Store Connect gives no expiry date or bundle ID for. The plan gives the reason.
 - It never makes or revokes a certificate (`xless sign bootstrap`), and never touches any other profile, app group,
   iCloud container, device or the app record. `xless provision` plans and makes those
   ([apple-account.md](apple-account.md#xless-provision)), from the same checks.
