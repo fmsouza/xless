@@ -136,8 +136,9 @@ enum StageRunner {
             SecretScope.enter() // reads signing / notary / App Store Connect keys
             let input = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
             // Every lane zips the dSYMs of the app, when its build kept any, into `<App>.app.dSYM.zip` next to its package.
-            let dSYMs = try Packager.shippedDSYMs(ctx.paths.dSYMs, of: input)
-            defer { if let dSYMs { try? FileManager.default.removeItem(at: dSYMs) } }
+            let copy = Packager.dSYMsCopy(beside: ctx.paths.out)
+            defer { try? FileManager.default.removeItem(at: copy) }
+            let dSYMs = try Packager.shippedDSYMs(ctx.paths.dSYMs, of: input, copiedTo: copy)
             switch ctx.platform {
             case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out, dSYMs: dSYMs)
             // App Store mac (TestFlight's flat package, explicit via the distribution): the pkg.

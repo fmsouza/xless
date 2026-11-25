@@ -312,15 +312,19 @@ private func addDSYM(_ path: String, _ uuid: UInt8, to dSYMs: URL) throws {
     try addDSYM("Other.app.dSYM", 0x22, to: dSYMs)
     try Data("x".utf8).write(to: dSYMs.appendingPathComponent("loose"))
     try Data("x".utf8).write(to: dSYMs.appendingPathComponent("Pods/loose"))
-    let shipped = try #require(try Packager.shippedDSYMs(dSYMs, of: app))
-    defer { try? fm.removeItem(at: shipped) }
+    let copy = Packager.dSYMsCopy(beside: root.appendingPathComponent("out"))
+    #expect(copy.path == root.appendingPathComponent("out.dSYMs").path)
+    try addDSYM("shipped/Stale.dSYM", 0x11, to: copy) // what an xless that was ended left
+    let shipped = try #require(try Packager.shippedDSYMs(dSYMs, of: app, copiedTo: copy))
+    #expect(shipped.path.hasPrefix(copy.path + "/"))
+    #expect(try fm.contentsOfDirectory(atPath: copy.path).count == 1)
     #expect(try fm.subpathsOfDirectory(atPath: shipped.path).filter { !$0.hasSuffix("/Contents") && !$0.contains("/Contents/") }.sorted() == ["Pods", "Pods/Y.framework.dSYM", "X.app.dSYM"])
     #expect(try Data(contentsOf: shipped.appendingPathComponent("X.app.dSYM/Contents/Resources/DWARF/X")) == machO(uuid: 0x11, filetype: 0xa))
     #expect(fm.fileExists(atPath: dSYMs.appendingPathComponent("loose").path)) // the build's own are left as they are
-    #expect(try Packager.shippedDSYMs(root.appendingPathComponent("none"), of: app) == nil)
+    #expect(try Packager.shippedDSYMs(root.appendingPathComponent("none"), of: app, copiedTo: copy) == nil && !fm.fileExists(atPath: copy.path))
     try fm.removeItem(at: dSYMs.appendingPathComponent("X.app.dSYM"))
     try fm.removeItem(at: dSYMs.appendingPathComponent("Pods"))
-    #expect(try Packager.shippedDSYMs(dSYMs, of: app) == nil)
+    #expect(try Packager.shippedDSYMs(dSYMs, of: app, copiedTo: copy) == nil && !fm.fileExists(atPath: copy.path))
 }
 
 @Test(arguments: ["link", "linked", "pipe", "newline"])
@@ -337,5 +341,6 @@ func dSYMsThatAreNoPlainTreeAreRefused(_ what: String) throws {
     case "pipe": try #require(mkfifo(dSYMs.appendingPathComponent("X.app.dSYM/Contents/Resources/DWARF/pipe").path, 0o600) == 0)
     default: try Data().write(to: dSYMs.appendingPathComponent("X.app.dSYM/a\nb"))
     }
-    #expect(throws: XlessError.self) { try Packager.shippedDSYMs(given, of: app) }
+    let copy = Packager.dSYMsCopy(beside: root.appendingPathComponent("out"))
+    #expect(throws: XlessError.self) { try Packager.shippedDSYMs(given, of: app, copiedTo: copy) }
 }

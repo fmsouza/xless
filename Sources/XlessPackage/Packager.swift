@@ -33,31 +33,33 @@ public enum Packager {
         }
     }
 
-    /// A copy of the dSYMs in `dSYMs` whose UUIDs `app` has, at the same paths in a directory of its own (the caller removes it); nil
-    /// when there is none. The build can leave what it likes in `dSYMs`, and may still run: what is looked at is the copy.
-    public static func shippedDSYMs(_ dSYMs: URL, of app: URL) throws -> URL? {
+    /// Where `shippedDSYMs` copies them to; the caller removes it. (They can be larger than what memory a `/tmp` in it has.)
+    public static func dSYMsCopy(beside out: URL) -> URL { URL(fileURLWithPath: out.path + ".dSYMs", isDirectory: true) }
+
+    /// A copy, in `copy`, of the dSYMs in `dSYMs` whose UUIDs `app` has, at the same paths; nil when there is none. The build can leave
+    /// what it likes in `dSYMs`, and may still run: what is looked at is the copy.
+    public static func shippedDSYMs(_ dSYMs: URL, of app: URL, copiedTo copy: URL) throws -> URL? {
         let fm = FileManager.default
+        try? fm.removeItem(at: copy)
         guard (try? fm.attributesOfItem(atPath: dSYMs.path)) != nil else { return nil }
-        try BuiltTree.check(dSYMs, stage: .package)
-        let copy = fm.temporaryDirectory.appendingPathComponent("xless-dsyms-\(UUID().uuidString)", isDirectory: true)
+        let built = copy.appendingPathComponent(dSYMs.lastPathComponent, isDirectory: true), shipped = copy.appendingPathComponent("shipped", isDirectory: true)
         do {
-            let images = DSYM.imageUUIDs(in: app), found = DSYM.bundles(under: dSYMs, ofImages: images)
+            try fm.createDirectory(at: copy, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try BuiltTree.copy(dSYMs, to: built, stage: .package)
+            try BuiltTree.check(built, stage: .package)
+            let images = DSYM.imageUUIDs(in: app), all = DSYM.bundles(under: built)
+            let found = all.filter { !DSYM.uuids(ofDSYM: built.appendingPathComponent($0)).isDisjoint(with: images) }
             for path in found {
-                let to = copy.appendingPathComponent(path)
+                let to = shipped.appendingPathComponent(path)
                 try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try fm.copyItem(at: dSYMs.appendingPathComponent(path), to: to)
+                try fm.moveItem(at: built.appendingPathComponent(path), to: to)
             }
-            let others = DSYM.bundles(under: dSYMs).filter { !found.contains($0) }
-            if !others.isEmpty {
-                let names = others.map { TerminalText.escaped($0) }.joined(separator: ", ")
+            if found != all {
+                let names = all.filter { !found.contains($0) }.map { TerminalText.escaped($0) }.joined(separator: ", ")
                 FileHandle.standardError.write(Data("xless: dSYMs of no binary in \(TerminalText.escaped(app.lastPathComponent)), left out: \(names)\n".utf8))
             }
-            guard !found.isEmpty else { return nil }
-            try BuiltTree.check(copy, stage: .package)
-            guard DSYM.bundles(under: copy, ofImages: images) == found else {
-                throw XlessError(.package, "\(dSYMs.path) changes while it is copied", fix: "end what the build left running, then build again")
-            }
-            return copy
+            try fm.removeItem(at: found.isEmpty ? copy : built)
+            return found.isEmpty ? nil : shipped
         } catch {
             try? fm.removeItem(at: copy)
             throw error
