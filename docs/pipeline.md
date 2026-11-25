@@ -105,6 +105,7 @@ earlier build left behind (Swift Build's derived data is kept between builds) ne
 named after the app, `<App>.app.dSYM`, with its DWARF file named after the app's executable (React Native keeps every
 dSYM under its own name). Signing, `finalize` and stripping do not change a Mach-O's UUID. Each `build` replaces the
 directory, and one that keeps no dSYM removes it; the build log's `dSYMs:` line says what was kept, or why nothing was.
+`package` looks again: what the build's own code put there beside them, or instead of them, is left out, and said.
 `dsymutil` is the one in the SDK's toolset (`toolset/bin/dsymutil`, which xtool installs next to `ld64.lld`, the same
 LLVM), in the images and in a native install alike.
 

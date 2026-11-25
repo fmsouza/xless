@@ -135,20 +135,22 @@ enum StageRunner {
             if ctx.platform == .macos { try MacNative.prepareSigner() } // it also notarizes, and signs what is packaged
             SecretScope.enter() // reads signing / notary / App Store Connect keys
             let input = try ctx.paths.bundle(in: ctx.paths.signed, stage: .package)
+            // Every lane zips the dSYMs of the app, when its build kept any, into `<App>.app.dSYM.zip` next to its package.
+            let dSYMs = try Packager.shippedDSYMs(ctx.paths.dSYMs, of: input)
+            defer { if let dSYMs { try? FileManager.default.removeItem(at: dSYMs) } }
             switch ctx.platform {
-            case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out, dSYMs: ctx.paths.dSYMs)
+            case .ios: return try Packager.ipa(signedApp: input, outputDir: ctx.paths.out, dSYMs: dSYMs)
             // App Store mac (TestFlight's flat package, explicit via the distribution): the pkg.
             // Takes priority over the overlay branches: an appStore run never produces a DMG.
             case .macos where ctx.config.distribution(for: .macos) == .appStore:
                 return try await PkgBuilder.appStore(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets,
-                                                     dSYMs: ctx.paths.dSYMs)
+                                                     dSYMs: dSYMs)
             // Tauri and cargo overlays: a signed, notarized, stapled DMG, named after the architectures of the app's
             // executable (a cargo overlay's `macos.architectures`); xless.yml: a notarized zip of the signed app.
-            // Every lane zips the build's dSYMs, when it kept any, into `<App>.app.dSYM.zip` next to its package.
             case .macos where ctx.tauriMac != nil || ctx.isCargo:
                 return try await DmgBuilder.notarizedDMG(signedApp: input, outputDir: ctx.paths.out, config: ctx.config, secrets: ctx.secrets,
-                                                         dSYMs: ctx.paths.dSYMs)
-            case .macos: return try Packager.notarizedZip(signedApp: input, outputDir: ctx.paths.out, secrets: ctx.secrets, dSYMs: ctx.paths.dSYMs)
+                                                         dSYMs: dSYMs)
+            case .macos: return try Packager.notarizedZip(signedApp: input, outputDir: ctx.paths.out, secrets: ctx.secrets, dSYMs: dSYMs)
             }
         }
     }

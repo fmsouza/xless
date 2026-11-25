@@ -47,6 +47,20 @@ public enum DSYM {
         return out
     }
 
+    /// The `.dSYM` bundles under `dir`: their paths in it, sorted. With `images`, only those that have a UUID of them.
+    public static func bundles(under dir: URL, ofImages images: Set<String>? = nil) -> [String] {
+        guard let walk = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
+        let base = dir.standardizedFileURL.path
+        var found: [String] = []
+        for case let url as URL in walk where url.pathExtension == "dSYM" {
+            walk.skipDescendants()
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            if let images, uuids(ofDSYM: url).isDisjoint(with: images) { continue }
+            found.append(String(url.standardizedFileURL.path.dropFirst(base.count + 1)))
+        }
+        return found.sorted()
+    }
+
     /// Where the dSYM of one executable is, or why there is none.
     public enum Source: Equatable, Sendable {
         case found(URL)

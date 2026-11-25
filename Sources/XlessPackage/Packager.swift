@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessMachO
 import XlessSign
 
 public enum Packager {
@@ -29,6 +30,37 @@ public enum Packager {
             try Shell.run("zip", ["-qryX", ipa.path, "Payload", "-x"] + junkExclusions, cwd: staging, stage: .package)
             try FileManager.default.removeItem(at: staging)
             return ipa
+        }
+    }
+
+    /// A copy of the dSYMs in `dSYMs` whose UUIDs `app` has, at the same paths in a directory of its own (the caller removes it); nil
+    /// when there is none. The build can leave what it likes in `dSYMs`, and may still run: what is looked at is the copy.
+    public static func shippedDSYMs(_ dSYMs: URL, of app: URL) throws -> URL? {
+        let fm = FileManager.default
+        guard (try? fm.attributesOfItem(atPath: dSYMs.path)) != nil else { return nil }
+        try BuiltTree.check(dSYMs, stage: .package)
+        let copy = fm.temporaryDirectory.appendingPathComponent("xless-dsyms-\(UUID().uuidString)", isDirectory: true)
+        do {
+            let images = DSYM.imageUUIDs(in: app), found = DSYM.bundles(under: dSYMs, ofImages: images)
+            for path in found {
+                let to = copy.appendingPathComponent(path)
+                try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: dSYMs.appendingPathComponent(path), to: to)
+            }
+            let others = DSYM.bundles(under: dSYMs).filter { !found.contains($0) }
+            if !others.isEmpty {
+                let names = others.map { TerminalText.escaped($0) }.joined(separator: ", ")
+                FileHandle.standardError.write(Data("xless: dSYMs of no binary in \(TerminalText.escaped(app.lastPathComponent)), left out: \(names)\n".utf8))
+            }
+            guard !found.isEmpty else { return nil }
+            try BuiltTree.check(copy, stage: .package)
+            guard DSYM.bundles(under: copy, ofImages: images) == found else {
+                throw XlessError(.package, "\(dSYMs.path) changes while it is copied", fix: "end what the build left running, then build again")
+            }
+            return copy
+        } catch {
+            try? fm.removeItem(at: copy)
+            throw error
         }
     }
 
