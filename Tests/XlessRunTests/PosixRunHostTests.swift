@@ -123,6 +123,24 @@ import Testing
         #expect(FileManager.default.fileExists(atPath: file) != cleansUp)
     }
 
+    /// Nor does a stack that overflows, in any thread that said what to remove.
+    @Test func aStackThatOverflowsLeavesNothing() async throws {
+        let first = try host.temporaryFile(), second = try host.temporaryFile()
+        defer { host.removeFile(first); host.removeFile(second) }
+        await #expect(processExitsWith: .failure) { [first = first as String, second = second as String] in
+            let host = PosixRunHost()
+            host.removeOnFault(first, isDirectory: false)
+            Thread.detachNewThread {
+                host.removeOnFault(second, isDirectory: false)
+                func deep(_ n: Int) -> Int { n < 0 ? n : deep(n + 1) &+ deep(n + 2) }
+                exit(deep(0) == 1 ? 0 : 0)
+            }
+            host.pause(60)
+            exit(0)
+        }
+        #expect(!FileManager.default.fileExists(atPath: first) && !FileManager.default.fileExists(atPath: second))
+    }
+
     /// Started with SIGCHLD ignored (some supervisors do), where the system keeps no process's end.
     @Test func anIgnoredSIGCHLDLosesNoExitCode() async {
         await #expect(processExitsWith: .success) {

@@ -432,15 +432,35 @@ static void fault_on(int sig, const struct sigaction *now) {
     sigaction(sig, &action, NULL);
 }
 
+// Where a thread's handler runs: the fault may be that its own stack is full. A thread that has one already keeps that.
+enum { HANDLER_STACK = 65536 };
+static pthread_key_t handler_stack;
+static void no_handler_stack(void *stack) {
+    stack_t off;
+    memset(&off, 0, sizeof off);
+    off.ss_flags = SS_DISABLE;
+    off.ss_size = HANDLER_STACK; // macOS looks at it
+    sigaltstack(&off, NULL);
+    munmap(stack, HANDLER_STACK);
+}
+static void make_handler_stack_key(void) { pthread_key_create(&handler_stack, no_handler_stack); }
+static void handler_stack_on(void) {
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    stack_t now;
+    if (sigaltstack(NULL, &now) != 0 || !(now.ss_flags & SS_DISABLE)) return;
+    pthread_once(&once, make_handler_stack_key);
+    void *stack = mmap(NULL, HANDLER_STACK, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (stack == MAP_FAILED) return;
+    stack_t own;
+    memset(&own, 0, sizeof own);
+    own.ss_sp = stack;
+    own.ss_size = HANDLER_STACK;
+    if (sigaltstack(&own, NULL) != 0 || pthread_setspecific(handler_stack, stack) != 0) no_handler_stack(stack);
+}
+
 /// Where nothing is said of the signal, or something is done at it (Swift's backtrace): that comes after.
 static void faults_on(void) {
-    static atomic_flag begun = ATOMIC_FLAG_INIT;
-    static char stack[65536]; // for the one that says the stack is full (of the thread that comes here first)
-    stack_t now_on;
-    if (!atomic_flag_test_and_set(&begun) && sigaltstack(NULL, &now_on) == 0 && (now_on.ss_flags & SS_DISABLE)) {
-        stack_t own = { .ss_sp = stack, .ss_size = sizeof stack };
-        sigaltstack(&own, NULL);
-    }
+    handler_stack_on();
     for (int sig = 1; sig < NSIG; sig++) {
         struct sigaction now;
         if (what_is(sig) != FAULT || sigaction(sig, NULL, &now) != 0 || now.sa_handler == SIG_IGN || now.sa_sigaction == fault) continue;
@@ -764,6 +784,7 @@ static void let_stop_clean_up(int sig) {
 }
 
 void xless_cleans_up(void) {
+    handler_stack_on();
     cleaner = pthread_self();
     atomic_store(&has_cleaner, 1);
 }
