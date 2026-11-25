@@ -40,8 +40,9 @@ What holds on Windows, and what does not:
 
 - The secret store is `%LOCALAPPDATA%\xless\vault` (the system's answer, not the variable's). Its directory and files are owned by the user
   of the process's token and let nobody else in; whatever else is found there (another owner, an access entry of anybody but the user, the
-  system and the administrators, an inherited or missing access list, a link, a junction, a second name, a share, a removable drive, FAT) is
-  refused, never repaired. The same for a key that xless writes. The system and the administrators are accepted when something else let
+  system and the administrators, an inherited or missing access list, a link, a junction, a second name, a share, a drive that Windows calls
+  removable, FAT) is refused, never repaired. (A USB disk mostly calls itself fixed, and is taken.) A key that xless writes is made and checked
+  so too, but may be on any drive that keeps access lists, a mapped share's as well (a path `\\server\…` is refused). The system and the administrators are accepted when something else let
   them in, and never let in by xless: they are root's counterparts.
 - The store is replaced in one step and flushed before; Windows has no way to flush a directory, so after a power cut the old store may
   be back. A backup, a shadow copy or a search index may have what is in a file that was written in clear, as on any system.

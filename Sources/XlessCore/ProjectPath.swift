@@ -23,11 +23,12 @@ public enum ProjectPath {
     }
 
     static func problemOnWindows(_ relative: String) -> String? {
-        if relative.unicodeScalars.contains(where: { $0.value < 0x20 }) { return "has a control character in its name" }
-        if let bad = relative.first(where: { "\\:<>\"|?*".contains($0) }) { return "has a \(bad) in its name" }
-        if relative.hasPrefix("/") { return "is not a path inside the directory" }
-        for part in relative.split(separator: "/") where part != "." && part != ".." {
-            // Looked at by scalar: a combining mark makes another character of a dot, and Windows sees the dot.
+        // All of it by scalar: a combining mark makes another character of a `\` or a dot, and Windows sees the `\` and the dot.
+        let scalars = relative.unicodeScalars
+        if scalars.contains(where: { $0.value < 0x20 }) { return "has a control character in its name" }
+        if let bad = scalars.first(where: { "\\:<>\"|?*".unicodeScalars.contains($0) }) { return "has a \(bad) in its name" }
+        if scalars.first == "/" { return "is not a path inside the directory" }
+        for part in scalars.split(separator: "/").map(Substring.init) where part != "." && part != ".." {
             if let last = part.unicodeScalars.last, last == "." || last == " " { return "ends in a dot or a space, which Windows drops" }
             if isDevice(part) { return "is the name of a device" }
         }

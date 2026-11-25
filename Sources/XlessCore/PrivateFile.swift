@@ -194,7 +194,7 @@ public enum PrivateFile {
 }
 
 /// A file that the user named to read a secret (or anything else) from: a regular file on a drive, whoever it belongs to; never a
-/// device, a pipe or a share's.
+/// device, a pipe or a path `\\server\\…`. (What a mapped drive or a link leads to may be a share's.)
 public enum InputFile {
     /// Its bytes; a file of more than `limit` is refused.
     public static func read(_ path: String, limit: Int, throughLinks: Bool = true) throws -> Data {

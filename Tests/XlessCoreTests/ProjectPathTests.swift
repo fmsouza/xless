@@ -16,6 +16,7 @@ func plainNamesAreFilesOnWindowsToo(_ name: String) {
     "a.", "a ", "a./b", "dir /b", "...", "a. .", "a.\u{301}x/ ",
     "NUL", "nul", "Nul.txt", "nul.tar.gz", "nul .txt", "x/CON", "con/x", "PRN", "aux.c", "COM1", "com9.yml", "COM0", "lpt1", "LPT\u{B9}", "com\u{b2}.x", "COM\u{b3}",
     "CONIN$", "conout$.txt", "clock$",
+    "..\\\u{301}x", "a.txt:\u{301}s", "NUL:\u{301}", "/\u{301}x", "NUL/\u{301}x", "a?\u{200D}", "a\\\u{FE0F}b",
 ])
 func whatWindowsTakesForSomethingElseIsRefused(_ name: String) {
     #expect(ProjectPath.problemOnWindows(name) != nil)
