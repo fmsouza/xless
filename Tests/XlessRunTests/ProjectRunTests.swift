@@ -111,9 +111,11 @@ import XlessCore
         #expect(try home.run([home.project, "--build-number", "7"], docker: false, host: host, environment: secrets, session: "/agent") == 0)
         let ships = host.allSteps.filter { $0.words.contains("ship") }
         try #require(ships.count == 2)
-        #expect(ships[0].words == ["xless", "ship", "--platform", "ios", "--from", "build", "--to", "finalize", "--build-number", "7"])
+        // each stops where it reads another xless.yml than the run has
+        let expected = ["--expect-config", RunText.sha256(try String(contentsOfFile: "\(home.project)/xless.yml", encoding: .utf8))]
+        #expect(ships[0].words == ["xless", "ship", "--platform", "ios", "--from", "build", "--to", "finalize"] + expected + ["--build-number", "7"])
         #expect(secretsIn(ships[0], secrets).isEmpty && ships[0].environment["XLESS_NO_SECRET_STORE"] == "1" && ships[0].directory == home.project)
-        #expect(ships[1].words == ["xless", "ship", "--project", home.project, "--platform", "ios", "--from", "sign", "--to", "upload", "--build-number", "7"])
+        #expect(ships[1].words == ["xless", "ship", "--project", home.project, "--platform", "ios", "--from", "sign", "--to", "upload"] + expected + ["--build-number", "7"])
         #expect(ships[1].directory == "/" && ships[1].environment["XLESS_DIST_KEY"] == "DIST-VALUE" && ships[1].environment["XLESS_SESSION"] == "/agent")
         #expect(ships[1].environment["XLESS_NO_SECRET_STORE"] == nil)
         // without a build, or without a signature, it is one
@@ -129,16 +131,18 @@ import XlessCore
     }
 
     @Test func onAMacAConfigurationThatTheBuildChangedIsNotSigned() throws {
-        for change in ["written", "link"] {
+        for change in ["written", "link to another", "pipe", "gone"] {
             let home = try RunHome(), file = "\(home.project)/xless.yml"
             let host = FakeRunHost(isMac: true, answer: home.answer { step in
                 if step.words.contains("finalize") {
                     let text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
-                    if change == "link" {
-                        try? text.write(toFile: file + ".other", atomically: true, encoding: .utf8)
-                        try? FileManager.default.removeItem(atPath: file)
+                    if change != "written" { try? FileManager.default.removeItem(atPath: file) }
+                    if change == "pipe" {
+                        mkfifo(file, 0o600)
+                    } else if change == "link to another" {
+                        try? (text + "bundleID: app.other\n").write(toFile: file + ".other", atomically: true, encoding: .utf8)
                         try? FileManager.default.createSymbolicLink(atPath: file, withDestinationPath: file + ".other")
-                    } else { try? (text + "bundleID: app.other\n").write(toFile: file, atomically: true, encoding: .utf8) }
+                    } else if change == "written" { try? (text + "bundleID: app.other\n").write(toFile: file, atomically: true, encoding: .utf8) }
                 }
                 return nil
             })
@@ -146,6 +150,16 @@ import XlessCore
             #expect(host.allSteps.filter { $0.words.contains("ship") }.count == 1)
             #expect(host.lines.contains { $0.contains("xless.yml is not what it was when this run began, so nothing is signed") })
         }
+    }
+
+    /// What it says is what counts: the build and the signature are told to take this and nothing else.
+    @Test func onAMacAnXlessYmlThatIsALinkIsFollowed() throws {
+        let home = try RunHome(), file = "\(home.project)/xless.yml"
+        try FileManager.default.moveItem(atPath: file, toPath: "\(home.root)/shared.yml")
+        try FileManager.default.createSymbolicLink(atPath: file, withDestinationPath: "\(home.root)/shared.yml")
+        let host = FakeRunHost(isMac: true, answer: home.answer())
+        #expect(try home.run([home.project], docker: false, host: host, environment: home.files(), session: "/agent") == 0)
+        #expect(host.allSteps.filter { $0.words.contains("ship") }.count == 2)
     }
 
     @Test func onAMacWhatANativeRunNeedsIsThereBeforeAnythingIsAsked() throws {

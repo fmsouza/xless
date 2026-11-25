@@ -344,12 +344,13 @@ public final class ProjectRun {
             var words = [xself, "ship", "--platform", "ios"] + span.extra, directory = project
             let stages = try RunSpan.overlay(request)
             if host.isMac, stages.from <= .finalize {
-                code = step([xself, "ship", "--platform", "ios", "--from", stages.from.name, "--to", "finalize"] + stages.extra, .nothing, directory: project, adding: noStore).code
-                if code == 0, configurationChanged {
+                let expected = [RunConfiguration.option, RunConfiguration.digest(pinned)]
+                code = step([xself, "ship", "--platform", "ios", "--from", stages.from.name, "--to", "finalize"] + expected + stages.extra, .nothing, directory: project, adding: noStore).code
+                if code == 0, !dryRun, !configurationIsWhatItWas {
                     throw RunStop.usage("\(pinFile) is not what it was when this run began, so nothing is signed. Look at what changed it, then run this project again")
                 }
                 // in no directory that the build can write
-                words = [xself, "ship", "--project", project, "--platform", "ios", "--from", "sign", "--to", stages.to.name] + stages.extra
+                words = [xself, "ship", "--project", project, "--platform", "ios", "--from", "sign", "--to", stages.to.name] + expected + stages.extra
                 directory = "/"
             }
             if code == 0 { code = step(words, .everything, told: true, directory: directory).code }
@@ -411,8 +412,13 @@ extension ProjectRun {
         (try? FileManager.default.attributesOfItem(atPath: pinFile))?[.type] as? FileAttributeType
     }
 
-    private var configurationChanged: Bool {
-        !dryRun && (kindOfConfiguration() != .typeRegular || (try? Data(contentsOf: URL(fileURLWithPath: pinFile))) != pinned)
+    private var configurationChanged: Bool { !dryRun && (kindOfConfiguration() != .typeRegular || !configurationIsWhatItWas) }
+
+    /// The file itself, or what a link names.
+    private var configurationIsWhatItWas: Bool {
+        let file = URL(fileURLWithPath: pinFile).resolvingSymlinksInPath().path
+        guard (try? FileManager.default.attributesOfItem(atPath: file))?[.type] as? FileAttributeType == .typeRegular else { return false }
+        return (try? Data(contentsOf: URL(fileURLWithPath: file))) == pinned
     }
 
     private func sayChangedConfiguration() {

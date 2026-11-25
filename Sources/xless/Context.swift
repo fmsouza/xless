@@ -3,6 +3,7 @@ import XlessASC
 import XlessCargo
 import XlessCore
 import XlessReactNative
+import XlessRun
 import XlessTauri
 import XlessXcode
 
@@ -83,14 +84,16 @@ struct Context {
     /// `--distribution` (ship): replaces the platform's configured distribution for this run; the config file is
     /// untouched. Applied after validation, so sign/package/upload all see it.
     /// The secret names the configuration gives of its own join `SecretEnvironment.scrub` before any tool runs.
-    static func load(_ opts: ProjectOptions, distribution: Distribution? = nil, env: [String: String] = ProcessInfo.processInfo.environment, fresh: Bool = false) async throws -> Context {
-        var context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh)
+    /// `expecting`: the digest of the xless.yml that is to be taken (`RunConfiguration`); another one is refused.
+    static func load(_ opts: ProjectOptions, distribution: Distribution? = nil, env: [String: String] = ProcessInfo.processInfo.environment, fresh: Bool = false,
+                     expecting: String? = nil) async throws -> Context {
+        var context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh, expecting: expecting)
         context.configFile = opts.configURL
         for name in context.config.secretNames { SecretEnvironment.scrub(name) }
         return context
     }
 
-    private static func loadConfiguration(_ opts: ProjectOptions, distribution: Distribution?, env: [String: String], fresh: Bool) async throws -> Context {
+    private static func loadConfiguration(_ opts: ProjectOptions, distribution: Distribution?, env: [String: String], fresh: Bool, expecting: String?) async throws -> Context {
         let override = opts.buildNumber ?? env["XLESS_BUILD_NUMBER"].flatMap { $0.isEmpty ? nil : $0 }
         let kind = try opts.configURL.map(OverlayKind.of)
         if let configURL = opts.configURL, kind == .reactNative {
@@ -144,7 +147,11 @@ struct Context {
                            buildOverride: override, overlay: loc.overlay, sourceRoot: loc.sourceRoot, workRoot: loc.workRoot, tauri: resolved)
         }
         let project = opts.projectURL
-        var config = try ProjectConfig.load(from: project.appendingPathComponent("xless.yml"), buildOverride: override)
+        let file = project.appendingPathComponent("xless.yml")
+        var config = try ProjectConfig.load(from: file, buildOverride: override) { data in
+            guard let expecting, RunConfiguration.digest(data) != expecting else { return }
+            throw XlessError(.config, "\(file.path) is not what it was when this run began", fix: "look at what changed it, then run this project again")
+        }
         _ = try config.platform(opts.platform)
         let paths = simulator ? StagePaths.iosSimulator(project: project) : StagePaths(project: project, platform: opts.platform)
         if simulator { // never uploaded: no App Store Connect is asked, and no device build's record is touched

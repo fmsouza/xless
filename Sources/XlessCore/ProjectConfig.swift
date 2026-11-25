@@ -312,10 +312,12 @@ extension ProjectConfig {
         return config
     }
 
-    public static func load(from url: URL, buildOverride: String? = nil) throws -> ProjectConfig {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+    /// `check` is of the bytes that the configuration is read from.
+    public static func load(from url: URL, buildOverride: String? = nil, check: (Data) throws -> Void = { _ in }) throws -> ProjectConfig {
+        guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else {
             throw XlessError(.config, "cannot read \(url.path)", fix: "run xless in the directory containing xless.yml or pass --project")
         }
+        try check(data)
         let config = try parse(yaml: text, buildOverride: buildOverride)
         config.testflight?.registerSecretNames()
         return config
