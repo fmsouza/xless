@@ -117,6 +117,7 @@ public enum TauriBuilder {
             try BinaryDeps.install(binaryDependencies, into: ctx.workRoot, cache: cache.appendingPathComponent("downloads"))
         }
         if var install = try installCommand(appRoot: ctx.appRoot) {
+            try dropForeignPackages(appRoot: ctx.appRoot, work: ctx.workRoot, isMac: ctx.sdk.isXcode)
             if ctx.sdk.isXcode { install.arguments = ownManager(install.arguments, appRoot: ctx.appRoot, path: ctx.env["PATH"] ?? "") }
             log("\(install.arguments.joined(separator: " ")) (\(install.lockfile))")
             try run(install.arguments, cwd: ctx.appRoot, env: ctx.tools, ctx: ctx, stage: .prepare)
@@ -132,6 +133,18 @@ public enum TauriBuilder {
 
     static func rustupSteps(toolchainFile: Bool, activeToolchain: Bool, targets: [String] = [TauriEnvironment.target]) -> [[String]] {
         RustApple.rustupSteps(toolchainFile: toolchainFile, activeToolchain: activeToolchain, targets: targets)
+    }
+
+    /// The images and a Mac's own tools build in one work copy: JS packages that were installed by the other have programs of another
+    /// system in them, which pnpm and yarn would keep.
+    static func dropForeignPackages(appRoot: URL, work: URL, isMac: Bool) throws {
+        let fm = FileManager.default, mark = work.appendingPathComponent(".xless/js-of-a-mac"), packages = appRoot.appendingPathComponent("node_modules")
+        guard isMac != fm.fileExists(atPath: mark.path) else { return }
+        if (try? fm.attributesOfItem(atPath: packages.path)) != nil {
+            log("node_modules is of \(isMac ? "an image" : "a Mac"): installing the JS packages again")
+            try fm.removeItem(at: packages)
+        }
+        if isMac { try Data().write(to: mark) } else { try fm.removeItem(at: mark) }
     }
 
     /// On a Mac, `corepack pnpm …` as the user's own tools do it: the pnpm on PATH, unless package.json names a release for corepack to

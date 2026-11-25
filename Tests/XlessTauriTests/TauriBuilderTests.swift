@@ -54,6 +54,16 @@ private func tree(_ files: [String]) throws -> URL {
         #expect(TauriBuilder.ownManager(["npm", "ci"], appRoot: root, path: "") == ["npm", "ci"])
     }
 
+    @Test func thePackagesOfAnImageAreNotAMacsNorTheOtherWayRound() throws {
+        let work = try tree([".xless/source"]), modules = work.appendingPathComponent("app/node_modules")
+        func isKept(_ isMac: Bool) throws -> Bool {
+            try FileManager.default.createDirectory(at: modules, withIntermediateDirectories: true)
+            try TauriBuilder.dropForeignPackages(appRoot: work.appendingPathComponent("app"), work: work, isMac: isMac)
+            return FileManager.default.fileExists(atPath: modules.path)
+        }
+        for (isMac, kept) in [(false, true), (true, false), (true, true), (false, false), (false, true)] { #expect(try isKept(isMac) == kept) }
+    }
+
     /// Every .m/.mm/.c/.cpp under the target's sources, skipping resources, folder references and `buildPhase: none`.
     @Test func findsNativeSources() throws {
         let apple = try tree(["Sources/app/main.mm", "Sources/app/bindings/bindings.h", "Sources/app/util.c", "Externals/arm64/release/libapp.a",
