@@ -121,18 +121,14 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         #expect(c.held(id: "ID")?.idle == 7200)
     }
 
-    @Test func anHourOrLessStaysInTheKeyringWhereThereIsOne() throws {
-        let agents = FakeAgents(), keyring = FakeKeyring()
-        let c = cache(agents, keyring)
+    @Test func anHourOrLessIsHeldByTheAgentToo() throws {
+        // The keyring has no idle time, and neither sleep nor a closed terminal ends it.
+        let agents = FakeAgents(), keyring = FakeKeyring(), notes = Notes()
+        let c = cache(agents, keyring, notes)
+        #expect(c.plan(half) == .init(seconds: 1800, idle: 1800))
         try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
-        #expect(agents.names.isEmpty)
-        #expect(keyring.seconds["ID"] == 1800)
-        #expect(try c.load(id: "ID", using: true) { _ in true } == key())
-        #expect(c.held(id: "ID")?.backend == .keyring)
-        let none = FakeKeyring(available: false) // macOS, Docker
-        let d = cache(agents, none)
-        try d.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
-        #expect(agents.names == ["xless-vault:ID"])
+        #expect(agents.hold("xless-vault:ID") == half)
+        #expect(keyring.names.isEmpty && notes.lines.isEmpty)
     }
 
     @Test func aRenewalStaysWhereTheUnlockIs() throws {
@@ -147,7 +143,8 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
     @Test func movingToTheAgentLeavesNothingInTheKeyring() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+        try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0) // by an older xless, or where no agent could run
+        #expect(c.held(id: "ID")?.backend == .keyring)
         try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         #expect(keyring.names.isEmpty)
         #expect(agents.names == ["xless-vault:ID"])
@@ -160,12 +157,41 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         #expect(c.isAvailable)
         try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         #expect(keyring.seconds["ID"] == 3600)
-        #expect(notes.lines.contains { $0.contains("1 h") && $0.contains("no session here") })
+        // What it does not keep is said, not promised.
+        #expect(c.plan(day) == .init(seconds: 3600, idle: nil))
+        let note = try #require(notes.lines.first)
+        #expect(note.contains("for 1 h") && note.contains("no session here") && note.contains("without use does not end it"), "\(note)")
+        #expect(c.held(id: "ID")?.idle == nil)
         let nowhere = cache(agents, FakeKeyring(available: false))
         #expect(!nowhere.isAvailable)
         let error = #expect(throws: VaultError.self) { try nowhere.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0) }
         #expect(error?.kind == .cacheUnavailable)
         #expect(error?.cause.contains("no session here") == true)
+    }
+
+    @Test func anIdleTimeAskedForIsRefusedWhereItIsNotKept() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        agents.obstacle = AgentError(.unavailable, "no session here", fix: "-")
+        let c = cache(agents, keyring)
+        var hold = half
+        hold.idleAsked = true
+        let error = #expect(throws: VaultError.self) { try c.store(key(), id: "ID", place: "/store", hold: hold, typedAgo: 0) }
+        #expect(error?.cause.contains("--idle") == true && error?.cause.contains("no session here") == true)
+        #expect(keyring.names.isEmpty)
+        #expect(throws: VaultError.self) { try c.require(hold) } // before anything is asked
+        try c.require(half)
+        // The agent, which could run, does not start: refused then, too.
+        agents.obstacle = nil
+        agents.refuses = true
+        try c.require(hold)
+        #expect(throws: VaultError.self) { try c.store(key(), id: "ID", place: "/store", hold: hold, typedAgo: 0) }
+        #expect(keyring.names.isEmpty)
+    }
+
+    @Test func theIdleTimeOfTheCommandLineIsToldFromTheConfiguredOne() throws {
+        let settings = UnlockSettings()
+        #expect(try settings.hold("1h", idle: "5s", option: "--for", stage: .config).idleAsked)
+        #expect(try !settings.hold("1h", option: "--for", stage: .config).idleAsked)
     }
 
     @Test func aStaleKeyIsDroppedEverywhere() throws {
@@ -181,7 +207,7 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
         try c.store(key(), id: "A", place: "/store", hold: day, typedAgo: 0)
-        try c.store(key(), id: "B", place: "/store", hold: half, typedAgo: 0)
+        try keyring.store(key(), id: "B", place: "/store", hold: half, typedAgo: 0)
         #expect(try c.forget(id: "A"))
         #expect(try c.forget(id: "B"))
         #expect(try !c.forget(id: "B"))
@@ -240,14 +266,17 @@ extension HeldKeyCacheTests {
         HeldSessionStore(agents: agents, keyring: keyring, isOff: off, witness: { witness }, say: { _ in })
     }
 
-    @Test func aLongSessionIsHeldByTheAgentAShortOneByTheKeyring() throws {
+    @Test func aSessionIsHeldByTheAgent() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let s = store(agents, keyring)
         #expect(s.allowed(day) == day.seconds)
         try s.put("xless-apple-session", key(1), hold: day)
         #expect(agents.names == ["xless-apple-session"])
         #expect(try s.get("xless-apple-session", using: true) == key(1))
+        try keyring.put("xless-apple-session", key(3), hold: half)
         try s.put("xless-apple-session", key(2), hold: half)
+        #expect(agents.hold("xless-apple-session") == half)
+        #expect(keyring.names.isEmpty)
         #expect(try s.get("xless-apple-session", using: true) == key(2)) // replaced, wherever it was
         #expect(try s.revoke("xless-apple-session"))
         #expect(try s.get("xless-apple-session", using: true) == nil)
@@ -257,10 +286,22 @@ extension HeldKeyCacheTests {
     @Test func whereNoAgentCanRunASessionIsKeptAnHour() throws {
         let agents = FakeAgents()
         agents.obstacle = AgentError(.unavailable, "no session here", fix: "-")
-        let s = store(agents, FakeKeyring())
+        let notes = Notes(), keyring = FakeKeyring()
+        let s = HeldSessionStore(agents: agents, keyring: keyring, isOff: false, witness: { nil }, say: notes.say)
         #expect(s.isAvailable)
         #expect(s.allowed(day) == 3600)
         #expect(!store(agents, FakeKeyring(available: false)).isAvailable)
+        try s.put("xless-apple-session", key(1), hold: SecretHold(seconds: 3600, idle: 3600, maximum: 86400))
+        try s.put("xless-apple-session-key", key(2), hold: SecretHold(seconds: 3600, idle: 3600, maximum: 86400))
+        #expect(keyring.names == ["xless-apple-session", "xless-apple-session-key"])
+        #expect(notes.lines.count == 1 && notes.lines[0].contains("without use does not end it"), "\(notes.lines)")
+        // An agent that does not start: for what fits, and no longer.
+        agents.obstacle = nil
+        agents.refuses = true
+        try s.put("xless-apple-session", key(4), hold: half)
+        #expect(try keyring.get("xless-apple-session", using: true) == key(4))
+        #expect(throws: AgentError.self) { try s.put("xless-apple-session", key(5), hold: day) }
+        #expect(try keyring.get("xless-apple-session", using: true) == nil)
     }
 
     @Test func aSessionIsTakenFromAnotherTerminalsAgentOnlyWithTheStoresKey() throws {

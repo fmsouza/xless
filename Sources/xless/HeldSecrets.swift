@@ -5,7 +5,7 @@ import XlessCore
 import XlessVault
 
 // Where an unlock and an Apple ID session are held for later commands (`xless unlock`, `--remember`, `--keep`): the
-// xless agent, or the Linux kernel keyring for an hour or less (and where no agent can run).
+// xless agent or, where none can run, the Linux kernel keyring, for an hour at most and with less to end it.
 
 /// The agents of this user, as these adapters use them (`AgentClient`; a fake in tests).
 protocol AgentHolding: Sendable {
@@ -46,8 +46,10 @@ enum HeldSecrets {
         "there is no kernel keyring here (macOS, or a container that blocks it), and \(agents.obstacle?.cause ?? "the xless agent cannot be used")"
     }
 
-    /// Whether `hold` goes to the kernel keyring: an hour or less where there is one (as before there was an agent).
-    static func fitsKeyring(_ hold: SecretHold) -> Bool { hold.seconds <= KernelKeyring.maximumTimeout }
+    /// What the kernel keyring holds instead of the agent, and what does not end it there.
+    static func fallback(_ what: String, seconds: Int, because why: String) -> String {
+        "note: \(why); the kernel keyring keeps \(what) instead, for \(HoldDuration.text(seconds)): a time without use does not end it there, nor do sleep, a locked screen or closing this terminal (`xless lock` in this login does)"
+    }
 }
 
 /// Says each thing once per process.
@@ -99,21 +101,45 @@ struct HeldKeyCache: VaultKeyCache {
         return nil
     }
 
+    /// What is kept of a hold.
+    struct Plan: Equatable {
+        let seconds: Int
+        /// nil: no idle time.
+        let idle: Int?
+    }
+
+    /// What will be kept of `hold` here.
+    func plan(_ hold: SecretHold) -> Plan {
+        agents.obstacle == nil ? Plan(seconds: hold.seconds, idle: hold.idle) : Plan(seconds: min(hold.seconds, KernelKeyring.maximumTimeout), idle: nil)
+    }
+
+    /// That `hold` can be kept here, with the idle time when one was asked for: checked before anything is asked.
+    func require(_ hold: SecretHold) throws {
+        guard isAvailable else {
+            throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(agents))",
+                             fix: "run without it; each command that needs the store asks the passphrase")
+        }
+        if let obstacle = agents.obstacle, hold.idleAsked { throw Self.noIdle(obstacle) }
+    }
+
+    private static func noIdle(_ why: AgentError) -> VaultError {
+        VaultError(.cacheUnavailable, "--idle cannot be kept here: \(why.cause), and the kernel keyring has no idle time", fix: "\(why.fix), or leave --idle out")
+    }
+
     func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws {
         guard !isOff else { throw VaultError(.cacheUnavailable, "XLESS_NO_SECRET_STORE=1 is set: nothing is kept unlocked", fix: "unset it") }
-        let name = HeldSecrets.name(ofVault: id)
-        if HeldSecrets.fitsKeyring(hold), keyring.isAvailable, held(id: id)?.backend != .agent {
-            return try keyring.store(key, id: id, place: place, hold: hold, typedAgo: typedAgo)
-        }
         do {
+            if let obstacle = agents.obstacle { throw obstacle }
+            let name = HeldSecrets.name(ofVault: id)
             try agents.put([AgentSeed(name: name, label: place, secret: key, hold: hold, typedAgo: typedAgo)]) { AgentWitness(item: name, key: key) }
             try keyring.forget(id: id)
         } catch let e as AgentError {
             guard keyring.isAvailable else {
                 throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(agents.obstacle == nil ? e.cause : HeldSecrets.reason(agents))", fix: e.fix)
             }
-            say("note: \(e.cause); the kernel keyring keeps the store unlocked instead, for \(HoldDuration.text(min(hold.seconds, KernelKeyring.maximumTimeout)))")
+            if hold.idleAsked { throw Self.noIdle(e) }
             let shorter = SecretHold(seconds: min(hold.seconds, KernelKeyring.maximumTimeout), idle: hold.idle, maximum: hold.maximum)
+            say(HeldSecrets.fallback("the store unlocked", seconds: shorter.seconds, because: e.cause))
             try keyring.store(key, id: id, place: place, hold: shorter, typedAgo: typedAgo)
         }
     }
@@ -168,8 +194,14 @@ struct HeldSessionStore: SessionKeyStore {
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         guard isAvailable else { throw AppleSessionCache.unavailable(obstacle) }
         _ = try revoke(name)
-        if HeldSecrets.fitsKeyring(hold), keyring.isAvailable { return try keyring.put(name, secret, hold: hold) }
-        try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], witness: witness)
+        do {
+            if let obstacle = agents.obstacle { throw obstacle }
+            try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], witness: witness)
+        } catch let e as AgentError {
+            guard keyring.isAvailable, keyring.allowed(hold) == hold.seconds else { throw e }
+            say(HeldSecrets.fallback("the Apple ID session", seconds: hold.seconds, because: e.cause))
+            try keyring.put(name, secret, hold: hold)
+        }
     }
 
     func get(_ name: String, using: Bool) throws -> SecretBytes? {

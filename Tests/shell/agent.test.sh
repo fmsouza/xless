@@ -246,8 +246,11 @@ b.run("$X lock"); gone()
 rc, shown, n = b.run("$X unlock --for 3s", PASS)
 check(rc == 0, "an unlock of 3 s", shown)
 check(gone(12), "ends by itself", agents())
-rc, shown, n = b.run("$X unlock --for 1h --idle 3s", PASS) if os.uname().sysname == "Darwin" else b.run("$X unlock --for 2h --idle 3s", PASS)
-check(rc == 0, "an unlock of 3 s without use", shown)
+rc, shown, n = b.run("$X unlock --for 1h --idle 3s", PASS)
+check(rc == 0 and "3 s without use" in shown, "an unlock of an hour or less has its idle time too", shown)
+check(status(b)["store"].get("backend") == "agent", "and is the agent's")
+rc, shown, n = b.run("$X unlock --for 1h --idle 3s")
+check(rc == 0 and n == 0, "again: renewed without asking", shown)
 check(gone(12), "ends by itself", agents())
 
 # ---- a changed passphrase, a replaced store --------------------------------------------------------------------------------

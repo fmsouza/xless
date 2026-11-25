@@ -130,7 +130,8 @@ forget everything when they end. Holding is asked for by name, never a default:
 They are held in one of two places, in memory only; `xless auth status` says which:
 
 - **The xless agent** (Linux and macOS): a small process of xless's, started by the first command that holds something.
-- **The Linux kernel keyring**, as before: for an hour or less where it works, and where no agent can run.
+- **The Linux kernel keyring**, only where no agent can run and the keyring works: for an hour at most, and
+  [with less to end it](#the-kernel-keyring), which xless says.
 
 Durations are `90s`, `30m`, `8h`, `2d` or seconds. `unlock:` in config.yml sets the defaults and lowers the maximum:
 
@@ -215,7 +216,7 @@ knows who it is. An agent of another xless version is never misunderstood: the c
 
 No agent can be used where xless itself leads its POSIX session (`ssh host xless …`, `docker exec … xless`, without a
 shell: nothing of it would be left to serve), nor on Linux before 5.3 (no pidfd). There, and only there, `xless unlock` uses
-the kernel keyring if it works, for at most an hour, and says so; else it is refused with the reason.
+the kernel keyring if it works, for at most an hour, and says so and what that lacks; else it is refused with the reason.
 
 ### The kernel keyring
 
@@ -225,8 +226,13 @@ the kernel keyring if it works, for at most an hour, and says so; else it is ref
   keyring, which all your processes without one share. Other users cannot read them; the permissions give nothing to
   the user, group or others outside possession. Every process that possesses the keys can read them; the tools xless
   runs, and so the code you build, do not ([below](#the-build-and-your-secrets)).
-- The kernel expires the keys itself, after at most one hour, and has no idle time; when xless cannot set the bound or the
-  permissions, it revokes the key and fails rather than keep it longer or wider.
+- The kernel expires the keys itself, after at most one hour; when xless cannot set the bound or the permissions, it
+  revokes the key and fails rather than keep it longer or wider.
+- **What ends a hold in the agent and not here:** a time without use (so an `--idle` is refused, and the configured one is
+  said not to be kept), sleep, a locked screen, a closed terminal. And `xless lock` drops the keys of the session keyring
+  it is run in: a screen locker, or a service of your login, may well have another one. The hour is the bound.
+- Beside the key is a note of when it ends and when the passphrase was typed, so the [maximum](#holding-an-unlock-off-by-default-in-memory)
+  is counted from there when the hold moves to an agent.
 
 A **longer keyring** was considered instead of an agent and left out: macOS and containers have none, a possessor is every
 process of the login rather than of a terminal, and it has no idle time, no sleep and no terminal to end with.

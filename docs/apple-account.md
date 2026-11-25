@@ -55,8 +55,8 @@ fails, the error says which interface it was and which page to use in a browser 
 - The session's cookies stay in memory and are forgotten when the command ends. Nothing is written to disk, unless
   `--across-reboots` asks for it, sealed.
 - **Keeping it:** `xless auth login --keep` seals the cookies with a random key and keeps both in memory for the later
-  commands of the same terminal, so they do not sign in again: in the xless agent, or in the Linux kernel keyring for an
-  hour or less. Without a duration it is kept as long as config.yml's `unlock` says (8 hours, at most 2 without use,
+  commands of the same terminal, so they do not sign in again: in the xless agent or, where none can run, in the Linux
+  kernel keyring for an hour at most ([what ends it there](security.md#the-kernel-keyring)). Without a duration it is kept as long as config.yml's `unlock` says (8 hours, at most 2 without use,
   unless you change them); `--keep 3d` asks for more, at most 7 days and never past the session's own expiry. It ends when
   the terminal is closed, the machine sleeps or (macOS) the screen is locked, with `xless auth logout` and with
   `xless lock` ([who may use it, and when it ends](security.md#holding-an-unlock-off-by-default-in-memory)).
@@ -131,7 +131,7 @@ the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#x
 |---|---|
 | `store.state` | `unlocked`; `locked` (a command asks the passphrase); `unavailable` (locked, and it cannot be kept unlocked here); `helper` (a credential helper's own lock, named in `detail`); `missing` (no store); `error` (`detail`) |
 | `store.backend` | `agent` or `keyring`, when unlocked |
-| `store.expires`, `.remainingSeconds` | until when (the keyring's is not known to xless) |
+| `store.expires`, `.remainingSeconds` | until when (absent for a keyring's unlock made by an xless that did not record it) |
 | `store.idleSeconds`, `.idleRemainingSeconds` | in the agent: how long without use ends it, and how much of that is left |
 | `session.state` | `kept`; `saved` (in the locked store: a command asks its passphrase); `none`; `unavailable` (none, and it cannot be kept here) |
 | `session.appleID`, `.backend`, `.expires`, `.remainingSeconds`, `.idleSeconds`, `.idleRemainingSeconds` | as the store's, when kept; `backend` is `agent`, `keyring` or `store` (saved, and the store is unlocked) |

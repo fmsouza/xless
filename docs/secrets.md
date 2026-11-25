@@ -145,11 +145,15 @@ xless lock                  # forget everything held, now
   ```yaml
   unlock: { duration: 8h, idle: 2h, maximum: 7d }
   ```
-- **Where:** in memory only, in the xless agent (Linux and macOS), or in the Linux kernel keyring for an hour or less.
+- **Where:** in memory only, in the xless agent (Linux and macOS). Where none can run (xless says why: started without a
+  shell, as by `ssh host xless …`, or Linux before 5.3) the Linux kernel keyring keeps it, if it works, for an hour at most.
+  There only that hour and `xless lock` in the same login end it: not a time without use (`--idle` is refused), a closed
+  terminal, sleep or a locked screen.
   `--remember [<duration>]` on `unlock`, `init`, `import` and `export` does the same while it does its own work.
 - **For whom:** the commands you run in the same terminal, and the scripts they are in. Another terminal shares it after an
   `xless unlock` of its own; cron jobs and services are not served. Closing the terminals, putting the
-  machine to sleep, locking the screen (macOS), `passwd` and a replaced store end it too. Other users, and the tools xless
+  machine to sleep and locking the screen (macOS) end what the agent holds; `passwd` and a replaced store end it
+  everywhere. Other users, and the tools xless
   runs (the build's plugins and scripts, npm, Docker), never reach it. The whole model, what it does not stop, and how to
   lock with a Linux screen locker: [security.md](security.md#holding-an-unlock-off-by-default-in-memory).
 

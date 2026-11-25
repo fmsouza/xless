@@ -8,6 +8,8 @@ public struct SecretHold: Sendable, Equatable {
     public var idle: Int
     /// The longest it may be held, renewals included, since the secret was last typed.
     public var maximum: Int
+    /// `idle` was asked for on the command line: where it cannot be kept, nothing is held instead of that.
+    public var idleAsked = false
 
     public init(seconds: Int, idle: Int, maximum: Int) {
         self.seconds = seconds; self.idle = idle; self.maximum = maximum
@@ -103,7 +105,9 @@ public struct UnlockSettings: Sendable, Equatable {
         }
         let n = try text.flatMap { $0 == Self.standardValue ? nil : $0 }.map { try seconds($0, option) } ?? duration
         let quiet = try idleText.map { try seconds($0, "--idle") } ?? idle
-        return SecretHold(seconds: n, idle: min(quiet, n), maximum: maximum)
+        var hold = SecretHold(seconds: n, idle: min(quiet, n), maximum: maximum)
+        hold.idleAsked = idleText != nil
+        return hold
     }
 }
 

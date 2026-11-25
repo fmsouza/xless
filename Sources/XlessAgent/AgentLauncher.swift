@@ -71,7 +71,7 @@ public enum AgentLauncher {
         let pidfd = xless_pidfd_open(getpid())
         guard pidfd >= 0 else {
             return AgentError(.unavailable, "the xless agent needs Linux 5.3 or newer (pidfd_open: \(String(cString: strerror(-pidfd))))",
-                              fix: "use a shorter time, which the kernel keyring can keep")
+                              fix: "use a newer kernel")
         }
         close(pidfd)
         #endif
@@ -108,7 +108,7 @@ public enum AgentLauncher {
         }
         guard answer.code == .ok else {
             let (_, text) = try answer.body { (try $0.uint8(), try $0.string(max: 2048)) }
-            throw AgentError(.unavailable, text, fix: "fix that, or use a shorter time where a kernel keyring can keep it")
+            throw AgentError(.unavailable, text, fix: "fix that, and try again")
         }
     }
 

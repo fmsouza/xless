@@ -9,11 +9,12 @@ struct UnlockCommand: ParsableCommand {
         commandName: "unlock",
         abstract: "Keep the secret store unlocked for the commands of this terminal, so they ask no passphrase.",
         discussion: """
-        Asks the passphrase once and keeps the store's key in memory: in the xless agent, a process of yours that gives it \
-        to xless commands of this terminal session only, or in the Linux kernel keyring for an hour or less. It ends after \
-        the time given (8 h by default, at most 7 days), after 2 h without use, when the terminal is closed, when the \
-        system sleeps or (macOS) the screen is locked, and with `xless lock`. The tools xless runs (compilers, build \
-        scripts, npm) never reach it. Run it again in another terminal to use the store there too.
+        Asks the passphrase once and keeps the store's key in memory, in the xless agent: a process of yours that gives it \
+        to xless commands of this terminal session only. It ends after the time given (8 h by default, at most 7 days), \
+        after 2 h without use, when the terminal is closed, when the system sleeps or (macOS) the screen is locked, and \
+        with `xless lock`. The tools xless runs (compilers, build scripts, npm) never reach it. Run it again in another \
+        terminal to use the store there too. Where no agent can run (it says why), the Linux kernel keyring keeps it, for \
+        an hour at most; there only that time and `xless lock` end it, and --idle is refused.
 
         config.yml (~/.config/xless/config.yml) sets the times: `unlock: { duration: 8h, idle: 2h, maximum: 7d }`. \
         `xless auth status` shows what is held. An Apple ID session is kept by `xless auth login --keep`. docs/secrets.md.
@@ -31,7 +32,7 @@ struct UnlockCommand: ParsableCommand {
                 return
             }
             let hold = try HeldSecrets.settings.get().hold(time, idle: idle, option: "--for", stage: .config)
-            try SecretStoreCLI.requireSomewhereToHold()
+            try SecretStoreCLI.cache.require(hold)
             print(try SecretStoreCLI.unlock(vault, hold: hold))
         }
     }

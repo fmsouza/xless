@@ -96,22 +96,16 @@ enum SecretStoreCLI {
             return nil
         }
         let hold = try HeldSecrets.settings.get().hold(text, option: "--remember", stage: .config)
-        try requireSomewhereToHold()
+        try cache.require(hold)
         return hold
-    }
-
-    static func requireSomewhereToHold() throws {
-        guard cache.isAvailable else {
-            throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(cache.isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(cache.agents))",
-                             fix: "run without it; each command that needs the store asks the passphrase")
-        }
     }
 
     /// Unlocks the vault and keeps it unlocked for `hold`; what to say about it.
     static func unlock(_ vault: VaultSecretStore, hold: SecretHold) throws -> String {
         let file = try existing(vault)
         if cache.held(id: file.id) == nil {
-            say("Unlocking the secret store for the commands of this terminal, for \(HoldDuration.text(hold.seconds)) (\(HoldDuration.text(hold.idle)) without use); `xless lock` ends it.")
+            let plan = cache.plan(hold)
+            say("Unlocking the secret store for the commands of this terminal, for \(HoldDuration.text(plan.seconds))\(plan.idle.map { " (\(HoldDuration.text($0)) without use)" } ?? ""); `xless lock` ends it.")
         }
         _ = try vault.key(for: file, remember: hold, reason: "unlocking")
         guard let held = cache.held(id: file.id) else {

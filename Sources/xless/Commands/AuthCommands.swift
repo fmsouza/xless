@@ -26,7 +26,7 @@ struct AuthLoginCommand: AsyncParsableCommand {
 
 
         With --keep, the session's cookies are sealed with a random key and kept, with that key, in memory only (the xless \
-        agent; the Linux kernel keyring for an hour or less) for the time given or, without one, as long as config.yml's \
+        agent; where none can run, the Linux kernel keyring, for an hour at most) for the time given or, without one, as long as config.yml's \
         `unlock` says (at most 7 days, never past the session's own expiry), so the commands of this terminal that need it \
         do not sign in again. The tools xless runs never reach it. Without --keep nothing is kept: this only checks the \
         sign-in.
