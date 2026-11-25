@@ -23,7 +23,10 @@ import Testing
     @Test func aStepHasNothingToReadAndNoDescriptorOfTheRuns() throws {
         let file = try host.temporaryFile()
         defer { host.removeFile(file) }
-        let descriptor = open(file, O_RDONLY)  // not close-on-exec
+        let opened = open(file, O_RDONLY)
+        let descriptor = fcntl(opened, F_DUPFD, 200)  // not close-on-exec; and not one that the shell itself uses
+        close(opened)
+        try #require(descriptor >= 200)
         defer { close(descriptor) }
         let r = try run(["sh", "-c", "cat; (: <&\(descriptor)) 2>/dev/null && echo open; true"])
         #expect(r.output.isEmpty && r.code == 0)
