@@ -2,7 +2,7 @@
 
 Building an app up to `finalize` needs nothing from Apple but the SDK. Signing it, packaging it and uploading it to
 App Store Connect need an Apple Developer Program membership and a few keys. This page covers those last stages, for
-an `xless.yml` project and for the overlay apps (Tauri, React Native).
+an `xless.yml` project and for the overlay apps (Tauri, Cargo, React Native).
 
 ## Before you start
 
@@ -127,7 +127,7 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   `docker rm -f $(docker ps -q --filter label=xless.run)`.
 - **Result.** xless prints the build number, each group and `available to N testers`; a group with no testers prints a
   warning. The exit code is xless's (17 for a failed upload or delivery). Then it prints the `xless release submit` command
-  that sends this build to App Review ([from TestFlight to the App Store](account.md#release-a-version)); nothing is
+  that sends this build to App Review ([from TestFlight to the App Store](release.md)); nothing is
   sent there without it. Afterwards,
   [`xless builds`](apple-account.md#xless-builds) lists the build, waits for its processing, answers its export
   compliance and expires old builds.
@@ -276,8 +276,4 @@ with `docker run --rm -v "$PWD":/work -w /work alpine chown -R "$(id -u):$(id -g
 
 ## Continuous integration
 
-[examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow to copy into your app's repository
-and adapt. It runs on a Linux runner of your own (self-hosted) that you set up once with `xless setup --sdk <dir>`, and ships
-with `xless ship`. It needs the secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` and `XLESS_DIST_KEY`. It has not been
-run yet. GitHub's own runners start empty, and there is no image to give them: one holds Apple's SDK, so it is never pushed to a
-registry ([maintainers.md](maintainers.md#images-on-other-machines)).
+[ci.md](ci.md): the secrets of a job, the flags, the runner, and an example workflow.

@@ -26,8 +26,8 @@ simulator app that Docker built is launched on a Mac ([react-native.md](react-na
 Everything, natively for Swift packages and in Docker for the rest. A session or an unlock is held in an agent in memory (Linux
 5.3 or later), else in the kernel's keyring where that works ([secrets.md](secrets.md#staying-unlocked)).
 
-A whole run against a real Apple account, from an empty account to a TestFlight build on a device and a submission to App
-Review, was made on Linux arm64 on 2026-11-24: [acceptance-m7.md](acceptance-m7.md). The approval, the release to the App Store
+A whole run against a real Apple account, for a new app, from the first API key to a TestFlight build on a device and a submission
+to App Review, was made on Linux arm64 on 2026-11-24: [acceptance-m7.md](acceptance-m7.md). The approval, the release to the App Store
 and the two last checks of that list were not part of it ([#181](https://github.com/fmsouza/xless/issues/181)).
 
 ## macOS

@@ -1,40 +1,22 @@
-# One-time Apple setup
+# The Apple setup, one step at a time
 
-Everything an app needs from Apple before its first upload, from the terminal: an App Store Connect API key, the
-bundle ID and its capabilities, the signing certificates with their private keys, the provisioning profiles and the
-app record. The short way is one command, [`xless provision apply`](#4-provision-the-account); the steps after it do
-the same one at a time. [account.md](account.md) covers what comes next (devices, testers, releases). The way through
-the developer portal and App Store Connect in a browser is kept as an [appendix](#appendix-the-same-in-a-browser).
-
-The account commands are tested against recorded Apple answers, not yet end to end on a real account
-([#105](https://github.com/fmsouza/xless/issues/105)): if one fails, its error names the page to use in a browser
-meanwhile, and the appendix has the manual step.
+What an app needs from Apple before its first upload: an App Store Connect API key, the bundle ID and its capabilities, the signing
+certificates with their private keys, the provisioning profiles and the app record. The short way is one command, [`xless provision
+apply`](#4-provision-the-account), and [get-started.md](get-started.md#i-have-nothing-yet) goes through it. This page is for when you want each step
+apart, or the [same in a browser](#appendix-the-same-in-a-browser). [account.md](account.md) has what comes next (devices,
+certificates), and says what of it was [tried on a real account](account.md): if a command fails, its error names the page to use in a
+browser meanwhile, and the appendix has the manual step.
 
 Keep every secret in xless's encrypted store on your own machine ([secrets.md](secrets.md)) and in your CI's secret
 store; never commit one. (`.gitignore` already excludes `*.p8` and `*.pem`.)
 
 ## What you need first
 
-- An Apple Developer Program membership, and an Apple ID that is its Account Holder, or an Admin the Account Holder
-  allowed to generate API keys. Two-factor authentication by code, or a USB security key on Linux
-  ([apple-account.md](apple-account.md#signing-in-with-a-security-key)).
-- The agreements accepted and, the first time, App Store Connect API access requested by the Account Holder: both are
-  in a browser only ([account.md](account.md#before-you-start)).
-- xless installed ([README](../README.md)).
+[Before you start](account.md#before-you-start): the membership, the Apple ID, and what only a person can do, in a browser.
 
 ## 1. The secret store and your Apple ID
 
-```sh
-xless secrets init                  # a new passphrase, twice; it cannot be recovered
-xless auth login --keep             # Apple ID, password and the two-factor code, on the terminal; lists your teams
-xless team use ABCDE12345           # the default team of the account commands
-```
-
-`--keep` keeps the Apple ID session in memory for the next commands of this terminal, for 8 hours (2 without use) unless
-you say otherwise; nothing of it is written to disk, and `xless auth logout` drops it ([security.md](security.md)). It also
-asks whether to keep the store unlocked once its passphrase is typed: with a yes, the rest of this page asks the passphrase
-once and does not sign in again ([secrets.md](secrets.md#staying-unlocked)). Without `--keep`, each command that needs the
-session signs in, and offers to keep it.
+[Get started, step 1](get-started.md#1-a-secret-store-and-an-api-key).
 
 ## 2. App Store Connect API key
 <a id="1-app-store-connect-api-key"></a>
@@ -54,22 +36,12 @@ first.
 
 ## 3. The project
 
-In `xless.yml`, or the overlay of a Tauri, Cargo or React Native app, set `teamID` to the team and `bundleID` to the
-app's identifier; the sample's values are placeholders ([xless-yml.md](xless-yml.md)). Its entitlements (push
-notifications, app groups, iCloud, Sign in with Apple…) decide the capabilities, groups, containers and keys.
-
-For an App Store app, an `appstore/` directory next to it names the app record: `app.yml` with `primaryLocale` and
-`version` (and `sku`, default the bundle ID), and `<locale>/name.txt` ([account.md](account.md#your-first-app-from-zero),
-[appstore-manifest.md](appstore-manifest.md)). `xless store validate --draft` checks it offline.
+[Get started, steps 2 and 3](get-started.md#2-the-project).
 
 ## 4. Provision the account
 
-```sh
-xless provision plan                                  # what the account lacks for this project; reads only
-xless provision apply --company-name "Example Ltd"    # asks, then does it (--company-name for the team's first app)
-```
-
-In dependency order: the bundle IDs (registered as universal, iOS and macOS), their capabilities, the app groups and
+`xless provision plan`, then `xless provision apply`: [get started, step 4](get-started.md#4-plan-then-apply). In dependency order it
+makes the bundle IDs (registered as universal, iOS and macOS), their capabilities, the app groups and
 iCloud containers the entitlements name, a signing key per lane generated into the store with its certificate (Apple
 Distribution for iOS and the Mac App Store, Mac Installer Distribution for a Mac App Store package, Developer ID
 Application for a notarized Mac app), an APNs key when push notifications are used, the profiles, the app record,
@@ -172,39 +144,14 @@ App Store Connect creates a certificate from a CSR but never returns the private
 
 ## 6. Setup (once per Xcode release)
 
-On your Linux machine, install the SDK and the toolset from the Xcode download ([README](../README.md#set-up)):
-
-```sh
-xless setup --xcode ~/Downloads/Xcode_27.xip
-```
-
-or build the Docker image instead, with `xless setup --docker --xcode …` ([README](../README.md#build-in-docker-instead)).
-On another machine (a CI runner, a build server) build it from a copy of the SDK export
-([maintainers.md](maintainers.md#images-on-other-machines)): never push an image to a registry, since it contains Apple's SDK.
-`xless xcode download` fetches the `.xip` from the terminal ([xcode-download.md](xcode-download.md)).
+[build.md](build.md): on a Mac, on Linux, in Docker. On another machine (a CI runner, a build server) build the image from a copy of
+the SDK export ([maintainers.md](maintainers.md#images-on-other-machines)): never push an image to a registry, since it contains
+Apple's SDK.
 
 ## 7. Ship
 
-```sh
-xless run <project-dir>                 # or, in the images: xless run --docker <project-dir>
-```
-
-A native build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own
-and without the secret variables, so a held unlock or a kept Apple ID session is out of their reach
-([security.md](security.md#the-build-and-your-secrets)). The keys come from the secret store: one passphrase per run, before it starts (none while the store is kept unlocked), no secrets file
-([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight), which also covers the overlay apps and
-running `xless ship` in a container yourself).
-
-**For CI**, which never opens the store: export each key the pipeline needs once, put its contents into the CI's
-secret store under the variable's name, and delete the file:
-
-```sh
-xless secrets list                                            # the entry names
-xless secrets export ASC_KEY_P8@ABCDE12345 --out key.p8       # → ASC_KEY_P8 (with ASC_KEY_ID and ASC_ISSUER_ID from `secrets list`)
-xless secrets export XLESS_DIST_KEY@ABCDE12345 --out dist.pem # → XLESS_DIST_KEY
-```
-
-The variables are in [signing-and-testflight.md](signing-and-testflight.md#secrets).
+[Get started, step 5](get-started.md#5-build-and-ship); every option is in
+[signing-and-testflight.md](signing-and-testflight.md#one-command-testflight). In CI: [ci.md](ci.md).
 
 ## Appendix: the same in a browser
 
