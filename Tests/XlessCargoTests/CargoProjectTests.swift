@@ -35,6 +35,27 @@ private func repo(_ tracked: [String: String], untracked: [String: String] = [:]
     #expect(manifests.keys.sorted() == ["Cargo.toml"] && !fm.fileExists(atPath: ran.path))
 }
 
+/// Nor one that a fetch starts: in a partial clone with a sparse index, a tree that is not there is fetched to list the files.
+@Test func listingTheManifestsFetchesNothing() throws {
+    let source = try repo(["Cargo.toml": "[package]\nname = \"a\"\nversion = \"1.2.3\"\n", "sub/a.txt": "a"])
+    defer { try? fm.removeItem(at: source) }
+    let ssh = source.appendingPathComponent(".git/ssh"), ran = source.appendingPathComponent("ran")
+    try ExecutableFile.write(Data("#!/bin/sh\n: > '\(ran.path)'\nexit 1\n".utf8), to: ssh, stage: .prepare)
+    let tree = try Shell.run("git", ["-C", source.path, "rev-parse", "HEAD:sub"], stage: .prepare).stdout.trimmingCharacters(in: .newlines)
+    try git(source, "sparse-checkout", "init", "--cone", "--sparse-index")
+    try git(source, "sparse-checkout", "set", "none")
+    for (name, value) in [("core.repositoryFormatVersion", "1"), ("extensions.partialClone", "origin"), ("remote.origin.url", "ssh://example.invalid/x"),
+                          ("remote.origin.promisor", "true"), ("core.sshCommand", ssh.path)] { try git(source, "config", name, value) }
+    try fm.removeItem(at: source.appendingPathComponent(".git/objects/\(tree.prefix(2))/\(tree.dropFirst(2))"))
+    // (an older git leaves out what it lacks, and says so on stderr alone)
+    #expect((try? CargoManifest.load(source: source)).map { $0.keys.sorted() == ["Cargo.toml"] } ?? true)
+    #expect(!fm.fileExists(atPath: ran.path))
+    // What a listing without this does, where git made the index sparse: the test is of a repository that it would fetch for.
+    guard try Data(contentsOf: source.appendingPathComponent(".git/index")).range(of: Data("sdir".utf8)) != nil else { return }
+    _ = try? Shell.run("git", ["-C", source.path, "ls-files"], env: ["GIT_SSH_COMMAND": nil, "GIT_SSH": nil, "GIT_ALLOW_PROTOCOL": nil, "GIT_NO_LAZY_FETCH": nil], stage: .prepare)
+    #expect(fm.fileExists(atPath: ran.path))
+}
+
 private func overlay(version: String? = nil, build: String = "dated", macos: Bool = false, extra: String = "") throws -> CargoOverlay {
     try CargoOverlay.parse(yaml: """
     type: cargo

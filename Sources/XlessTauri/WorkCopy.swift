@@ -18,7 +18,7 @@ public enum WorkCopy {
         try checkOrigin(origin ?? source.resolvingSymlinksInPath().standardizedFileURL.path, work: work, volume: baseEnvironment["XLESS_WORK_VOLUME"])
 
         // Entries look like `<mode> <sha> <stage>\t<path>`, NUL-separated; run in `source`, paths are relative to it.
-        let listing = try Shell.run("git", git(source, ["ls-files", "-s", "-z", "--", "."]), baseEnvironment: baseEnvironment, stage: .prepare).stdout
+        let listing = try git(source, ["ls-files", "-s", "-z", "--", "."], baseEnvironment: baseEnvironment, stage: .prepare)
         var tracked: [String] = []
         var seen = Set<String>()
         for entry in listing.split(separator: "\0", omittingEmptySubsequences: true) {
@@ -76,10 +76,18 @@ public enum WorkCopy {
         return tracked.count
     }
 
-    /// Read-only git arguments for `source`. `safe.directory=*`: in docker the source belongs to the host user, not to
-    /// root, and git would otherwise refuse it ("detected dubious ownership"). `core.fsmonitor=false`: no
-    /// program that the repository's configuration names is run. Nothing is written to the repository.
-    public static func git(_ source: URL, _ args: [String]) -> [String] {
+    /// What git says about `source`, read-only. Reading the index runs no program that the repository's configuration names:
+    /// `core.fsmonitor=false`, and nothing is fetched (a partial clone fetches what it lacks, over `core.sshCommand` say):
+    /// `GIT_NO_LAZY_FETCH`, and for a git that does not know it, no protocol. Nothing is written to the repository.
+    public static func git(_ source: URL, _ args: [String], baseEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+                           stage: Stage) throws -> String {
+        try Shell.run("git", gitArguments(source, args), env: ["GIT_NO_LAZY_FETCH": "1", "GIT_ALLOW_PROTOCOL": "none"],
+                      baseEnvironment: baseEnvironment, stage: stage).stdout
+    }
+
+    /// `safe.directory=*`: in docker the source belongs to the host user, not to root, and git would otherwise refuse it
+    /// ("detected dubious ownership").
+    public static func gitArguments(_ source: URL, _ args: [String]) -> [String] {
         ["-c", "safe.directory=*", "-c", "core.fsmonitor=false", "-C", source.path] + args
     }
 
@@ -87,8 +95,8 @@ public enum WorkCopy {
     static func gitCheckout(_ source: URL, baseEnvironment: [String: String]) throws {
         let inside: String
         do {
-            inside = try Shell.run("git", git(source, ["rev-parse", "--is-inside-work-tree"]), baseEnvironment: baseEnvironment, stage: .prepare)
-                .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            inside = try git(source, ["rev-parse", "--is-inside-work-tree"], baseEnvironment: baseEnvironment, stage: .prepare)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         } catch let e as XlessError where e.cause.contains("not a git repository") {
             throw XlessError(.prepare, "\(source.path) is not inside a git repository", fix: "point --source (or the overlay's source:) at a directory of a git checkout")
         } catch let e as XlessError {

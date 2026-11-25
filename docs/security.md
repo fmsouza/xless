@@ -479,8 +479,12 @@ whether the account may be changed, and the app that the upload goes to come fro
   a directory of the run's own outside of the project (`~/.cache/xless/run/<random>/`), over the one in the project. The
   container that signs runs in `/`, not in the project. When xless.yml in the project is another one after the build, the run
   says so (on a Mac's file system a build can write it under another spelling of its name).
-- Signing tools read no configuration of the directory they run in: rcodesign is started with `-C /dev/null`, in `/`, and git with
-  the programs of a repository's configuration off (`core.fsmonitor`). This holds natively too.
+- Signing tools read no configuration of the directory they run in: rcodesign is started with `-C /dev/null`, in `/`. Where the
+  steps with the secrets list the files of an overlay's source (a Cargo or React Native one), git reads the index and starts none
+  of the programs that the repository's configuration may name for that: the file system monitor is off (`core.fsmonitor`), and
+  nothing is fetched (a partial clone fetches what it lacks when it is listed, over `core.sshCommand` or a helper). So
+  fetch what a partial clone lacks before the run (`git ls-files` in it does): without it the listing fails, or an older git leaves
+  those files out. This holds natively too.
 - Natively the build runs as you, and can write what you can: the overlay and xless.yml as well. What is above is of the
   containers.
 

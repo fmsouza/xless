@@ -83,7 +83,7 @@ public enum CargoInputs {
         }
         let final = cache.appendingPathComponent("\(name)-\(rev)"), partial = cache.appendingPathComponent("\(name)-\(rev).partial")
         func head(_ dir: URL) -> String? {
-            (try? git(WorkCopy.git(dir, ["rev-parse", "HEAD"])))?.trimmingCharacters(in: .whitespacesAndNewlines)
+            (try? git(WorkCopy.gitArguments(dir, ["rev-parse", "HEAD"])))?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if fm.fileExists(atPath: final.path) {
             if head(final) == rev { return final }
@@ -93,7 +93,7 @@ public enum CargoInputs {
             try? fm.removeItem(at: partial)
             try fm.createDirectory(at: cache, withIntermediateDirectories: true)
             _ = try git(["clone", "-q", "--no-checkout", "--", url, partial.path])
-            _ = try git(WorkCopy.git(partial, ["-c", "advice.detachedHead=false", "checkout", "-q", rev]))
+            _ = try git(WorkCopy.gitArguments(partial, ["-c", "advice.detachedHead=false", "checkout", "-q", rev]))
             guard head(partial) == rev else { throw fail("the checkout is not at the pinned commit") }
             try fm.moveItem(at: partial, to: final)
         } catch let error as XlessError where error.stage == .prepare && error.cause.hasPrefix("input '") {
