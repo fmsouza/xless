@@ -8,7 +8,8 @@ xless takes an app's source and produces what Apple's own tools would:
   Mac App Store `.pkg`, uploaded to TestFlight ([the lane](signing-and-testflight.md#macos-app-store-lane-testflight);
   not yet confirmed by a real upload: [research/mas-pkg.md](research/mas-pkg.md)).
 
-It does this on Linux, without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
+On a Mac it builds `xless.yml` projects with the Xcode that is installed there ([native-install.md](native-install.md#on-a-mac)).
+Everywhere else it does this on Linux, without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
 from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releases are supported: 27.2 (27B52), 27.1
 (27A9275), 27.0 (27A266a), 26.6 (17F113), 26.5 (17F42), 26.4.1 (17E202), 26.4 (17E192), 26.3 (17C529), 26.2 (17C52), 26.1.1 (17B100), 26.1 (17B55) and 26.0.1 (17A400).
 
@@ -32,6 +33,7 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releas
 
 - **The native install.** `xless setup` installs the toolset and the SDK under your home directory, with no Docker
   ([native-install.md](native-install.md)). It builds `xless.yml` projects.
+  On a Mac nothing is installed: the installed Xcode is used.
 - **The image.** `xless setup --docker` builds one per Xcode and architecture from the `.xip`, for example
   `xless:local-arm64-xcode26.2` ([images.md](images.md) shows each step, for building it by hand). It holds xless, xtool,
   rcodesign, Swift Build, replacements of the Xcode tools a build calls, the Darwin SDK and the open-source Swift
@@ -40,7 +42,8 @@ from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releas
   top of it that `xless run` builds when an app needs one, and a project can name an image of its own (`image:`).
   A run uses the image of the Xcode the project pins (`xcode:`), and without a pin the image of the newest Xcode there is one of.
 - **`xless run`** runs a build, natively or, with `--docker`, in those images (`xless docker` is `xless run --docker`).
-  With a project directory (an `xless.yml` project) it runs `xless ship` in one process or container. With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs three containers,
+  With a project directory (an `xless.yml` project) it runs `xless ship` in one process or container (natively on a Mac, in two
+  when it both builds and signs: [security.md](security.md#the-build-and-your-secrets)). With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs three containers,
   so that the app's own build code never runs next to a signing key ([signing-and-testflight.md](signing-and-testflight.md#the-three-step-split)).
   The options after the project or overlay go to `xless ship`, for example `--to finalize` or `--from sign`.
 
@@ -92,6 +95,7 @@ or the `.pkg`. xless uploads nothing: App Store Connect gets no dSYM from it.
 |---|---|---|
 | `xless.yml`, macOS | Swift Build's `<name>.dSYM` next to each architecture's executable, merged into one universal dSYM | When Swift Build writes one (it does for the release build in the xless image) |
 | `xless.yml`, iOS | xtool's build: Swift Build's `<Product>-App.dSYM` (xtool builds with Swift Build from Swift 6.4), else `dsymutil` on the app's executable | When the executable has a debug map (SwiftPM's release builds have debug info) |
+| `xless.yml` on a Mac with Xcode | The `.dSYM` Swift Build wrote next to the executable, and to each library of the packages that the app loads | When Swift Build writes one (it does for a release build) |
 | React Native | Every `.dSYM` Swift Build wrote ([react-native.md](react-native.md#dsyms)) | `DEBUG_INFORMATION_FORMAT = dwarf-with-dsym` (Expo's Release default) |
 | Cargo (iOS, macOS), Tauri macOS | The linker wrapper's debug link ([below](#dsyms-of-rust-apps)), one per architecture | When the release profile has debug info |
 | Tauri iOS | `dsymutil` on the executable xless links | When the release profile has debug info for the app crate |

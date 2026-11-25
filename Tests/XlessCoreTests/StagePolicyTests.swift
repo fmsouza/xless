@@ -64,9 +64,10 @@ func everyStageAfterBuildRefusesASimulatorBuildWithItsOwnExitCode(stage: Stage) 
 @Test func theSimulatorIsRefusedForTauriAndXlessYMLProjects() throws {
     let e = #expect(throws: XlessError.self) { try StagePolicy.requireReactNativeForSimulator(simulator: true, isReactNative: false) }
     #expect(e?.stage == .config && e?.stage.exitCode == 10)
-    #expect(e?.description == "[config] --destination simulator builds React Native overlays only — drop --destination, or build a type: react-native overlay")
+    #expect(e?.description == "[config] --destination simulator builds React Native overlays only (and xless.yml projects, on a Mac with Xcode) — drop --destination, or build a type: react-native overlay")
     try StagePolicy.requireReactNativeForSimulator(simulator: true, isReactNative: true)
     try StagePolicy.requireReactNativeForSimulator(simulator: false, isReactNative: false)
+    try StagePolicy.requireReactNativeForSimulator(simulator: true, isReactNative: false, builds: true)
 }
 
 // MARK: the build stage's SDK and Swift checks (BuildSDKCheck, StageRunner.checkSDK and prepare)

@@ -5,6 +5,7 @@ This is the same on Linux and macOS. After `xless setup` and a few builds, xless
 | What | Where | Size |
 |---|---|---|
 | The program and its support files | `~/.local/bin/xless`, `~/.local/share/xless` (the install's `--prefix` / `XLESS_PREFIX`) | about 100 MB |
+| On a Mac, natively: rcodesign only (the builds use your Xcode) | `~/.local/share/xless-native` | under 50 MB |
 | The native install: Swift toolchain, xtool, rcodesign; the installed SDK and its metadata | `~/.local/share/xless-native`; `~/.swiftpm/swift-sdks/darwin.artifactbundle` and `~/.config/xless/toolchain-meta.json` | about 8 GB |
 | The exported SDKs, Tauri work copies and downloads | `~/.cache/xless` (`$XDG_CACHE_HOME/xless` when that is set) | about 3.5 GB per Xcode and architecture, plus the work copies |
 | With `--docker`: the image `xless:local-<arch>-xcode<version>`, the kits on it, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 14 GB for the images and about 25 GB with the build cache, per Xcode and architecture |
@@ -32,7 +33,8 @@ xless clean --all           # remove all of them
 | `--native` | the native install: `~/.local/share/xless-native` (or `$XLESS_NATIVE_HOME`), the installed SDK and its `toolchain-meta.json`; needs no Docker |
 | `--all` | `--images`, `--volumes`, `--cache` and `--native` |
 
-It leaves alone the xless install itself, the [secret store](secrets.md) and Docker's build cache, which other
+It leaves alone the xless install itself, SwiftPM's caches of the packages that your projects depend on (on a Mac
+`~/Library/Caches/org.swift.swiftpm`, which Xcode uses too), the [secret store](secrets.md) and Docker's build cache, which other
 projects share. A volume or image that a
 container still uses is not removed: `docker ps -a` shows the container, `docker rm <container>` removes it. Tauri
 work copies are built as root inside the container, so if `--cache` reports files it could not remove, run the

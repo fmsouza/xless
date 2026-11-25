@@ -1,0 +1,203 @@
+import Foundation
+import XlessCore
+import XlessMachO
+
+/// Builds a Swift package's app on a Mac with the installed Xcode: the same generated wrapper package as on Linux (an executable
+/// target that links the app's library product), built by that Xcode's `swift build` for its own SDK. No Xcode project is made and
+/// no `xcodebuild` runs.
+///
+/// SwiftPM's sandbox stays on: manifests, plugins and macros have no network there and write nothing outside their own directories.
+/// (xless puts no other around it: nested ones fail, and SwiftPM's own would have to go.) `--disable-keychain`: SwiftPM asks the
+/// user's keychain for no password.
+public enum XcodePackageBuilder {
+    public enum Destination: Sendable, Equatable {
+        case device, simulator, mac
+
+        var platform: Platform { self == .mac ? .macos : .ios }
+    }
+
+    static func wrapperPackage(product: String, minimumOS: String, platform: Platform) -> String {
+        let (os, frameworks) = platform == .ios ? ("iOS", "@executable_path/Frameworks") : ("macOS", "@executable_path/../Frameworks")
+        return """
+        // swift-tools-version: 6.0
+        import PackageDescription
+        let package = Package(
+            name: "\(product)-XcodeBuilder",
+            platforms: [.\(os)("\(minimumOS)")],
+            dependencies: [.package(name: "RootPackage", path: "../..")],
+            targets: [
+                .executableTarget(name: "\(product)App",
+                    dependencies: [.product(name: "\(product)", package: "RootPackage")],
+                    linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "\(frameworks)"])]
+                )
+            ]
+        )
+
+        """
+    }
+
+    /// An iPhone's and (a Mac's own) simulator's architecture is arm64; a Mac app is universal, as on Linux.
+    static func arguments(_ destination: Destination, wrapper: URL, scratch: URL, product: String, minimumOS: String) -> [String] {
+        let target: [String] = switch destination {
+        case .device: ["--triple", "arm64-apple-ios\(minimumOS)"]
+        case .simulator: ["--triple", "arm64-apple-ios\(minimumOS)-simulator"]
+        case .mac: MacBuilder.archs.flatMap { ["--arch", $0] }
+        }
+        return ["build", "--package-path", wrapper.path, "--scratch-path", scratch.path, "-c", "release", "--build-system", "swiftbuild",
+                "--disable-keychain", "--product", "\(product)App"] + target
+    }
+
+    /// The products directory of `swift build`.
+    static func productsDirectory(_ destination: Destination) -> String {
+        switch destination {
+        case .device: "Release-iphoneos"
+        case .simulator: "Release-iphonesimulator"
+        case .mac: "Release"
+        }
+    }
+
+    public static func build(project: URL, config: ProjectConfig, paths: StagePaths, destination: Destination, xcode: InstalledXcode,
+                             env: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
+        let platform = destination.platform, pc = try config.platform(platform)
+        let name = destination == .mac ? "macos" : destination == .device ? "ios" : "ios-simulator"
+        let wrapper = project.appendingPathComponent(".xless/xcode-pkg-\(name)", isDirectory: true)
+        try writeWrapper(wrapper, project: project, product: pc.product, minimumOS: pc.minimumOS, platform: platform)
+        // Another Xcode builds in a directory of its own, and reuses nothing of this one's.
+        let scratch = project.appendingPathComponent(".xless/xcode-build-\(name)-\(xcode.build)", isDirectory: true)
+        let products = scratch.appendingPathComponent("out/Products/\(productsDirectory(destination))", isDirectory: true)
+        // Every bundle there goes into the app, and one of a package that the app no longer has would stay. (Swift Build makes those
+        // it needs again.)
+        for bundle in bundles(of: products) { try FileManager.default.removeItem(at: bundle) }
+        let environment = xcode.environment(env)
+        try Shell.run(try xcode.require(.swift, stage: .build).path,
+                      arguments(destination, wrapper: wrapper, scratch: scratch, product: pc.product, minimumOS: pc.minimumOS),
+                      cwd: project, env: environment, baseEnvironment: env, stage: .build, passthrough: true)
+        if let note = unpinnedNote(project: project, wrapper: wrapper) { FileHandle.standardError.write(Data("xless: note: \(note)\n".utf8)) }
+        guard let executable = MacBuilder.builtExecutable(named: "\(pc.product)App", under: products) else {
+            throw XlessError(.build, "no \(pc.product)App executable under \(products.path)",
+                             fix: "check the swift build output above, and that platforms.\(platform.rawValue).product matches a library product in Package.swift")
+        }
+        let images = try embedded(executable, products: products)
+        let resources = bundles(of: products)
+        let built = try Files.atomicOutput(paths.app) { partial in
+            let app = try PackageApp.assemble(in: partial, executable: try Data(contentsOf: executable), resources: resources, frameworks: images.map(\.item),
+                                              project: project, config: config, platform: platform)
+            let directory = BundleLayout(platform: platform).executableDir
+            if destination == .simulator { // (finalize, which stamps a device's, does not run)
+                let plist = app.appendingPathComponent("Info.plist")
+                var info = try Plist.read(plist, stage: .build)
+                info["CFBundleSupportedPlatforms"] = ["iPhoneSimulator"]
+                try Plist.write(info, to: plist, stage: .build)
+            }
+            try removeRunPaths(of: app.appendingPathComponent(directory.isEmpty ? pc.product : "\(directory)/\(pc.product)"), xcode: xcode, environment: environment, where: isForeign)
+            // Those of a vendor's are the vendor's: only what names this Mac's Xcode goes.
+            let frameworks = app.appendingPathComponent(BundleLayout(platform: platform).frameworksDir)
+            for image in images {
+                try removeRunPaths(of: frameworks.appendingPathComponent(image.library), xcode: xcode, environment: environment) { isOfXcode($0, xcode) }
+            }
+            return app
+        }
+        let dSYMs = try DSYM.keep(executables: [executable], app: built, into: paths.dSYMs)
+        FileHandle.standardError.write(Data("xless: dSYMs: \(dSYMs.summary)\n".utf8))
+        for image in images { // a library of the app's own packages, which Swift Build wrote one for
+            let dSYM = DSYM.companion(of: products.appendingPathComponent(image.item.lastPathComponent))
+            guard case .kept = dSYMs, FileManager.default.fileExists(atPath: dSYM.path) else { continue }
+            try FileManager.default.copyItem(at: dSYM, to: paths.dSYMs.appendingPathComponent(dSYM.lastPathComponent))
+            FileHandle.standardError.write(Data("xless: dSYMs: \(dSYM.lastPathComponent)\n".utf8))
+        }
+        return built
+    }
+
+    /// The wrapper package, with the app's own Package.resolved: the root package's is the one that SwiftPM keeps to, and the root is
+    /// the wrapper here.
+    static func writeWrapper(_ wrapper: URL, project: URL, product: String, minimumOS: String, platform: Platform) throws {
+        try? FileManager.default.removeItem(at: wrapper)
+        let sources = wrapper.appendingPathComponent("Sources/\(product)App", isDirectory: true)
+        try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
+        try Data().write(to: sources.appendingPathComponent("stub.c"))
+        try wrapperPackage(product: product, minimumOS: minimumOS, platform: platform)
+            .write(to: wrapper.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let resolved = project.appendingPathComponent("Package.resolved")
+        guard FileManager.default.fileExists(atPath: resolved.path) else { return }
+        do { try Data(contentsOf: resolved).write(to: wrapper.appendingPathComponent("Package.resolved")) } catch {
+            throw XlessError(.build, "cannot read \(resolved.path): \(error.localizedDescription)", fix: "make it readable: it says which versions of its packages the app is built with")
+        }
+    }
+
+    /// The packages that were built in a version that the app's Package.resolved does not name, for the build's log.
+    static func unpinnedNote(project: URL, wrapper: URL) -> String? {
+        func pins(_ directory: URL) -> [String: [String: String]]? {
+            guard let data = FileManager.default.contents(atPath: directory.appendingPathComponent("Package.resolved").path),
+                  let file = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let pins = file["pins"] as? [[String: Any]] else { return nil }
+            return Dictionary(pins.compactMap { pin in (pin["identity"] as? String).map { ($0, pin["state"] as? [String: String] ?? [:]) } }) { first, _ in first }
+        }
+        let own = pins(project)
+        let others = (pins(wrapper) ?? [:]).filter { own?[$0.key] != $0.value }
+            .map { "\($0.key) \($0.value["version"] ?? $0.value["branch"] ?? $0.value["revision"] ?? "?")" }.sorted()
+        guard !others.isEmpty else { return nil }
+        return (own == nil ? "the project has no Package.resolved, which would hold these packages to a version: " : "Package.resolved does not name these, which were built: ")
+            + others.joined(separator: ", ") + " (`swift package resolve` writes it: keep it with the project)"
+    }
+
+    static func bundles(of products: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: products, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "bundle" }.sorted { $0.path < $1.path }
+    }
+
+    /// The frameworks and dynamic libraries of the build that `executable` loads, and those that they load. One that is neither of
+    /// the build nor of the system would not be there on the device.
+    /// Each is what is put into Frameworks (`item`) and the path there of what is loaded (`library`).
+    static func embedded(_ executable: URL, products: URL) throws -> [(item: URL, library: String)] {
+        var found: [String: (item: URL, library: String)] = [:], open = [executable]
+        while let image = open.popLast() {
+            for library in try rpathLibraries(of: image) {
+                let parts = library.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+                guard !parts.contains(where: { ["", ".", ".."].contains($0) }) else {
+                    throw XlessError(.build, "\(image.lastPathComponent) loads @rpath/\(library), which is no place in the app", fix: "fix the install name of that library, or ask who made it")
+                }
+                let item = parts[0] // X.framework or libX.dylib
+                guard found[item] == nil else { continue }
+                let places = [products, products.appendingPathComponent("PackageFrameworks")].map { $0.appendingPathComponent(item) }
+                guard let place = places.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+                    throw XlessError(.build, "\(image.lastPathComponent) loads @rpath/\(library), which the build did not make",
+                                     fix: item.hasPrefix("libswift") ? "raise minimumOS in xless.yml: the systems before it do not have this part of Swift"
+                                         : "make it a product of one of the app's packages (a binaryTarget, or a library)")
+                }
+                found[item] = (place, library)
+                open.append(place.deletingLastPathComponent().appendingPathComponent(library))
+            }
+        }
+        return found.values.sorted { $0.item.path < $1.item.path }
+    }
+
+    /// What `image` loads by @rpath, without that.
+    static func rpathLibraries(of image: URL) throws -> [String] {
+        let data: Data
+        do { data = try Data(contentsOf: image) } catch { throw XlessError(.build, "cannot read \(image.path): \(error.localizedDescription)", fix: "check the swift build output above") }
+        var out: [String] = []
+        do {
+            for (_, _, range) in try MachO.sliceArchitectures(in: data) {
+                out += try MachO.linkedLibraries(in: data, slice: range).filter { $0.hasPrefix("@rpath/") }.map { String($0.dropFirst("@rpath/".count)) }
+            }
+        } catch { throw XlessError(.build, "cannot read the libraries of \(image.path): \(error)", fix: "report it to the xless maintainers") }
+        return out
+    }
+
+    /// Swift Build adds directories of the Xcode to where the app looks for its libraries: they name this Mac's files, and are not on
+    /// the device. `install_name_tool` takes them out.
+    static func removeRunPaths(of executable: URL, xcode: InstalledXcode, environment: [String: String?], where goes: (String) -> Bool) throws {
+        let data = try Data(contentsOf: executable)
+        var paths: Set<String> = []
+        for (_, _, range) in try MachO.sliceArchitectures(in: data) { paths.formUnion(try MachO.rpaths(in: data, slice: range).filter(goes)) }
+        guard !paths.isEmpty else { return }
+        try Shell.run(try xcode.require(.installNameTool, stage: .build).path, paths.sorted().flatMap { ["-delete_rpath", $0] } + [executable.path],
+                      env: environment, stage: .build)
+    }
+
+    static func isForeign(_ path: String) -> Bool { path.hasPrefix("/") && path != "/usr/lib/swift" }
+
+    /// (The cryptex is where macOS has the libraries of its newest Swift.)
+    static func isOfXcode(_ path: String, _ xcode: InstalledXcode) -> Bool {
+        [xcode.app.path + "/", "/var/run/com.apple.security.cryptexd/"].contains { path.hasPrefix($0) }
+    }
+}

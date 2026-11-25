@@ -29,6 +29,13 @@ struct RunTop {
     subscript(_ key: String) -> String? { values[key] }
 }
 
+/// How a ship that `xless run` starts is told which xless.yml it is made with: the one the run read when it began.
+public enum RunConfiguration {
+    public static let option = "--expect-config"
+
+    public static func digest(_ data: Data) -> String { RunText.sha256(data) }
+}
+
 enum RunText {
     /// `word` quoted for a shell when it needs it, as the dry run prints commands.
     static func quoted(_ word: String) -> String {
@@ -38,9 +45,9 @@ enum RunText {
 
     static func commandLine(_ words: [String]) -> String { words.map { quoted($0) + " " }.joined() }
 
-    static func sha256(_ text: String) -> String {
-        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
+    static func sha256(_ text: String) -> String { sha256(Data(text.utf8)) }
+
+    static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
     /// The Xcode version as image tags spell it (scripts/build-images.sh): major.minor, plus the patch when it is not 0
     /// ("26" and "26.0.0" → 26.0, "26.2.0" → 26.2, "26.0.1" stays). nil: not a version.

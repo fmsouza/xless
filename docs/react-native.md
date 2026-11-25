@@ -171,7 +171,7 @@ Docker creates every volume on first use.
 
 **Getting the build out.** The `.ipa` stays in the volume, at `/cache/work/<overlay name>/.xless/build/ios/out/`. Copy it out with `docker run --rm -v <work volume>:/w -v "$PWD":/out alpine cp /w/<overlay name>/.xless/build/ios/out/<Product>.ipa /out/` (with `--context` as the run chose it: `DOCKER_CONTEXT`, else `colima-xless` when it exists). A build stopped at `finalize` is in `/w/<overlay name>/.xless/build/ios/final/` instead; copy it with `cp -r`.
 
-**Native.** `xless run` refuses an overlay on Linux without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the three steps without docker. Step 2 needs everything the images add (Ruby, Bundler, Swift Build, `hermesc`, the shims in `docker/shims`, `/bin/sh` as bash). Native React Native builds are untested.
+**Native.** `xless run` refuses an overlay without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the three steps without docker. Step 2 needs everything the images add (Ruby, Bundler, Swift Build, `hermesc`, the shims in `docker/shims`, `/bin/sh` as bash). Native React Native builds are untested.
 
 ## dSYMs
 

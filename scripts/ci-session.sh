@@ -7,27 +7,33 @@
 [ $# -gt 0 ] || { echo "usage: scripts/ci-session.sh <command> [argument...]" >&2; exit 2; }
 exec python3 -I -c '
 import os, signal, subprocess, sys
-# A signal waits until the command can be told of it: from before the fork until its session, and the handlers, are there.
+# A signal waits from before the fork until it can be passed on: the script passes it to the leader, and the leader, once the command
+# is there, to its group (a group that is signalled while it forks may miss what is forked: so the leader does it, and goes on).
 stops = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
 before = signal.pthread_sigmask(signal.SIG_BLOCK, stops)
-ready, tell = os.pipe()
+def pass_on(send):
+    def stop(number, frame):
+        try: send(number)
+        except ProcessLookupError: pass
+    for number in stops: signal.signal(number, stop)
+    signal.pthread_sigmask(signal.SIG_SETMASK, before)
+def to_group(number):
+    mine = signal.signal(number, signal.SIG_IGN)
+    os.killpg(0, number)
+    signal.signal(number, mine)
 child = os.fork()
 if child == 0:
-    os.close(ready)
     os.setsid()
-    os.close(tell)
-    signal.pthread_sigmask(signal.SIG_SETMASK, before)
-    try: code = subprocess.call(sys.argv[1:])
+    if signal.getsignal(signal.SIGINT) is signal.default_int_handler: signal.signal(signal.SIGINT, signal.SIG_DFL)
+    try:
+        command = subprocess.Popen(sys.argv[1:], preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, before))
+        pass_on(to_group)
+        code = command.wait()
     except OSError as e:
         print("ci-session: %s: %s" % (sys.argv[1], e.strerror), file=sys.stderr)
         code = 127
     os._exit(code if code >= 0 else 128 - code)
-def stop(number, frame):
-    try: os.killpg(child, number)
-    except ProcessLookupError: pass
-for number in stops: signal.signal(number, stop)
-os.close(tell)
-os.read(ready, 1)
-signal.pthread_sigmask(signal.SIG_SETMASK, before)
-sys.exit(os.waitstatus_to_exitcode(os.waitpid(child, 0)[1]) & 255)
+pass_on(lambda number: os.kill(child, number))
+code = os.waitstatus_to_exitcode(os.waitpid(child, 0)[1])
+sys.exit(code if code >= 0 else 128 - code)
 ' "$@"

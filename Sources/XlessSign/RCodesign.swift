@@ -11,9 +11,24 @@ public enum RCodesign {
         arguments.prefix(1) + ["-C", "/dev/null"] + arguments.dropFirst()
     }
 
+    /// Which one is run.
+    final class Choice: @unchecked Sendable {
+        private let lock = NSLock()
+        private var chosen = "rcodesign" // of PATH: a Linux install's, and an image's
+        var program: String { lock.withLock { chosen } }
+        func use(_ program: URL) { lock.withLock { chosen = program.path } }
+    }
+
+    private static let choice = Choice()
+
+    public static var program: String { choice.program }
+
+    /// From here on this one is run, whatever PATH says (on a Mac).
+    public static func use(_ program: URL) { choice.use(program) }
+
     /// Runs it, in a directory that no build can write.
     @discardableResult
-    public static func run(_ arguments: [String], program: String = "rcodesign", stage: Stage, captureTo: URL? = nil) throws -> ShellResult {
+    public static func run(_ arguments: [String], program: String = RCodesign.program, stage: Stage, captureTo: URL? = nil) throws -> ShellResult {
         try Shell.run(program, self.arguments(arguments), cwd: URL(fileURLWithPath: "/"), stage: stage, captureTo: captureTo)
     }
 

@@ -17,8 +17,12 @@ public struct RunContext: Sendable {
     public var session: String?
     /// This is the start inside `xless session`.
     public var unlocked: Bool
+    /// What a native run on a Mac needs before it asks anything or builds: an Xcode (the pin's, where there is one) when it
+    /// builds, and the signer when it signs.
+    public var prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)?
 
-    public init(environment: [String: String], xless: String, again: [String], share: String, useDocker: String, session: String?, unlocked: Bool) {
+    public init(environment: [String: String], xless: String, again: [String], share: String, useDocker: String, session: String?, unlocked: Bool,
+                prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil) {
         self.environment = environment
         self.xless = xless
         self.again = again
@@ -26,6 +30,7 @@ public struct RunContext: Sendable {
         self.useDocker = useDocker
         self.session = session
         self.unlocked = unlocked
+        self.prepareMac = prepareMac
     }
 }
 
@@ -37,7 +42,7 @@ public struct RunContext: Sendable {
 ///   2. xless ship --to finalize    WITHOUT any secret mount or variable: prepare, build, assets, finalize.
 ///   3. xless ship --from sign      with the secrets: sign, package, upload (no build code runs here).
 /// The secrets a step needs are required only when that step runs. A project directory is one `xless ship`, with the secrets
-/// unless it stops before sign. docs/signing-and-testflight.md has the rest.
+/// unless it stops before sign; natively on a Mac it is steps 2 and 3. docs/signing-and-testflight.md has the rest.
 public final class ProjectRun {
     let host: any RunHost
     let context: RunContext
@@ -278,11 +283,21 @@ public final class ProjectRun {
 
     /// One `xless ship`. Secrets are mounted, and xless scrubs them from the environment of the tools it runs, but the files stay
     /// readable to package code (SwiftPM plugins and macros) built in the same container. In containers, with an image of the
-    /// project's own (`image:`, XLESS_IMAGE), it is two: the build in that one without a secret, the rest in xless's own.
+    /// project's own (`image:`, XLESS_IMAGE), it is two: the build in that one without a secret, the rest in xless's own. Natively on a
+    /// Mac it is two as well: the build has no secret in any of its processes.
     private func run(project: String, top: RunTop) throws -> Int32 {
-        let span = try RunSpan.project(request)
-        let signs = span.to >= .sign
+        var span = try RunSpan.project(request)
         try chooseDocker()
+        if request.simulator {
+            guard host.isMac, !docker else { throw RunStop.usage("--destination simulator needs --config <overlay.yml> (a React Native app), or a Mac with Xcode, natively") }
+            span = try RunSpan.overlay(request)
+            span.extra = request.rest + ["--destination", "simulator"]
+        }
+        let signs = span.to >= .sign
+        if !docker, host.isMac, !dryRun {
+            let stages = try RunSpan.overlay(request)
+            try context.prepareMac?(xcodePin, stages.from <= .finalize, stages.from <= .sign && signs)
+        }
         if docker, kindOfConfiguration() == .typeSymbolicLink {
             throw RunStop.usage("\(pinFile) is a link, and the containers get the xless.yml of a project as a file of its own: put the file itself there")
         }
@@ -300,6 +315,7 @@ public final class ProjectRun {
         try holdWorkCopy(host.realPath(project) ?? project) // the project is its own work copy
         host.say("==> TestFlight: build number " + (span.buildNumberGiven ? "from --build-number" : environment["XLESS_BUILD_NUMBER"] ?? ""))
         var code: Int32 = 0
+        let noStore = ["XLESS_NO_SECRET_STORE": "1"]
         if docker {
             if images.areTwo { buildMounts = [try files.real(project)] }
             let configuration = try keepConfiguration(of: project, images)
@@ -325,9 +341,21 @@ public final class ProjectRun {
                 if !configuration.isEmpty { sayChangedConfiguration() }
             }
         } else if signs {
-            code = step([xself, "ship", "--platform", "ios"] + span.extra, .everything, told: true, directory: project).code
+            var words = [xself, "ship", "--platform", "ios"] + span.extra, directory = project
+            let stages = try RunSpan.overlay(request)
+            if host.isMac, stages.from <= .finalize {
+                let expected = [RunConfiguration.option, RunConfiguration.digest(pinned)]
+                code = step([xself, "ship", "--platform", "ios", "--from", stages.from.name, "--to", "finalize"] + expected + stages.extra, .nothing, directory: project, adding: noStore).code
+                if code == 0, !dryRun, !configurationIsWhatItWas {
+                    throw RunStop.usage("\(pinFile) is not what it was when this run began, so nothing is signed. Look at what changed it, then run this project again")
+                }
+                // in no directory that the build can write
+                words = [xself, "ship", "--project", project, "--platform", "ios", "--from", "sign", "--to", stages.to.name] + expected + stages.extra
+                directory = "/"
+            }
+            if code == 0 { code = step(words, .everything, told: true, directory: directory).code }
         } else {
-            code = step([xself, "ship", "--platform", "ios"] + span.extra, .nothing, directory: project, adding: ["XLESS_NO_SECRET_STORE": "1"]).code
+            code = step([xself, "ship", "--platform", "ios"] + span.extra, .nothing, directory: project, adding: noStore).code
         }
         if code == 0, !signs {
             host.say("==> TestFlight: stopped after \(span.to.name) (--to), nothing delivered")
@@ -384,8 +412,17 @@ extension ProjectRun {
         (try? FileManager.default.attributesOfItem(atPath: pinFile))?[.type] as? FileAttributeType
     }
 
+    private var configurationChanged: Bool { !dryRun && (kindOfConfiguration() != .typeRegular || !configurationIsWhatItWas) }
+
+    /// The file itself, or what a link names.
+    private var configurationIsWhatItWas: Bool {
+        let file = URL(fileURLWithPath: pinFile).resolvingSymlinksInPath().path
+        guard (try? FileManager.default.attributesOfItem(atPath: file))?[.type] as? FileAttributeType == .typeRegular else { return false }
+        return (try? Data(contentsOf: URL(fileURLWithPath: file))) == pinned
+    }
+
     private func sayChangedConfiguration() {
-        guard !dryRun, kindOfConfiguration() != .typeRegular || (try? Data(contentsOf: URL(fileURLWithPath: pinFile))) != pinned else { return }
+        guard configurationChanged else { return }
         host.say("==> warning: \(pinFile) is not what it was when this run began. The run keeps to what it was; look at what changed it before you run this project again")
     }
 }

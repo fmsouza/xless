@@ -41,7 +41,7 @@ os.wait(); os.write(w, b"x")
 "$s" sh -c 'echo $$ > "$0/pid"; exec sleep 100' "$t" & p=$!
 for _ in $(seq 100); do [[ -s "$t/pid" ]] && break; sleep 0.1; done
 kill -TERM "$p"; rc=0; wait "$p" || rc=$?
-[[ $rc -ne 0 ]] || fail "stopped, and says it succeeded"
+[[ $rc -eq 143 ]] || fail "stopped by SIGTERM: $rc"
 for _ in $(seq 50); do alive "$(cat "$t/pid")" || break; sleep 0.1; done
 alive "$(cat "$t/pid")" && fail "the command outlived the script"
 # ... also by a signal that comes right after it started the command: here the script is slow to go on from there.
@@ -57,9 +57,28 @@ chmod +x "$t/slow/python3"; rm "$t/pid"
 PATH="$t/slow:$PATH" "$s" sh -c 'echo $$ > "$0/pid"; exec sleep 100' "$t" & p=$!
 for _ in $(seq 100); do [[ -s "$t/pid" ]] && break; sleep 0.1; done
 kill -TERM "$p"; rc=0; wait "$p" || rc=$?
-[[ $rc -ne 0 ]] || fail "stopped early, and says it succeeded"
+[[ $rc -eq 143 ]] || fail "stopped early by SIGTERM: $rc"
 gone=no; for _ in $(seq 50); do alive "$(cat "$t/pid")" || { gone=yes; break; }; sleep 0.1; done
 [[ $gone == yes ]] || { kill "$(cat "$t/pid")"; fail "the command outlived a script that was stopped early"; }   # this test's own sleep
+# ... and by one that comes while its leader is about to start it: here the leader is slow to.
+cat > "$t/slow/python3" <<P
+#!$(command -v bash)
+[[ "\$1 \$2" == "-I -c" && "\$3" == *"    os.setsid()"* ]] || exec $(command -v python3) "\$@"
+code="\$3"; shift 3
+slow='    os.setsid(); import time; open(sys.argv[-1] + "/leads", "w").close(); time.sleep(1.5)'   # not in the expansion: bashes differ on quotes there
+exec $(command -v python3) -I -c "\${code/    os.setsid()/\$slow}" "\$@"
+P
+rm "$t/pid"
+PATH="$t/slow:$PATH" "$s" sh -c 'echo $$ > "$0/pid"; exec sleep 100' "$t" & p=$!
+for _ in $(seq 100); do [[ -e "$t/leads" ]] && break; sleep 0.1; done
+kill -TERM "$p"; rc=0; wait "$p" || rc=$?
+[[ $rc -eq 143 ]] || fail "stopped by SIGTERM while it starts: $rc"
+[[ ! -s "$t/pid" ]] || ! alive "$(cat "$t/pid")" || { kill "$(cat "$t/pid")"; fail "the command outlived a script that was stopped while it started it"; }   # this test's own sleep
+# A command that makes nothing of the signal goes on, and so does the script.
+"$s" sh -c 'trap "" TERM; echo > "$0/deaf"; sleep 2; exit 7' "$t" & p=$!
+for _ in $(seq 100); do [[ -e "$t/deaf" ]] && break; sleep 0.1; done
+kill -TERM "$p"; rc=0; wait "$p" || rc=$?
+[[ $rc -eq 7 ]] || fail "a command that ignores SIGTERM and then ends with 7: $rc"
 # A command does not inherit what the script does with signals.
 [[ "$("$s" python3 -I -c 'import signal; print(signal.pthread_sigmask(signal.SIG_BLOCK, []), signal.getsignal(signal.SIGTERM) == signal.SIG_DFL)')" == "set() True" ]] || fail "the command's signals"
 echo "ci-session.test.sh: OK"

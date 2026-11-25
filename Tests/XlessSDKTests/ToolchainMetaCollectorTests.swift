@@ -54,6 +54,13 @@ func makeFakeXcode() throws -> URL {
     #expect(meta.swiftVersion == nil)
 }
 
+@Test func swiftIsAskedWithTheEnvironmentThatIsGiven() throws {
+    let app = try makeFakeXcode(), key = "XLESS_TEST_OF_SWIFT_\(UUID().uuidString.prefix(8))"
+    try ExecutableFile.write("#!/bin/sh\necho \"Apple Swift version 6.4.$\(key)\"\n",
+                             to: app.appendingPathComponent("Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"), stage: .sdk)
+    #expect(try ToolchainMetaCollector.collect(xcodeApp: app, buildMachineOSBuild: "x", environment: [key: "7"]).swiftVersion == "6.4.7")
+}
+
 @Test func missingXcodeIsSDKError() {
     do { _ = try ToolchainMetaCollector.collect(xcodeApp: URL(fileURLWithPath: "/nope.app"), buildMachineOSBuild: "x"); Issue.record("expected throw") }
     catch let e as XlessError { #expect(e.stage == .sdk) } catch { Issue.record("\(error)") }

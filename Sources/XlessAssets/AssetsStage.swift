@@ -6,13 +6,14 @@ import XlessMachO
 
 public enum AssetsStage {
     /// `profile` gives the image's tools profile (`XcodeToolsProfile.forImage`); it is asked at most once, and only when
-    /// an iOS catalog or launch storyboard is compiled (macOS icons do not depend on the Xcode).
-    public static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
+    /// an iOS catalog or launch storyboard is compiled (macOS icons do not depend on the Xcode). `xcode`: the tools of a Mac's
+    /// Xcode, which then compile in xless's place.
+    public static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL, xcode: XcodeAssets? = nil,
                            profile: @escaping () throws -> XcodeToolsProfile) async throws -> URL {
         let once = Once(profile)
         return try await Files.atomicOutput(outputDir) { partial in
             try await compile(into: Files.copyBundle(input, intoFreshDir: partial), platform: platform, config: config, project: project,
-                              profile: once.value)
+                              xcode: xcode, profile: once.value)
         }
     }
 
@@ -29,30 +30,42 @@ public enum AssetsStage {
         }
     }
 
-    static func compile(into app: URL, platform: Platform, config: ProjectConfig, project: URL,
-                        profile: () throws -> XcodeToolsProfile) async throws -> URL {
-        if config.distribution(for: platform) == .appStore,
+    @discardableResult
+    public static func compile(into app: URL, platform: Platform, config: ProjectConfig, project: URL, xcode: XcodeAssets? = nil,
+                               profile: () throws -> XcodeToolsProfile) async throws -> URL {
+        if config.distribution(for: platform) == .appStore, xcode?.simulator != true,
            config.assets.map({ appIconSet(catalog: project.appendingPathComponent($0)) == nil }) ?? true {
             // App Store Connect rejects icon-less builds only after a full upload (ITMS-90022/90704).
             let missing = config.assets.map { "\($0) has no .appiconset" } ?? "xless.yml has no `assets:` catalog"
             throw XlessError(.assets, "App Store builds need an app icon, but \(missing)",
                              fix: "add an AppIcon.appiconset with an opaque 1024×1024 PNG to an asset catalog and set `assets:` in xless.yml to it")
         }
-        if let assets = config.assets { try await compileCatalog(assets, into: app, platform: platform, config: config, project: project, profile: profile) }
+        if let assets = config.assets { try await compileCatalog(assets, into: app, platform: platform, config: config, project: project, xcode: xcode, profile: profile) }
         if platform == .ios, let storyboard = config.launchStoryboard {
             try LaunchStoryboard.compile(project.appendingPathComponent(storyboard), into: app, minimumOS: try config.platform(.ios).minimumOS,
-                                         profile: try profile())
+                                         xcode: xcode, profile: profile)
         }
         return app
     }
 
-    static func compileCatalog(_ assets: String, into app: URL, platform: Platform, config: ProjectConfig, project: URL,
+    static func compileCatalog(_ assets: String, into app: URL, platform: Platform, config: ProjectConfig, project: URL, xcode: XcodeAssets? = nil,
                                profile: () throws -> XcodeToolsProfile) async throws {
         let catalog = project.appendingPathComponent(assets)
         let layout = BundleLayout(platform: platform)
         let plistURL = app.appendingPathComponent(layout.infoPlist)
         var info = try Plist.read(plistURL, stage: .assets)
+        var added: [String: Any] = [:]
+        if let xcode, let actool = xcode.actool {
+            added = try xcode.compile(catalog, with: actool, into: layout.resourcesDir.isEmpty ? app : app.appendingPathComponent(layout.resourcesDir),
+                                          platform: platform, minimumOS: try config.platform(platform).minimumOS, info: info)
+            info.merge(added) { $1 }
+        }
         switch platform {
+        case .ios where xcode?.actool != nil:
+            // what App Store Connect refuses (ITMS-90717), and actool does not
+            if xcode?.simulator != true { try checkIconsOpaque(appIconPNGs(catalog: catalog)) }
+            if added["CFBundleIcons"] != nil { info.removeValue(forKey: "CFBundleIconFile") }
+        case .macos where added["CFBundleIconFile"] != nil: break // actool's .icns
         case .ios:
             let compiled = try await compileIOSCatalog(catalog, deploymentTarget: try config.platform(.ios).minimumOS, profile: try profile())
             try compiled.car.write(to: app.appendingPathComponent("Assets.car"))
@@ -64,7 +77,7 @@ public enum AssetsStage {
             }
         case .macos:
             let icons = try appIconPNGs(catalog: catalog)
-            guard !icons.isEmpty else { return }
+            guard !icons.isEmpty else { break }
             let icns: Data
             do { icns = try ICNS.make(pngs: icons) } catch {
                 throw XlessError(.assets, "cannot build AppIcon.icns: \(error)", fix: "provide square PNG app icons sized 16–1024")
