@@ -3,6 +3,7 @@ import Foundation
 import XlessAgent
 import XlessAppleID
 import XlessCore
+import XlessVault
 
 // What the commands that use the Apple ID web session share (docs/apple-account.md#the-apple-id-web-session): the
 // help text that says so, the terminal, the transport (traced with --verbose) and the opt-in kept session.
@@ -11,8 +12,9 @@ enum AppleWebHelp {
     /// Part of the `--help` of every command that uses the Apple ID web session.
     static let note = """
     Uses the Apple ID web session, not the App Store Connect API: Apple's own web interface, undocumented, for what the \
-    API cannot do. It signs in with your Apple ID, password and two-factor code (or security key) on the terminal, unless \
-    `xless auth login --keep` kept a session; nothing of the session is written to disk in clear.
+    API cannot do. It uses the session kept for this terminal (`xless auth login --keep`, or a yes to the offer after a \
+    sign-in); without one it signs in with your Apple ID, password and two-factor code (or security key) on the terminal. \
+    Nothing of the session is written to disk in clear.
     """
 
     /// The commands that say so.
@@ -39,24 +41,61 @@ enum AppleWebCLI {
     }
 
     /// A web client for one command; `invalidate` the transport at the end.
-    static func client(verbose: Bool) -> (AppleWebClient, URLSessionAppleTransport) {
+    static func client(verbose: Bool, stage: Stage = .account) -> (AppleWebClient, URLSessionAppleTransport) {
         let transport = URLSessionAppleTransport()
         let wire: AppleTransport = verbose ? TracingAppleTransport(transport, trace: .standardError) : transport
-        return (AppleWebClient(transport: wire, userAgent: "xless/\(XlessVersion.current)", stage: .account), transport)
+        return (AppleWebClient(transport: wire, userAgent: "xless/\(XlessVersion.current)", stage: stage), transport)
     }
 
-    /// The kept session, else a sign-in on the terminal (forgotten when the command ends).
+    /// The kept session, else a sign-in on the terminal (forgotten when the command ends, unless the person keeps it).
     static func open(verbose: Bool) async throws -> (AppleWebSession, URLSessionAppleTransport) {
         SecretScope.enter()
         let (web, transport) = client(verbose: verbose)
         do {
-            let session = try await AppleWebSession.open(web: web, cache: cache) { try prompter() }
-            if session.kept == nil { say("Signed in to Apple as \(session.appleID).") }
-            return (session, transport)
+            return (try await session(web) { try prompter() }.session, transport)
         } catch {
             transport.invalidate()
             throw error
         }
+    }
+
+    /// The session of `web`: the kept one, else a sign-in on `terminal`, announced.
+    /// - Parameter offering: false when the command itself says how long it is kept.
+    /// - Returns: also the terminal it signed in on; nil when it did not have to.
+    static func session<T: SignInPrompter & PassphrasePrompter>(_ web: AppleWebClient, offering: Bool = true, cache: AppleSessionCache = cache, offer: KeepOffer = .shared,
+                                                                terminal: () throws -> T) async throws -> (session: AppleWebSession, signedInOn: T?) {
+        var signedInOn: T?
+        let session = try await AppleWebSession.open(web: web, cache: cache, prompter: {
+            let opened = try terminal()
+            (opened as any PassphrasePrompter).say(offer.signInAnnouncement(offering: offering))
+            signedInOn = opened
+            return opened
+        }, keep: {
+            guard offering, let signedInOn else { return nil }
+            return offer.session(signedInOn)
+        }, kept: { held in signedInOn.map { offer.kept(held, $0) } })
+        if signedInOn != nil { say("Signed in to Apple as \(session.appleID).") }
+        return (session, signedInOn)
+    }
+
+    /// Selects the team: `team` (the option's, the project's or the saved one), else the Apple ID's only one, else that of
+    /// the xless.yml here or of the store's API keys. One the xless.yml here names and the Apple ID does not have is an error.
+    /// - Parameter known: false for a command that must be told among several.
+    static func selectTeam(_ team: String?, in session: AppleWebSession, known: Bool = true, directory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+                           keyTeam: @autoclosure () -> String? = AccountSession.keyTeam(of: AccountSession.storeEntries())) async throws -> PortalTeam {
+        guard team == nil else { return try await session.selectTeam(team) }
+        let project = StoreProject.nextTo(manifestDir: directory.appendingPathComponent("appstore"))?.team
+        guard known else { return try await session.selectTeam(nil, project: project) }
+        let key = keyTeam()
+        let selected = try await session.selectTeam(nil, project: project, preferring: [project, key].compactMap { $0 })
+        if selected.teamId == project { say("Team \(selected.teamId), as in xless.yml here (--team chooses another).") }
+        else if selected.teamId == key { say("Team \(selected.teamId), the App Store Connect API key's (--team chooses another).") }
+        return selected
+    }
+
+    /// Makes the team's App Store Connect provider the current one.
+    static func useProvider(for team: PortalTeam, in session: AppleWebSession) async throws {
+        try await session.useProvider(for: team, issuers: AccountSession.keyIssuers(of: AccountSession.storeEntries(), team: team.teamId), choose: chooser())
     }
 
     /// Asks which provider, when several App Store Connect teams share the portal team's name; nil without a terminal.

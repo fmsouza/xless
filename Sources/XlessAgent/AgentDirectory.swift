@@ -63,6 +63,26 @@ public struct AgentDirectory: Sendable {
         try verify()
     }
 
+    /// What would keep a socket out of the directory, as far as that can be told before one is made: nothing is made here.
+    func obstacle() -> AgentError? {
+        do {
+            let there = try verify()
+            try Self.checkLength(socket: path + "/" + Self.name(Owner(pid: 0, start: 0)))
+            let parent = path.lastIndex(of: "/").map { path[..<$0] } ?? "."
+            guard access(there ? path : parent.isEmpty ? "/" : String(parent), W_OK | X_OK) != 0 else { return nil }
+            return AgentError(.init(system: errno), "the xless agent's directory \(path) cannot be \(there ? "written" : "made"): \(String(cString: strerror(errno)))",
+                              fix: "set XDG_RUNTIME_DIR to a directory of yours")
+        } catch {
+            return error as? AgentError
+        }
+    }
+
+    private static func checkLength(socket: String) throws {
+        guard socket.utf8.count > xless_unix_path_max() else { return }
+        throw AgentError(.unavailable, "the path of the xless agent's socket is too long (\((socket as NSString).deletingLastPathComponent)/…: \(socket.utf8.count) bytes, at most \(xless_unix_path_max()))",
+                         fix: "set XDG_RUNTIME_DIR to a directory with a shorter path")
+    }
+
     /// The agents' sockets: the user's, at most `limit` of them.
     func sockets(limit: Int = AgentLimits.sockets) throws -> [String] {
         guard try verify(), let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return [] }
@@ -131,13 +151,10 @@ public struct AgentDirectory: Sendable {
             throw AgentError(.unavailable, "the system does not say when a process started", fix: "mount /proc")
         }
         let path = "\(path)/\(Self.name(owner))"
-        guard path.utf8.count <= xless_unix_path_max() else {
-            throw AgentError(.unavailable, "the path of the xless agent's socket is too long (\(path), at most \(xless_unix_path_max()) bytes)",
-                             fix: "set XDG_RUNTIME_DIR to a directory with a shorter path")
-        }
+        try Self.checkLength(socket: path)
         let fd = xless_unix_listen(path, 128)
         guard fd >= 0 else {
-            throw AgentError(.init(system: -fd), "the xless agent cannot listen on \(path): \(String(cString: strerror(-fd)))", fix: "set XDG_RUNTIME_DIR to a directory of yours")
+            throw AgentError(.init(binding: -fd), "the xless agent cannot listen on \(path): \(String(cString: strerror(-fd)))", fix: "set XDG_RUNTIME_DIR to a directory of yours")
         }
         guard let identity = identity(of: path) else {
             close(fd)

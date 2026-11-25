@@ -36,8 +36,10 @@ final class TerminalPrompter: SignInPrompter, PassphrasePrompter, @unchecked Sen
 
     // Synchronous: they satisfy both the sign-in's async requirements and the secret store's synchronous ones.
 
+    /// What was typed before the question is shown is no answer to it: it is thrown away (as `askSecret` does).
     func ask(_ prompt: String) throws -> String {
         try lock.withLock {
+            tcflush(fd, TCIFLUSH)
             write(prompt)
             return String(decoding: try readLine(), as: UTF8.self)
         }

@@ -22,14 +22,30 @@ public final class AppleWebSession: Sendable {
     }
 
     /// The kept session when there is one (`cache`), else a sign-in through `prompter` (asked for only then).
-    public static func open(web: AppleWebClient, cache: AppleSessionCache?,
-                            prompter: () throws -> any SignInPrompter) async throws -> AppleWebSession {
+    /// - Parameter keep: asked after a sign-in: how long to keep the session (nil: for this command).
+    public static func open(web: AppleWebClient, cache: AppleSessionCache?, prompter: () throws -> any SignInPrompter,
+                            keep: () -> SecretHold? = { nil }, kept: (Bool) -> Void = { _ in }) async throws -> AppleWebSession {
+        let terminal: any SignInPrompter
+        let session: AppleWebSession
         if let cache, let kept = try await cache.restore(into: web) {
-            let session = AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
-            guard await session.isRefused() else { return session }
-            return try await signInAgain(web: web, kept: kept, cache: cache, prompter: try prompter())
+            let restored = AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
+            guard await restored.isRefused() else { return restored }
+            terminal = try prompter()
+            session = try await signInAgain(web: web, kept: kept, cache: cache, prompter: terminal)
+        } else {
+            terminal = try prompter()
+            session = try await signIn(web: web, prompter: terminal)
         }
-        return try await signIn(web: web, prompter: try prompter())
+        guard session.kept == nil, let cache, let hold = keep() else { return session }
+        do {
+            let info = try await cache.keep(web, appleID: session.appleID, hold: hold)
+            kept(true)
+            return AppleWebSession(web: web, appleID: session.appleID, kept: info)
+        } catch {
+            kept(false)
+            terminal.say("note: \(error)")
+            return session
+        }
     }
 
     /// Whether Apple no longer takes the session: App Store Connect says so, and the developer portal too (an Apple ID
@@ -60,17 +76,17 @@ public final class AppleWebSession: Sendable {
 
     /// Selects `teamID` (or the only team) on the developer portal; returns it.
     @discardableResult
-    public func selectTeam(_ teamID: String?) async throws -> PortalTeam {
-        let team = try AppleTeams.select(teamID, from: try await portal.teams())
+    public func selectTeam(_ teamID: String?, project: String? = nil, preferring known: [String] = []) async throws -> PortalTeam {
+        let team = try AppleTeams.select(teamID, project: project, preferring: known, from: try await portal.teams())
         await portal.use(team: team.teamId)
         return team
     }
 
     /// Makes `team` App Store Connect's current provider (see `AppleTeams.useProvider`).
     @discardableResult
-    public func useProvider(for team: PortalTeam,
+    public func useProvider(for team: PortalTeam, issuers: [String] = [],
                             choose: (([OlympusProvider]) async throws -> OlympusProvider)?) async throws -> OlympusProvider {
-        try await AppleTeams.useProvider(for: team, asc: asc, choose: choose)
+        try await AppleTeams.useProvider(for: team, asc: asc, issuers: issuers, choose: choose)
     }
 
     /// Forgets this process's copy of the session (a kept one stays kept until `xless auth logout` or its expiry).

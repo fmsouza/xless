@@ -49,7 +49,9 @@ xless auth api-key create --role ADMIN      # the key goes straight into the sto
 ```
 
 `--keep` keeps the session in memory for the next commands of this terminal (8 hours, at most 2 without use; `--keep 30m`
-for less, `xless auth logout` drops it); without it each web-session command signs in again. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
+for less, `xless auth logout` drops it) and asks whether to keep the store unlocked too, once its passphrase is typed. With a
+yes, everything below asks each secret **once**: the passphrase at `api-key create`, and no more sign-in
+([how it is kept, and for whom](secrets.md#staying-unlocked)). Without it each command asks for itself, once. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
 and users need it; a key that only ships builds, edits the listing and releases can be `APP_MANAGER`, the default
 ([roles](apple-account.md#xless-auth-api-key)).
 
@@ -83,10 +85,10 @@ xless provision plan                                  # what the account lacks; 
 xless provision apply --company-name "Example Ltd"    # asks, then does it; --company-name for the team's first app
 ```
 
-`plan` lists the steps by area (bundle IDs, capabilities, app groups, iCloud containers, certificates, keys,
+(With the session still kept, `apply` asks nothing but to go ahead.) `plan` lists the steps by area (bundle IDs, capabilities, app groups, iCloud containers, certificates, keys,
 profiles, the app record, the listing, App Privacy, TestFlight groups), marks the ones that need the web session, and
 says what blocks it and what differs from the project without being changed (drift). `apply` runs them in that order
-in one process: one passphrase, at most one Apple ID sign-in. A new signing key is generated into the store before
+in one process: one passphrase, at most one Apple ID sign-in, both before the first step. A new signing key is generated into the store before
 its certificate is requested; an APNs key is created and stored when an entitlement uses push notifications. It
 never deletes or revokes anything; running it again does only what is left, so after a failure, fix the cause and run
 it again. In CI, `apply --yes --json` prints what was done, the step that failed and what is left as one JSON document
@@ -256,9 +258,10 @@ pause|resume|complete`). App Review's reasons for a rejection are not in the API
 |---|---|
 | App Store Connect API key (from the environment, a `_FILE` variable or the store) | `devices`, `bundle-ids`, `merchant-ids`, `certs`, `profiles`, `apps list/show/update/price-points`, `store pull/push` (but App Privacy), `builds`, `users`, `testflight`, `release`, `provision plan` (mostly), `api`, and the pipeline (`sign`, `upload`, TestFlight delivery) |
 | Apple ID web session (*web session*) | `auth login`, `team list`, `auth api-key create/list/revoke`, `apps create`, `store privacy`, `app-groups`, `icloud-containers`, `keys`, and the steps of `provision apply` that need them |
-| Neither | `auth status`, `auth logout`, `unlock`, `lock`, `team use`, `secrets`, `store validate` |
+| Neither | `auth status`, `auth logout`, `unlock`, `lock`, `session`, `team use`, `secrets`, `store validate` |
 
-**Scripts.** `xless unlock` (and `xless auth login --keep`, for the web-session commands) at the start of the day lets the
+**Scripts.** `xless session -- ./script.sh` asks the passphrase once for the whole script (`--sign-in`: and signs in once)
+and drops both when it ends ([one unlock for a script](secrets.md#one-unlock-for-a-script)). Or `xless unlock` (and `xless auth login --keep`, for the web-session commands) at the start of the day lets the
 scripts of that terminal run without asking, and `--no-input` makes them fail instead of waiting for an answer
 ([staying unlocked](secrets.md#staying-unlocked), [checking first](apple-account.md#xless-auth)).
 

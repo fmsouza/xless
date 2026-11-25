@@ -47,7 +47,7 @@ export XLESS_M7_CONTACT_FIRST=Ada XLESS_M7_CONTACT_LAST=Lovelace \
 # optional: XLESS_M7_BUNDLE_ID (default dev.xless.m7.<random>), XLESS_M7_APP_NAME (default "xless M7 <random>"),
 #           XLESS_M7_COMPANY (the seller name, for a team's first app), XLESS_M7_DEVICE_UDID (+ _NAME)
 
-scripts/acceptance-m7.sh --contract   # first: the read-only contract check (signs in, keeps the session 30 minutes)
+scripts/acceptance-m7.sh --contract   # first: the read-only contract check (signs in if need be, keeps the session 30 minutes)
 scripts/acceptance-m7.sh              # then the checklist; run it again after each stop
 scripts/acceptance-m7.sh --status     # where it stands
 scripts/acceptance-m7.sh --cleanup    # at the end: revoke and remove what the run made
@@ -61,14 +61,14 @@ The steps (each row of the record's table is one):
 
 | Step | What the script runs | Where a person is needed |
 |---|---|---|
-| 0 | `XLESS_LIVE_APPLE=1 xless live-check`: at the start (the web session), after step 2 (the new API key) and after step 4 (the app). A `FAIL` stops the run before anything more is written. | The Apple ID sign-in (xless asks on the terminal) |
+| 0 | `XLESS_LIVE_APPLE=1 xless live-check`: at the start (the web session), after step 2 (the new API key) and after step 4 (the app). A `FAIL` stops the run before anything more is written. | The Apple ID sign-in (xless asks on the terminal), when no session is kept |
 | 1 | `xless --version`; no `~/.config/xless`, no store, no key file under `$HOME` | Only if the machine is not fresh |
-| 2 | `xless secrets init`, `xless auth login --keep 30m`, `xless team use`, `xless auth api-key create --role ADMIN`, `xless auth status`, `xless auth logout` | The store's passphrase; the sign-in |
+| 2 | `xless secrets init`, `xless unlock --for 1h` (here and before a later step, when the store is locked), `xless auth login --keep 30m --verbose` (when no session is kept; its trace is scanned), `xless team use`, `xless auth api-key create --role ADMIN`, `xless auth status`; the `--verbose` traces of `team list`, `keys list` and `apps list`, scanned | The store's passphrase; the sign-in, if step 0's is over |
 | 3 | The sample copied and filled in; its bundle ID checked unregistered; `xless store validate` | — |
-| 4 | `xless provision plan`, `xless provision apply --yes`, again, then `xless provision plan --json` must have no step | The sign-in (app record, APNs key, App Privacy use the web session) |
-| 5 | `xless run <app>` with nothing in the environment (the store only), its processes watched; `xless testflight testers add` | Installing the build from TestFlight on a device |
+| 4 | `xless provision plan`, `xless provision apply --yes`, again, then `xless provision plan --json` must have no step | The sign-in, when the session of step 0 is over (app record, APNs key, App Privacy use the web session) |
+| 5 | `xless auth logout`; `xless run <app>` with nothing in the environment (the store only), its processes watched; `xless testflight testers add` | Installing the build from TestFlight on a device |
 | 6 | `xless release submit --build <step 5's build> --release manual` (`--dry-run` first), `xless release status` until *Pending Developer Release*, `xless release publish` | Waiting for App Review (days): the script stops with exit code 75; run it again later, or with `--wait` |
-| 7 | Key files under `$HOME`; `strings` on the store; the environments of steps 5 and 8; `coredumpctl`; the `--verbose` traces of a sign-in, `team list`, `keys list` and `apps list`, scanned (only the findings are recorded); `xless secrets lock`, `xless auth logout`, then the kernel keyring | The sign-in of the traced login |
+| 7 | Key files under `$HOME`; `strings` on the store; the environments of steps 5 and 8; `coredumpctl`; what the scans of the `--verbose` traces found; `xless lock`, then `xless auth status` and the kernel keyring | A sign-in, only if none was traced before |
 | 8 | `xless run --docker <app> --to finalize`, then `--from sign`, every container inspected (mounts, variable names). It runs right after step 5: once App Review approves the version, Apple takes no more builds of it. An xless.yml project in Docker is one container that gets the store's secrets when it signs (scripts/testflight.sh), so the run is split where the build ends | — |
 | 9 | — | The answer: was a portal opened in a browser? |
 
@@ -84,8 +84,8 @@ Every command and its output, through `xless secrets redact` (the rules of `--ve
 session headers, secret fields, presigned URLs) and with the run's personal values hidden: the Apple ID, the team ID
 and the names of the Apple ID's teams (an individual's team is their name), the API key's issuer ID, the tester, the
 review contact and the device. The team's bundle IDs are checked without being recorded. Paths show the state directory as `<kit>` and the home directory as
-`~`. The `--verbose` traces of step 7 are scanned as they come and never written; only their line counts and findings
-are. The watchers of steps 5 and 8 record variable names and process names, never a value. Read the record before
+`~`. The `--verbose` traces of the sign-in and of step 2 are scanned in memory and never written; only their line counts
+and findings are. The watchers of steps 5 and 8 record variable names and process names, never a value. Read the record before
 committing it all the same.
 
 Once every row is PASS, commit this page with the record and link it from [README.md](README.md#acceptance-records).

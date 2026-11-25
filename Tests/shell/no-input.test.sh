@@ -14,8 +14,18 @@ if [[ -z "$x" ]]; then
   x="$(cd "$repo" && env -u DEVELOPER_DIR swift build --show-bin-path)/xless"
 fi
 
-python3 -I - "$x" "$t" "$repo" <<'PY'
-import concurrent.futures, json, os, plistlib, pty, re, select, shlex, signal, subprocess, sys, time, zipfile
+# Nothing may reach Apple, whatever the commands do: a Mac's URL loading heeds no proxy variable, so there a sandbox
+# without network.
+guard=()
+if [[ "$(uname)" == Darwin ]]; then guard=(sandbox-exec -p '(version 1)(allow default)(deny network-outbound (remote ip "*:*"))(deny network-outbound (literal "/private/var/run/mDNSResponder"))'); fi
+${guard[@]+"${guard[@]}"} python3 -I - "$x" "$t" "$repo" <<'PY'
+import concurrent.futures, json, os, plistlib, pty, re, select, shlex, signal, socket, subprocess, sys, time, zipfile
+
+if sys.platform == "darwin":
+    with socket.create_server(("127.0.0.1", 0)) as here:
+        try: socket.create_connection(here.getsockname(), 2).close()
+        except PermissionError: pass
+        else: sys.exit("FAIL the sandbox lets the network through: nothing was run")
 
 xless, t, repo = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2]), sys.argv[3]
 PASS = "correct horse battery staple"
@@ -92,6 +102,8 @@ for name, text in (("name", "App"), ("description", "An app."), ("keywords", "ap
     write(f"{t}/appstore/en-US/{name}.txt", text + "\n")
 write(t + "/tauri/app/package.json", '{"name": "app", "version": "1.0.0"}')
 write(t + "/tauri/app/src-tauri/tauri.conf.json", '{"productName": "App", "version": "1.0.0", "identifier": "com.example.app"}')
+os.mkdir(t + "/config/xless", 0o700)
+write(t + "/config/xless/config.yml", "unlock: { keep: never }\n")   # the offer to keep it: prompts.test.sh
 rc, out = on_a_terminal([xless, "secrets", "init"], [PASS, PASS])
 check(rc == 0, "secrets init", out)
 rc, out = on_a_terminal([xless, "secrets", "init"], [PASS, PASS], {**env, "XDG_DATA_HOME": t + "/empty"})
@@ -118,7 +130,7 @@ ASKS = {
     "inspect": "--config %T/tauri.yml", "tauri inspect": "--config %T/tauri.yml", "package": "--project %T/app --platform macos",
     "sign bootstrap": "--type developer-id",
     "secrets init": "", "secrets import": "OTHER --file %T/secret", "secrets export": "NOTE --out %T/new", "secrets rm": "NOTE", "secrets passwd": "",
-    "secrets unlock": "--remember 1h", "unlock": "", "secrets materialize": "sign=XLESS_DIST_KEY --allow-disk",
+    "secrets unlock": "--remember 1h", "unlock": "", "session": "-- true", "secrets materialize": "sign=XLESS_DIST_KEY --allow-disk",
     "live-check": "",
     # … or for the App Store Connect key
     "devices list": "", "devices register": "Phone 00008030-001A2B3C4D5E6F70", "devices import": "%T/devices.txt", "devices enable": "D1", "devices disable": "D1",
@@ -158,6 +170,14 @@ ASKS = {
     "keys list": "", "keys create": "--service apns", "keys show": "ABCDE12345", "keys revoke": "ABCDE12345",
     "apps create": f"--bundle-id {B} --name App --sku SKU1 --locale en-US", "store privacy pull": f"--app {B} --dir %T/newstore", "store privacy push": "--dir %T/appstore",
 }
+# What each asks first. A command that Apple's API covers never signs in, so it asks for the store's passphrase (its key);
+# one that keeps a new key opens the store before Apple makes it. (The inventory of #183; the rest of what a composite
+# command asks, and how often: prompts.test.sh and ProvisionTests.)
+SIGN_IN_FIRST = {"xcode download", "auth login", "auth api-key list", "auth api-key revoke", "team list", "keys list", "keys show", "keys revoke",
+                 "store privacy pull", "store privacy push",
+                 *(f"{group} {verb}" for group in ("app-groups", "icloud-containers") for verb in ("list", "create", "assign", "unassign"))}
+def asks_first(shown): return "the Apple ID" if re.search(r"Apple ID[^\r\n]{0,20}: $", shown) else "a new passphrase" if re.search(r"New [^\r\n]*: $", shown) else "the passphrase" if re.search(r"assphrase: $", shown) else "a confirmation" if shown.endswith("[y/N] ") else shown[-200:]
+
 # The environment of some: another (empty) store, where the question is about what is not there yet.
 EMPTY = {"XDG_DATA_HOME": t + "/empty"}
 MORE = {"live-check": {"XLESS_LIVE_APPLE": "1"}, "secrets init": {"XDG_DATA_HOME": t + "/none"},
@@ -182,12 +202,15 @@ LATE = {"auth api-key import"}
 
 def both(command):
     e = {**env, **MORE.get(command, {})}
-    argv = [xless, *command.split(), *shlex.split(ASKS[command].replace("%T", t))]
-    return command, (None, "") if command in LATE else on_a_terminal(argv, environment=e), on_a_terminal([*argv, "--no-input"], environment=e), \
-        on_a_terminal(argv, environment={**e, "XLESS_NO_INPUT": "1"})
+    argv, rest = [xless, *command.split()], shlex.split(ASKS[command].replace("%T", t))
+    return command, (None, "") if command in LATE else on_a_terminal(argv + rest, environment=e), on_a_terminal([*argv, "--no-input", *rest], environment=e), \
+        on_a_terminal(argv + rest, environment={**e, "XLESS_NO_INPUT": "1"})
 with concurrent.futures.ThreadPoolExecutor(min(8, (os.cpu_count() or 2) * 2)) as pool:
     for command, (rc, out), (off, refused), (variable, _) in pool.map(both, ASKS):
         check(rc is None, f"`xless {command}` asks", (rc, out[-400:]))
+        if command not in LATE:
+            first = "a new passphrase" if command == "secrets init" else "a confirmation" if command == "secrets rm" else "the Apple ID" if command in SIGN_IN_FIRST else "the passphrase"
+            check(asks_first(out) == first, f"`xless {command}` asks for {first} first", asks_first(out))
         check(off == 23, f"`xless {command} --no-input` ends with exit code 23", (off, refused[-400:]))
         check(variable == 23, f"XLESS_NO_INPUT=1 xless {command} ends with exit code 23", variable)
         check("[input] --no-input (XLESS_NO_INPUT): xless would ask for " in refused, f"`xless {command} --no-input` says why", refused[-400:])
@@ -204,10 +227,9 @@ check(rc == 0, "--yes needs no input", (rc, out))
 
 # A credential helper has no terminal to ask on.
 os.mkdir(t + "/helpers", 0o755)
-os.mkdir(t + "/config/xless", 0o700) if not os.path.isdir(t + "/config/xless") else None
 write(t + "/helpers/xless-credential-ask", f"#!/bin/sh\nif (: < /dev/tty) 2>/dev/null; then echo terminal; else echo none; fi >> {t}/helper.log\nexit 1\n")
 os.chmod(t + "/helpers/xless-credential-ask", 0o755)
-write(t + "/config/xless/config.yml", "secrets: { backend: helper, helper: ask }\n")
+write(t + "/config/xless/config.yml", "unlock: { keep: never }\nsecrets: { backend: helper, helper: ask }\n")
 e = {**env, "PATH": t + "/helpers:" + env["PATH"]}
 on_a_terminal([xless, "secrets", "list"], environment=e)
 on_a_terminal([xless, "secrets", "list", "--no-input"], environment=e)

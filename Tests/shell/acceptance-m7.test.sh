@@ -3,7 +3,8 @@
 # by the harness (XLESS_M7_HUMAN=auto): the first run stops at App Review (exit 75) with steps 0 to 5 recorded; the
 # second skips what is done and finishes; the record is redacted (no key, token, Apple ID, team, tester or contact);
 # --cleanup removes only what the run made; --dry-run and --status run nothing; a secret in a child's environment, an
-# unreadable contract and an xless without `secrets redact` are each reported.
+# unreadable contract and an xless without `secrets redact` are each reported. From a locked store and no session it
+# unlocks once and signs in once, and its watchers print nothing on the terminal.
 #   Tests/shell/acceptance-m7.test.sh     (builds xless with `swift build` for `secrets redact`; XLESS_BIN=<path> uses that binary)
 set -euo pipefail
 export LC_ALL=C
@@ -32,11 +33,15 @@ case "$1 ${2:-}" in
   "--version "*) echo 0.9.0 ;;
   "secrets redact") [[ "${STUB_NO_REDACT:-0}" == 0 ]] || exit 64; exec "$REAL_XLESS" "$@" ;;
   "secrets init") mkdir -p "$XDG_DATA_HOME/xless/vault"; echo '{"version":2,"entries":[{"name":"ASC_KEY_P8@ZZZZZ99999","sealed":"q83vEjRWeJA="}]}' > "$XDG_DATA_HOME/xless/vault/secrets.vault" ;;
-  "secrets list"|"secrets lock"|"team use"|"store validate"|"store push"|"testflight testers"|"builds list"|"devices disable"|"profiles delete"|"certs revoke"|"keys revoke") echo "ok: $*" ;;
+  "unlock "*) touch "$S/unlocked"; echo "The secret store is unlocked for the commands of this terminal." ;;
+  "lock "*) rm -f "$S/session" "$S/unlocked"; echo "Locked." ;;
+  "secrets list"|"team use"|"store validate"|"store push"|"testflight testers"|"builds list"|"devices disable"|"profiles delete"|"certs revoke"|"keys revoke") echo "ok: $*" ;;
   "auth status")
     if [[ -e "$S/session" ]]; then state=kept; else state=none; fi
-    if [[ " $* " == *" --json "* ]]; then echo "{\"session\": {\"state\": \"$state\", \"appleID\": \"ada@example.com\"}}"; else echo "session: $state"; fi ;;
-  "auth login") touch "$S/session"; printf 'Signed in to Apple as ada@example.com.\nTEAM ID     NAME\nZZZZZ99999  Ada Lovelace Personal\n'; [[ " $* " != *" --verbose "* ]] || trace ;;
+    if [[ ! -e "$XDG_DATA_HOME/xless/vault/secrets.vault" ]]; then store=missing; elif [[ -e "$S/unlocked" ]]; then store=unlocked; else store=locked; fi
+    [[ "${STUB_SAVED_SESSION:-0}" == 0 || $state == kept ]] || { if [[ $store == locked ]]; then state=saved; else state=kept; touch "$S/session"; fi; }
+    if [[ " $* " == *" --json "* ]]; then echo "{\"session\": {\"state\": \"$state\", \"appleID\": \"ada@example.com\"}, \"store\": {\"state\": \"$store\"}}"; else echo "session: $state"; fi ;;
+  "auth login") [[ "${STUB_LOGIN_FAIL:-0}" == 0 ]] || { trace; echo "[account] Apple refused the password" >&2; exit 20; }; touch "$S/session"; printf 'Signed in to Apple as ada@example.com.\nTEAM ID     NAME\nZZZZZ99999  Ada Lovelace Personal\n'; [[ " $* " != *" --verbose "* ]] || trace ;;
   "auth logout") rm -f "$S/session"; echo "Signed out." ;;
   "auth api-key")
     case "$3" in
@@ -67,7 +72,7 @@ case "$1 ${2:-}" in
     else
       env | grep -q '^ASC_KEY_P8=' && { echo "a secret in my environment" >&2; exit 9; }
       if [[ "${STUB_RUN_FAIL_ONCE:-0}" == 1 && ! -e "$S/failed-once" ]]; then touch "$S/failed-once"; echo "upload failed" >&2; exit 1; fi
-      if [[ "${STUB_LEAK_ENV:-0}" == 1 ]]; then env ASC_KEY_P8=leaked sleep 2; else sleep 1.5; fi
+      if [[ "${STUB_LEAK_ENV:-0}" == 1 ]]; then env ASC_KEY_P8=leaked python3 -I -c 'import time; time.sleep(2)'; else sleep 1.5; fi
       echo "==> TestFlight: build number $XLESS_BUILD_NUMBER"; leak
     fi ;;
   "release submit")
@@ -99,7 +104,13 @@ esac
 STUB
 printf '#!/bin/sh\necho "No coredumps found."\n' > "$t/bin/coredumpctl"
 printf '#!/bin/sh\nexit 0\n' > "$t/bin/keyctl"
-chmod 755 "$t/bin/xless" "$t/bin/docker" "$t/bin/coredumpctl" "$t/bin/keyctl"
+# the watchers pause half a second and a second between two looks: what they say would land on a person's prompt
+cat > "$t/bin/sleep" <<'STUB'
+#!/bin/sh
+case "$1" in 0.5|1) echo "watcher noise" >&2 ;; esac
+exec /bin/sleep "$@"
+STUB
+chmod 755 "$t/bin/xless" "$t/bin/docker" "$t/bin/coredumpctl" "$t/bin/keyctl" "$t/bin/sleep"
 
 record_template() {   # the committed record's shape: an introduction, then the markers
   printf '# Milestone 7 acceptance\n\nHow to run it.\n\n<!-- acceptance-m7:record:begin -->\nnot run yet\n<!-- acceptance-m7:record:end -->\n\nAfter the record.\n' > "$1"
@@ -116,7 +127,7 @@ kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub acc
     XLESS_M7_TEAM=ZZZZZ99999 XLESS_M7_TESTER=tess@example.com XLESS_M7_BUNDLE_ID=dev.xless.m7.test \
     XLESS_M7_CONTACT_FIRST=Rita XLESS_M7_CONTACT_LAST=Reviewer XLESS_M7_CONTACT_PHONE="+55 11 5555 0100" \
     XLESS_M7_CONTACT_EMAIL=rev@example.com \
-    STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
+    STUB_LOGIN_FAIL="${STUB_LOGIN_FAIL:-0}" STUB_SAVED_SESSION="${STUB_SAVED_SESSION:-0}" STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
     STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" \
     ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} \
     bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
@@ -151,7 +162,16 @@ app="$t/main/state/app"
 { grep -q 'firstName: "Rita"' "$app/appstore/app.yml" && grep -q '^bundleID: dev.xless.m7.test$' "$app/appstore/app.yml"; } || fail "app.yml placeholders"
 grep -q '^xless M7 ' "$app/appstore/pt-BR/name.txt" || fail "name placeholder: $(cat "$app/appstore/pt-BR/name.txt")"
 ! grep -rq 'com\.example\.xless\.m7\|ABCDE12345\|XLESSM7SKU' "$app" --exclude-dir=.git --exclude=README.md || fail "a placeholder was left"
-[[ "$(stat -c %a "$t/main/state")" == 700 ]] || fail "the state directory is not private"
+[[ -n "$(find "$t/main/state" -prune -perm 700)" ]] || fail "the state directory is not private"
+
+# From a locked store and no session: one unlock and one sign-in, whose trace is scanned (so that step 7 needs no other);
+# the session is dropped before step 5, which has the store only.
+[[ $(calls main '^unlock') == 1 ]] || fail "the store was unlocked $(calls main '^unlock') times, expected once"
+[[ $(calls main '^auth login') == 1 ]] || fail "signed in $(calls main '^auth login') times, expected once"
+grep -q "xless auth login --keep 30m --verbose.: 3 trace line(s), 0 finding(s)" "$r" || fail "the sign-in's trace was not scanned: $(grep 'trace line' "$r")"
+order="$(grep -n '^auth logout\|^run ' "$t/main/stub/log" | sed 's/^[0-9]*://; s/ .*//' | head -2 | tr '\n' ' ')"
+[[ "$order" == "auth run " ]] || fail "step 5 ran with a kept session: $order"
+! grep -q 'watcher noise' "$t/main/err" || fail "a watcher printed on the terminal: $(grep -m1 'watcher noise' "$t/main/err")"
 
 # 2. Run again while still in review: nothing before step 6 runs again; still 75.
 before=$(wc -l < "$t/main/stub/log")
@@ -169,8 +189,11 @@ for i in 6 7 9; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is 
 [[ $(calls main '^release publish') == 1 ]] || fail "not published once"
 { grep -q 'run --docker .* --to finalize' "$t/main/stub/log" && grep -q 'run --docker .* --from sign' "$t/main/stub/log"; } || fail "the docker run was not split"
 grep -q 'container c0ffeebuild .*mounts=/work env=' "$r" || fail "the build container was not inspected: $(grep -n container "$r")"
-grep -q 'trace line(s), 0 finding(s)' "$r" || fail "the traces were not scanned"
-grep -q 'no xless key after secrets lock and auth logout' "$r" || fail "the keyring was not checked"
+for c in 'team list --verbose' 'keys list --team <redacted> --verbose' 'apps list --team <redacted> --verbose'; do
+  grep -qF "\`xless $c\`: 3 trace line(s), 0 finding(s)" "$r" || fail "the trace of '$c' was not scanned: $(grep 'trace line' "$r")"
+done
+grep -q 'no xless key after xless lock' "$r" || fail "the keyring was not checked"
+[[ $(calls main '^auth login') == 1 && $(calls main '^unlock') == 1 ]] || fail "asked again after App Review: $(calls main '^auth login') sign-ins, $(calls main '^unlock') unlocks"
 clean_record main
 kit main
 [[ $code == 0 ]] || fail "a run after everything is done: exit $code"
@@ -196,7 +219,7 @@ mkdir -p "$t/leak/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/leak/stub/review"
 STUB_LEAK_ENV=1 kit leak
 [[ $code == 1 ]] || fail "leak: exit $code, expected 1"
 grep -q '^| 7 | .* | \*\*FAIL\*\*' "$t/leak/record.md" || fail "a secret in a child's environment passed step 7"
-grep -q 'FOUND sleep(.*environment variable ASC_KEY_P8' "$t/leak/record.md" || fail "the finding is not recorded"
+grep -q 'FOUND [^ ]*[Pp]ython[^ ]*(.*environment variable ASC_KEY_P8' "$t/leak/record.md" || fail "the finding is not recorded"
 ! grep -q 'leaked' "$t/leak/record.md" || fail "the value was recorded"
 mkdir -p "$t/dock/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dock/stub/review"
 STUB_LEAK_DOCKER=1 kit dock
@@ -204,7 +227,7 @@ STUB_LEAK_DOCKER=1 kit dock
 grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dock/record.md" || fail "a build container with the store passed step 8"
 kit dock   # step 8 starts again: its failure is not judged a second time from the old containers
 [[ $code == 0 ]] || fail "step 8 again without the leak: exit $code: $(tail -5 "$t/dock/err")"
-mapfile -t builds < <(grep '^run-build ' "$t/dock/stub/log" | tail -4)   # two halves, then two halves
+builds=(); while IFS= read -r line; do builds+=("$line"); done < <(grep '^run-build ' "$t/dock/stub/log" | tail -4)   # two halves, then two halves
 [[ ${#builds[@]} == 4 && "${builds[0]}" == "${builds[1]}" && "${builds[2]}" == "${builds[3]}" && "${builds[1]}" != "${builds[2]}" ]] ||
   fail "step 8 did not run again with a new build number: ${builds[*]}"
 mkdir -p "$t/dockkey/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dockkey/stub/review"
@@ -223,6 +246,21 @@ STUB_NO_REDACT=1 kit fallback --contract
 grep -q 'build number\|ok    api' "$t/fallback/record.md" || fail "the fallback recorded nothing"
 clean_record fallback
 
+# A session that is already kept is used, whoever kept it; one saved in the store is there once the store is unlocked; a
+# sign-in that fails says why; a secret in the trace of the sign-in is found.
+mkdir -p "$t/kept/stub"; touch "$t/kept/stub/session"
+kit kept --contract
+[[ $code == 0 && $(calls kept '^auth login') == 0 ]] || fail "signed in although a session is kept (exit $code)"
+mkdir -p "$t/saved/stub" "$t/saved/home/.local/share/xless/vault"; echo '{}' > "$t/saved/home/.local/share/xless/vault/secrets.vault"
+STUB_SAVED_SESSION=1 kit saved --contract
+[[ $code == 0 && $(calls saved '^auth login') == 0 && $(calls saved '^unlock') == 1 ]] || fail "signed in although a session is saved in the store (exit $code): $(cat "$t/saved/stub/log")"
+STUB_LOGIN_FAIL=1 kit refused --contract
+[[ $code != 0 ]] || fail "a sign-in that failed went on"
+grep -q 'Apple refused the password' "$t/refused/err" || fail "a failed sign-in does not say why: $(tail -5 "$t/refused/err")"
+STUB_LEAK_TRACE=1 kit trace --contract
+grep -q 'xless auth login --keep 30m --verbose.: 4 trace line(s), 1 finding(s)' "$t/trace/record.md" || fail "a token in the sign-in's trace was not found: $(grep 'trace line' "$t/trace/record.md")"
+! grep -q 'Bearer abcdef' "$t/trace/record.md" || fail "the token was recorded"
+
 # 7. A run of step 5 that fails takes a new build number next time; a rejection (76) resubmits once fixed.
 mkdir -p "$t/retry/stub"; echo REJECTED > "$t/retry/stub/review"
 STUB_RUN_FAIL_ONCE=1 kit retry
@@ -230,12 +268,38 @@ STUB_RUN_FAIL_ONCE=1 kit retry
 grep -q '^| 5 | .* | \*\*FAIL\*\*' "$t/retry/record.md" || fail "the failed run is not recorded"
 STUB_RUN_FAIL_ONCE=1 kit retry
 [[ $code == 76 ]] || fail "rejected: exit $code, expected 76: $(tail -5 "$t/retry/err")"
-mapfile -t builds < <(grep '^run-build ' "$t/retry/stub/log" | head -2)
+builds=(); while IFS= read -r line; do builds+=("$line"); done < <(grep '^run-build ' "$t/retry/stub/log" | head -2)
 [[ ${#builds[@]} == 2 && "${builds[0]}" != "${builds[1]}" ]] || fail "step 5 ran again with the same build number: ${builds[*]}"
 grep -q '^| 6 | .* | \*\*PENDING\*\* — Apple rejected it (REJECTED)' "$t/retry/record.md" || fail "the rejection is not recorded"
 echo PENDING_DEVELOPER_RELEASE > "$t/retry/stub/review"
 kit retry
 [[ $code == 0 ]] || fail "after the fix: exit $code: $(tail -5 "$t/retry/err")"
 [[ $(calls retry '^release submit .* --release manual$') == 2 ]] || fail "not resubmitted after the rejection"
+
+# 8. What a person typed before a question was shown does not answer it.
+{ echo 'HUMAN=ask; note() { echo "NOTE $*"; }; die() { echo "$*"; exit 1; }'
+  sed -n '/^# ---- people/,/^# ---- helpers/p' "$repo/scripts/acceptance-m7.sh"
+  echo 'echo READY; sleep 1; ask_yes "Submit it?" || true; ask_yes "Sure?" || true'; } > "$t/people.sh"
+python3 -I - "$t/people.sh" <<'PY' || fail "typed-ahead input answered a question"
+import os, pty, re, sys
+pid, fd = pty.fork()
+if pid == 0: os.execv("/bin/bash", ["bash", sys.argv[1]])
+seen = b""
+def until(text):
+    global seen
+    while not re.search(text, seen):
+        try: chunk = os.read(fd, 4096)
+        except OSError: chunk = b""
+        if not chunk: sys.exit(f"no {text!r} in {seen!r}")
+        seen += chunk
+until(b"READY")
+os.write(fd, b"y\n")
+until(rb"Submit it\? \[y/N\] ")
+os.write(fd, b"\n")
+until(rb"Sure\? \[y/N\] ")
+os.write(fd, b"yes\n") # (one that is answered is heard)
+until(rb'"Sure\?" [^\n]*yes')
+sys.exit(b'"Submit it?" \xe2\x80\x94 no.' not in seen)
+PY
 
 echo "acceptance-m7: ok"

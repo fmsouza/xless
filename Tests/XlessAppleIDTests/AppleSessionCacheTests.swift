@@ -12,6 +12,7 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
     let clock: TestClock
     var available = true
     private(set) var timeouts: [String: Int] = [:]
+    private(set) var maximums: [String: Int] = [:]
 
     init(clock: TestClock) { self.clock = clock }
 
@@ -25,9 +26,10 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
 
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         let bytes = secret.withUnsafeBytes { Array($0) }
+        if refusing { throw XlessError(.account, "not today", fix: "-") }
         lock.withLock {
             items[name] = (bytes, clock.now.addingTimeInterval(TimeInterval(hold.seconds)))
-            timeouts[name] = hold.seconds
+            maximums[name] = hold.maximum; timeouts[name] = hold.seconds
         }
     }
 
@@ -39,7 +41,17 @@ final class MemoryKeyStore: SessionKeyStore, @unchecked Sendable {
         }
     }
 
-    func revoke(_ name: String) throws -> Bool { lock.withLock { items.removeValue(forKey: name) != nil } }
+    /// The drops that reach everything, and the ones that reach one place.
+    private(set) var revoked: [String] = [], discarded: [[String]] = []
+    func revoke(_ name: String) throws -> Bool { lock.withLock { revoked.append(name); return items.removeValue(forKey: name) != nil } }
+    func discard(_ names: [String]) throws {
+        lock.withLock {
+            discarded.append(names)
+            for name in names { items[name] = nil }
+        }
+    }
+    /// The next puts fail.
+    var refusing = false
 
     func raw(_ name: String) -> [UInt8]? { lock.withLock { items[name]?.bytes } }
     func tamper(_ name: String) { lock.withLock { items[name]?.bytes[20] ^= 0xFF } }
@@ -270,6 +282,29 @@ final class AppleSessionCacheTests: XCTestCase {
         XCTAssertEqual(store.names, [])
     }
 
+    /// Another terminal's session, or a running script's, is not this one's to drop: only `forget` (logout) reaches those.
+    func testKeepingASessionOrFindingOneUnreadableDropsNothingElsewhere() async throws {
+        let clock = TestClock(t0), store = MemoryKeyStore(clock: clock)
+        let cache = AppleSessionCache(store: store, now: { clock.now })
+        for _ in 0..<2 { try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800)) }
+        XCTAssertEqual(store.revoked, [])
+        XCTAssertEqual(store.discarded, [])
+        XCTAssertNotNil(cache.info())
+        store.tamper("xless-apple-session")
+        XCTAssertNil(cache.info())
+        XCTAssertEqual(store.names, [])
+        XCTAssertEqual(store.discarded, [["xless-apple-session", "xless-apple-session-key"]])
+        store.refusing = true
+        do {
+            try await cache.keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800))
+            XCTFail("kept")
+        } catch {}
+        XCTAssertEqual(store.discarded.count, 2)
+        XCTAssertEqual(store.revoked, [])
+        cache.forget()
+        XCTAssertEqual(store.revoked, ["xless-apple-session", "xless-apple-session-key"])
+    }
+
     func testForgetSaysWhetherASessionWasKept() async throws {
         let clock = TestClock(t0)
         let store = MemoryKeyStore(clock: clock)
@@ -326,6 +361,29 @@ final class AppleSessionCacheTests: XCTestCase {
         XCTAssertEqual(store.used, [])
         _ = try await cache.restore(into: AppleWebClient(transport: MockTransport { _ in .init(status: 200) }))
         XCTAssertEqual(store.used, ["xless-apple-session", "xless-apple-session-key"])
+    }
+
+    func testAKeptSessionIsKeptLongerWithoutASignInButNeverPastTheMaximumSinceItWasMade() async throws {
+        let clock = TestClock(t0)
+        let store = MemoryKeyStore(clock: clock)
+        let cache = AppleSessionCache(store: store, now: { clock.now })
+        let web = try await signedInClient(clock: clock, expiry: nil)
+        let first = try await cache.keep(web, appleID: "me@example.com", hold: SecretHold(seconds: 600, idle: 600, maximum: 5000))
+        clock.now = t0.addingTimeInterval(500)
+        let longer = try await cache.keep(web, appleID: "me@example.com", hold: SecretHold(seconds: 1000, idle: 600, maximum: 5000), of: first)
+        XCTAssertEqual(longer.created, t0) // when the password was typed
+        XCTAssertEqual(longer.expires, t0.addingTimeInterval(1500))
+        XCTAssertEqual(store.maximums["xless-apple-session"], 4500)
+        clock.now = t0.addingTimeInterval(1400)
+        let longest = try await cache.keep(web, appleID: "me@example.com", hold: SecretHold(seconds: 5000, idle: 600, maximum: 5000), of: longer)
+        XCTAssertEqual(longest.expires, t0.addingTimeInterval(5000))
+        XCTAssertEqual(cache.info()?.expires, t0.addingTimeInterval(5000))
+        clock.now = t0.addingTimeInterval(4980)
+        do {
+            _ = try await cache.keep(web, appleID: "me@example.com", hold: SecretHold(seconds: 5000, idle: 600, maximum: 5000), of: longest)
+            XCTFail("expected an error")
+        } catch let e as XlessError { XCTAssertTrue(e.fix.contains("auth logout"), e.fix) }
+        XCTAssertNotNil(cache.info()) // what was kept still is
     }
 
     func testASessionKeptByAnEarlierVersionIsRead() async throws {
@@ -400,6 +458,59 @@ final class AppleWebSessionTests: XCTestCase {
         let cookies = await again.cookieSnapshot().map { "\($0.name)=\($0.value)" }.sorted()
         XCTAssertEqual(cookies, ["DES5abc=TRUSTED", "myacinfo=NEW"])
         XCTAssertNotNil(session.kept)
+    }
+
+    /// Apple, answering a sign-in that needs no second factor.
+    private func signingIn() -> MockTransport {
+        let apple = FakeApple()
+        apple.completeStatus = 200
+        return MockTransport { r in
+            var reply = try apple.handle(r)
+            if r.url?.path.hasSuffix("/complete") == true { reply.headers["Set-Cookie"] = "myacinfo=NEW; Domain=.apple.com; Path=/; Secure" }
+            return reply
+        }
+    }
+
+    func testASignInIsOfferedToBeKeptAndTheNextCommandUsesIt() async throws {
+        let store = MemoryKeyStore(clock: TestClock(Date()))
+        let cache = AppleSessionCache(store: store)
+        let prompter = ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password)
+        let offered = Box(0)
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: signingIn(), stage: .account), cache: cache, prompter: { prompter }, keep: {
+            offered.value += 1
+            return hold(900)
+        }, kept: { held in
+            XCTAssertTrue(held && store.names.count == 2) // told once it is
+            offered.value += 10
+        })
+        XCTAssertEqual(offered.value, 11)
+        XCTAssertNotNil(session.kept)
+        XCTAssertEqual(store.timeouts["xless-apple-session"], 900)
+        let later = MockTransport { r in r.url?.path == "/olympus/v1/session" ? .json(200, [:]) : .json(200, PortalWebClientTests.teams) }
+        _ = try await AppleWebSession.open(web: AppleWebClient(transport: later, stage: .account), cache: cache, prompter: {
+            XCTFail("prompted")
+            throw XlessError(.account, "no terminal", fix: "")
+        }, keep: { XCTFail("offered again"); return nil })
+    }
+
+    func testASignInThatIsNotAgreedToBeKeptIsNot() async throws {
+        let store = MemoryKeyStore(clock: TestClock(Date()))
+        let prompter = ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password)
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: signingIn(), stage: .account), cache: AppleSessionCache(store: store),
+                                                     prompter: { prompter }, keep: { nil })
+        XCTAssertNil(session.kept)
+        XCTAssertEqual(store.names, [])
+    }
+
+    func testASignInThatCannotBeKeptIsSaidAndTheCommandGoesOn() async throws {
+        let store = MemoryKeyStore(clock: TestClock(Date()))
+        store.available = false
+        let prompter = ScriptedPrompter(answers: ["me@example.com"], secret: FakeApple.password), held = Box([Bool]())
+        let session = try await AppleWebSession.open(web: AppleWebClient(transport: signingIn(), stage: .account), cache: AppleSessionCache(store: store),
+                                                     prompter: { prompter }, keep: { hold(900) }, kept: { held.value.append($0) })
+        XCTAssertNil(session.kept)
+        XCTAssertEqual(held.value, [false])
+        XCTAssertTrue(prompter.said.contains { $0.contains("cannot be kept here") }, "\(prompter.said)")
     }
 
     func testARefusedSessionThatCannotBeSignedInAgainIsAnErrorAndDropped() async throws {

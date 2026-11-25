@@ -87,6 +87,8 @@ enum TestflightScript {
         setenv("XLESS_SHARE", share.path, 1)
         // The script runs xless (natively, and host-side helpers like `"$XLESS_SELF" cargo inputs`) as the one that started it.
         setenv("XLESS_SELF", exe.path, 1)
+        // Which tells the xless it runs, and nothing else.
+        if let agent = XlessSession.agent { setenv(XlessSession.variable, agent, 1) }
         let argv = ["bash", script] + arguments
         var cArgs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
         cArgs.append(nil)

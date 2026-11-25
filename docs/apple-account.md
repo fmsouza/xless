@@ -34,7 +34,7 @@ and send where, in [security.md](security.md).
 
 | Option | What it does |
 |---|---|
-| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
+| `--team <TEAM_ID>` | The team whose key is used: the store's `ASC_KEY_P8` entry recorded for that team (`ASC_KEY_P8@<TEAM_ID>`, or `--team-id` at import). Without it, the default team saved by [`xless team use`](#xless-team), else the only (or unteamed) entry. The web-session commands take the Apple ID's only team; among several, the one of the xless.yml here, else that of the store's API keys (when they are all of one), and say which; they ask for `--team` only when none of these tells (`auth api-key create` does not guess). When the xless.yml here names a team that the Apple ID is not a member of, that is an error: another one is used only with `--team`. `xless store` and `xless release` first take the team of the project's configuration (the xless.yml next to `appstore/`, or `--config`), its entry preferred, else an unteamed one, unless `--app` names the app. Keys from the environment are used as they are. |
 | `--json` | Prints JSON instead of a table (see [JSON output](#json-output)). |
 | `--yes` | Answers yes to the confirmation that every destructive call asks. Without a terminal, such a call is refused unless `--yes` is given; it never goes ahead silently. |
 | `--verbose` | Shows every HTTP exchange with Apple on standard error. The trace never shows the key, the token, a cookie or a secret field: they read `<redacted>`. |
@@ -52,8 +52,12 @@ fails, the error says which interface it was and which page to use in a browser 
   a touch on a [security key](#signing-in-with-a-security-key) (Linux). Everything is typed on the terminal
   (`/dev/tty`); never read from a pipe, a file, an argument or the environment. Accounts with the old two-step
   verification are not supported.
-- The session's cookies stay in memory and are forgotten when the command ends. Nothing is written to disk, unless
+- The session's cookies stay in memory and are forgotten when the command ends, unless you keep them: after a sign-in
+  xless asks once whether to keep it, with the secret store's unlock, for the next commands of this terminal (Enter is no;
+  [the question and its answer in config.yml](secrets.md#staying-unlocked)). Nothing is written to disk, unless
   `--across-reboots` asks for it, sealed.
+- **At most one sign-in per command**, and none where the API key does it: the line before it says which command signs in
+  and why. A kept session is always used first.
 - **Keeping it:** `xless auth login --keep` seals the cookies with a random key and keeps both in memory for the later
   commands of the same terminal, so they do not sign in again: in the xless agent or, where none can run, in the Linux
   kernel keyring for an hour at most ([what ends it there](security.md#the-kernel-keyring)). Without a duration it is kept as long as config.yml's `unlock` says (8 hours, at most 2 without use,
@@ -69,7 +73,8 @@ fails, the error says which interface it was and which page to use in a browser 
   only for the password where Apple still trusts this device (its trusted-device cookie is kept with the session), and for
   a code only if Apple wants one. What replaces it is kept for the rest of the time. With `--no-input` it stops instead.
 - **Teams:** the developer portal knows a team by its team ID, App Store Connect by a provider number; xless matches
-  them by name and asks when several App Store Connect teams share it.
+  them by name. When several App Store Connect teams share the name, the issuer ID of the team's API key in the store
+  tells which; xless asks only when it does not.
 - **Agreements:** xless never accepts legal terms. When Apple wants new terms accepted, the command stops and names the
   page: [App Store Connect > Business](https://appstoreconnect.apple.com/agreements) or
   [developer.apple.com/account](https://developer.apple.com/account), where the Account Holder accepts them.
@@ -116,12 +121,16 @@ xless auth status                 # which credentials resolve, from where; what 
 xless auth logout                 # forget the kept session
 xless unlock                      # keep the secret store unlocked for this terminal
 xless lock                        # forget everything held: the unlock and the session
+xless session --sign-in -- ./script.sh   # both for one script, dropped when it ends (docs/secrets.md)
 ```
+
+`xless auth login` uses a kept session that Apple still takes, and asks nothing then (`xless auth logout` first to sign in
+as somebody else).
 
 `xless auth status` reads no secret and sends nothing: for `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` it says whether
 each comes from the environment, a `_FILE` variable (and its path) or the secret store (and the entry), for which team,
 whether the secret store is unlocked and whether an Apple ID session is kept (where, until when, after how long without use
-it ends), and which commands need that session. App Store Connect does not tell a key its own role, so
+it ends), what is held for a command that runs (`xless session`, `xless run`), in this terminal or another, and which commands need that session. App Store Connect does not tell a key its own role, so
 the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#xless-auth-api-key)).
 
 `--json` prints the same as a document, so a script can check before it starts. Besides the API key's fields
@@ -136,6 +145,8 @@ the role is shown as unknown unless xless recorded it ([`xless auth api-key`](#x
 | `session.state` | `kept`; `saved` (in the locked store: a command asks its passphrase); `none`; `unavailable` (none, and it cannot be kept here) |
 | `session.appleID`, `.backend`, `.expires`, `.remainingSeconds`, `.idleSeconds`, `.idleRemainingSeconds` | as the store's, when kept; `backend` is `agent`, `keyring` or `store` (saved, and the store is unlocked) |
 | `session.savedUntil` | until when it is saved across reboots, when it is |
+| `keepUntil` | until when what is typed in this terminal is kept without a question, after a yes to [the offer](secrets.md#staying-unlocked) |
+| `sessions` | the `xless session` and `xless run` that run, of all your terminals: `command`, `holds` (`store`: its unlock; `session`: an Apple ID session), `expires` and `remainingSeconds` (at the latest: it ends with the command), `thisTerminal` |
 | `session.neededBy` | the commands that need the session; every other one works with the API key, also in CI |
 
 ```sh
@@ -1076,8 +1087,9 @@ and containers and profile, planned like the app's.
   passphrase only to read the API key from the store, or to match a stored signing key that has no recorded
   certificate.
 - **`apply`** plans again, shows the plan, asks (or `--yes`) and runs the steps in order in one process: the secret
-  store's passphrase is asked once, and the Apple ID signs in at most once: before asking, when some steps can only be
-  checked through the web session (so the plan shown is exact), else at the first step that needs it. Each step
+  store's passphrase is asked once, and the Apple ID signs in at most once, both before the first step, so nothing is
+  asked half-way: the sign-in before the question, when some steps can only be checked through the web session (so the plan
+  shown is exact), else right after it, when a step needs it. What no step needs is not asked. Each step
   reads again what it changes, so a second `apply` finds nothing to do. The first failure stops it: the error names the
   step, and standard error lists what was done and what is left; running `apply` again does only what is left. A plan
   with blockers sends nothing. When the listing push creates a new App Store version (or the app record was created

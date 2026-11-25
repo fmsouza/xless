@@ -8,14 +8,19 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
     public let vault: VaultStore
     public let cache: (any VaultKeyCache)?
     let prompter: () -> (any PassphrasePrompter)?
+    private let manner: (any UnlockManner)?
     private let lock = NSLock()
     /// `isLookedAt`: it is the unlock cache's, where it does not count as used yet.
     private var dataKey: (id: String, key: SymmetricKey, isLookedAt: Bool)?
 
-    /// - Parameter prompter: the terminal, or nil when there is none (called only when the passphrase is needed).
-    public init(store: VaultStore, cache: (any VaultKeyCache)? = KernelKeyringCache(), prompter: @escaping () -> (any PassphrasePrompter)?) {
+    /// - Parameters:
+    ///   - manner: what is said and offered around the passphrase's question.
+    ///   - prompter: the terminal, or nil when there is none (called only when the passphrase is needed).
+    public init(store: VaultStore, cache: (any VaultKeyCache)? = KernelKeyringCache(), manner: (any UnlockManner)? = nil,
+                prompter: @escaping () -> (any PassphrasePrompter)?) {
         vault = store
         self.cache = cache
+        self.manner = manner
         self.prompter = prompter
     }
 
@@ -106,7 +111,8 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
         SecretScope.enter() // before the passphrase and the data key are in memory
         return try lock.withLock {
             if remember == nil, let key = ownKey(for: file, using: true) { return key }
-            let key = try VaultUnlocker.dataKey(for: file, cache: cache, place: vault.location.file.path, prompter: prompter, remember: remember, reason: reason)
+            let key = try VaultUnlocker.dataKey(for: file, cache: cache, place: vault.location.file.path, manner: manner,
+                                                prompter: prompter, remember: remember, reason: reason)
             dataKey = (file.id, key, false)
             return key
         }

@@ -156,3 +156,37 @@ private func mode(_ path: String) -> mode_t {
     #expect(!ends(peer(inode: 3)))
     #expect(!ends(peer(pid: getpid()), owner: AgentDirectory.Owner(pid: getpid(), start: 7))) // never itself
 }
+
+@Test func whatKeepsASocketOutOfTheDirectoryIsFoundBeforeOneIsMade() throws {
+    let scratch = ScratchDirectory()
+    let fine = AgentDirectory(path: scratch.path + "/xless-agent")
+    #expect(fine.obstacle() == nil)
+    #expect(!FileManager.default.fileExists(atPath: fine.path)) // nothing is made to find that out
+    try fine.prepare()
+    #expect(fine.obstacle() == nil)
+    #expect(AgentDirectory(path: scratch.path + "/" + String(repeating: "x", count: 100)).obstacle()?.kind == .unavailable)
+    #expect(AgentDirectory(path: scratch.path + "/nothing/xless-agent").obstacle()?.kind == .unavailable)
+    try Data().write(to: URL(fileURLWithPath: scratch.path + "/file"))
+    #expect(AgentDirectory(path: scratch.path + "/file/xless-agent").obstacle()?.kind == .unavailable)
+    if geteuid() != 0 { // root may write anywhere
+        mkdir(scratch.path + "/shut", 0o500)
+        #expect(AgentDirectory(path: scratch.path + "/shut/xless-agent").obstacle()?.kind == .unavailable)
+        chmod(fine.path, 0o500)
+        #expect(fine.obstacle()?.kind == .unavailable)
+    }
+    chmod(fine.path, 0o755)
+    #expect(fine.obstacle()?.kind == .unsafePath)
+}
+
+/// The longest directory a socket still fits into, and one byte more.
+@Test func theObstacleOfALongPathIsThatOfBinding() throws {
+    let scratch = ScratchDirectory()
+    let room = Int(xless_unix_path_max()) - "/000000000000000000000000.sock".utf8.count - scratch.path.utf8.count - 1
+    let longest = AgentDirectory(path: scratch.path + "/" + String(repeating: "x", count: room))
+    #expect(longest.obstacle() == nil)
+    let bound = try longest.bind()
+    close(bound.fd)
+    let longer = AgentDirectory(path: longest.path + "x")
+    let obstacle = try #require(longer.obstacle())
+    #expect(throws: obstacle) { _ = try longer.bind() }
+}

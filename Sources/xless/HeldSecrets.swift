@@ -14,9 +14,10 @@ protocol AgentHolding: Sendable {
     func get(_ name: String, using: Bool, accept: (SecretBytes) -> Bool) -> SecretBytes?
     func get(_ name: String, using: Bool, witness: () -> AgentWitness?) -> SecretBytes?
     func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws
-    func drop(prefix: String, label: String) -> Int
-    var unreached: AgentError? { get }
+    func drop(prefix: String, label: String) -> AgentDropped
+    func discard(_ names: [String], witness: () -> AgentWitness?) -> Bool
     func statuses() -> [AgentStatus]
+    func leases() -> [AgentStatus]
 }
 
 extension AgentClient: AgentHolding {}
@@ -31,19 +32,30 @@ enum HeldSecrets {
     /// The longest anything is held after it was typed.
     static var maximum: Int { ((try? settings.get()) ?? UnlockSettings()).maximum }
 
-    static let agents: AgentClient = {
+    static let agents = AgentClient(terms: terms, session: XlessSession.agent)
+
+    /// What the agents keep to.
+    static var terms: AgentTerms {
         let s = (try? settings.get()) ?? UnlockSettings()
-        return AgentClient(terms: AgentTerms(maximum: s.maximum, lockOnSleep: s.lockOnSleep, lockOnScreenLock: s.lockOnScreenLock))
-    }()
+        return AgentTerms(maximum: s.maximum, lockOnSleep: s.lockOnSleep, lockOnScreenLock: s.lockOnScreenLock)
+    }
 
     static func say(_ line: String) { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
 
     static func name(ofVault id: String) -> String { vaultPrefix + id }
     static let vaultPrefix = "xless-vault:"
 
-    /// Why nothing can be kept where there is neither.
+    /// Whether anything can be kept: in an agent, or where none can run in the keyring. What is wrong with an agent that
+    /// could run is put right, not worked round with what keeps less.
+    static func canKeep(_ agents: any AgentHolding, keyring: Bool) -> Bool {
+        guard let obstacle = agents.obstacle else { return true }
+        return obstacle.kind == .unavailable && keyring
+    }
+
+    /// Why nothing can be kept.
     static func reason(_ agents: any AgentHolding) -> String {
-        "there is no kernel keyring here (macOS, or a container that blocks it), and \(agents.obstacle?.cause ?? "the xless agent cannot be used")"
+        if let obstacle = agents.obstacle, obstacle.kind != .unavailable { return obstacle.cause }
+        return "there is no kernel keyring here (macOS, or a container that blocks it), and \(agents.obstacle?.cause ?? "the xless agent cannot be used")"
     }
 
     /// What the kernel keyring holds instead of the agent, and what does not end it there.
@@ -69,6 +81,14 @@ private final class SayOnce: @unchecked Sendable {
     }
 }
 
+private final class FirstFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failure: AgentError?
+
+    var first: AgentError? { lock.withLock { failure } }
+    func note(_ error: AgentError?) { lock.withLock { failure = failure ?? error } }
+}
+
 /// The secret store's unlock.
 struct HeldKeyCache: VaultKeyCache {
     let agents: any AgentHolding
@@ -87,7 +107,7 @@ struct HeldKeyCache: VaultKeyCache {
         self.say = SayOnce(say)
     }
 
-    var isAvailable: Bool { !isOff && (keyring.isAvailable || agents.obstacle == nil) }
+    var isAvailable: Bool { !isOff && HeldSecrets.canKeep(agents, keyring: keyring.isAvailable) }
 
     func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes? {
         guard !isOff else { return nil }
@@ -117,7 +137,7 @@ struct HeldKeyCache: VaultKeyCache {
     func require(_ hold: SecretHold) throws {
         guard isAvailable else {
             throw VaultError(.cacheUnavailable, "the store cannot be kept unlocked here: \(isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(agents))",
-                             fix: "run without it; each command that needs the store asks the passphrase")
+                             fix: agents.obstacle.flatMap { $0.kind == .unavailable ? nil : $0.fix } ?? "run without it; each command that needs the store asks the passphrase")
         }
         if let obstacle = agents.obstacle, hold.idleAsked { throw Self.noIdle(obstacle) }
     }
@@ -145,18 +165,21 @@ struct HeldKeyCache: VaultKeyCache {
     }
 
     func forget(id: String) throws -> Bool {
-        let agent = agents.drop(prefix: HeldSecrets.name(ofVault: id), label: "") > 0
-        let unreached = agents.unreached
-        let any = try keyring.forget(id: id) || agent
-        if let unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
+        let dropped = agents.drop(prefix: HeldSecrets.name(ofVault: id), label: "")
+        let any = try keyring.forget(id: id) || dropped.count > 0
+        if let unreached = dropped.unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
         return any
     }
 
     func forget(place: String) throws {
-        _ = agents.drop(prefix: HeldSecrets.vaultPrefix, label: place)
-        let unreached = agents.unreached
+        let dropped = agents.drop(prefix: HeldSecrets.vaultPrefix, label: place)
         try keyring.forget(place: place)
-        if let unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
+        if let unreached = dropped.unreached { throw VaultError(.cacheUnavailable, unreached.cause, fix: unreached.fix) }
+    }
+
+    /// Drops an unlock that was typed nobody knows when, or too long ago: the keyring's. An agent knows, and keeps none.
+    func forgetUndated(id: String, maximum: Int) throws {
+        if let held = keyring.held(id: id), (held.typedAgo ?? maximum) >= maximum { _ = try keyring.forget(id: id) }
     }
 
     func held(id: String) -> HeldUnlock? {
@@ -179,6 +202,7 @@ struct HeldSessionStore: SessionKeyStore {
     /// What shows an agent of another terminal that this one has the store unlocked (never asked for).
     let witness: @Sendable () -> AgentWitness?
     private let say: SayOnce
+    private let failures = FirstFailure()
 
     init(agents: any AgentHolding = HeldSecrets.agents, keyring: any SessionKeyStore = KernelKeyringSessionStore(), isOff: Bool = HeldSecrets.isOff,
          witness: @escaping @Sendable () -> AgentWitness?, say: @escaping @Sendable (String) -> Void = HeldSecrets.say) {
@@ -189,7 +213,7 @@ struct HeldSessionStore: SessionKeyStore {
         self.say = SayOnce(say)
     }
 
-    var isAvailable: Bool { !isOff && (keyring.isAvailable || agents.obstacle == nil) }
+    var isAvailable: Bool { !isOff && HeldSecrets.canKeep(agents, keyring: keyring.isAvailable) }
 
     /// Why a session cannot be kept.
     var obstacle: String { isOff ? "XLESS_NO_SECRET_STORE=1 is set" : HeldSecrets.reason(agents) }
@@ -198,10 +222,10 @@ struct HeldSessionStore: SessionKeyStore {
 
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         guard isAvailable else { throw AppleSessionCache.unavailable(obstacle) }
-        _ = try revoke(name)
         do {
             if let obstacle = agents.obstacle { throw obstacle }
             try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], witness: witness)
+            _ = try keyring.revoke(name)
         } catch let e as AgentError {
             guard e.kind == .unavailable, keyring.isAvailable, keyring.allowed(hold) == hold.seconds else { throw e }
             say(HeldSecrets.fallback("the Apple ID session", seconds: hold.seconds, because: e.cause))
@@ -230,7 +254,15 @@ struct HeldSessionStore: SessionKeyStore {
     }
 
     func revoke(_ name: String) throws -> Bool {
-        let agent = agents.drop(prefix: name, label: "") > 0
-        return try keyring.revoke(name) || agent
+        let dropped = agents.drop(prefix: name, label: "")
+        failures.note(dropped.unreached)
+        return try keyring.revoke(name) || dropped.count > 0
     }
+
+    func discard(_ names: [String]) throws {
+        if !agents.discard(names, witness: witness) { try keyring.discard(names) }
+    }
+
+    /// Why not every agent was reached by what was revoked: the first failure.
+    var unreached: AgentError? { failures.first }
 }

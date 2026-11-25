@@ -20,6 +20,10 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     var failure: AgentError?
     var needsWitness = false
 
+    /// The seconds that have passed since what is held was put.
+    private var aged = 0
+    func age(by seconds: Int) { lock.withLock { aged += seconds } }
+
     var names: [String] { lock.withLock { items.keys.sorted() } }
     func hold(_ name: String) -> SecretHold? { lock.withLock { items[name]?.seed.hold } }
     func label(_ name: String) -> String? { lock.withLock { items[name]?.seed.label } }
@@ -45,7 +49,21 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
             }
         }
     }
-    func drop(prefix: String, label: String) -> Int {
+    func drop(prefix: String, label: String) -> AgentDropped {
+        let failure = failures.isEmpty ? unreached : failures.removeFirst()
+        return AgentDropped(count: remove(prefix, label), unreached: failure)
+    }
+    /// What one agent, the first that has it, was told to drop.
+    private(set) var discarded: [[String]] = []
+    func discard(_ names: [String], witness: () -> AgentWitness?) -> Bool {
+        lock.withLock {
+            discarded.append(names)
+            return names.filter { items.removeValue(forKey: $0) != nil }.count > 0
+        }
+    }
+    /// Of the next drops.
+    var failures: [AgentError?] = []
+    private func remove(_ prefix: String, _ label: String) -> Int {
         lock.withLock {
             dropped.append((prefix, label))
             let gone = items.filter { $0.key.hasPrefix(prefix) && (label.isEmpty || $0.value.seed.label == label) }.keys
@@ -56,11 +74,14 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
     var unreached: AgentError?
     func statuses() -> [AgentStatus] {
         lock.withLock {
-            guard !items.isEmpty else { return [] }
-            let list = items.values.map { AgentItemStatus(name: $0.seed.name, label: $0.seed.label, remaining: $0.seed.hold.seconds, idle: $0.seed.hold.idle, idleRemaining: $0.seed.hold.idle) }
-            return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name })]
+            guard !items.isEmpty else { return elsewhere }
+            let list = items.values.map { AgentItemStatus(name: $0.seed.name, label: $0.seed.label, remaining: $0.seed.hold.seconds - aged, idle: $0.seed.hold.idle, idleRemaining: $0.seed.hold.idle) }
+            return [AgentStatus(isGranted: true, count: list.count, remaining: list.map(\.remaining).max() ?? 0, sessions: 1, items: list.sorted { $0.name < $1.name }, isSameSession: !needsWitness)] + elsewhere
         }
     }
+    /// Of agents of other sessions, which serve this one too.
+    var elsewhere: [AgentStatus] = []
+    func leases() -> [AgentStatus] { [] }
 }
 
 /// The kernel keyring, in memory.
@@ -180,6 +201,23 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         }
     }
 
+    /// Found before anything is asked: the same, whatever the keyring could hold.
+    @Test func whereAnAgentIsKeptFromRunningTheKeyringIsNotItsStandInEither() throws {
+        for kind in [.unsafePath, .failed] as [AgentError.Kind] {
+            let agents = FakeAgents(), keyring = FakeKeyring(), notes = Notes()
+            agents.obstacle = AgentError(kind, "what is wrong", fix: "put it right")
+            let c = cache(agents, keyring, notes)
+            #expect(!c.isAvailable)
+            let before = #expect(throws: VaultError.self) { try c.require(half) }
+            #expect(before?.cause.contains("what is wrong") == true && before?.cause.contains("keyring") == false && before?.fix == "put it right")
+            #expect(throws: VaultError.self) { try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0) }
+            let s = HeldSessionStore(agents: agents, keyring: keyring, isOff: false, witness: { nil }, say: notes.say)
+            #expect(!s.isAvailable && s.obstacle == "what is wrong")
+            #expect(throws: (any Error).self) { try s.put("xless-apple-session", key(1), hold: half) }
+            #expect(keyring.names.isEmpty && notes.lines.isEmpty)
+        }
+    }
+
     @Test func anIdleTimeAskedForIsRefusedWhereItIsNotKept() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         agents.obstacle = AgentError(.unavailable, "no session here", fix: "-")
@@ -239,6 +277,25 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         #expect(keyring.names.isEmpty)
     }
 
+    @Test func aDropThatWasNotAskedForDoesNotMakeALaterOneFail() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        let c = cache(agents, keyring)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
+        agents.failures = [AgentError(.malformed, "once", fix: "-")] // of the stale key, on the way
+        #expect(try c.load(id: "ID", using: true) { _ in false } == nil)
+        #expect(try !c.forget(id: "ID"))
+    }
+
+    @Test func forgettingASessionFailsWhenAnyOfItsDropsDidNotReachEverything() throws {
+        let agents = FakeAgents()
+        let store = HeldSessionStore(agents: agents, keyring: FakeKeyring(), isOff: false, witness: { nil }, say: { _ in })
+        #expect(store.unreached == nil)
+        agents.failures = [AgentError(.silent, "first", fix: "-"), nil]
+        _ = try store.revoke("xless-apple-session")
+        _ = try store.revoke("xless-apple-session-key")
+        #expect(store.unreached?.cause == "first")
+    }
+
     @Test func anAgentThatCannotBeUsedIsReportedOnceAndCountsAsLocked() throws {
         let agents = FakeAgents(), notes = Notes()
         agents.problem = AgentError.versionMismatch(theirs: "9.9.9")
@@ -268,6 +325,21 @@ extension HeldKeyCacheTests {
         try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 3540)
         #expect(agents.typed == [3540])
         #expect(c.held(id: "ID")?.typedAgo == 0) // the agent's word
+    }
+
+    /// `xless session` asks again for one that was typed nobody knows when: that takes none from another terminal.
+    @Test func anUnlockOfUnknownAgeIsDroppedFromTheKeyringOnly() throws {
+        for age in [nil, 7 * 86400] as [Int?] {
+            let agents = FakeAgents(), keyring = FakeKeyring()
+            try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+            keyring.typedAgo = age
+            try cache(agents, keyring).forgetUndated(id: "ID", maximum: 7 * 86400)
+            #expect(keyring.names.isEmpty && agents.dropped.isEmpty)
+        }
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+        try cache(agents, keyring).forgetUndated(id: "ID", maximum: 7 * 86400)
+        #expect(keyring.names == ["ID"])
     }
 
     @Test func aLoweredMaximumEndsAHoldOfTheKeyring() throws {
@@ -323,7 +395,23 @@ extension HeldKeyCacheTests {
         try s.put("xless-apple-session", key(4), hold: half)
         #expect(try keyring.get("xless-apple-session", using: true) == key(4))
         #expect(throws: AgentError.self) { try s.put("xless-apple-session", key(5), hold: day) }
-        #expect(try keyring.get("xless-apple-session", using: true) == nil)
+        try s.discard(["xless-apple-session", "xless-apple-session-key"])
+        #expect(keyring.names.isEmpty)
+    }
+
+    @Test func keepingASessionReplacesItWhereItGoesAndTellsNoOtherAgent() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        let s = store(agents, keyring)
+        try s.put("xless-apple-session", key(1), hold: day)
+        try s.put("xless-apple-session", key(2), hold: day)
+        #expect(agents.dropped.isEmpty)
+        #expect(try s.get("xless-apple-session", using: true) == key(2))
+        try keyring.put("xless-apple-session", key(3), hold: half)
+        try s.discard(["xless-apple-session", "xless-apple-session-key"])
+        #expect(agents.dropped.isEmpty && agents.discarded == [["xless-apple-session", "xless-apple-session-key"]])
+        #expect(keyring.names == ["xless-apple-session"]) // the one that was not read
+        try s.discard(["xless-apple-session", "xless-apple-session-key"])
+        #expect(keyring.names.isEmpty)
     }
 
     @Test func aSessionIsTakenFromAnotherTerminalsAgentOnlyWithTheStoresKey() throws {

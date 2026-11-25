@@ -22,12 +22,25 @@ public struct AgentUnanswered: Sendable, Equatable {
 
     public init(pid: Int32, path: String) { self.pid = pid; self.path = path }
 
+    /// Nobody takes connections there: the process its name says, when that one runs (here: a container may have
+    /// another's directory, and other pids).
+    init(busy path: String) { self.init(pid: AgentDirectory.Owner(of: path).flatMap { $0.isRunning ? $0.pid : nil } ?? 0, path: path) }
+
     public var cause: String { "an xless agent (\(pid > 0 ? "process \(pid), " : "")\(path)) does not answer: what it holds may still be held" }
     public var fix: String {
         // By the time it is read the process may have ended, and its pid be another one's.
         let end = pid > 0 ? "if `ps -p \(pid) -o args=` still says `xless __agent`, end it (`kill -9 \(pid)`)" : "end every agent of yours (`pkill -9 -f 'xless __agent'`)"
         return "\(end), then run `xless lock`"
     }
+}
+
+/// What a drop came to.
+public struct AgentDropped: Sendable, Equatable {
+    public let count: Int
+    /// Why not every agent could be told; nil: every one was.
+    public let unreached: AgentError?
+
+    public init(count: Int, unreached: AgentError?) { self.count = count; self.unreached = unreached }
 }
 
 /// What `lockAll` came to.
@@ -43,11 +56,12 @@ public struct AgentLocked: Sendable, Equatable {
 public final class AgentClient: @unchecked Sendable {
     private let directory: AgentDirectory
     private let terms: AgentTerms
+    /// The socket of the session's agent (`xless session`) this command runs in.
+    private let session: String?
     private let findObstacle: @Sendable () -> AgentError?
     private let startAgent: @Sendable ([AgentSeed], AgentDirectory) throws -> Void
     private let lock = NSLock()
     private var lastProblem: AgentError?
-    private var lastUnreached: AgentError?
     /// The sockets that did not answer this process, and who listens: they are not waited for again.
     private var silent: [AgentDirectory.Socket: Int32] = [:]
     /// Where nobody listened.
@@ -56,38 +70,45 @@ public final class AgentClient: @unchecked Sendable {
     /// For tests: no agent here is of this session.
     var seesEveryAgentAsAnotherSessions = false
 
-    /// - Parameter timeout: milliseconds for the answers to one question, however many agents there are.
-    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms(), timeout: Int = 1500) {
-        self.init(directory: directory, terms: terms, timeout: timeout, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
+    /// - Parameters:
+    ///   - session: the socket of the agent of the `xless session` this command runs in: the only agent on a lease it
+    ///     uses, and where what it keeps goes.
+    ///   - timeout: milliseconds for the answers to one question, however many agents there are.
+    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms(), session: String? = nil, timeout: Int = 1500) {
+        self.init(directory: directory, terms: terms, session: session, timeout: timeout, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
             try AgentLauncher.start(seeds, directory: directory, terms: terms)
         }
     }
 
-    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int = 1500, obstacle: @escaping @Sendable () -> AgentError?,
+    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), session: String? = nil, timeout: Int = 1500, obstacle: @escaping @Sendable () -> AgentError?,
          start: @escaping @Sendable ([AgentSeed], AgentDirectory) throws -> Void) {
         self.directory = directory
         self.terms = terms
+        self.session = session
         self.timeout = timeout
         findObstacle = obstacle
         startAgent = start
     }
 
-    /// Why no agent can be started here; nil when one can.
-    public var obstacle: AgentError? { findObstacle() }
+    /// Why no agent can be started here; nil when one can, as far as that can be told before one is.
+    public var obstacle: AgentError? { findObstacle() ?? directory.obstacle() }
 
     /// Why an agent that is there could not be used, the last time one was looked for.
     public var problem: AgentError? { lock.withLock { lastProblem } }
 
-    /// Why not every agent could be told what to drop (`drop`), the first time that was so.
-    public var unreached: AgentError? { lock.withLock { lastUnreached } }
-
     private var deadline: Int64 { xless_clock_awake_ms() + Int64(timeout) }
 
-    /// Connections to the agents.
+    /// Connections to the agents this command uses: that of the `xless session` it runs in first, then those of the
+    /// terminal. Another `xless session`'s is not one.
     private func links() -> [AgentLink] {
         let (links, problem) = links { try directory.sockets() }
         lock.withLock { lastProblem = problem }
-        return links
+        return links.filter(isMySession) + links.filter { !$0.isLease }
+    }
+
+    private func isMySession(_ link: AgentLink) -> Bool {
+        guard let session, link.isLease else { return false }
+        return link.path == session || directory.identity(of: session) == link.socket.identity
     }
 
     /// Connections to the agents at `paths`, which are all asked at once; and why one that is there could not be used.
@@ -168,10 +189,19 @@ public final class AgentClient: @unchecked Sendable {
         return (try? link.prove(has: witness.item, key: witness.symmetric)) == true
     }
 
-    /// Holds `seeds`, in an agent of this session, else one that has the witness's key, else a new one.
+    /// Holds `seeds`: in the agent of the `xless session` this runs in; with none, in an agent of this terminal's session,
+    /// else one that has the witness's key, else a new one.
     public func put(_ seeds: [AgentSeed], witness: () -> AgentWitness? = { nil }) throws {
         let links = links()
         if let problem, problem.kind == .unsafePath { throw problem }
+        if session != nil {
+            guard let link = links.first(where: { isMySession($0) && $0.isGranted && $0.isSameSession }) else {
+                throw AgentError(.refused, "the `xless session` this runs in holds nothing any more (it ended, the system slept, or the screen was locked)",
+                                 fix: "start it again; in a shell that outlived it (a tmux server started in it, say), `unset XLESS_SESSION`")
+            }
+            for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typedAgo: seed.typedAgo) }
+            return
+        }
         if let link = links.first(where: { $0.isGranted && $0.isSameSession }) ?? links.first(where: { link in witness().map { trusted(link, $0) } ?? false }) {
             do {
                 for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typedAgo: seed.typedAgo) }
@@ -182,9 +212,8 @@ public final class AgentClient: @unchecked Sendable {
         try startAgent(seeds, directory)
     }
 
-    /// Drops what is held under names that start with `prefix` (for `label` only, unless it is empty), in every agent;
-    /// how many. `unreached` says why that may not be all.
-    @discardableResult public func drop(prefix: String, label: String = "") -> Int {
+    /// Drops what is held under names that start with `prefix` (for `label` only, unless it is empty), in every agent.
+    @discardableResult public func drop(prefix: String, label: String = "") -> AgentDropped {
         var failure: AgentError?
         var count = 0
         do {
@@ -198,8 +227,17 @@ public final class AgentClient: @unchecked Sendable {
         } catch {
             failure = error as? AgentError
         }
-        lock.withLock { lastUnreached = lastUnreached ?? failure }
-        return count
+        return AgentDropped(count: count, unreached: failure)
+    }
+
+    /// Drops `names` from the first agent that has one of them and can be believed, as `get` finds it; whether there was one.
+    @discardableResult public func discard(_ names: [String], witness: () -> AgentWitness? = { nil }) -> Bool {
+        func drops(_ link: AgentLink) -> Bool { names.map { (try? link.drop(prefix: $0)) ?? 0 }.reduce(0, +) > 0 }
+        let links = links()
+        for link in links where link.isGranted && link.isSameSession && drops(link) { return true }
+        let others = links.filter { !($0.isGranted && $0.isSameSession) }
+        guard !others.isEmpty, let witness = witness() else { return false }
+        return others.contains { trusted($0, witness) && drops($0) }
     }
 
     /// Tells every agent, whatever its version, to drop everything and end. One that does not answer is ended where that
@@ -237,6 +275,24 @@ public final class AgentClient: @unchecked Sendable {
             let again = try? AgentLink.open([link.path], directory: directory, timeout: timeout)
             return again.map { $0.links.isEmpty && $0.busy.isEmpty } ?? true ? .gone : .unanswered
         }
+    }
+
+    /// Why no lease can be started here.
+    public var leaseObstacle: AgentError? { AgentLauncher.obstacle(lease: true) ?? directory.obstacle() }
+
+    /// Starts an agent for this process alone to keep: it ends with it, with `end()`, or after `seconds`.
+    /// - Parameter command: whose it is, for `leases`.
+    public func lease(_ seeds: [AgentSeed], command: String, seconds: Int) throws -> AgentLease {
+        try AgentLauncher.lease(seeds, command: command, seconds: seconds, directory: directory, terms: terms)
+    }
+
+    /// Whether the agent of the `xless session` this runs in is there, and serves this process.
+    public var isInSession: Bool { links().contains { isMySession($0) && $0.isGranted && $0.isSameSession } }
+
+    /// The leases that hold something, of every session of the user: looked at, not used.
+    public func leases() -> [AgentStatus] {
+        let all = (try? batches()) ?? []
+        return all.flatMap { paths in links { paths }.0.filter(\.isLease).compactMap { try? $0.status() } }.filter { $0.lease != nil && $0.count > 0 }
     }
 
     public func statuses() -> [AgentStatus] { links().compactMap { try? $0.status() } }

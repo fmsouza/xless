@@ -12,8 +12,9 @@
 #
 # Resumable: a step that finished is skipped when the script runs again; a step that failed or stopped runs again from
 # its start. App Review takes days: step 6 stops with exit code 75 while the version is in review; run the script again
-# later. It pauses only where a person must act: the Apple ID sign-in and two-factor code (asked by xless itself, on the
-# terminal), installing the TestFlight build on a device, and the closing question of step 9.
+# later. It pauses only where a person must act: the store's passphrase and the Apple ID sign-in (asked by xless itself,
+# on the terminal, once: `xless unlock` and `xless auth login --keep` hold both for the steps that follow, and neither is
+# asked again while it lasts), installing the TestFlight build on a device, and the closing question of step 9.
 #
 # Environment (read once and kept in the state file; the state wins afterwards):
 #   XLESS_M7_TEAM            the Apple team ID (10 characters)                                       required
@@ -185,10 +186,10 @@ result() {   # STEP PASS|FAIL|PENDING|SKIPPED NOTE
 step_titles=(
   "Live contract check: the list and get endpoints xless reads, decoded (read-only)"
   "Fresh Linux machine, xless from the release candidate, no ~/.config/xless, no key files"
-  "xless auth login; xless auth api-key create (key in the store); xless auth logout"
+  "xless auth login; xless auth api-key create (key in the store)"
   "A new sample app: never-registered bundle ID, push entitlement, appstore/ with two locales and screenshots"
   "xless provision plan, then apply; a second apply is a no-op"
-  "xless run ships to TestFlight using only the store; a tester gets the build"
+  "xless auth logout; xless run ships to TestFlight using only the store; a tester gets the build"
   "xless release submit --release manual; status to Pending Developer Release; xless release publish"
   "Security: no secret under \$HOME but the vault, vault strings, process environments, core dumps, keyring, --verbose"
   "Docker: xless run --docker with the store; the build container never sees a secret"
@@ -231,11 +232,14 @@ render() {
 
 # ---- people ---------------------------------------------------------------------------------------------------------
 tty_ok() { [[ -r /dev/tty && -w /dev/tty ]] && { : < /dev/tty; } 2>/dev/null; }
+# What was typed before a question is shown is no answer to it.
+fresh_tty() { python3 -I -c 'import termios; termios.tcflush(0, termios.TCIFLUSH)' < /dev/tty 2>/dev/null || true; }
 # Waits for a person: Enter goes on, "no" (or n) records that it did not happen. Returns 1 for no.
 pause() {   # MESSAGE
   local answer
   if [[ "$HUMAN" == auto ]]; then note "(human step answered by the test harness: $1)"; return 0; fi
   tty_ok || die "a person is needed here and there is no terminal: $1"
+  fresh_tty
   printf '\n*** %s\n*** Press Enter when done, or type no: ' "$1" > /dev/tty
   IFS= read -r answer < /dev/tty || answer=no
   case "$answer" in n|N|no|NO|No) note "Person: \"$1\" — answered no."; return 1 ;; esac
@@ -245,6 +249,7 @@ ask_yes() {   # QUESTION: yes → 0
   local answer
   if [[ "$HUMAN" == auto ]]; then note "(question answered no by the test harness: $1)"; return 1; fi
   tty_ok || die "a person is needed here and there is no terminal: $1"
+  fresh_tty
   printf '\n*** %s [y/N] ' "$1" > /dev/tty
   IFS= read -r answer < /dev/tty || answer=n
   case "$answer" in y|Y|yes|YES|Yes) note "Person: \"$1\" — yes."; return 0 ;; esac
@@ -276,6 +281,14 @@ session_kept() {
   [[ "$(json "$out" 'd["session"]["state"]')" == kept ]] && { remember_apple_id "$out"; rm -f "$out"; return 0; }
   rm -f "$out"; return 1
 }
+# STATUS: what `xless auth status` says of the session or the store (kept, saved, none…; unlocked, locked, missing…)
+held() { local out="$DIR/tmp.held.json"; "$XLESS" auth status --json > "$out" 2>/dev/null || true; json "$out" "d['$1']['state']"; rm -f "$out"; }
+# One passphrase for the steps that follow, up front: nothing is asked while the store is unlocked, or when there is none.
+unlock_store() {
+  [[ "$(held store)" == locked ]] || return 0
+  say "Unlocking the secret store for this terminal: xless asks its passphrase once for the next hour (xless lock ends it)"
+  xl unlock --for 1h || note "The store could not be kept unlocked: each command that needs it asks its passphrase."
+}
 # STATUS-JSON: the Apple ID, the names of its teams (an individual's team is their name) and their App Store Connect
 # provider IDs (live-check prints the current one).
 remember_apple_id() {
@@ -295,11 +308,48 @@ remember_apple_id() {
   done < <(json "$out" '[str(t["providerId"]) for t in d if isinstance(t, dict) and t.get("providerId")]')
   rm -f "$out"
 }
-sign_in() {   # keeps a session for the steps that use the web session (xless asks the Apple ID, password and code)
+sign_in() {   # only when no usable session is kept: keeps one for the steps that use the web session, its trace scanned
   session_kept && return 0
-  say "Signing in to Apple: xless asks for the Apple ID, the password and the two-factor code on this terminal"
-  xl auth login --keep 30m
+  if [[ "$(held session)" == saved ]]; then unlock_store; if session_kept; then return 0; fi; fi
+  say "Signing in to Apple: xless asks the Apple ID, the password and the two-factor code on this terminal, once for the next 30 minutes"
+  traced auth login --keep 30m --verbose
+  state_set trace.login 1
   session_kept || true
+}
+
+# A traced command (a sign-in, the web session, the API): its trace is scanned for anything secret that came through
+# unredacted, in memory; the record keeps the count of lines and the findings. Returns the command's exit code.
+TRACE_RE='(^[<>] (Cookie|Set-Cookie|Authorization|scnt|X-Apple-ID-Session-Id|X-Apple-Session-Token|X-Apple-TwoSV-Trust-Token|X-Apple-HC|csrf|csrf_ts): (?!<redacted>))|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.|PRIVATE KEY|"(password|a|b|c|m1|m2|key|securityCode)": ?"(?!<redacted>)|[Bb]earer (?!<redacted>)'
+traced() {
+  local trace rc=0 counts n f
+  say "xless $* (its trace is scanned, not recorded)"
+  trace="$("$XLESS" "$@" 2>&1 >/dev/null)" || rc=$?
+  counts="$(printf '%s\n' "$trace" | python3 -I -c '
+import re, sys
+pattern = re.compile(sys.argv[1], re.M)
+n = f = 0
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    n += 1
+    if pattern.search(line):
+        f += 1
+        print("FINDING line %d: %s" % (n, pattern.search(line).group(0)[:40]), file=sys.stderr)
+print(n, f)' "$TRACE_RE" 2> >(redact >> "$(frag)"))" || true
+  n="${counts% *}"; f="${counts#* }"
+  note "\`xless $*\`: ${n:-0} trace line(s), ${f:-0} finding(s)."
+  state_set trace.lines $(( $(state_get trace.lines) + ${n:-0} ))
+  state_set trace.findings $(( $(state_get trace.findings) + ${f:-0} ))
+  [[ $rc == 0 ]] || { printf '%s\n' "$trace" | grep -v -E '^[<>] ' | tail -n 5 | redact | tee -a /dev/stderr >> "$(frag)" || true; note "(exit $rc)"; }
+  return "$rc"
+}
+# The commands traced besides the sign-in, once: step 2 does it, while the session it needs is kept.
+trace_commands() {
+  [[ -z "$(state_get trace.commands)" ]] || return 0
+  traced team list --verbose || true
+  traced keys list --team "$TEAM" --verbose || true
+  traced apps list --team "$TEAM" --verbose || true
+  state_set trace.commands 1
 }
 
 ARCH="$(uname -m)"; case "$ARCH" in arm64|aarch64) ARCH=arm64 ;; *) ARCH=amd64 ;; esac
@@ -307,56 +357,73 @@ ARCH="$(uname -m)"; case "$ARCH" in arm64|aarch64) ARCH=arm64 ;; *) ARCH=amd64 ;
 # The names of secrets a process may not carry: xless's own, and anything named like a key, a password or a token.
 SECRET_NAME_RE='(^|_)(KEY|P8|PEM|PASSWORD|PASSPHRASE|TOKEN|SECRET)(_|$)'
 # Watches the environments and command lines of this script's descendants (xless, testflight.sh, docker, the build
-# tools) until $DIR/watch.stop appears, and writes what it finds to $1: variable names and process names, never a
-# value. Variables already in this shell before the run (yours) are listed once and not counted.
+# tools) until $DIR/watch.stop appears, or this script is gone, and writes what it finds to $1: variable names and
+# process names, never a value. Variables already in this shell before the run (yours) are listed once and not counted.
+# It prints nothing (start_watch): a person may be typing a passphrase meanwhile.
 watch_processes() {   # OUT
-  local out="$1" root="$$" seen=" " p env name comm
+  local out="$1" root="$$" seen=" " p env name comm line
+  set +e   # a process that ends while it is read is no reason to stop
   : > "$out"
-  while [[ ! -e "$DIR/watch.stop" ]]; do
+  while [[ ! -e "$DIR/watch.stop" ]] && kill -0 "$root"; do
     for p in $(descendants "$root"); do
-      [[ -r "/proc/$p/environ" ]] || { [[ "$seen" == *" u$p "* ]] || { seen+="u$p "; echo "unreadable $p $(cat "/proc/$p/comm" 2>/dev/null)" >> "$out"; }; continue; }
-      [[ "$seen" != *" $p "* ]] || continue
-      seen+="$p "
-      comm="$(cat "/proc/$p/comm" 2>/dev/null || echo '?')"
-      echo "scanned $p $comm" >> "$out"
-      env="$(tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null || true)"
+      comm="$(proc_name "$p" | tr ' ' '_')"   # with the name: a process may exec another program
+      [[ "$seen" != *" $p:$comm "* ]] || continue
+      if ! env="$(proc_env "$p")"; then
+        [[ "$seen" == *" u$p "* ]] || { seen+="u$p "; echo "unreadable $p $comm" >> "$out"; }
+        continue
+      fi
+      seen+="$p:$comm "
+      echo "scanned $p ${comm:-?}" >> "$out"
       while IFS= read -r line; do
         name="${line%%=*}"; [[ -n "$name" && "$line" == *=* ]] || continue
         [[ -n "${line#*=}" ]] || continue
         [[ "$name" != *_FILE && "$name" != XLESS_NO_SECRET_STORE ]] || continue
         [[ " $BASELINE_SECRETS " != *" $name "* ]] || continue
-        if [[ "$name" =~ $SECRET_NAME_RE ]]; then echo "FOUND $comm($p): environment variable $name" >> "$out"; fi
-        case "${line#*=}" in *"PRIVATE KEY"*|eyJ*.*.*) echo "FOUND $comm($p): $name holds key material or a token" >> "$out" ;; esac
+        if [[ "$name" =~ $SECRET_NAME_RE ]]; then echo "FOUND ${comm:-?}($p): environment variable $name" >> "$out"; fi
+        case "${line#*=}" in *"PRIVATE KEY"*|eyJ*.*.*) echo "FOUND ${comm:-?}($p): $name holds key material or a token" >> "$out" ;; esac
       done <<< "$env"
-      case "$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null)" in
-        *"PRIVATE KEY"*|*eyJ*.*.*) echo "FOUND $comm($p): key material or a token on its command line" >> "$out" ;;
+      case "$(proc_args "$p")" in
+        *"PRIVATE KEY"*|*eyJ*.*.*) echo "FOUND ${comm:-?}($p): key material or a token on its command line" >> "$out" ;;
       esac
     done
     sleep 0.5
   done
 }
-descendants() {   # PID: every process below it (from /proc: no ps needed)
-  local f line pid rest ppid p changed
-  local -A parent=() below=()
-  for f in /proc/[0-9]*/stat; do
-    { IFS= read -r line < "$f"; } 2>/dev/null || continue
-    pid="${f#/proc/}"; pid="${pid%/stat}"
-    rest="${line##*) }"; rest="${rest#* }"; ppid="${rest%% *}"
-    parent[$pid]="$ppid"
-  done
-  below[$1]=1; changed=1
-  while [[ $changed == 1 ]]; do
-    changed=0
-    for p in "${!parent[@]}"; do
-      [[ -z "${below[$p]:-}" && -n "${below[${parent[$p]}]:-}" ]] || continue
-      below[$p]=1; changed=1
+# A process's name, command line and environment (NAME=VALUE lines): from /proc, else (macOS) from ps, which shows no
+# environment of the system's own programs.
+if [[ -r /proc/self/environ ]]; then
+  proc_name() { cat "/proc/$1/comm"; }
+  proc_env() { [[ -r "/proc/$1/environ" ]] && tr '\0' '\n' < "/proc/$1/environ"; }
+  proc_args() { tr '\0' ' ' < "/proc/$1/cmdline"; }
+  proc_parents() {   # "pid ppid" lines (no ps needed)
+    local f line pid rest
+    for f in /proc/[0-9]*/stat; do
+      IFS= read -r line < "$f" || continue
+      pid="${f#/proc/}"; rest="${line##*) }"; rest="${rest#* }"
+      echo "${pid%/stat} ${rest%% *}"
     done
-  done
-  for p in "${!below[@]}"; do [[ "$p" == "$1" ]] || echo "$p"; done
+  }
+else
+  proc_name() { local name; name="$(ps -o comm= -p "$1")"; printf '%s' "${name##*/}"; }
+  proc_env() { local all; all="$(ps -Eww -o command= -p "$1")" && printf '%s\n' "${all#"$(proc_args "$1")"}" | tr ' ' '\n'; }
+  proc_args() { ps -ww -o command= -p "$1"; }
+  proc_parents() { ps -axo pid=,ppid=; }
+fi
+descendants() {   # PID: every process below it
+  proc_parents | awk -v root="$1" '
+    { parent[$1] = $2 }
+    END {
+      below[root] = 1
+      do {
+        changed = 0
+        for (p in parent) if (!(p in below) && (parent[p] in below)) { below[p] = 1; changed = 1 }
+      } while (changed)
+      for (p in below) if (p != root) print p
+    }'
 }
 WATCHERS=()
-start_watch() { rm -f "$DIR/watch.stop"; watch_processes "$1" & WATCHERS+=("$!"); }
-start_container_watch() { watch_containers "$1" & WATCHERS+=("$!"); }
+start_watch() { rm -f "$DIR/watch.stop"; watch_processes "$1" </dev/null >/dev/null 2>&1 & WATCHERS+=("$!"); }
+start_container_watch() { watch_containers "$1" </dev/null >/dev/null 2>&1 & WATCHERS+=("$!"); }
 stop_watch() { touch "$DIR/watch.stop"; wait ${WATCHERS[@]+"${WATCHERS[@]}"} 2>/dev/null || true; WATCHERS=(); rm -f "$DIR/watch.stop"; }
 watch_summary() {   # FILE: one line, and FOUND lines in the record
   local scanned unreadable found
@@ -370,8 +437,9 @@ watch_summary() {   # FILE: one line, and FOUND lines in the record
 # variable names (never their values).
 watch_containers() {   # OUT
   local out="$1" seen=" " c
+  set +e
   : > "$out"
-  while [[ ! -e "$DIR/watch.stop" ]]; do
+  while [[ ! -e "$DIR/watch.stop" ]] && kill -0 "$$"; do
     for c in $(docker ps -q --filter label=xless.run 2>/dev/null || true); do
       [[ "$seen" != *" $c "* ]] || continue
       seen+="$c "
@@ -435,7 +503,7 @@ step1() {
   for f in config.yml testflight.env; do
     if [[ -e "$config/$f" ]]; then note "$config/$f exists."; ok=0; fi
   done
-  if [[ -d "$config" ]]; then note "$config holds: $(find "$config" -mindepth 1 -maxdepth 1 -printf '%f ' | sort)"; else note "No $config."; fi
+  if [[ -d "$config" ]]; then note "$config holds: $(find "$config" -mindepth 1 -maxdepth 1 | sed 's|.*/||' | sort | tr '\n' ' ')"; else note "No $config."; fi
   if [[ -e "$(vault_file)" ]]; then note "A secret store already exists: $(vault_file)."; ok=0; else note "No secret store."; fi
   found="$(secret_files)"
   if [[ -n "$found" ]]; then note "Key files under \$HOME:"; printf '%s\n' "$found" | redact >> "$(frag)"; ok=0; else note "No key file under \$HOME."; fi
@@ -447,7 +515,9 @@ step1() {
 step2() {
   local out="$DIR/tmp.key.json" key
   if [[ ! -e "$(vault_file)" ]]; then xl secrets init || { result 2 FAIL "xless secrets init failed"; return 1; }; fi
-  if session_kept; then xl auth status || true; else sign_in; fi
+  unlock_store
+  sign_in
+  xl auth status || true
   xl team use "$TEAM" || { result 2 FAIL "xless team use failed"; return 1; }
   key="$(state_get api_key_id)"
   if [[ -z "$key" ]]; then
@@ -461,9 +531,8 @@ step2() {
   fi
   xl secrets list || true
   xl auth status --team "$TEAM" || true
-  xl auth logout || true
-  if session_kept; then result 2 FAIL "a session is still kept after xless auth logout"; return 1; fi
-  result 2 PASS "API key $key created and kept in the store; signed out"
+  trace_commands
+  result 2 PASS "API key $key created and kept in the store"
 }
 
 step3() {
@@ -474,7 +543,8 @@ step3() {
   # The placeholders (samples/m7-acceptance/README.md).
   local f
   for f in "$APP/xless.yml" "$APP/appstore/app.yml"; do
-    sed -i -e "s/com\.example\.xless\.m7/$BUNDLE/g" -e "s/ABCDE12345/$TEAM/g" -e "s/XLESSM7SKU/$SKU/g" "$f"
+    sed -e "s/com\.example\.xless\.m7/$BUNDLE/g" -e "s/ABCDE12345/$TEAM/g" -e "s/XLESSM7SKU/$SKU/g" "$f" > "$f.new"
+    cat "$f.new" > "$f"; rm -f "$f.new"
   done
   python3 -I - "$APP/appstore/app.yml" <<'PY'
 import os, sys
@@ -549,7 +619,7 @@ step4() {
   snapshot after
   local kind
   for kind in certs profiles keys; do made "$kind"; done
-  note "Made by this run: $(wc -l < "$DIR/made.certs") certificate(s), $(wc -l < "$DIR/made.profiles") profile(s), $(wc -l < "$DIR/made.keys") auth key(s)."
+  note "Made by this run: $(grep -c . "$DIR/made.certs") certificate(s), $(grep -c . "$DIR/made.profiles") profile(s), $(grep -c . "$DIR/made.keys") auth key(s)."
   xl provision apply --project "$APP" --yes || { result 4 FAIL "the second xless provision apply failed"; return 1; }
   xl_keep "$out" provision plan --project "$APP" --json || true
   steps="$(json "$out" 'len(d["steps"])')"; rm -f "$out"
@@ -576,6 +646,8 @@ step5() {
   [[ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/xless/testflight.env" ]] || { result 5 FAIL "${XDG_CONFIG_HOME:-$HOME/.config}/xless/testflight.env exists: only the store may provide the secrets"; return 1; }
   [[ -n "$(state_get build.5)" ]] || state_set build.5 "$(next_build)"
   if [[ -z "$(state_get shipped.5)" ]]; then
+    xl auth logout || true
+    if session_kept; then result 5 FAIL "a session is still kept after xless auth logout"; return 1; fi
     start_watch "$watch"
     set +e; XLESS_BUILD_NUMBER="$(state_get build.5)" xl run "$APP"; rc=$?; set -e
     stop_watch
@@ -669,42 +741,28 @@ step7() {
   else
     note "coredumpctl is not installed; kernel.core_pattern is $(cat /proc/sys/kernel/core_pattern 2>/dev/null || echo '?')."
   fi
-  # 5. --verbose traces: nothing secret (the trace is scanned as it comes; only the findings are recorded)
-  sign_in_traced
-  [[ "$(state_get trace.findings)" == 0 ]] || ok=0
-  # 6. the kernel keyring after lock and logout
-  xl secrets lock || true
-  xl auth logout || true
+  # 5. --verbose traces: nothing secret. The sign-in's was scanned when it was made, the others' in step 2; what was not
+  # (a session kept before the run, a run started by an older kit) is scanned now.
+  if [[ -z "$(state_get trace.login)" ]]; then
+    xl auth logout || true
+    traced auth login --keep 10m --verbose || { result 7 FAIL "the traced sign-in failed"; return 1; }
+    state_set trace.login 1
+  fi
+  if [[ -z "$(state_get trace.commands)" ]]; then sign_in; trace_commands; fi
+  note "--verbose traces scanned: $(state_get trace.lines) line(s), $(state_get trace.findings) finding(s)."
+  [[ "$(state_get trace.lines)" != 0 ]] || note "warning: the traces were empty."
+  if [[ "$(state_get trace.findings)" != 0 ]]; then
+    ok=0
+    for found in login commands lines findings; do state_set "trace.$found" ""; done   # scanned again by the next run
+  fi
+  # 6. nothing is held after xless lock: the agent, and the kernel keyring
+  xl lock || true
+  if session_kept; then note "A session is still kept after xless lock."; ok=0; fi
+  if [[ "$(held store)" == unlocked ]]; then note "The store is still unlocked after xless lock."; ok=0; fi
   keyring="$( { grep -i xless /proc/keys 2>/dev/null || true; if command -v keyctl >/dev/null 2>&1; then keyctl show @s 2>/dev/null; keyctl show @u 2>/dev/null; fi; } | grep -i xless || true)"
-  if [[ -n "$keyring" ]]; then note "The kernel keyring still holds:"; printf '%s\n' "$keyring" | redact >> "$(frag)"; ok=0; else note "The kernel keyring holds no xless key after secrets lock and auth logout."; fi
+  if [[ -n "$keyring" ]]; then note "The kernel keyring still holds:"; printf '%s\n' "$keyring" | redact >> "$(frag)"; ok=0; else note "The kernel keyring holds no xless key after xless lock."; fi
   if [[ $ok == 1 ]]; then result 7 PASS "no secret file, store opaque, no secret in processes, no core dump, clean traces and keyring"; return 0; fi
   result 7 FAIL "see the findings above"; return 1
-}
-
-# Traced commands (a sign-in, the web session, the API): their trace is scanned on the fly for anything secret that
-# came through unredacted; the record keeps the count of lines and the findings.
-TRACE_RE='(^[<>] (Cookie|Set-Cookie|Authorization|scnt|X-Apple-ID-Session-Id|X-Apple-Session-Token|X-Apple-TwoSV-Trust-Token|X-Apple-HC|csrf|csrf_ts): (?!<redacted>))|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.|PRIVATE KEY|"(password|a|b|c|m1|m2|key|securityCode)": ?"(?!<redacted>)|[Bb]earer (?!<redacted>)'
-sign_in_traced() {
-  local total=0 findings=0 cmd lines n f
-  for cmd in "auth login --keep 10m --verbose" "team list --verbose" "keys list --team $TEAM --verbose" "apps list --team $TEAM --verbose"; do
-    say "xless $cmd (its trace is scanned, not recorded)"
-    # shellcheck disable=SC2086 # the words of $cmd are the arguments
-    lines="$( { "$XLESS" $cmd 2>&1 >/dev/null; } | python3 -I -c '
-import re, sys
-pattern = re.compile(sys.argv[1], re.M)
-n = f = 0
-for line in sys.stdin:
-    n += 1
-    if pattern.search(line):
-        f += 1
-        print("FINDING line %d: %s" % (n, pattern.search(line).group(0)[:40]), file=sys.stderr)
-print(n, f)' "$TRACE_RE" 2> >(redact >> "$(frag)") )" || true
-    n="${lines% *}"; f="${lines#* }"
-    note "\`xless $cmd\`: ${n:-0} trace line(s), ${f:-0} finding(s)."
-    total=$(( total + ${n:-0} )); findings=$(( findings + ${f:-0} ))
-  done
-  state_set trace.findings "$findings"
-  [[ $total -gt 0 ]] || note "warning: the traces were empty."
 }
 
 step8() {
@@ -757,6 +815,7 @@ cleanup() {
   STEP=cleanup
   frag() { printf '%s/record/cleanup.md' "$DIR"; }
   note "Cleanup of $(date -u +%Y-%m-%dT%H:%MZ):"
+  unlock_store
   sign_in
   if [[ -n "$(state_get tester_added)" ]]; then
     if xl testflight testers remove "$TESTER" --app "$BUNDLE" --team "$TEAM" --yes; then state_set tester_added ""; fi
@@ -784,7 +843,7 @@ cleanup() {
   id="$(state_get api_key_id)"
   if [[ -n "$id" ]] && xl auth api-key revoke "$id" --team "$TEAM" --yes; then state_set api_key_id ""; fi
   xl secrets list || true
-  xl auth logout || true
+  xl lock || true
   note "Left in place (Apple has no delete for them): the app record of $BUNDLE and its bundle ID, the TestFlight group, the uploaded builds (they expire after 90 days)."
   render
 }
@@ -794,21 +853,24 @@ dry_run() {
   cat <<EOF
 The M7 acceptance (#105), as this script would run it (nothing is run now):
 
- 0. XLESS_LIVE_APPLE=1 xless live-check --team <team> [--app <bundle ID>]      (after: xless auth login --keep 30m)
+ 0. XLESS_LIVE_APPLE=1 xless live-check --team <team> [--app <bundle ID>]
+    (after: xless auth login --keep 30m --verbose, its trace scanned; here and below only when no session is kept)
     again at the end of step 2 (with the new API key) and of step 4 (with the app); a FAIL stops the run
  1. xless --version; checks: no ~/.config/xless, no store, no key file under \$HOME          (a person decides if not fresh)
- 2. xless secrets init; xless auth login --keep 30m; xless team use <team>;
-    xless auth api-key create --name "xless M7 acceptance" --role ADMIN --json; xless auth status; xless auth logout
+ 2. xless secrets init; xless unlock --for 1h (here and before the steps below, only when the store is locked);
+    xless auth login --keep 30m --verbose; xless team use <team>;
+    xless auth api-key create --name "xless M7 acceptance" --role ADMIN --json; xless auth status;
+    --verbose traces of team list, keys list, apps list scanned
  3. copy samples/m7-acceptance to $APP, fill the placeholders; xless bundle-ids list --json (not registered yet);
     xless store validate --dir $APP/appstore
- 4. xless auth login --keep 30m; [xless devices register]; xless provision plan --project $APP;
+ 4. xless auth login --keep 30m --verbose; [xless devices register]; xless provision plan --project $APP;
     xless provision apply --project $APP --yes [--company-name ...]; again; xless provision plan --json (0 steps)
- 5. xless run $APP (processes watched); xless testflight testers add <tester> --group "$GROUP" --app <bundle ID>
+ 5. xless auth logout; xless run $APP (processes watched); xless testflight testers add <tester> --group "$GROUP" --app <bundle ID>
     PAUSE: install the TestFlight build on a device
  6. xless release submit --release manual (--dry-run first); xless release status --json until Pending Developer Release
     (exit 75: in review, run again later; 76: rejected, fix and run again); xless release publish
  7. key files under \$HOME; strings on the store; process environments of steps 5 and 8; coredumpctl;
-    --verbose traces of auth login, team list, keys list, apps list scanned; xless secrets lock; xless auth logout; keyring
+    what the --verbose traces above held; xless lock; what xless auth status and the keyring still hold
  8. xless run --docker $APP --to finalize, then --from sign (containers inspected: no secret in the build one)
  9. QUESTION: was a portal opened in a browser?
 --cleanup: testers remove, devices disable, profiles delete, certs revoke, keys revoke (those this run made), api-key revoke.
@@ -880,6 +942,8 @@ for STEP in 0 1 2 3 4 5 8 6 7 9; do
   if done_step "$STEP"; then say "step $STEP: done before, skipped"; continue; fi
   say "step $STEP: ${step_titles[$STEP]}"
   printf '\n_%s_\n' "$(date -u +%Y-%m-%dT%H:%MZ)" >> "$(frag)"
+  # Asked here, before the step's own work; steps 0, 1 and 9 need no store, steps 2 and 7 see to it themselves.
+  case "$STEP" in 3|4|5|6|8) unlock_store ;; esac
   set +e; ( set -e; if [[ $STEP == 0 ]]; then step0 "" sign-in; else "step$STEP"; fi ); rc=$?; set -e
   hide_learnt
   if [[ $rc != 0 ]]; then render; say "stopped at step $STEP (exit $rc): run the script again to continue from there"; exit "$rc"; fi

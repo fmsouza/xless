@@ -351,7 +351,8 @@ What `push` leaves alone:
   Apple allows (10 screenshots, 3 previews) stops the push before anything is sent. An upload `pull` could not download
   (`media.lock` without `md5`) is part of the directory and stays where it is;
 - App Privacy when `app.yml` has no `privacy:`; with one, when no Apple ID session is kept and there is no terminal
-  to sign in on (CI): the part is skipped with a note (an error with `--only privacy`) and the rest is pushed.
+  to sign in on (CI): the part is skipped with a note (an error with `--only privacy`) and the rest is pushed. On a terminal
+  it signs in once, before anything is planned (a kept session is used instead; `--only` without `privacy` needs none).
 
 **The demo account's password** comes from the secret `review.demoAccount.passwordSecret` names: the secret store's
 entry, or the `NAME` / `NAME_FILE` environment variables ([secrets.md](secrets.md)). App Store Connect never gives it
@@ -361,7 +362,7 @@ password). `passwordSecret` may not name one of xless's keys or anything named l
 `*_TOKEN`, `*_P8`, `*_PEM`, `*_SECRET`): its value would be sent to App Store Connect, where App Review reads it. Nor
 may it name a variable something else relies on: the system's or the shell's (`PATH`, `HOME`, `ENV`, `IFS`, `LANG`,
 `LC_*`, `LD_*`, `XDG_*`, `SSH_*`, …), one of xless's own (`XLESS_*` other than `XLESS_DEMO_PASSWORD`, `*_FILE`) or of its
-scripts (`TEAM`, `NAME`, `SIM`, …); case does not matter. It is read once, before anything is sent (a missing secret sends nothing), goes into that one request, sent
+scripts (`TEAM`, `NAME`, `SIM`, …); case does not matter. It is read once, before anything is sent (with the one passphrase of the command) (a missing secret sends nothing), goes into that one request, sent
 once and never retried, and is never printed, written, or shown in a `--verbose` trace or an error, even when App Store
 Connect's answer repeats it.
 

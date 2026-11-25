@@ -92,6 +92,14 @@ func aChildStartedDirectlyByChildProcessStartsInAnEmptySessionKeyring() throws {
     #expect(env == ["PATH": "/bin", "ADDED": "x", "XLESS_NO_SECRET_STORE": "1"])
 }
 
+/// Where the agent of an `xless session` is: no tool is told, whoever adds it.
+@Test func noToolIsToldOfWhatIsHeld() throws {
+    #expect(ChildProcess.environment(["PATH": "/bin", "XLESS_SESSION": "/x.sock"], extra: ["XLESS_SESSION": "/y.sock"])
+        == ["PATH": "/bin", "XLESS_NO_SECRET_STORE": "1"])
+    let out = try Shell.run("env", [], env: ["XLESS_SESSION": "/y.sock"], baseEnvironment: ["PATH": "/usr/bin:/bin", "XLESS_SESSION": "/x.sock"], stage: .build).stdout
+    #expect(!out.contains("XLESS_SESSION"))
+}
+
 @Test func startingAChildEntersTheSecretScope() throws {
     _ = try Shell.run("true", [], stage: .build)
     #expect(SecretScope.coreFileLimit == 0)

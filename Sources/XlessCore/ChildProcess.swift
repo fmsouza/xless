@@ -15,6 +15,7 @@ import Foundation
 ///   kept Apple ID session (possessor-only keys in the user's session keyring) and the agent's access token are out of
 ///   its reach and its descendants'. xless itself keeps the user's keyring: a later stage still finds a remembered unlock.
 /// - **`XLESS_NO_SECRET_STORE=1`**, so an xless the build runs never opens the store (and leaves the keyring too).
+/// - **No `XLESS_SESSION`**: it is not told where what an `xless session` holds is (it would be refused there too).
 /// - **No secret variable**: `Shell.scrubbedEnvironment` (the registered secrets and every name the run resolved).
 /// - **xless is not dumpable** (`SecretScope`): the child cannot attach to xless or read its memory or its environment
 ///   (`/proc/<pid>/environ`, which holds the secret variables it was started with).
@@ -22,12 +23,16 @@ public enum ChildProcess {
     /// The variable that keeps a nested xless out of the secret store (read in `main`).
     public static let noSecretStore = "XLESS_NO_SECRET_STORE"
 
-    /// A child's environment: `base` without the secret variables, then `extra` (nil removes), then
+    /// The variable that says where the agent of an `xless session` is.
+    public static let session = "XLESS_SESSION"
+
+    /// A child's environment: `base` without the secret variables, then `extra` (nil removes), then no `XLESS_SESSION` and
     /// `XLESS_NO_SECRET_STORE=1`, which nothing overrides.
     public static func environment(_ base: [String: String], extra: [String: String?] = [:]) -> [String: String] {
         var environment = base
         for name in Shell.scrubbedEnvironment { environment[name] = nil }
         for (k, v) in extra { environment[k] = v }
+        environment[session] = nil
         environment[noSecretStore] = "1"
         return environment
     }

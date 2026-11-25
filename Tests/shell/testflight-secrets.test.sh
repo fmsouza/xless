@@ -21,11 +21,17 @@ RUN="$t/run/xless/0123456789abcdef0123456789abcdef"
 # The fake xless: `secrets materialize` writes each SET=NAME,… as $RUN/SET/NAME, printing $RUN first (MAT_EXIT: fails
 # instead; MAT_SLEEP: stops after printing, as when it waits for the passphrase; MAT_DIR: prints that path instead).
 # `secrets named-by` prints NAMES (comma-separated) and logs to $XLOG.named; ABSENT: optional (?NAME) secrets the
-# store does not have.
+# store does not have. `session` runs its command, with XLESS_SESSION set (unless NO_HOLD: where nothing can be held).
 cat > "$t/bin/xless" <<'X'
 #!/usr/bin/env bash
 if [[ "$1 $2" == "secrets named-by" ]]; then echo "$*" >> "$XLOG.named"; [[ -z "${NAMES:-}" ]] || tr , '\n' <<<"$NAMES"; exit "${NAMED_EXIT:-0}"; fi
-echo "$* | NOSTORE=${XLESS_NO_SECRET_STORE-unset}${MY_REVIEW_PW_FILE+ PWF=$MY_REVIEW_PW_FILE}${MY_REVIEW_PW+ PW=set}" >> "$XLOG"
+echo "$* | NOSTORE=${XLESS_NO_SECRET_STORE-unset}${XLESS_SESSION+ HELD}${MY_REVIEW_PW_FILE+ PWF=$MY_REVIEW_PW_FILE}${MY_REVIEW_PW+ PW=set}" >> "$XLOG"
+if [[ "$1" == session ]]; then
+  [[ -z "${SESSION_EXIT:-}" ]] || exit "$SESSION_EXIT"
+  while [[ "$1" != -- ]]; do shift; done; shift
+  [[ -n "${NO_HOLD:-}" ]] || export XLESS_SESSION=/held.sock
+  "$@"; exit
+fi
 [[ "$1 $2" == "secrets materialize" ]] || { case "$*" in *next-build*) echo 1.0.0.2026112301 ;; esac; exit "${XLESS_EXIT:-0}"; }
 [[ -z "${MAT_EXIT:-}" ]] || { echo "error: [config] the secret store has no XLESS_DIST_KEY" >&2; exit "$MAT_EXIT"; }
 if [[ "$3" == --check ]]; then   # prints the optional (?NAME) secrets the store has
@@ -173,17 +179,44 @@ grep -q -- "-e XLESS_DIST_KEY " "$t/dlog" && fail "a secret value reached a cont
 
 # natively nothing is written: xless reads the store itself; the script checks it holds them first (no passphrase),
 # and the build step (2) cannot open it
-native=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 XDG_RUNTIME_DIR="$t/run" XLOG="$t/xlog")
+# a program the script itself runs (dirname, mktemp): it logs whether it is told of the session
+mkdir -p "$t/own"
+for c in dirname mktemp; do printf '#!/bin/sh\necho "%s${XLESS_SESSION+ HELD}" >> "%s/own.log"\nexec /usr/bin/%s "$@"\n' "$c" "$t" "$c" > "$t/own/$c"; chmod +x "$t/own/$c"; done
+native=(env -i HOME="$t/home" PATH="$t/bin:$t/own:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0 XDG_RUNTIME_DIR="$t/run" XLOG="$t/xlog")
 reset
 "${native[@]}" "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native overlay from the store: $(cat "$t/err")"
-[[ "$(sed -n 1p "$t/xlog")" == "secrets materialize --check --team ABCDE12345 next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY | NOSTORE=unset" ]] \
-  || fail "native check: $(cat "$t/xlog")"
+check="secrets materialize --check --team ABCDE12345 next=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID sign=ASC_KEY_P8,ASC_KEY_ID,ASC_ISSUER_ID,XLESS_DIST_KEY | NOSTORE=unset"
+[[ "$(sed -n 1p "$t/xlog")" == "$check" ]] || fail "native check: $(cat "$t/xlog")"
 grep -q -- "--to finalize | NOSTORE=1$" "$t/xlog" || fail "native step 2 can open the store: $(cat "$t/xlog")"
-grep -q -- "--from sign --to upload | NOSTORE=unset$" "$t/xlog" || fail "native step 3 cannot open the store: $(cat "$t/xlog")"
+grep -q -- "--from sign --to upload | NOSTORE=unset HELD$" "$t/xlog" || fail "native step 3 cannot open the store: $(cat "$t/xlog")"
 [[ ! -e "$t/run/xless" ]] || fail "a native run wrote secrets"
+# and it asks for the passphrase once, before the first step, for all of them (`xless session`): the steps run inside it,
+# the build without it
+[[ "$(sed -n 2p "$t/xlog")" == "session --if-possible --purpose xless run --reason reading ASC_KEY_P8, ASC_KEY_ID, ASC_ISSUER_ID, XLESS_DIST_KEY -- bash $S --config $t/ov/app.yml | NOSTORE=unset" ]] \
+  || fail "native session: $(cat "$t/xlog")"
+[[ $(grep -c "^session" "$t/xlog") -eq 1 ]] || fail "one session: $(cat "$t/xlog")"
+grep -q "^mktemp" "$t/own.log" && ! grep -q HELD "$t/own.log" || fail "the script's own programs are told of the session: $(cat "$t/own.log")"
+grep -q "next-build.* HELD$" "$t/xlog" || fail "step 1 is not in the session: $(cat "$t/xlog")"
+reset
+"${native[@]}" "$S" "$t/proj" --verbose >/dev/null 2>"$t/err" || fail "native project from the store: $(cat "$t/err")"
+[[ "$(sed -n 2p "$t/xlog")" == "session "*" -- bash $S $t/proj --verbose | "* && "$(grep -c "^session" "$t/xlog")" -eq 1 ]] && grep -q "^ship .* HELD$" "$t/xlog" \
+  || fail "a project directory's run asks up front too: $(cat "$t/xlog")"
+reset
+"${native[@]}" NO_HOLD=1 "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native, with nothing held: $(cat "$t/err")"
+[[ $(grep -c "^session" "$t/xlog") -eq 1 ]] && grep -q -- "--from sign --to upload | NOSTORE=unset$" "$t/xlog" || fail "where nothing can be held the run goes on without: $(cat "$t/xlog")"
+reset
+"${native[@]}" XLESS_SESSION=/mine.sock "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native, in a session: $(cat "$t/err")"
+grep -q "^session" "$t/xlog" && fail "a run in a session of the user's own starts another: $(cat "$t/xlog")"
+grep -q -- "--to finalize | NOSTORE=1$" "$t/xlog" || fail "the build is told of the user's session: $(cat "$t/xlog")"
+reset; code=0
+"${native[@]}" SESSION_EXIT=23 "$S" --config "$t/ov/app.yml" >/dev/null 2>&1 || code=$?
+[[ $code -eq 23 && $(wc -l < "$t/xlog") -eq 2 ]] || fail "a store that is not unlocked must stop the run before it builds: exit $code $(cat "$t/xlog")"
 reset; code=0
 "${native[@]}" CHECK_EXIT=10 "$S" "$t/proj" >/dev/null 2>&1 || code=$?
 [[ $code -eq 10 && $(wc -l < "$t/xlog") -eq 1 ]] || fail "a failed native check must stop the run before it builds: exit $code $(cat "$t/xlog")"
+reset
+"${native[@]}" XLESS_TESTFLIGHT_DRY_RUN=1 "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native dry run: $(cat "$t/err")"
+[[ ! -s "$t/xlog" ]] || fail "a dry run unlocks: $(cat "$t/xlog")"
 # natively a NAME set in the environment serves as well (xless reads it), so the store is not checked for it
 reset
 "${native[@]}" XLESS_DIST_KEY=pem ASC_KEY_P8=p8 ASC_KEY_ID=K ASC_ISSUER_ID=I "$S" "$t/proj" >/dev/null 2>"$t/err" || fail "native values: $(cat "$t/err")"
@@ -290,7 +323,7 @@ dmg=$(grep "^run .*--to package" "$t/dlog"); pkg=$(grep "^run .*--distribution a
 reset
 "${native[@]}" NAMES=MY_REVIEW_PW MY_REVIEW_PW_FILE="$t/pw/review" MY_REVIEW_PW=pw "$S" --config "$t/ov/app.yml" >/dev/null 2>"$t/err" || fail "native with a demo password: $(cat "$t/err")"
 grep -q -- "--to finalize | NOSTORE=1$" "$t/xlog" || fail "native step 2 sees the demo password: $(cat "$t/xlog")"
-grep -q -- "--from sign --to upload | NOSTORE=unset PWF=$t/pw/review PW=set$" "$t/xlog" || fail "native step 3 lacks the demo password: $(cat "$t/xlog")"
+grep -q -- "--from sign --to upload | NOSTORE=unset HELD PWF=$t/pw/review PW=set$" "$t/xlog" || fail "native step 3 lacks the demo password: $(cat "$t/xlog")"
 grep -q "MY_REVIEW_PW" <(grep materialize "$t/xlog") && fail "natively the store is checked for an optional secret: $(cat "$t/xlog")"
 [[ ! -e "$t/run/xless" ]] || fail "a native run wrote secrets"
 echo PASS

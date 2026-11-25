@@ -88,7 +88,7 @@ enum LiveCheckWeb {
             let session = try await AppleWebSession.open(web: web, cache: AppleWebCLI.cache) {
                 throw XlessError(.account, "the kept session has expired", fix: "`xless auth login --keep`")
             }
-            let selected = try await session.selectTeam(team)
+            let selected = try await AppleWebCLI.selectTeam(team, in: session)
             try await session.useProvider(for: selected, choose: nil)
             return (session, transport)
         } catch {

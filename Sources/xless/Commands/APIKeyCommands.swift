@@ -19,11 +19,12 @@ struct AuthAPIKeyCommand: AsyncParsableCommand {
 
 /// What the web-session `api-key` commands share: signing in, the team, and App Store Connect's provider for it.
 enum APIKeyWebCLI {
-    static func open(team: String?, verbose: Bool) async throws -> (AppleWebSession, URLSessionAppleTransport, PortalTeam) {
+    /// - Parameter known: false for a command that must be told its team among several (`AppleWebCLI.selectTeam`).
+    static func open(team: String?, known: Bool = true, verbose: Bool) async throws -> (AppleWebSession, URLSessionAppleTransport, PortalTeam) {
         let (session, transport) = try await AppleWebCLI.open(verbose: verbose)
         do {
-            let selected = try await session.selectTeam(team)
-            try await session.useProvider(for: selected, choose: AppleWebCLI.chooser())
+            let selected = try await AppleWebCLI.selectTeam(team, in: session, known: known)
+            try await AppleWebCLI.useProvider(for: selected, in: session)
             return (session, transport, selected)
         } catch {
             transport.invalidate()
@@ -109,7 +110,7 @@ struct AuthAPIKeyCreateCommand: AsyncParsableCommand {
             let wanted = AccountSession.resolveTeam(flag: team.team, saved: AccountSession.savedTeam())
             if let wanted { try APIKeyStore.precheck(file, name: APIKeyStore.entryName(team: wanted), team: wanted) }
             let keys = try APIKeyWebCLI.unlocked(reason: "storing the new API key") { APIKeyStore(store: $0, catalogID: $1.id) }
-            let (session, transport, selected) = try await APIKeyWebCLI.open(team: wanted, verbose: trace.verbose)
+            let (session, transport, selected) = try await APIKeyWebCLI.open(team: wanted, known: false, verbose: trace.verbose)
             defer { transport.invalidate() }
             guard let issuer = try await session.asc.session().provider?.publicProviderId, !issuer.isEmpty else {
                 throw XlessError(.account, "App Store Connect did not give this team's issuer ID; nothing was created",

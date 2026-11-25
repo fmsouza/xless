@@ -23,8 +23,10 @@ PASS, NEXT, VALUE = "correct horse battery staple", "another long passphrase her
 keep = {k: os.environ[k] for k in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH") if k in os.environ}
 env = {**keep, "HOME": t + "/home", "XDG_DATA_HOME": t + "/data", "XDG_CONFIG_HOME": t + "/config", "XDG_RUNTIME_DIR": t + "/run",
        "TMPDIR": t + "/tmp", "TERM": "dumb", "LC_ALL": "C", "X": xless, "T": t}
-for d in ("home", "data", "config", "run", "tmp", "bin"):
+for d in ("home", "data", "config", "run", "tmp", "bin", "config/xless"):
     os.mkdir(f"{t}/{d}", 0o700)
+with open(t + "/config/xless/config.yml", "w") as f:   # what is held here is asked for (the offer: prompts.test.sh)
+    f.write("unlock: { keep: never }\n")
 failures = 0
 
 def check(ok, what, detail=""):
@@ -323,12 +325,12 @@ check(rc == 0 and n == 1, "after an agent was killed, unlock starts another", sh
 c.run("$X lock")
 os.system(f"rm -rf {t}/run/xless-agent")
 os.symlink(t + "/tmp", t + "/run/xless-agent")
-rc, shown, n = c.run("$X unlock --for 2h", PASS)
-check(rc != 0 and "xless-agent" in shown and not os.listdir(t + "/tmp"), "a directory that is a link is refused", shown)
+rc, shown, n = c.run("$X unlock --for 2h")
+check(rc != 0 and n == 0 and "xless-agent" in shown and not os.listdir(t + "/tmp"), "a directory that is a link is refused, before anything is asked", shown)
 os.unlink(t + "/run/xless-agent")
 os.mkdir(t + "/run/xless-agent"); os.chmod(t + "/run/xless-agent", 0o755)
-rc, shown, n = c.run("$X unlock --for 2h", PASS)
-check(rc != 0 and "xless-agent" in shown, "a directory others can enter is refused", shown)
+rc, shown, n = c.run("$X unlock --for 2h")
+check(rc != 0 and n == 0 and "xless-agent" in shown, "a directory others can enter is refused, before anything is asked", shown)
 os.rmdir(t + "/run/xless-agent")
 check(status(c)["store"]["state"] == "locked", "nothing is held at the end")
 c.run("$X lock")

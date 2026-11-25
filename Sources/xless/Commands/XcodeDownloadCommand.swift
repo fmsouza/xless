@@ -11,8 +11,9 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
         discussion: """
         Asks for your Apple ID, its password and the two-factor code (or a touch on a security key) on the terminal, signs in to Apple directly (no \
         browser; the password itself is never sent, as in Apple's own sign-in), then downloads each requested Xcode in \
-        that one session. Nothing of the sign-in is stored: no password, code, cookie or token is written to disk, \
-        logged or passed to another program, and the session ends with the command.
+        that one session. A session kept for this terminal (`xless auth login --keep`) is used instead, and nothing is \
+        asked. Nothing of the sign-in is written to disk, logged or passed to another program, and the session ends with \
+        the command unless you keep it.
 
         Versions are Apple's names without "Xcode": 26.2, 27 (or 27.0), "26 beta 3"; as separate arguments and/or \
         comma-separated (26.2,27.0). Every version is checked against Apple's list before anything downloads; --list \
@@ -58,13 +59,10 @@ struct XcodeDownloadCommand: AsyncParsableCommand {
             }
         }
 
-        let prompter = try TerminalPrompter()
-        let transport = URLSessionAppleTransport()
+        // The Apple ID web session: the kept one, else a sign-in. Its errors are `[sdk]` ones.
+        let (client, transport) = AppleWebCLI.client(verbose: false, stage: .sdk)
         defer { transport.invalidate() }
-        // The Apple ID web session, signed in for this run only and reporting `[sdk]` errors, as before.
-        let client = AppleWebClient(transport: transport, userAgent: "xless/\(XlessVersion.current)", stage: .sdk)
-        _ = try await AppleWebSession.signIn(web: client, prompter: prompter)
-        prompter.say("Signed in to Apple.")
+        _ = try await AppleWebCLI.session(client) { try TerminalPrompter() }
         let downloads = try await DeveloperDownloads.list(client: client)
 
         if list {

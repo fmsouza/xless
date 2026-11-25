@@ -13,14 +13,30 @@ public struct AgentStatus: Sendable, Equatable {
     /// How many terminal sessions it serves.
     public let sessions: Int
     public let items: [AgentItemStatus]
+    /// It is a process of this very session, by the kernel's word.
+    public let isSameSession: Bool
+    /// When it is on a lease; its items are then named for every process of the user, by kind.
+    public let lease: AgentLeaseStatus?
 
-    public init(isGranted: Bool, count: Int, remaining: Int, sessions: Int, items: [AgentItemStatus]) {
+    public init(isGranted: Bool, count: Int, remaining: Int, sessions: Int, items: [AgentItemStatus], isSameSession: Bool, lease: AgentLeaseStatus? = nil) {
+        self.isSameSession = isSameSession
+        self.lease = lease
         self.isGranted = isGranted
         self.count = count
         self.remaining = remaining
         self.sessions = sessions
         self.items = items
     }
+}
+
+/// Of an agent on a lease (`xless session`).
+public struct AgentLeaseStatus: Sendable, Equatable {
+    /// The command it is for.
+    public let command: String
+    /// The seconds it has left at most.
+    public let remaining: Int
+
+    public init(command: String, remaining: Int) { self.command = command; self.remaining = remaining }
 }
 
 public struct AgentHeld: Sendable {
@@ -42,6 +58,8 @@ final class AgentLink {
     private(set) var isGranted = false
     private(set) var isSameSession = false
     private(set) var hasProved = false
+    /// It is a session's (`xless session`).
+    private(set) var isLease = false
 
     var isTrusted: Bool { isSameSession || hasProved }
 
@@ -81,7 +99,7 @@ final class AgentLink {
                 let refused = fd == -ECONNREFUSED || fd == -EAGAIN
                 if refused, round == 9 {
                     if fd == -EAGAIN || mayListen(socket.path) {
-                        out.busy.append(AgentUnanswered(pid: 0, path: socket.path))
+                        out.busy.append(AgentUnanswered(busy: socket.path))
                     } else if !removeStale(socket, directory) {
                         out.dead.append(socket)
                     }
@@ -151,7 +169,7 @@ final class AgentLink {
     }
 
     /// Text of unknown origin, fit for a terminal.
-    private static func printable(_ text: String) -> String {
+    static func printable(_ text: String) -> String {
         String(text.unicodeScalars.prefix(200).map { $0.value < 0x20 || $0.value == 0x7F || (0x80...0x9F).contains($0.value) ? "?" : Character($0) })
     }
 
@@ -203,7 +221,7 @@ final class AgentLink {
     /// Takes the verdict, and looks at who gave it.
     func settle(until deadline: Int64) throws {
         let echo: [UInt8]
-        (echo, isGranted) = try answer(.verdict, until: deadline).body { (try $0.bytes(max: 16), try $0.bool()) }
+        (echo, isGranted, isLease) = try answer(.verdict, until: deadline).body { (try $0.bytes(max: 16), try $0.bool(), try $0.bool()) }
         guard AgentProof.equal(echo, second) else { throw AgentError.malformed("not the nonce it was given") }
         let peer = try channel.peer()
         let mine = AgentSession.current
@@ -279,16 +297,22 @@ final class AgentLink {
     }
 
     func status() throws -> AgentStatus? {
-        try request(.status).body { r in
-            let granted = try r.bool(), count = Int(try r.uint32()), remaining = try r.int(), sessions = Int(try r.uint32())
-            let named = Int(try r.uint32())
-            guard named <= AgentLimits.items else { throw AgentError.malformed("\(named) items") }
-            let items = try (0..<named).map { _ in
-                AgentItemStatus(name: try r.string(max: AgentLimits.nameBytes), label: try r.string(max: AgentLimits.labelBytes),
-                                remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int(), typedAgo: try r.int())
-            }
-            return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items)
+        try request(.status).body { try Self.status(&$0, isSameSession: isSameSession) }
+    }
+
+    /// Its times are no longer than an agent's can be, whatever it says: who speaks may be no agent.
+    static func status(_ r: inout WireReader, isSameSession: Bool) throws -> AgentStatus {
+        func seconds(_ r: inout WireReader) throws -> Int { max(0, min(try r.int(), AgentLimits.seconds)) }
+        let granted = try r.bool(), count = Int(try r.uint32()), remaining = try seconds(&r), sessions = Int(try r.uint32())
+        let lease = try r.bool() ? AgentLeaseStatus(command: Self.printable(try r.string(max: AgentLimits.labelBytes)), remaining: try seconds(&r)) : nil
+        let named = Int(try r.uint32())
+        guard named <= AgentLimits.items else { throw AgentError.malformed("\(named) items") }
+        let items = try (0..<named).map { _ in
+            AgentItemStatus(name: try r.string(max: AgentLimits.nameBytes), label: try r.string(max: AgentLimits.labelBytes),
+                            remaining: try seconds(&r), idle: try seconds(&r), idleRemaining: try seconds(&r), typedAgo: try seconds(&r))
         }
+        return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items,
+                           isSameSession: isSameSession, lease: lease)
     }
 
     /// Asks the agent, of whatever version, to drop everything and end; waits for nothing.

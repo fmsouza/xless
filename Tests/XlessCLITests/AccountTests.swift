@@ -109,3 +109,14 @@ let fakeKeyEnv = ["ASC_KEY_ID": "KEY123", "ASC_ISSUER_ID": "iss-1", "ASC_KEY_P8"
     #expect(seen.team == .some("ABCDE12345"))
     #expect(session.team == "ABCDE12345")
 }
+
+/// A question is asked the same way everywhere: `TerminalPrompter.confirm` adds the answers, once.
+@Test func noQuestionBringsItsOwnAnswers() throws {
+    let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/xless")
+    let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)).compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+    #expect(files.count > 50)
+    for file in files where !["TerminalPrompter.swift", "KeepOffer.swift"].contains(file.lastPathComponent) {
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(!text.contains("[y/N]"), "\(file.lastPathComponent): the question would show it twice")
+    }
+}

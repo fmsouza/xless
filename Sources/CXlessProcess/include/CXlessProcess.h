@@ -84,6 +84,16 @@ int xless_wait(int pid, int *status);
 /// Whether `pid` is a tool that signals are passed on to.
 int xless_tool_runs(int pid);
 
+/// Runs `path` with `argv` and `envp` (NULL-terminated) as a shell runs a script: in this process's session and process
+/// group, with its terminal, working directory and every descriptor that is not close-on-exec; and waits for it. Meanwhile
+/// SIGTERM and SIGHUP are passed on to it, and SIGINT and SIGQUIT when the terminal did not send them (it sends them to
+/// the whole group), and this process goes on; those that are ignored stay so, for both. Returns 0 (`*status`: its exit
+/// status, or the signal that ended it and `*by_signal` 1), or an errno value (nothing was started).
+int xless_run_foreground(const char *path, char *const argv[], char *const envp[], int *status, int *by_signal);
+
+/// Ends this process as `sig` does by default.
+void xless_end_by_signal(int sig);
+
 /// Sets `sig` back to what it does by default: to end this process, and (where it would be passed on) the tools it runs.
 /// Async-signal-safe.
 void xless_signal_default(int sig);

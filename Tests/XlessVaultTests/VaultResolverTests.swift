@@ -255,3 +255,79 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     #expect(user.heldKey(for: file, using: false) != nil)
     #expect(cache.using == [false, true, false, true, true])
 }
+
+// What the command line adds around the passphrase's question: a line that says why, and the offer to keep the unlock.
+
+private final class Manner: UnlockManner, @unchecked Sendable {
+    let hold: SecretHold?
+    private(set) var reasons: [String] = []
+    private(set) var remembered: [SecretHold?] = []
+    private(set) var offered = 0
+    /// Whether what it offered was kept.
+    private(set) var kept: [Bool] = []
+
+    init(hold: SecretHold?) { self.hold = hold }
+
+    func announcement(reason: String, remember: SecretHold?) -> String? { reasons.append(reason); remembered.append(remember); return "opens it: \(reason)" }
+    func offer(_ prompter: any PassphrasePrompter) -> SecretHold? { offered += 1; return hold }
+    func kept(_ held: Bool, _ prompter: any PassphrasePrompter) { kept.append(held) }
+}
+
+@Test func thePassphrasesQuestionSaysWhyAndATypedOneIsOfferedToBeKept() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, _) = try t.make()
+    let cache = MemoryCache(), manner = Manner(hold: SecretHold(seconds: 900, idle: 600, maximum: 7200))
+    let prompter = ScriptedPrompter(["wrong one here", "correct horse battery"])
+    let store = VaultSecretStore(store: t.store, cache: cache, manner: manner, prompter: { prompter })
+    _ = try store.key(for: file, remember: nil, reason: "exporting NOTE")
+    #expect(manner.reasons == ["exporting NOTE"]) // once, not per attempt
+    #expect(prompter.said.first == "opens it: exporting NOTE")
+    #expect(manner.offered == 1)
+    #expect(manner.kept == [true]) // told once it is
+    #expect(cache.stored.map(\.1) == [900])
+    #expect(cache.typed == [0])
+    // Held now: another command's store says and offers nothing.
+    let next = Manner(hold: nil)
+    _ = try VaultSecretStore(store: t.store, cache: cache, manner: next, prompter: { nil }).key(for: file, remember: nil, reason: "test")
+    #expect(next.reasons.isEmpty && next.offered == 0)
+}
+
+@Test func nothingIsKeptUnlessThePersonSaysSoAndWhatIsAskedForIsNotOffered() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, _) = try t.make()
+    let cache = MemoryCache(), no = Manner(hold: nil)
+    _ = try VaultSecretStore(store: t.store, cache: cache, manner: no, prompter: { ScriptedPrompter(["correct horse battery"]) }).key(for: file, remember: nil, reason: "test")
+    #expect(no.offered == 1 && cache.stored.isEmpty && no.kept.isEmpty)
+    // --remember: it is kept already.
+    let hold = SecretHold(seconds: 1800, idle: 600, maximum: 7200)
+    _ = try VaultSecretStore(store: t.store, cache: cache, manner: no, prompter: { ScriptedPrompter(["correct horse battery"]) }).key(for: file, remember: hold, reason: "test")
+    #expect(no.offered == 1 && no.remembered == [nil, hold])
+    #expect(cache.stored.map(\.1) == [1800])
+    // A wrong passphrase is not offered to be kept either.
+    try cache.forget(place: "")
+    #expect(throws: VaultError.self) {
+        try VaultSecretStore(store: t.store, cache: cache, manner: no, prompter: { ScriptedPrompter(["no", "no", "no"]) }).key(for: file, remember: nil, reason: "test")
+    }
+    #expect(no.offered == 1)
+}
+
+@Test func aHoldThatCannotBeMadeIsSaidAndTheCommandGoesOn() throws {
+    struct Full: VaultKeyCache {
+        var isAvailable: Bool { true }
+        func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes? { nil }
+        func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws { throw VaultError(.cacheUnavailable, "no room", fix: "make some") }
+        func forget(id: String) throws -> Bool { false }
+        func forget(place: String) throws {}
+        func held(id: String) -> HeldUnlock? { nil }
+    }
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, _) = try t.make()
+    let prompter = ScriptedPrompter(["correct horse battery"]), manner = Manner(hold: SecretHold(seconds: 900, idle: 600, maximum: 7200))
+    let store = VaultSecretStore(store: t.store, cache: Full(), manner: manner, prompter: { prompter })
+    _ = try store.key(for: file, remember: nil, reason: "test")
+    #expect(manner.kept == [false])
+    #expect(prompter.said.contains { $0.contains("no room") })
+}

@@ -120,6 +120,17 @@ public struct KernelKeyringCache: VaultKeyCache {
     }
 }
 
+/// What the command line adds around the passphrase's question.
+public protocol UnlockManner: Sendable {
+    /// The line before it: what is asked, for what, and for how long it is kept (`remember`, nil: for this command).
+    func announcement(reason: String, remember: SecretHold?) -> String?
+    /// A passphrase was typed, for this command only: offers on the same terminal to keep the store unlocked; the hold
+    /// the person agreed to. It is asked under the store's lock, so it must not ask the store for anything.
+    func offer(_ prompter: any PassphrasePrompter) -> SecretHold?
+    /// Whether what it agreed to is held now.
+    func kept(_ held: Bool, _ prompter: any PassphrasePrompter)
+}
+
 /// Gets the data key of an existing store: from the unlock cache, else by asking the passphrase.
 public enum VaultUnlocker {
     public static let passphrasePrompt = "Secret store passphrase: "
@@ -129,9 +140,9 @@ public enum VaultUnlocker {
     ///   - prompter: the terminal, or nil when there is none; called only when the cache cannot unlock.
     ///   - remember: how long to keep the unlocked key in `cache` (nil: not cached).
     ///   - place: where the store is.
-    ///   - reason: what needs the store ("the secret ASC_KEY_P8", "exporting NOTE"), for the error when it is locked and there is no terminal.
-    public static func dataKey(for file: VaultFile, cache: (any VaultKeyCache)?, place: String = "", prompter: () -> (any PassphrasePrompter)?,
-                               remember: SecretHold? = nil, reason: String) throws -> SymmetricKey {
+    ///   - reason: what needs the store ("the secret ASC_KEY_P8", "exporting NOTE"), for the line before the question and the error when it is locked and there is no terminal.
+    public static func dataKey(for file: VaultFile, cache: (any VaultKeyCache)?, place: String = "", manner: (any UnlockManner)? = nil,
+                               prompter: () -> (any PassphrasePrompter)?, remember: SecretHold? = nil, reason: String) throws -> SymmetricKey {
         // A stale key (the store was re-created) is dropped, and the passphrase asked.
         if let cached = try? cache?.load(id: file.id, using: true, accept: { opens(file, $0) }) {
             guard let remember, let cache else { return SymmetricKey(data: cached) }
@@ -149,12 +160,23 @@ public enum VaultUnlocker {
             throw VaultError(.locked, "the secret store is locked and there is no terminal to ask its passphrase on (needed for \(reason))",
                              fix: "run `xless unlock` in this terminal session first, or provide it through the environment")
         }
+        if let line = manner?.announcement(reason: reason, remember: remember) { prompter.say(line) }
         var lastError: VaultError = .wrongPassphrase
         for attempt in 1...attempts {
             let passphrase = try prompter.askSecret(passphrasePrompt)
             do {
                 let key = try VaultCrypto.unwrap(file, passphrase: passphrase)
-                if let remember, let cache { try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: place, hold: remember, typedAgo: 0) }
+                if let remember, let cache {
+                    try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: place, hold: remember, typedAgo: 0)
+                } else if let cache, let hold = manner?.offer(prompter) {
+                    do {
+                        try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: place, hold: hold, typedAgo: 0)
+                        manner?.kept(true, prompter)
+                    } catch {
+                        manner?.kept(false, prompter)
+                        prompter.say("note: the store is not kept unlocked: \(error)")
+                    }
+                }
                 return key
             } catch let e as VaultError where e.kind == .wrongPassphrase {
                 lastError = e
