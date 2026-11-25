@@ -151,9 +151,8 @@ struct SetupCommand: AsyncParsableCommand {
         say("==> \(native.xcode.summary)")
         say("    " + (try Platform.allCases.map { let s = try native.meta.sdk(for: $0); return "\(s.sdkName) SDK (\(s.sdkBuild))" }).joined(separator: ", ") + "; \(native.compiler)")
         say("    \(native.tools.summary(of: native.xcode))")
-        let layout = NativeLayout(env: env), signer = try MacNative.signer(env: env, layout: layout)
-        let here = FileManager.default.isExecutableFile(atPath: signer.final.appendingPathComponent("rcodesign").path)
-        say("    rcodesign, which signs: " + (here ? "in \(signer.final.path)" : "the first run that signs fetches it (\(signer.url.lastPathComponent), checked against its SHA-256)"))
+        let signer = try MacNative.signer(env: env)
+        say("    rcodesign, which signs: " + (signer.isInstalled ? "in \(signer.download.final.path)" : "the first run that signs fetches it (\(signer.download.url.lastPathComponent), checked against its SHA-256)"))
         if given != nil, chosen?.app != native.xcode.app {
             say("note: a build uses \(chosen?.summary ?? "no Xcode yet"): to build with this one, export DEVELOPER_DIR=\(Self.quote(native.xcode.developer.path))")
         }
@@ -381,7 +380,7 @@ struct SetupCommand: AsyncParsableCommand {
 
     /// A native download: fetched next to its `.partial` directory (both removed first: a leftover is never reused),
     /// checked against its pin, unpacked into `.partial`, then renamed into place and linked into the native `bin/`.
-    static func install(_ d: NativeDownload, layout: NativeLayout, again: String = "run xless setup again") throws {
+    static func install(_ d: NativeDownload, layout: NativeLayout) throws {
         let fm = FileManager.default
         let partial = d.partial, file = URL(fileURLWithPath: partial.path + ".download")
         for u in [partial, file] where fm.fileExists(atPath: u.path) { try fm.removeItem(at: u) }
@@ -390,12 +389,12 @@ struct SetupCommand: AsyncParsableCommand {
         do {
             try Shell.run("curl", ["-fsSL", "--retry", "3", "--proto", "=https", "-o", file.path, d.url.absoluteString], stage: .sdk)
         } catch let e as XlessError {
-            throw XlessError(.sdk, "cannot download \(d.url.absoluteString): \(e.cause)", fix: "check the network, then \(again)")
+            throw XlessError(.sdk, "cannot download \(d.url.absoluteString): \(e.cause)", fix: "check the network, then run xless setup again")
         }
         let sum = try XcodeSource.sha256(of: file)
         guard sum == d.sha256.lowercased() else {
             throw XlessError(.sdk, "\(d.url.absoluteString) has sha256 \(sum), not versions.env's \(d.sha256): nothing was installed",
-                             fix: "\(again); if it persists, report it (the download changed upstream)")
+                             fix: "run xless setup again; if it persists, report it (the download changed upstream)")
         }
         let staged: URL, link: (name: String, target: String)?
         switch d.kind {

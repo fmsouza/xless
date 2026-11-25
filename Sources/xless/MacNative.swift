@@ -3,6 +3,7 @@ import XlessAssets
 import XlessBuild
 import XlessCore
 import XlessSDK
+import XlessSign
 
 /// A native build on a Mac: the Xcode that is installed there, found and checked once per command, and what of xless's own goes with
 /// it. Off a Mac there is none (`here` is nil): xless.yml projects build there as they always did.
@@ -95,38 +96,24 @@ struct MacNative: Sendable {
 
     /// rcodesign, as on Linux: it signs with the key of the secret store from a file that only this user can read and that is gone
     /// seconds later. (`codesign` takes a key from a keychain only, where every program of this user could use it.) It is fetched by
-    /// the first command that needs it, checked against its pin, and first on PATH from here on; another one on PATH is not used.
+    /// the first command that needs it, and checked by each (`MacSigner`).
     static func prepareSigner(env: [String: String] = ProcessInfo.processInfo.environment) throws {
         guard isMac else { return }
-        let layout = NativeLayout(env: env)
-        let signer = try signer(env: env, layout: layout)
-        let program = signer.final.appendingPathComponent("rcodesign")
-        if !FileManager.default.isExecutableFile(atPath: program.path) {
-            try withLock(layout.tools.appendingPathComponent("rcodesign.lock")) { // another run's fetch, waited for
-                guard !FileManager.default.isExecutableFile(atPath: program.path) else { return }
-                say("fetching rcodesign (\(signer.url.lastPathComponent)), which signs, once, into \(signer.final.path)")
-                try SetupCommand.install(signer, layout: layout, again: "run it again")
+        let signer = try signer(env: env)
+        RCodesign.use(try signer.prepare { url, file in
+            say("fetching rcodesign (\(url.lastPathComponent)), which signs, once, into \(signer.download.final.path)")
+            do {
+                try Shell.run("/usr/bin/curl", ["-fsSL", "--retry", "3", "--proto", "=https", "-o", file.path, url.absoluteString], stage: .sdk)
+            } catch let e as XlessError {
+                throw XlessError(.sdk, "cannot download \(url.absoluteString): \(e.cause)", fix: "check the network, then run it again")
             }
-        }
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        if path != signer.final.path, !path.hasPrefix(signer.final.path + ":") { setenv("PATH", "\(signer.final.path):\(path)", 1) }
+        })
     }
 
-    private static func withLock(_ file: URL, _ body: () throws -> Void) throws {
-        #if os(macOS)
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fd = open(file.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
-        guard fd >= 0 else { throw XlessError(.sdk, "cannot open \(file.path): \(String(cString: strerror(errno)))", fix: "check the directory's permissions") }
-        defer { close(fd) } // which unlocks it
-        while flock(fd, LOCK_EX) != 0 && errno == EINTR {}
-        #endif
-        try body()
-    }
-
-    static func signer(env: [String: String], layout: NativeLayout) throws -> NativeDownload {
+    static func signer(env: [String: String]) throws -> MacSigner {
         let exe = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
         let table = KnownXcodes.parseEnv((try? String(contentsOf: XlessShare.root(env: env, executable: exe).appendingPathComponent("versions.env"), encoding: .utf8)) ?? "")
-        return try NativeSetupPlan.rcodesign(arch: SetupCommand.hostArch, mac: true, table: table, layout: layout)
+        return try MacSigner(env: env, arch: SetupCommand.hostArch, table: table)
     }
 
     private static func say(_ line: String) { FileHandle.standardError.write(Data("xless: \(line)\n".utf8)) }

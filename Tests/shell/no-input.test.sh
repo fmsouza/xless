@@ -37,9 +37,8 @@ env = {**keep, "PATH": os.environ["PATH"], "HOME": t + "/home", "XDG_DATA_HOME":
 for d in ("home", "data", "config", "run", "cache", "work", "tmp", "app", "appstore"):
     os.mkdir(f"{t}/{d}", 0o700)
 if sys.platform == "darwin":   # what signs is there already (nothing is fetched here)
-    version = next(l.split("=")[1].strip() for l in open(repo + "/versions.env") if l.startswith("RCODESIGN_VERSION="))
-    os.makedirs(f"{t}/data/xless-native/tools/rcodesign-{version}")
-    os.symlink("/usr/bin/false", f"{t}/data/xless-native/tools/rcodesign-{version}/rcodesign")
+    subprocess.run([repo + "/Tests/shell/fake-signer.sh", repo, t + "/share", t + "/data/xless-native"], check=True)
+    env["XLESS_SHARE"] = t + "/share"
 
 failures = 0
 def check(ok, what, detail=""):

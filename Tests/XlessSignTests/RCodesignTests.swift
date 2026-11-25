@@ -15,12 +15,20 @@ import Foundation
         #expect(said == "/\nsign\n-C\n/dev/null\n--pem-file\n/k.pem\n/b/X.app\n")
     }
 
+    /// On a Mac it is a file of xless's own (MacSigner), whatever PATH says.
+    @Test func theOneThatIsUsedIsStartedByItsPath() {
+        #expect(RCodesign.program == "rcodesign")
+        let chosen = RCodesign.Choice()
+        chosen.use(URL(fileURLWithPath: "/x/rcodesign"))
+        #expect(chosen.program == "/x/rcodesign")
+    }
+
     /// Every step that has a secret starts it that way. (A simulator build's, which signs ad hoc without one, is a build step.)
     @Test func nothingElseStartsIt() throws {
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Sources").standardizedFileURL
         var direct: [String] = []
         for case let file as URL in try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)) where file.pathExtension == "swift" {
-            for line in try String(contentsOf: file, encoding: .utf8).split(separator: "\n") where line.contains("Shell.run(\"rcodesign\"") || line.contains("[\"rcodesign\"]") {
+            for line in try String(contentsOf: file, encoding: .utf8).split(separator: "\n") where ["Shell.run(\"rcodesign\"", "[\"rcodesign\"]", "[RCodesign.program]"].contains(where: line.contains) {
                 if !line.contains("RCodesign.arguments(") { direct.append(file.lastPathComponent) }
             }
         }

@@ -259,9 +259,8 @@ COMMANDS = [(command, answers) for command, answers in (
     ("store push --dir $T/appstore --yes", SIGN_IN),   # with App Privacy details, which have no API
     ("auth api-key create", SIGN_IN), ("run $T/app", ()))]
 if sys.platform == "darwin":   # what signs is there already (nothing is fetched here)
-    version = next(l.split("=")[1].strip() for l in open(sys.argv[3] + "/versions.env") if l.startswith("RCODESIGN_VERSION="))
-    os.makedirs(f"{t}/data/xless-native/tools/rcodesign-{version}")
-    os.symlink("/usr/bin/false", f"{t}/data/xless-native/tools/rcodesign-{version}/rcodesign")
+    subprocess.run([sys.argv[3] + "/Tests/shell/fake-signer.sh", sys.argv[3], t + "/share", t + "/data/xless-native"], check=True)
+    env["XLESS_SHARE"] = t + "/share"
 with concurrent.futures.ThreadPoolExecutor(len(COMMANDS)) as pool:   # each retries a while when Apple does not answer
     results = list(pool.map(lambda c: on_a_terminal_of_its_own((EMPTY if c[0].startswith("auth") else "") + "$X " + c[0], PASS, *c[1]), COMMANDS))
 for (command, answers), (rc, shown, n) in zip(COMMANDS, results):
