@@ -646,18 +646,24 @@ What the build has:
 What it does not have: `~/.config/xless`, the store, the keychains, `~/.ssh`, `~/.aws`, `~/.npmrc`, `~/.docker`, `~/.gnupg` and the
 rest of every home directory, other volumes, the directories for temporary files (it can neither read what is there nor list it;
 whether a path that it guesses is there, it can tell); sockets (the xless agent's, Docker's, an ssh agent's), the terminal, the
-keychain's services, the pasteboard, Apple events, launchd (it cannot leave a job behind), starting an app (`open`), `sudo` and other
-programs that run as another user, other programs' memory and signals to them, mounting (a second `/dev`, or something else over its
-own directories), drivers (IOKit's, the Secure Enclave's key store among them). What it starts and leaves running is in the sandbox as
-well.
+keychain's services, the pasteboard's, Apple events' and the window server's, starting an app (`open`), a job of its own in launchd or a
+service that other programs find, `sudo` and other programs that run as another user, other programs' memory and signals to them,
+mounting (a second `/dev`, or something else over its own directories), drivers (IOKit's, the Secure Enclave's key store among them).
+What it starts and leaves running is in the sandbox as well.
 
 What the sandbox is not:
 
 - **Apple calls `sandbox-exec` deprecated, and its rules are not documented.** xless tests what its own do, on the macOS that its
   tests run on. It is not a container, and no virtual machine: a hole in the kernel, or a service of the system that is open to it
   and does more than it seems, is a way out. Of the services there are the ones that tell users and hosts, check certificates, watch
-  files, take log messages and tell the types of documents (so it can list the apps that are installed); launchd answers it about
-  its jobs, too.
+  files, take log messages and tell the types of documents (so it can list the apps that are installed).
+- **launchd answers it, and does some of what it asks**: the rules have no word for that (they refuse jobs of its own, and to stop,
+  signal or remove yours, but a rule that tells launchd's requests apart is for Apple's own programs). The build can **turn a launch
+  agent of yours off, or on again** (`launchctl disable`, `enable`). That stays after the build, and after the sandbox: an agent
+  that is turned off does not start at your next login. `launchctl print-disabled gui/$UID` shows what is off, `launchctl enable
+  gui/$UID/<label>` turns it on (`disable`, off). It can start an agent that is loaded and not running (`launchctl kickstart`): as you
+  set it up, outside of the sandbox. And it can read what is in your agents' files, variables among them (`launchctl print`): keep no
+  secret there.
 - **The environment of your other programs can be read**, as any program of yours can (`KERN_PROCARGS2`, what `ps -E` shows): the
   rules have no word for it. A secret that is exported in a shell is in the environment of what that shell started. Keep secrets in
   the store. The xless of a macOS release hides its own environment; one that you built from source does not.
