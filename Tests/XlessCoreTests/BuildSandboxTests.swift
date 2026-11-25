@@ -57,6 +57,13 @@ private final class Sandboxed {
         let status = tool.wait()
         return (status, try String(contentsOf: out, encoding: .utf8))
     }
+    /// A program of the build's own, made outside.
+    func compiled(_ source: String, _ flags: String...) throws -> String {
+        let program = "\(work)/probe"
+        try Data(source.utf8).write(to: URL(fileURLWithPath: program + ".c"))
+        try Shell.run("/usr/bin/cc", ["-o", program, program + ".c"] + flags, stage: .build)
+        return program
+    }
     /// What `sh -c` says.
     func sh(_ script: String) throws -> (status: Int32, out: String) { try run("/bin/sh", "-c", script) }
 }
@@ -118,23 +125,64 @@ private final class Sandboxed {
 
 @Test func theSandboxMountsNothingAndOpensNoDriver() throws {
     let box = try Sandboxed()
-    let source = box.work + "/probe.c", probe = box.work + "/probe", mounted = box.work + "/mounted"
-    try FileManager.default.createDirectory(atPath: mounted, withIntermediateDirectories: true)
-    // what mounts a second /dev (with a terminal that no rule knows) over a directory of the user's, and opens a driver that every process may
-    try Data("""
+    // A mount that mounts nothing anywhere: the system says whether it may be before it reads what the volume is, which is not given.
+    // And a driver that every process may open.
+    let probe = try box.compiled("""
         #include <IOKit/IOKitLib.h>
+        #include <errno.h>
         #include <string.h>
         #include <sys/mount.h>
         int main(int argc, char **argv) {
-            if (!strcmp(argv[1], "mount")) return mount("devfs", argv[2], MNT_NOSUID | MNT_DONTBROWSE, 0) ? 3 : unmount(argv[2], 0) ? 4 : 0;
+            if (!strcmp(argv[1], "mount")) return mount("apfs", argv[2], 0, 0) && errno == EPERM ? 3 : 0;
             io_connect_t driver = 0;
             return IOServiceOpen(IOServiceGetMatchingService(0, IOServiceMatching(argv[2])), mach_task_self(), 0, &driver) ? 3 : 0;
         }
-        """.utf8).write(to: URL(fileURLWithPath: source))
-    try Shell.run("/usr/bin/cc", ["-o", probe, source, "-framework", "IOKit"], stage: .build)
-    for words in [["mount", mounted], ["open", "IOPMrootDomain"]] {
+        """, "-framework", "IOKit")
+    for words in [["mount", box.work], ["open", "IOPMrootDomain"]] {
         try Shell.run(probe, words, stage: .build) // outside, it can
         #expect(try box.run(probe, words[0], words[1]).status == 3, "\(words)")
+    }
+}
+
+@Test func theSandboxFindsFewServicesAndOffersNone() throws {
+    let box = try Sandboxed()
+    // asks for services, or offers one, which goes with it; nothing is sent to any
+    let probe = try box.compiled("""
+        #include <mach/mach.h>
+        #include <servers/bootstrap.h>
+        #include <string.h>
+        int main(int argc, char **argv) {
+            mach_port_t port = 0;
+            if (!strcmp(argv[1], "find")) return bootstrap_look_up(bootstrap_port, argv[2], &port) % 256;
+            mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port);
+            mach_port_insert_right(mach_task_self(), port, port, MACH_MSG_TYPE_MAKE_SEND);
+            return bootstrap_register(bootstrap_port, argv[2], port) % 256;
+        }
+        """, "-Wno-deprecated-declarations")
+    let refused = Int32(1100 % 256) // BOOTSTRAP_NOT_PRIVILEGED
+    // the keychain (which is there without a user, too), Apple events, the pasteboard, the window server, what starts apps, simulators
+    for service in ["com.apple.SecurityServer", "com.apple.securityd.xpc", "com.apple.coreservices.appleevents", "com.apple.pasteboard.1", "com.apple.windowserver.active",
+                    "com.apple.coreservices.launchservicesd", "com.apple.CoreSimulator.CoreSimulatorService", "com.apple.tccd", "com.apple.cfprefsd.agent"] {
+        #expect(try box.run(probe, "find", service).status == refused, "\(service)")
+    }
+    try Shell.run(probe, ["find", "com.apple.SecurityServer"], stage: .build)
+    #expect(try box.run(probe, "find", "com.apple.system.notification_center").status == 0)
+    let own = "app.xless.sandbox-test-\(UUID().uuidString)"
+    try Shell.run(probe, ["offer", own], stage: .build)
+    #expect(try box.run(probe, "offer", own).status == refused)
+}
+
+@Test func theSandboxStartsNoProgramThatRunsAsAnotherUser() throws {
+    let box = try Sandboxed()
+    for program in ["/usr/bin/sudo", "/usr/bin/crontab", "/usr/bin/at", "/bin/ps"] {
+        var info = stat()
+        #expect(lstat(program, &info) == 0 && info.st_mode & S_ISUID != 0 && info.st_uid == 0, "\(program)")
+    }
+    // (that they are such programs is what is refused, so one that lists stands for all)
+    try Shell.run("/bin/ps", ["-p", "\(getpid())"], stage: .build)
+    for harmless in ["/bin/ps -p $$", "/usr/bin/crontab -l"] {
+        let answer = try box.sh(harmless)
+        #expect(answer.status == 126 && answer.out.contains("not permitted"), "\(harmless): \(answer.status) \(answer.out)")
     }
 }
 

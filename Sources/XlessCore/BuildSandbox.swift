@@ -72,7 +72,7 @@ public struct BuildSandbox: Sendable, Equatable {
         rules += ["(deny mach-lookup)", "(allow mach-lookup \(Self.services.map { "(global-name \"\($0)\")" }.joined(separator: " ")))"]
         let sockets = try writes.map { " (remote unix-socket (subpath \(try Self.quoted(Self.real($0)))))" }.joined()
         rules += ["(deny network-outbound (remote unix-socket))", #"(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder"))"# + sockets + ")"]
-        rules += ["(deny job-creation)", "(deny appleevent-send)", "(deny lsopen)", "(deny mach-priv-task-port)", "(deny process-info* (target others))",
+        rules += ["(deny mach-register)", "(deny job-creation)", "(deny appleevent-send)", "(deny lsopen)", "(deny mach-priv-task-port)", "(deny process-info* (target others))",
                   "(deny signal)", "(allow signal (target self) (target pgrp) (target same-sandbox))"]
         return rules.joined(separator: "\n") + "\n"
     }
