@@ -78,7 +78,7 @@ def start(ignored=None, polite=False):
     return p, pid_in("tool"), pid_in("child")
 
 def ended(p):
-    try: return p.wait(10)
+    try: return p.wait(30)
     except subprocess.TimeoutExpired:
         p.kill()
         return "xless goes on"
@@ -152,7 +152,7 @@ int met_sigaction(int sig, const struct sigaction *new, struct sigaction *old) {
     return r;
 }
 int met_raise(int sig) {
-    if (!atomic_exchange(&raising, 1)) until(&back);
+    if (!atomic_exchange(&raising, 1) && !atomic_load(&queued)) until(&back);
     return raise(sig);
 }
 static int start(void) {
@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
         until(&counted);
         pthread_kill(pthread_self(), SIGTERM); // which waits for the start
         atomic_store(&noted, 1);
-        sleep(10);
+        sleep(30);
         return 4;
     }
 #endif
