@@ -327,6 +327,7 @@ static atomic_int tools[256]; // their pids, which are their process groups; 0: 
 static atomic_int owner;      // the process they are tools of (a forked child has their numbers too)
 static atomic_int starting;   // how many are being started
 static atomic_int deferred;   // the signal that came meanwhile
+static atomic_int ending;     // a signal ends this process: no tool is being started, and none will be
 
 /// SIGINT, SIGTERM and SIGHUP as they are; any other says the same as SIGTERM to them.
 static void tell_tools(int sig) {
@@ -368,12 +369,14 @@ static void forward(int sig) {
     if (getpid() == atomic_load(&owner)) {
         tell_tools(sig);
         // While one is being started nobody knows its number: whoever starts it goes on from here (`tool_started`). In
-        // this order, so that either it or this sees the other.
+        // this order, so that either it or this sees the other. Nothing is put off once it is the end: what is counted then
+        // starts no tool, but may have put this handler back as `take_default` was about to send the signal again.
         atomic_store(&deferred, sig);
-        if (atomic_load(&starting) > 0) {
+        if (!atomic_load(&ending) && atomic_load(&starting) > 0) {
             errno = e;
             return;
         }
+        atomic_store(&ending, 1);
         remove_private();
     }
     take_default(sig);
@@ -513,6 +516,7 @@ static void tool_started(int tool) { // 0: it was not
     }
     int sig;
     if (atomic_fetch_sub(&starting, 1) == 1 && (sig = atomic_load(&deferred)) != 0) {
+        atomic_store(&ending, 1);
         tell_tools(sig);
         remove_private();
         take_default(sig);
