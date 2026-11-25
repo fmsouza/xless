@@ -39,14 +39,9 @@ public struct StoreManifest: Sendable, Equatable {
     /// A file `app.yml` names (e.g. `eula.file`), inside the manifest directory `dir`; nil when the name leads outside it
     /// (an absolute path, `..`, or a symbolic link out of it).
     public static func resolve(_ relative: String, in dir: URL) -> URL? {
-        guard !relative.isEmpty, !relative.hasPrefix("/") else { return nil }
+        guard !relative.isEmpty, !relative.hasPrefix("/"), ProjectPath.problem(relative) == nil else { return nil }
         let url = dir.appendingPathComponent(relative).standardizedFileURL
-        let base = dir.resolvingSymlinksInPath().standardizedFileURL.path
-        // A missing file's own path cannot be resolved: resolve its directory's.
-        let resolved = FileManager.default.fileExists(atPath: url.path) ? url.resolvingSymlinksInPath()
-            : url.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(url.lastPathComponent)
-        let target = resolved.standardizedFileURL.path
-        return target.hasPrefix(base + "/") ? url : nil
+        return ProjectPath.isInside(url, dir) ? url : nil
     }
 
     /// Locales in a stable order: the primary locale first, then by name.

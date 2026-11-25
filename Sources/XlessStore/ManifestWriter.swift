@@ -1,4 +1,5 @@
 import Foundation
+import XlessCore
 import Yams
 
 /// Writes a manifest directory all at once: the new tree is built next to it and swapped in by renames, so an
@@ -77,13 +78,16 @@ public enum ManifestWriter {
 
     static func fill(_ root: URL, manifest: StoreManifest, files: [String: Content], lock: MediaLock, previous: URL) throws {
         let fm = FileManager.default
+        for relative in files.keys.sorted() { try ProjectPath.check(relative, stage: .account) }
         func put(_ data: Data, _ relative: String) throws {
+            try ProjectPath.check(relative, stage: .account)
             let url = root.appendingPathComponent(relative)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url)
         }
         try put(Data(try renderApp(manifest).utf8), ManifestReader.appFile)
         for (locale, listing) in manifest.locales {
+            try ProjectPath.check(locale, stage: .account)
             try fm.createDirectory(at: root.appendingPathComponent(locale), withIntermediateDirectories: true)
             for (file, field) in LocaleListing.textFields {
                 if let value = listing[keyPath: field] { try put(Data(ManifestText.render(value).utf8), "\(locale)/\(file)") }
@@ -114,7 +118,12 @@ public enum ManifestWriter {
     /// enumerator gives relative paths, so a symbolic link in `dir`'s own path (macOS's /var → /private/var) cannot skew them.
     static func relativeFiles(under dir: URL) -> [String] {
         guard let e = FileManager.default.enumerator(atPath: dir.path) else { return [] }
-        return e.compactMap { $0 as? String }.filter {
+        #if os(Windows)
+        let names = e.compactMap { ($0 as? String)?.replacingOccurrences(of: "\\", with: "/") }
+        #else
+        let names = e.compactMap { $0 as? String }
+        #endif
+        return names.filter {
             (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent($0).path)[.type] as? FileAttributeType) == .typeRegular
         }.sorted()
     }

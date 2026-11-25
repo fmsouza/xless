@@ -1,6 +1,7 @@
 import Crypto
 import Foundation
 import XlessASC
+import XlessCore
 import Yams
 
 /// `appstore/media.lock`: which App Store Connect asset each local screenshot, preview or attachment is.
@@ -56,7 +57,7 @@ public struct MediaLock: Codable, Sendable, Equatable {
     /// The entry whose upload has Apple's checksum `appleChecksum` and whose local file still has its recorded MD5.
     public func unchangedFile(for appleChecksum: String, in dir: URL) -> String? {
         for (path, entry) in files.values.sorted(by: { $0.key < $1.key }) where entry.appleChecksum == appleChecksum {
-            if let recorded = entry.md5, let md5 = MD5Hex.file(dir.appendingPathComponent(path)), md5 == recorded { return path }
+            if let recorded = entry.md5, ProjectPath.problem(path) == nil, let md5 = MD5Hex.file(dir.appendingPathComponent(path)), md5 == recorded { return path }
         }
         return nil
     }
