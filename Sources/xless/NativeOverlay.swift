@@ -2,6 +2,7 @@ import ArgumentParser
 import Foundation
 import XlessCargo
 import XlessCore
+import XlessPackage
 import XlessTauri
 #if canImport(Glibc)
 import Glibc
@@ -80,7 +81,7 @@ struct NativeOverlay {
             }
         }
         reads += [executable.path, xcode.app.path] + more
-        let stages = [paths.signed, paths.out, paths.uploadRecord].flatMap { [$0.path, $0.path + ".partial"] }
+        let stages = [paths.signed, paths.out, paths.uploadRecord].flatMap { [$0.path, $0.path + ".partial"] } + [Packager.dSYMsCopy(beside: paths.out).path]
         return BuildSandbox(reads: reads, writes: writes.map(\.path), readOnly: stages, fixed: fixed.map(\.path), secrets: BuildPlaces.secrets(env, home: home), closed: closed)
     }
 

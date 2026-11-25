@@ -31,7 +31,7 @@ import XlessCore
         let cache = root + "/home/.cache/xless", work = cache + "/work/app"
         #expect(box.writes == [work, cache + "/build-home", cache + "/downloads", cache + "/inputs", cache + "/work/.pnpm-store"])
         #expect(box.fixed == [work + "/.xless", work + "/.xless/build", work + "/.xless/build/ios"])
-        for path in ["signed", "signed.partial", "out", "out.partial", "upload.json"] { #expect(box.readOnly.contains("\(work)/.xless/build/ios/\(path)")) }
+        for path in ["signed", "signed.partial", "out", "out.partial", "out.dSYMs", "upload.json"] { #expect(box.readOnly.contains("\(work)/.xless/build/ios/\(path)")) }
         for path in [".ssh", ".config/xless", ".local/share/xless", "Library/Keychains"] { #expect(box.secrets.contains("\(root)/home/\(path)")) }
         #expect(box.closed.contains(root + "/home") && box.closed.contains("/Users") && BuildSandbox.userHome.map(box.closed.contains) == true)
     }
