@@ -2,6 +2,7 @@
 # A new file gets its line here; WindowsSourcesTests checks both lists.
 - Sources/XlessCore/AppleSignature.swift
 - Sources/XlessCore/BuildSDKCheck.swift
+- Sources/XlessCore/BuiltTree.swift
 + Sources/XlessCore/BundleLayout.swift
 - Sources/XlessCore/ChildProcess.swift
 + Sources/XlessCore/DarwinSDK.swift
@@ -192,6 +193,7 @@
 + Sources/XlessStore/StoreSender.swift
 - Tests/XlessCoreTests/AppleSignatureTests.swift
 - Tests/XlessCoreTests/BuildSDKCheckTests.swift
+- Tests/XlessCoreTests/BuiltTreeTests.swift
 - Tests/XlessCoreTests/ChildProcessTests.swift
 - Tests/XlessCoreTests/DittoShimTests.swift
 + Tests/XlessCoreTests/DottedVersionTests.swift
