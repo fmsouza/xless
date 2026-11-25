@@ -53,7 +53,7 @@ cmp -s "$t/password" "$t/pw/xless/XLESS_DEMO_PASSWORD/secret.gpg" || fail "the p
 [[ ! -e "$t/home/.local/share/xless/vault/secrets.vault" ]] || fail "a vault was created"
 # Helper writes take turns under the vault's writers' lock: only its lock file is there, in a private directory.
 [[ -f "$t/home/.local/share/xless/vault/lock" ]] || fail "helper writes did not take the writers' lock"
-[[ "$(stat -c %a "$t/home/.local/share/xless/vault")" == 700 ]] || fail "the lock's directory is not private"
+[[ "$(ls -ld "$t/home/.local/share/xless/vault" | cut -c1-10)" == drwx------ ]] || fail "the lock's directory is not private"
 run import XLESS_DEMO_PASSWORD --file "$t/password"; refused "a second import" "already has an entry XLESS_DEMO_PASSWORD"
 
 run list; ok list
