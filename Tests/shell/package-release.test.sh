@@ -67,6 +67,7 @@ mac="$t/out/xless-1.2.3-macos-arm64.tar.gz" mactop=xless-1.2.3-macos-arm64
 [[ "$(wc -l < "$t/out/SHA256SUMS" | tr -d ' ')" == 3 ]] || fail "SHA256SUMS should have three lines"
 tar -tzf "$mac" > "$t/maclist"
 diff <(tar -tzf "$tb" | sed "s#^$top##" | grep -v /licenses/ | sort) <(tar -tzf "$mac" | sed "s#^$mactop##" | grep -v /licenses/ | sort) || fail "the macOS package has another layout"
+sed 's#/$##' "$t/maclist" | LC_ALL=C sort -c || fail "the names in the macOS package are not sorted"
 grep -qE '(^|/)(\._[^/]*|\.DS_Store|__MACOSX|_CodeSignature)(/|$)' "$t/maclist" && fail "macOS metadata in the package"
 for id in swift-LICENSE llvm-compiler-rt boringssl libyaml swift-crypto yams assetkit; do grep -q "/licenses/$id" "$t/maclist" || fail "no notice for $id on macOS"; done
 for id in musl curl icu zlib libxml2 swift-corelibs; do grep -q "/licenses/$id" "$t/maclist" && fail "a notice for $id, which a macOS xless has not in it"; done
@@ -142,6 +143,7 @@ done
 echo '          cmd LC_DYLD_ENVIRONMENT' >> "$t/mac/commands"; refused "sets variables of the dynamic linker"
 sed -i.bak 's/minos 14.0/minos 26.0/' "$t/mac/commands"; refused "is for macOS 26.0 or later"
 sed -i.bak 's/platform 1/platform 2/' "$t/mac/commands"; refused "is not for macOS"
+printf '  sectname __swift56_hooks\n   segname __DATA\n' >> "$t/mac/commands"; refused "holds a compatibility library of Swift: __swift56_hooks"
 echo 1 > "$t/mac/verify"; refused "does not verify"
 sed -i.bak 's/Signature=adhoc/Authority=Someone/' "$t/mac/signature"; refused "is not signed ad hoc"
 for flag in runtime restrict; do sed -i.bak "s/$flag//" "$t/mac/signature"; refused "not $flag"; done

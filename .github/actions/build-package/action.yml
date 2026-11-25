@@ -44,7 +44,8 @@ runs:
         swift build -c release --product xless --swift-sdk "$TRIPLE"
         echo "XLESS_BIN=$(swift build -c release --product xless --swift-sdk "$TRIPLE" --show-bin-path)/xless" >> "$GITHUB_ENV"
     # With the runner's Xcode, against its SDK: the binary links to the system's libraries only, and the package holds nothing
-    # of either (scripts/check-macos-binary.sh and check-package.sh, which package-release.sh runs). Nothing is cached.
+    # of either (scripts/check-macos-binary.sh and check-package.sh, which package-release.sh runs). Nothing is cached. Without
+    # the runtime-compatibility-version, dependencies that are for older systems bring in libswiftCompatibility56.a.
     - name: Build the macOS binary
       if: inputs.os == 'macos'
       shell: bash
@@ -54,8 +55,9 @@ runs:
         git config --global http.version HTTP/1.1
         xcodebuild -version
         swift --version
-        swift build -c release --product xless --arch "$ARCH"
-        echo "XLESS_BIN=$(swift build -c release --product xless --arch "$ARCH" --show-bin-path)/xless" >> "$GITHUB_ENV"
+        build=(swift build -c release --product xless --arch "$ARCH" -Xswiftc -runtime-compatibility-version -Xswiftc none)
+        "${build[@]}"
+        echo "XLESS_BIN=$("${build[@]}" --show-bin-path)/xless" >> "$GITHUB_ENV"
     - name: The binary reports the stamped version
       if: inputs.stamp == 'true'
       shell: bash

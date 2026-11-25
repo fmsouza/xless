@@ -1,7 +1,7 @@
 # Vendored third-party notices
 
 Verbatim copies of the upstream licence files for everything that is linked statically into the release `xless` binary
-(a musl build with the Swift static Linux SDK 0.1.0 for Swift 6.4.0) and is not a SwiftPM package of this repository.
+(on Linux a musl build with the Swift static Linux SDK 0.1.0 for Swift 6.4.0) and is not a SwiftPM package of this repository.
 They are shipped in `share/xless/licenses/` by `scripts/third-party-licenses.sh`, which refuses to copy a file whose
 sha256 differs from `SOURCES.tsv`; `Tests/shell/licenses.test.sh` checks the same. Nothing here is hand-written.
 
@@ -28,6 +28,11 @@ sha256 differs from `SOURCES.tsv`; `Tests/shell/licenses.test.sh` checks the sam
 Not linked (present in the SDK, no member reached the link): mimalloc, bzip2, XZ Utils, libarchive.
 The SDK's own bill of materials (`sbom.spdx.json`) lists the versions used above; it records no BoringSSL version, so the
 BoringSSL notice is the file at the upstream commit named below (the LICENSE has been stable for years).
+On macOS the Swift runtime, Foundation, CryptoKit, curl, libxml2, zlib and the C library are the system's, and no archive of
+the toolchain reaches the link (`swift build -c release --product xless -Xswiftc -runtime-compatibility-version -Xswiftc none
+-Xlinker -map -Xlinker map.txt`: objects of this repository and its packages only, for arm64 and x86_64). A macOS package gets
+the notices of what the compiler puts into those objects (`swift`, `compiler-rt`), of BoringSSL (in swift-crypto) and of
+libyaml.
 libyaml is not in the SDK: SwiftPM's Yams 6.2.2 bundles its source (`Sources/CYaml`), and the notice is libyaml 0.2.5's
 (the bundled copy is a later libyaml revision; the licence text of the 0.2.x line is the same MIT licence).
 The SwiftPM packages in `Package.resolved` (and the in-repo `ThirdParty/AssetKit`, with its CLZFSE) get their notices from

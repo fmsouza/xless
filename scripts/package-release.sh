@@ -40,7 +40,7 @@ if [[ "$os" == macos ]]; then
     done < <(otool -l "$stage/bin/xless" 2>/dev/null | sed -n '/cmd LC_RPATH/,/path /s/^ *path \(.*\) (offset [0-9]*)$/\1/p' | grep -vx /usr/lib/swift || true)
   fi
   # Ad hoc: no identity, so nobody but the checksums and the attestation vouches for it (docs/maintainers.md#releases). The
-  # hardened runtime refuses debuggers; "restrict" hides the environment and the memory from other programs of the user.
+  # hardened runtime refuses debuggers and DYLD_ variables; "restrict" hides the environment from the user's other programs.
   "${XLESS_CODESIGN:-codesign}" --force --sign - --identifier xless --options runtime,restrict "$stage/bin/xless"
   "${XLESS_CHECK_BINARY:-$root/scripts/check-macos-binary.sh}" "$stage/bin/xless" "$arch"
 fi
@@ -70,11 +70,13 @@ chmod -R u=rwX,go=rX "$stage"   # whatever the umask here, and the modes of what
 
 mkdir -p "$outdir"
 tarball="$outdir/$name.tar.gz"
-tar_opts=()
-if tar --version 2>/dev/null | grep -qi 'gnu tar'; then tar_opts=(--owner=0 --group=0 --numeric-owner --sort=name)
-else tar_opts=(--uid 0 --gid 0 --numeric-owner --no-mac-metadata --no-xattrs --no-acls --no-fflags); fi
+if tar --version 2>/dev/null | grep -qi 'gnu tar'; then tar_opts=(--owner=0 --group=0 --numeric-owner --sort=name "$name")
+else
+  (cd "$work" && find "$name" | LC_ALL=C sort) > "$work/names"
+  tar_opts=(--uid 0 --gid 0 --numeric-owner --no-mac-metadata --no-xattrs --no-acls --no-fflags -n -T "$work/names")
+fi
 # To its own name once it is checked: nothing else takes it up.
-COPYFILE_DISABLE=1 tar "${tar_opts[@]}" -czf "$work/$name.tar.gz" -C "$work" "$name"
+COPYFILE_DISABLE=1 tar -czf "$work/$name.tar.gz" -C "$work" "${tar_opts[@]}"
 "$root/scripts/check-package.sh" "$os" "$version" "$arch" "$work/$name.tar.gz" >/dev/null
 cat "$work/$name.tar.gz" > "$tarball"
 
