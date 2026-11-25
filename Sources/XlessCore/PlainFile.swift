@@ -29,7 +29,9 @@ public enum PlainFile {
     public static func read(_ url: URL, maxSize: Int = maxSize, followsLinks: Bool = false) throws(Unread) -> Data {
         #if os(Windows)
         if followsLinks { // The user's own path, wherever it leads: to another machine or into WSL, where `InputFile` reads nothing.
-            guard FileManager.default.fileExists(atPath: url.path) else { throw .absent }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { throw .absent }
+            guard !isDirectory.boolValue else { throw .notFile }
             guard let file = try? FileHandle(forReadingFrom: url), let data = try? file.read(upToCount: maxSize + 1) ?? Data() else { throw .failed }
             guard data.count <= maxSize else { throw .tooLarge }
             return data
