@@ -115,32 +115,7 @@ public enum MacBuilder {
         }
 
         let built = try Files.atomicOutput(paths.app) { partial in
-            let app = partial.appendingPathComponent("\(mac.product).app", isDirectory: true)
-            let layout = BundleLayout(platform: .macos)
-            let fm = FileManager.default
-            for dir in [layout.executableDir, layout.resourcesDir] {
-                try fm.createDirectory(at: app.appendingPathComponent(dir), withIntermediateDirectories: true)
-            }
-            let exeURL = app.appendingPathComponent("\(layout.executableDir)/\(mac.product)")
-            try MachO.makeFat(slices).write(to: exeURL)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exeURL.path)
-            try Data("APPL????".utf8).write(to: app.appendingPathComponent(layout.pkgInfo))
-            for b in resourceBundles {
-                try fm.copyItem(at: b, to: app.appendingPathComponent("\(layout.resourcesDir)/\(b.lastPathComponent)"))
-            }
-            if let privacy = config.privacyManifest {
-                guard fm.fileExists(atPath: project.appendingPathComponent(privacy).path) else {
-                    throw XlessError(.build, "privacyManifest \(privacy) does not exist", fix: "fix the privacyManifest path in xless.yml (relative to the project directory)")
-                }
-                try fm.copyItem(at: project.appendingPathComponent(privacy),
-                                to: app.appendingPathComponent("\(layout.resourcesDir)/PrivacyInfo.xcprivacy"))
-            }
-            var info = try baseInfoPlist(config: config)
-            if let userInfo = config.infoPlist {
-                for (k, v) in try Plist.read(project.appendingPathComponent(userInfo), stage: .build) { info[k] = v }
-            }
-            try Plist.write(info, to: app.appendingPathComponent(layout.infoPlist), stage: .build)
-            return app
+            try PackageApp.assemble(in: partial, executable: MachO.makeFat(slices), resources: resourceBundles, project: project, config: config, platform: .macos)
         }
         // Swift Build writes `<name>.dSYM` next to each architecture's executable: one universal `<Product>.app.dSYM`.
         let dSYMs = try DSYM.keep(executables: executables, app: built, into: paths.dSYMs)
