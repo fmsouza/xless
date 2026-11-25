@@ -51,7 +51,7 @@ struct ProvisionStep: Sendable {
         case linked(PortalLinkedKind, String, bundles: [String])
         case certificate(CertificateKind, KeySource)
         case apnsKey
-        case profile(ProvisionTarget)
+        case profile(SigningTarget)
         case app(AppCreateRequest)
         case listing
         case privacy(AppYAML.Privacy)
@@ -259,7 +259,7 @@ struct ProvisionPlanner {
             for key in unmapped {
                 plan.notes.append("\(id): the App Store Connect API has no capability for the entitlement \(key): enable it at https://developer.apple.com/account/resources/identifiers/list (the sign stage checks the profile carries it)")
             }
-            var existing: [ProvisionCapability] = []
+            var existing: [SigningCapability] = []
             if let resource = plan.known.bundles[id] { existing = try await account.capabilities(of: resource) }
             for r in requests {
                 let settings = r.settings.map { s in "\(s.key): \(CapabilitySetting.chosen([s]).values.first ?? "")" }
@@ -442,35 +442,17 @@ struct ProvisionPlanner {
     func planProfiles(_ plan: inout ProvisionPlan) async throws {
         for t in inputs.targets {
             let type = t.profileType
-            let name = ProfileService.defaultName(bundleIdentifier: t.bundleID, type: type)
+            let name = t.profileName
             let cert = plan.known.certificates[t.signingKind]
             let details = ["\(type.displayName) for \(t.label), with the \(t.signingKind.certificateType.displayName) certificate\(cert.map { " \($0)" } ?? (plan.steps.contains { $0.area == .certificates && $0.subject == t.signingKind.certificateType.displayName } ? " created above" : ""))"]
             guard let bundle = plan.known.bundles[t.bundleID] else { plan.add(.profiles, .create, name, details, .profile(t)); continue }
             let profiles = try await account.profiles(named: name, type: type)
             guard !profiles.isEmpty else { plan.add(.profiles, .create, name, details, .profile(t)); continue }
-            let problems: [[String]] = profiles.map { self.problems(of: $0, target: t, bundle: bundle, certificate: cert) }
+            let problems: [[String]] = profiles.map { t.problems(of: $0, bundle: bundle, certificate: cert, now: now) }
             guard !problems.contains(where: { $0.isEmpty }), let first = profiles.first else { continue }
             plan.drift.append(ProvisionDrift(area: .profiles, subject: "\(name) (\(first.id))", message: problems[0].joined(separator: "; "),
                                              fix: "`xless profiles renew \(first.id)` (or let `xless sign` replace it)"))
         }
-    }
-
-    /// Why a profile is not the one `sign` would use for the target; empty when it is.
-    func problems(of p: ProvisionProfile, target t: ProvisionTarget, bundle: String, certificate: String?) -> [String] {
-        var out: [String] = []
-        if p.state != "ACTIVE" { out.append("it is \(p.state ?? "not active")") }
-        if let e = p.expires, e < now.addingTimeInterval(7 * 86_400) { out.append("it expires on \(CertTable.day(e))") }
-        if let b = p.bundleID, b != bundle { out.append("it is for another bundle ID") }
-        if let certificate, !p.certificateIDs.contains(certificate) {
-            out.append("it does not hold the \(t.signingKind.certificateType.displayName) certificate \(certificate)")
-        } else if certificate == nil {
-            out.append("it does not hold the certificate this plan creates")
-        }
-        if t.entitlementsKnown, let content = p.content, let granted = try? Entitlements.extract(fromProfile: content) {
-            let lacking = Entitlements.profileLacks(user: t.entitlements, profile: granted, platform: t.platform)
-            if !lacking.isEmpty { out.append("it lacks \(lacking.joined(separator: ", "))") }
-        }
-        return out
     }
 
     func planApp(_ plan: inout ProvisionPlan) async throws {
@@ -745,13 +727,13 @@ struct ProvisionApplier {
             return "created APNs key \(created.keyID), stored as \(created.entry)"
 
         case .profile(let t):
-            let name = ProfileService.defaultName(bundleIdentifier: t.bundleID, type: t.profileType)
+            let name = t.profileName
             let bundle = try await bundle(t.bundleID, &state)
             if let existing = try await account.profiles(named: name, type: t.profileType).first { return "profile \(name) exists (\(existing.id))" }
             guard let cert = state.certificates[t.signingKind] else {
                 throw XlessError(.account, "no \(t.signingKind.certificateType.displayName) certificate to put in \(name)", fix: "re-run `xless provision apply` (it creates the certificate first)")
             }
-            let created = try await account.createProfile(name: name, type: t.profileType, bundleResourceID: bundle, certificateID: cert)
+            let created = try await account.createProfile(name: name, type: t.profileType, bundleResourceID: bundle, bundleID: t.bundleID, certificateID: cert)
             return "created profile \(name) (\(created.id))"
 
         case .app(let request):

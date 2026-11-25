@@ -24,9 +24,9 @@ private struct Failure: Error {}
 /// One in-memory Apple account: the documented API's resources, the web session's, and what was written.
 private final class World: @unchecked Sendable {
     var bundles: [String: String] = [:]
-    var capabilities: [String: [ProvisionCapability]] = [:]
+    var capabilities: [String: [SigningCapability]] = [:]
     var certificates: [ASCCertificate] = []
-    var profiles: [ProvisionProfile] = []
+    var profiles: [SigningProfile] = []
     var apps: [AppSummary] = []
     var groups: [String: [ProvisionGroup]] = [:]
     var portal: [PortalLinkedKind: [PortalIdentifier]] = [:]
@@ -82,11 +82,11 @@ private struct FakeAccount: ProvisionAccount {
         world.bundles[identifier] = id
         return id
     }
-    func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability] { world.capabilities[bundleResourceID] ?? [] }
+    func capabilities(of bundleResourceID: String) async throws -> [SigningCapability] { world.capabilities[bundleResourceID] ?? [] }
     func enable(_ request: CapabilityRequest, on bundleResourceID: String, identifier: String) async throws {
         try world.write("enable", "\(request.type.rawValue) \(identifier)")
         world.capabilities[bundleResourceID, default: []].removeAll { $0.type == request.type.rawValue }
-        world.capabilities[bundleResourceID, default: []].append(ProvisionCapability(id: world.next("CAP"), type: request.type.rawValue,
+        world.capabilities[bundleResourceID, default: []].append(SigningCapability(id: world.next("CAP"), type: request.type.rawValue,
                                                                                    settings: CapabilitySetting.chosen(request.settings)))
     }
     func list(types: [CertificateType], withContent: Bool) async throws -> [ASCCertificate] {
@@ -98,13 +98,13 @@ private struct FakeAccount: ProvisionAccount {
         world.certificates.append(cert)
         return cert
     }
-    func profiles(named name: String, type: ProfileType) async throws -> [ProvisionProfile] {
+    func profiles(named name: String, type: ProfileType) async throws -> [SigningProfile] {
         world.profiles.filter { $0.name == name && $0.type == type.rawValue }
     }
-    func createProfile(name: String, type: ProfileType, bundleResourceID: String, certificateID: String) async throws -> ProvisionProfile {
+    func createProfile(name: String, type: ProfileType, bundleResourceID: String, bundleID: String, certificateID: String) async throws -> SigningProfile {
         try world.write("createProfile", name)
         let identifier = world.bundles.first { $0.value == bundleResourceID }!.key
-        let p = ProvisionProfile(id: world.next("P"), name: name, type: type.rawValue, state: "ACTIVE", expires: now.addingTimeInterval(300 * 86_400),
+        let p = SigningProfile(id: world.next("P"), name: name, type: type.rawValue, state: "ACTIVE", expires: now.addingTimeInterval(300 * 86_400),
                                  bundleID: bundleResourceID, certificateIDs: [certificateID],
                                  content: world.content(bundleID: identifier, platform: type == .iosAppStore ? .ios : .macos))
         world.profiles.append(p)
@@ -268,9 +268,9 @@ private nonisolated(unsafe) let entitlements: [String: Any] = [
 
 /// An iOS App Store app and its Developer ID macOS app under one bundle ID, internal and external TestFlight groups.
 private func inputs(ios: Bool = true, macDistribution: Distribution = .developerID) -> ProvisionInputs {
-    var targets: [ProvisionTarget] = []
-    if ios { targets.append(ProvisionTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: entitlements)) }
-    targets.append(ProvisionTarget(platform: .macos, distribution: macDistribution, bundleID: bundle, entitlements: [:]))
+    var targets: [SigningTarget] = []
+    if ios { targets.append(SigningTarget(platform: .ios, distribution: .appStore, bundleID: bundle, entitlements: entitlements)) }
+    targets.append(SigningTarget(platform: .macos, distribution: macDistribution, bundleID: bundle, entitlements: [:]))
     return ProvisionInputs(team: team, targets: targets, version: "1.0",
                            testflight: TestFlightConfig(groups: ["Internal"], whatToTest: "Everything", external: ExternalTestFlight(groups: ["Beta"])))
 }
@@ -564,8 +564,8 @@ private final class TypingPassphrase: PassphrasePrompter {
     _ = try await s.apply(try await s.plan())
     let resource = try #require(s.world.bundles[bundle])
     // An extra capability with an entitlement, one Apple enables by itself, an extra app group, a profile gone stale.
-    s.world.capabilities[resource]!.append(ProvisionCapability(id: "X1", type: "HEALTHKIT", settings: [:]))
-    s.world.capabilities[resource]!.append(ProvisionCapability(id: "X2", type: "IN_APP_PURCHASE", settings: [:]))
+    s.world.capabilities[resource]!.append(SigningCapability(id: "X1", type: "HEALTHKIT", settings: [:]))
+    s.world.capabilities[resource]!.append(SigningCapability(id: "X2", type: "IN_APP_PURCHASE", settings: [:]))
     s.world.portal[.appGroup]!.append(PortalIdentifier(id: "OLD", identifier: "group.com.example.old", name: "Old"))
     s.world.linked[.appGroup]![bundle]!.append("OLD")
     let i = try #require(s.world.profiles.firstIndex { $0.type == "IOS_APP_STORE" })

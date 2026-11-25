@@ -11,25 +11,6 @@ import XlessVault
 // in-memory account (Tests/XlessCLITests/ProvisionTests.swift): the documented API (API key), the Apple ID web session,
 // the secret store and the `appstore/` listing.
 
-/// A capability enabled on a bundle ID: its type (API value) and the option chosen for each setting.
-struct ProvisionCapability: Sendable, Equatable {
-    var id: String
-    var type: String
-    var settings: [String: String]
-}
-
-/// A provisioning profile with what `provision` checks: state, expiry, bundle ID, certificates and content.
-struct ProvisionProfile: Sendable, Equatable {
-    var id: String
-    var name: String
-    var type: String
-    var state: String?
-    var expires: Date?
-    var bundleID: String?
-    var certificateIDs: [String]
-    var content: Data?
-}
-
 struct ProvisionGroup: Sendable, Equatable {
     var id: String
     var name: String
@@ -37,18 +18,8 @@ struct ProvisionGroup: Sendable, Equatable {
 }
 
 /// The documented App Store Connect API (the API key): bundle IDs, capabilities, certificates, profiles, the app and
-/// its TestFlight groups. The certificate and app parts are the ones `xless certs create` and `xless apps create` use.
-protocol ProvisionAccount: CertificateAPI, AppCreationAPI {
-    /// The resource ID of the bundle ID registered with exactly this identifier.
-    func bundleID(_ identifier: String) async throws -> String?
-    /// Registers the identifier as a universal bundle ID (or finds it registered); its resource ID.
-    func register(bundleID identifier: String) async throws -> String
-    func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability]
-    /// Enables the capability with its settings, or changes them when it is enabled already.
-    func enable(_ request: CapabilityRequest, on bundleResourceID: String, identifier: String) async throws
-    /// The profiles named exactly `name` of `type`, with their certificates and content.
-    func profiles(named name: String, type: ProfileType) async throws -> [ProvisionProfile]
-    func createProfile(name: String, type: ProfileType, bundleResourceID: String, certificateID: String) async throws -> ProvisionProfile
+/// its TestFlight groups. The signing part is `sign`'s; the certificate and app parts are the ones `xless certs create` and `xless apps create` use.
+protocol ProvisionAccount: SigningAccount, CertificateAPI, AppCreationAPI {
     func betaGroups(app appID: String) async throws -> [ProvisionGroup]
     func createBetaGroup(name: String, app appID: String, external: Bool) async throws
 }
@@ -149,26 +120,18 @@ struct APIProvisionAccount: ProvisionAccount {
     let resources: ASCResources
 
     var issuerID: String { resources.client.issuerID }
-    var bundleIDs: ASCBundleIDs { ASCBundleIDs(resources: resources) }
+    var signing: APISigningAccount { APISigningAccount(resources: resources, stage: .account) }
     var certificates: ASCCertificates { ASCCertificates(resources: resources) }
 
-    func bundleID(_ identifier: String) async throws -> String? { try await bundleIDs.find(identifier: identifier)?.id }
-
-    func register(bundleID identifier: String) async throws -> String {
-        try await bundleIDs.create(identifier: identifier, name: PortalName.bundleID(for: identifier), platform: .universal).bundleID.id
-    }
-
-    func capabilities(of bundleResourceID: String) async throws -> [ProvisionCapability] {
-        try await bundleIDs.capabilities(of: bundleResourceID).map { ProvisionCapability(id: $0.id, type: $0.capabilityType, settings: $0.chosenSettings) }
-    }
-
+    func bundleID(_ identifier: String) async throws -> String? { try await signing.bundleID(identifier) }
+    func register(bundleID identifier: String) async throws -> String { try await signing.register(bundleID: identifier) }
+    func capabilities(of bundleResourceID: String) async throws -> [SigningCapability] { try await signing.capabilities(of: bundleResourceID) }
     func enable(_ request: CapabilityRequest, on bundleResourceID: String, identifier: String) async throws {
-        do {
-            _ = try await bundleIDs.enable(request.type, settings: request.settings, on: bundleResourceID)
-        } catch let e as ASCError where e.status == 409 {
-            throw XlessError(.account, "App Store Connect refused to enable \(request.type.rawValue) (\(request.type.displayName)) on \(identifier): \(e)",
-                             fix: "if the capability needs Apple's approval or does not apply to this platform, request or enable it at developer.apple.com/account/resources/identifiers, or drop its entitlement")
-        }
+        try await signing.enable(request, on: bundleResourceID, identifier: identifier)
+    }
+    func profiles(named name: String, type: ProfileType) async throws -> [SigningProfile] { try await signing.profiles(named: name, type: type) }
+    func createProfile(name: String, type: ProfileType, bundleResourceID: String, bundleID identifier: String, certificateID: String) async throws -> SigningProfile {
+        try await signing.createProfile(name: name, type: type, bundleResourceID: bundleResourceID, bundleID: identifier, certificateID: certificateID)
     }
 
     func list(types: [CertificateType], withContent: Bool) async throws -> [ASCCertificate] {
@@ -177,24 +140,6 @@ struct APIProvisionAccount: ProvisionAccount {
 
     func create(type: CertificateType, csrPEM: String, relatedID: String?) async throws -> ASCCertificate {
         try await certificates.create(type: type, csrPEM: csrPEM, relatedID: relatedID)
-    }
-
-    func profiles(named name: String, type: ProfileType) async throws -> [ProvisionProfile] {
-        let api = ASCProfiles(resources: resources)
-        var out: [ProvisionProfile] = []
-        for listed in try await api.find(name: name) where listed.profileType == type.rawValue {
-            let (profile, _) = try await api.get(id: listed.id, withContent: true)
-            out.append(ProvisionProfile(id: profile.id, name: profile.name, type: profile.profileType, state: profile.attributes.profileState,
-                                        expires: profile.expires, bundleID: profile.bundleIDResourceID,
-                                        certificateIDs: try await api.certificateIDs(of: profile.id), content: profile.content))
-        }
-        return out
-    }
-
-    func createProfile(name: String, type: ProfileType, bundleResourceID: String, certificateID: String) async throws -> ProvisionProfile {
-        let p = try await ASCProfiles(resources: resources).create(name: name, type: type, bundleIDResourceID: bundleResourceID, certificateIDs: [certificateID])
-        return ProvisionProfile(id: p.id, name: p.name, type: p.profileType, state: p.attributes.profileState, expires: p.expires,
-                                bundleID: bundleResourceID, certificateIDs: [certificateID], content: p.content)
     }
 
     func findApp(bundleID: String) async throws -> AppSummary? { try await ASCApps(resources: resources).find(bundleID: bundleID).map(AppSummary.init) }

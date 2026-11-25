@@ -1,6 +1,8 @@
 public enum Platform: String, Sendable, CaseIterable, Codable {
     case ios, macos
 
+    /// `iOS`, `macOS`.
+    public var display: String { self == .ios ? "iOS" : "macOS" }
     /// Key used in toolchain-meta.json and DTPlatformName.
     public var sdkKey: String { self == .ios ? "iphoneos" : "macosx" }
     /// CFBundleSupportedPlatforms value.

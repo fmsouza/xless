@@ -159,6 +159,31 @@ public struct ASCResources: Sendable {
         try await create(path, type: type, attributes: attributes, relationships: ASCNoRelationships?.none)
     }
 
+    /// A create that is sent again after a failure that says nothing (a lost connection, 429, 5xx) only once `lookup` shows
+    /// it was not made; one that was made by the request whose answer was lost or cannot be read, or refused (409) because
+    /// it exists, is what `lookup` found. `create` sends one request (`create(_:type:attributes:)`). For creates that can be found again
+    /// by their name; never for certificates and keys.
+    public func settled<T: Sendable>(lookup: () async throws -> T?, create: () async throws -> T) async throws -> T {
+        var attempt = 0
+        while true {
+            attempt += 1
+            do { return try await create() } catch {
+                let e = error as? ASCError
+                let silent = error is URLError || e.map { $0.status == 429 || $0.status >= 500 } ?? false
+                guard silent || e?.status == 409 || error is DecodingError else { throw error }
+                let found: T?
+                do { found = try await lookup() } catch let failed {
+                    if failed is CancellationError { throw failed }
+                    throw error
+                }
+                if let found { return found }
+                let wait = e?.retryAfter ?? (1 << (attempt - 1))
+                guard silent, attempt < ASCClient.maxAttempts, wait <= ASCClient.maxRetryAfter else { throw error }
+                try await client.sleep(.seconds(wait))
+            }
+        }
+    }
+
     /// PATCH `{ data: { type, id, attributes } }` to the resource at `path`.
     public func update<A: Encodable & Sendable, D: Decodable & Sendable>(_ path: String, type: String, id: String, attributes: A) async throws -> ASCSingle<D> {
         try await client.patch(path, body: Body(data: .init(type: type, id: id, attributes: attributes, relationships: ASCNoRelationships?.none)))

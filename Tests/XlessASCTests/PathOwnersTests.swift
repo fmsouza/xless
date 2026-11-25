@@ -22,10 +22,9 @@ private let exceptions: [String: String] = [
 /// Called from several files today, to be made one: the list only gets shorter.
 private let pending: Set<String> = [
     "/v1/betaBuildLocalizations", "/v1/betaBuildLocalizations/{}",
-    "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds/{}/betaBuildLocalizations", "/v1/bundleIds",
-    "/v1/profiles", "/v1/profiles/{}", "/v1/profiles/{}/relationships/certificates",
+    "/v1/betaGroups", "/v1/betaGroups/{}", "/v1/builds/{}/betaBuildLocalizations",
 ]
-private let pendingCallers: Set<String> = ["XlessSign/ProfileService.swift"]
+private let pendingCallers: Set<String> = []
 
 /// Files outside XlessASC that send through `ASCClient` themselves: file → why.
 private let clientCallers: [String: String] = [

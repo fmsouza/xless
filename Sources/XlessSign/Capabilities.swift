@@ -122,26 +122,8 @@ public enum Capabilities {
         return needs
     }
 
-    /// Enables every missing capability in `requests`; true if any was enabled (the profile must then be regenerated).
-    /// A capability enabled already is left as it is, settings included.
-    /// - Parameter identifier: the bundle identifier, for the error when Apple refuses a capability.
-    public static func ensure(_ requests: [CapabilityRequest], bundleIDResourceID: String, identifier: String? = nil,
-                              client: ASCClient) async throws -> Bool {
-        if requests.isEmpty { return false }
-        let bundleIDs = ASCBundleIDs(resources: ASCResources(client: client))
-        let existing = try await bundleIDs.capabilities(of: bundleIDResourceID)
-        var enabled = false
-        for request in requests where !existing.contains(where: { $0.capabilityType == request.type.rawValue }) {
-            do {
-                _ = try await bundleIDs.enable(request.type, settings: request.settings, on: bundleIDResourceID, existing: existing)
-            } catch let e as ASCError where e.status == 409 {
-                // Apple refuses a capability the bundle ID's platform or the team's membership cannot have, or one that
-                // needs Apple's approval first.
-                throw XlessError(.sign, "App Store Connect refused to enable \(request.type.rawValue) (\(request.type.displayName)) on \(identifier ?? "bundle ID \(bundleIDResourceID)"): \(e)",
-                                 fix: "if the capability needs Apple's approval or does not apply to this platform, request or enable it at developer.apple.com/account/resources/identifiers, or drop its entitlement (an overlay's entitlements.remove), then re-run")
-            }
-            enabled = true
-        }
-        return enabled
+    /// The requests whose capability is not enabled, whatever the settings of the ones that are.
+    public static func missing(_ requests: [CapabilityRequest], in existing: [SigningCapability]) -> [CapabilityRequest] {
+        requests.filter { r in !existing.contains { $0.type == r.type.rawValue } }
     }
 }

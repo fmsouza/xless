@@ -139,3 +139,73 @@ private struct AppAttributes: Codable, Sendable, Equatable { var name: String?; 
     encoder.outputFormatting = [.sortedKeys]
     #expect(String(decoding: try encoder.encode(value), as: UTF8.self) == #"{"a":{"y":-3,"z":1},"b":[1,2.5,"x",true,null]}"#)
 }
+
+// MARK: - Creates whose answer may be lost
+
+private struct Thing: Equatable, Sendable { var id: String }
+
+/// Scripted lookups and creates, in order; what was asked is in `log`.
+private final class Script: @unchecked Sendable {
+    var log: [String] = []
+    var lookups: [Result<Thing?, any Error>]
+    var creates: [Result<Thing, any Error>]
+    init(lookups: [Result<Thing?, any Error>] = [], creates: [Result<Thing, any Error>]) { self.lookups = lookups; self.creates = creates }
+    func run() async throws -> Thing {
+        let client = ASCClient(credentials: testCreds, transport: MockTransport([]), sleep: { [self] d in log.append("wait \(d.components.seconds)") })
+        return try await ASCResources(client: client).settled(
+            lookup: { self.log.append("look"); return try self.lookups.removeFirst().get() },
+            create: { self.log.append("create"); return try self.creates.removeFirst().get() })
+    }
+}
+
+@Test func aCreateThatAnswersIsSentOnceAndNotLookedUp() async throws {
+    let s = Script(creates: [.success(Thing(id: "1"))])
+    #expect(try await s.run() == Thing(id: "1"))
+    #expect(s.log == ["create"])
+}
+
+@Test func aCreateWhoseAnswerWasLostIsLookedUpBeforeItIsSentAgain() async throws {
+    for failure in [URLError(.networkConnectionLost) as any Error, ASCError(status: 500, items: []), ASCError(status: 429, items: [])] {
+        let made = Script(lookups: [.success(Thing(id: "1"))], creates: [.failure(failure)])
+        #expect(try await made.run() == Thing(id: "1"))
+        #expect(made.log == ["create", "look"])
+        let absent = Script(lookups: [.success(nil)], creates: [.failure(failure), .success(Thing(id: "2"))])
+        #expect(try await absent.run() == Thing(id: "2"))
+        #expect(absent.log == ["create", "look", "wait 1", "create"])
+    }
+}
+
+@Test func aCreateRefusedBecauseItExistsTakesTheExistingOne() async throws {
+    let exists = Script(lookups: [.success(Thing(id: "1"))], creates: [.failure(ASCError(status: 409, items: []))])
+    #expect(try await exists.run() == Thing(id: "1"))
+    // A 409 for another reason is the answer: never sent again.
+    let refused = Script(lookups: [.success(nil)], creates: [.failure(ASCError(status: 409, items: []))])
+    await #expect(throws: ASCError.self) { _ = try await refused.run() }
+    #expect(refused.log == ["create", "look"])
+}
+
+@Test func aRefusedCreateOrAFailedLookupIsTheAnswer() async throws {
+    let refused = Script(creates: [.failure(ASCError(status: 403, items: []))])
+    await #expect(throws: ASCError.self) { _ = try await refused.run() }
+    #expect(refused.log == ["create"])
+    // Not knowing whether it exists, nothing is sent again; the create's own error is thrown.
+    let blind = Script(lookups: [.failure(URLError(.notConnectedToInternet))], creates: [.failure(ASCError(status: 502, items: []))])
+    do { _ = try await blind.run(); Issue.record("expected throw") } catch let e as ASCError { #expect(e.status == 502) }
+    #expect(blind.log == ["create", "look"])
+    let cancelled = Script(creates: [.failure(CancellationError())])
+    await #expect(throws: CancellationError.self) { _ = try await cancelled.run() }
+    #expect(cancelled.log == ["create"])
+}
+
+@Test func aCreateIsSentAtMostFiveTimes() async throws {
+    let s = Script(lookups: Array(repeating: .success(nil), count: 5), creates: Array(repeating: .failure(ASCError(status: 500, items: [])), count: 5))
+    await #expect(throws: ASCError.self) { _ = try await s.run() }
+    #expect(s.log.filter { $0 == "create" }.count == 5)
+    #expect(s.log.filter { $0.hasPrefix("wait") } == ["wait 1", "wait 2", "wait 4", "wait 8"])
+    // A spent hourly budget is not waited for.
+    let spent = Script(lookups: [.success(nil)], creates: [.failure(ASCError(status: 429, items: [], retryAfter: 3600))])
+    await #expect(throws: ASCError.self) { _ = try await spent.run() }
+    let soon = Script(lookups: [.success(nil)], creates: [.failure(ASCError(status: 429, items: [], retryAfter: 7)), .success(Thing(id: "1"))])
+    _ = try await soon.run()
+    #expect(soon.log.contains("wait 7"))
+}

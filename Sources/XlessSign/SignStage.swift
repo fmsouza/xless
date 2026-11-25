@@ -3,22 +3,27 @@ import XlessASC
 import XlessCore
 
 public enum SignStage {
+    /// `say`: where the plan of what changes on the account is printed (standard error).
     /// `manifest`: the bundles' entitlements as the build recorded them (React Native). Without it the app's come from
     /// `platforms.<p>.entitlements` and an app extension, if any, gets none.
     public static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
-                           secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest? = nil) async throws -> URL {
+                           secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest? = nil,
+                           say: (String) -> Void = standardError) async throws -> URL {
         try await run(input: input, outputDir: outputDir, platform: platform, config: config, project: project, secrets: secrets,
-                      client: client, manifest: manifest, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
+                      client: client, manifest: manifest, say: say, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
     }
 
     /// `codesign` runs rcodesign with the given arguments (a test seam: tests read the entitlement files it names).
     static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL, secrets: Secrets,
-                    client: ASCClient, manifest: EntitlementsManifest?, codesign: ([String]) throws -> Void) async throws -> URL {
+                    client: ASCClient, manifest: EntitlementsManifest?, say: (String) -> Void = { _ in },
+                    codesign: ([String]) throws -> Void) async throws -> URL {
         try await Files.atomicOutput(outputDir) { partial in
             try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
-                           client: client, manifest: manifest, codesign: codesign)
+                           client: client, manifest: manifest, say: say, codesign: codesign)
         }
     }
+
+    public static let standardError: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
 
     /// A bundle with the profile it is signed under.
     struct Provisioned {
@@ -28,7 +33,7 @@ public enum SignStage {
     }
 
     static func sign(input: URL, into outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
-                     secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest?,
+                     secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest?, say: (String) -> Void,
                      codesign: ([String]) throws -> Void) async throws -> URL {
         let pc = try config.platform(platform)
         let distribution = config.distribution(for: platform)
@@ -49,13 +54,16 @@ public enum SignStage {
         }
         let targets = try SignTargets.plan(app: input, platform: platform, appBundleID: bundleID, appEntitlements: user,
                                            manifest: manifest, teamID: config.teamID, declared: declared)
-        let profiles = ProfileService(client: client)
-        let cert = try await ASCCertificates(resources: ASCResources(client: client)).find(for: key, kind: kind)
-        var provisioned: [Provisioned] = []
-        for target in targets {
-            provisioned.append(try await provision(target, platform: platform, distribution: distribution, certificateID: cert.id,
-                                                    profiles: profiles, client: client))
-        }
+        let resources = ASCResources(client: client)
+        let cert = try await ASCCertificates(resources: resources).find(for: key, kind: kind)
+        let account = APISigningAccount(resources: resources, stage: .sign)
+        let plan = try await SigningPlanner(account: account).plan(targets.map {
+            SigningTarget(platform: platform, distribution: distribution, bundleID: $0.bundleID, entitlements: $0.entitlements,
+                          extensionPath: $0.path.isEmpty ? nil : $0.path)
+        }, certificate: cert.id)
+        say(plan.text)
+        let profiles = try await SigningApplier(account: account).apply(plan)
+        let provisioned = try zip(targets, profiles).map { Provisioned(target: $0, profile: $1, granted: try Entitlements.extract(fromProfile: $1)) }
 
         // Every check runs before the bundle is touched.
 
@@ -99,26 +107,5 @@ public enum SignStage {
         try codesign(RCodesign.signArguments(bundle: app, keyPEM: keyURL, certPEM: certURL, entitlements: entURL, distribution: distribution,
                                              runtimePaths: runtimePaths, nestedEntitlements: nestedEntitlements))
         return app
-    }
-
-    /// Registers the bundle ID, enables the capabilities its entitlements need and gets its profile.
-    static func provision(_ target: SignTarget, platform: Platform, distribution: Distribution, certificateID: String, profiles: ProfileService,
-                          client: ASCClient) async throws -> Provisioned {
-        let needed = Capabilities.required(entitlements: target.entitlements, platform: platform)
-        let resource = try await profiles.ensureBundleID(identifier: target.bundleID, platform: platform)
-        let enabled = try await Capabilities.ensure(needed.requests, bundleIDResourceID: resource, identifier: target.bundleID, client: client)
-        let type = ProfileType.for(platform: platform, distribution: distribution)
-        var profile = try await profiles.ensureProfile(bundleIDResourceID: resource, certificateID: certificateID,
-                                                       type: type, bundleIdentifier: target.bundleID, forceNew: enabled)
-        var granted = try Entitlements.extract(fromProfile: profile)
-        // A capability enabled (or an app group assigned) by hand in the portal only reaches an existing profile once it
-        // is regenerated. A keychain group outside the team's pattern is not something a new profile changes.
-        if !enabled, Entitlements.problems(user: target.entitlements, profile: granted, platform: platform)
-            .contains(where: { $0.key != Entitlements.keychainGroupsKey }) {
-            profile = try await profiles.ensureProfile(bundleIDResourceID: resource, certificateID: certificateID,
-                                                       type: type, bundleIdentifier: target.bundleID, forceNew: true)
-            granted = try Entitlements.extract(fromProfile: profile)
-        }
-        return Provisioned(target: target, profile: profile, granted: granted)
     }
 }

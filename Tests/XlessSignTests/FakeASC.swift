@@ -22,10 +22,20 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
     var groupsForAll: [String] = []
     /// Entitlements of capabilities enabled by hand in the portal (no API type), per identifier.
     var portal: [String: [String: Any]] = [:]
-    struct Profile { var id: String; var name: String; var bundleResource: String; var content: Data }
+    struct Profile {
+        var id: String, name: String, bundleResource: String, content: Data
+        var certificates = ["C1"], state = "ACTIVE", expires = future
+    }
     var profiles: [Profile] = []
     /// Capability types App Store Connect refuses to enable (409).
     var refuse: Set<String> = []
+    /// Capability types every new identifier has.
+    var enabledByApple: [String] = []
+    /// Deleted profiles stay listed (a listing that lags behind).
+    var keepsDeleted = false
+    /// "METHOD /path" → the next requests to it that fail, and whether what they ask for happens all the same.
+    var failures: [String: [(status: Int, happens: Bool)]] = [:]
+    private var lost = false
     /// "METHOD /path" of every request, in order.
     var log: [String] = []
     /// Capability types created, as (identifier, type).
@@ -54,12 +64,21 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
         return e
     }
 
+    private func attributes(_ p: Profile) -> [String: Any] {
+        ["name": p.name, "profileState": p.state, "profileType": String(p.name.split(separator: " ").last ?? ""),
+         "profileContent": p.content.base64EncodedString(), "expirationDate": p.expires]
+    }
     private func next(_ prefix: String) -> String { serial += 1; return "\(prefix)\(serial)" }
     private func json(_ o: Any) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: o), as: UTF8.self) }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let method = request.httpMethod ?? "GET", url = request.url!, path = url.path
         log.append("\(method) \(path)")
+        if let failure = failures["\(method) \(path)"]?.first {
+            failures["\(method) \(path)"]!.removeFirst()
+            if failure.happens { lost = true } else { return answer(url, failure.status, #"{"errors":[{"status":"\#(failure.status)","code":"X"}]}"#) }
+        }
+        defer { lost = false }
         let query = Dictionary((URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["data"] as? [String: Any]
         let attrs = body?["attributes"] as? [String: Any] ?? [:]
@@ -76,6 +95,7 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
         case ("POST", 2, "bundleIds"):
             let identifier = attrs["identifier"] as! String
             let id = next("B"); bundleIDs[identifier] = id
+            if !enabledByApple.isEmpty { capabilities[id] = enabledByApple }
             (status, text) = (201, json(["data": ["type": "bundleIds", "id": id, "attributes": ["identifier": identifier]]]))
         case ("GET", 4, "bundleIds"):
             let data = (capabilities[parts[2]] ?? []).map { ["type": "bundleIdCapabilities", "id": "\(parts[2])_\($0)", "attributes": ["capabilityType": $0]] }
@@ -92,18 +112,18 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
             created.append((bundleIDs.first { $0.value == resource }!.key, type))
             (status, text) = (201, json(["data": ["type": "bundleIdCapabilities", "id": next("K"), "attributes": ["capabilityType": type]]]))
         case ("GET", 2, "profiles"):
-            let data = profiles.filter { $0.name == query["filter[name]"] }.map {
-                ["type": "profiles", "id": $0.id, "attributes": ["name": $0.name, "profileState": "ACTIVE", "profileType": "IOS_APP_STORE",
-                                                              "profileContent": $0.content.base64EncodedString(), "expirationDate": future]]
+            let data = profiles.filter { $0.name == query["filter[name]"] }.map { p in
+                ["type": "profiles", "id": p.id, "attributes": attributes(p).filter { $0.key != "profileContent" }]
             }
             (status, text) = (200, json(["data": data]))
         case ("GET", 5, "profiles") where parts[4] == "certificates":
-            (status, text) = (200, #"{"data":[{"type":"certificates","id":"C1"}]}"#)
-        case ("GET", 5, "profiles"):
+            (status, text) = (200, json(["data": profiles.first { $0.id == parts[2] }!.certificates.map { ["type": "certificates", "id": $0] }]))
+        case ("GET", 3, "profiles"):
             let p = profiles.first { $0.id == parts[2] }!
-            (status, text) = (200, json(["data": ["type": "bundleIds", "id": p.bundleResource]]))
+            (status, text) = (200, json(["data": ["type": "profiles", "id": p.id, "attributes": attributes(p),
+                                                  "relationships": ["bundleId": ["data": ["type": "bundleIds", "id": p.bundleResource]]]]]))
         case ("DELETE", 3, "profiles"):
-            profiles.removeAll { $0.id == parts[2] }
+            if !keepsDeleted { profiles.removeAll { $0.id == parts[2] } }
             (status, text) = (204, "")
         case ("POST", 2, "profiles"):
             let resource = relID("bundleId")!, identifier = bundleIDs.first { $0.value == resource }!.key
@@ -113,6 +133,10 @@ final class FakeASC: HTTPTransport, @unchecked Sendable {
         default:
             (status, text) = (404, #"{"errors":[{"status":"404","code":"NOT_FOUND","title":"fake","detail":"\#(method) \#(path)"}]}"#)
         }
-        return (Data(text.utf8), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        return lost ? answer(url, 500, #"{"errors":[{"status":"500","code":"X"}]}"#) : answer(url, status, text)
+    }
+
+    private func answer(_ url: URL, _ status: Int, _ text: String) -> (Data, HTTPURLResponse) {
+        (Data(text.utf8), HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!)
     }
 }

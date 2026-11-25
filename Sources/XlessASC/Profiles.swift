@@ -160,9 +160,9 @@ public struct ASCProfiles: Sendable {
         return ASCProfileListing(profiles: sorted, bundleIDs: bundles)
     }
 
-    /// The profiles named exactly `name` (Apple's filter may match more loosely).
-    public func find(name: String) async throws -> [ASCProfile] {
-        try await list(name: name).profiles.filter { $0.name == name }
+    /// The profiles named exactly `name` (Apple's filter may match more loosely), of `type` when given.
+    public func find(name: String, type: ProfileType? = nil) async throws -> [ASCProfile] {
+        try await list(types: type.map { [$0] } ?? [], name: name).profiles.filter { $0.name == name && (type == nil || $0.profileType == type?.rawValue) }
     }
 
     /// One profile and its bundle ID; `withContent` also fetches the profile itself.
@@ -180,6 +180,11 @@ public struct ASCProfiles: Sendable {
     /// The IDs of the certificates in a profile, every page.
     public func certificateIDs(of id: String) async throws -> [String] {
         try await resources.relationship("\(Self.path)/\(id)", "certificates").map(\.id)
+    }
+
+    /// The resource ID of the profile's bundle ID (for a response without the linkage).
+    public func bundleIDResourceID(of id: String) async throws -> String? {
+        try await resources.toOneRelationship("\(Self.path)/\(id)", "bundleId")?.id
     }
 
     /// The IDs of the devices in a profile, every page.
@@ -226,20 +231,14 @@ public struct ASCProfiles: Sendable {
     struct CreateAttributes: Encodable, Sendable { var name: String; var profileType: String }
     struct CreateRelationships: Encodable, Sendable { var bundleId: ASCToOne; var certificates: ASCToMany; var devices: ASCToMany? }
 
-    /// Creates a profile. `deviceIDs` is sent only when not empty. The POST is sent once, never retried, unless `once` is
-    /// false (the `sign` stage, which always retried it and deletes a same-named profile first).
+    /// Creates a profile. `deviceIDs` is sent only when not empty. The POST is sent once, never retried.
     public func create(name: String, type: ProfileType, bundleIDResourceID: String, certificateIDs: [String],
-                       deviceIDs: [String] = [], once: Bool = true) async throws -> ASCProfile {
+                       deviceIDs: [String] = []) async throws -> ASCProfile {
         let relationships = CreateRelationships(
             bundleId: ASCToOne(ASCRef(type: "bundleIds", id: bundleIDResourceID)),
             certificates: ASCToMany(certificateIDs.map { ASCRef(type: "certificates", id: $0) }),
             devices: deviceIDs.isEmpty ? nil : ASCToMany(deviceIDs.map { ASCRef(type: "devices", id: $0) }))
         let attributes = CreateAttributes(name: name, profileType: type.rawValue)
-        if !once {
-            let body = ASCResources.Body(data: .init(type: "profiles", id: nil, attributes: attributes, relationships: relationships))
-            let created: ASCSingle<ASCProfile> = try await resources.client.post(Self.path, body: body)
-            return created.data
-        }
         let created: ASCSingle<ASCProfile> = try await resources.create(Self.path, type: "profiles", attributes: attributes, relationships: relationships)
         return created.data
     }

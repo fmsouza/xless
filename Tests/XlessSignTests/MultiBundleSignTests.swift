@@ -107,9 +107,11 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     let app = try await f.run(capture: capture)
 
     // Extension first: its identifier, capabilities and profile, then the app's.
-    let bundleLookups = f.asc.log.enumerated().filter { $0.element == "GET /v1/bundleIds" }.map(\.offset)
-    #expect(bundleLookups.count == 2)
+    #expect(f.asc.log.filter { $0 == "POST /v1/bundleIds" }.count == 2)
     #expect(f.asc.bundleIDs[extID] == "B1" && f.asc.bundleIDs[appID] != nil)
+    // Everything is read, and the plan printed, before the first change.
+    let firstWrite = try #require(f.asc.log.firstIndex { !$0.hasPrefix("GET ") })
+    #expect(f.asc.log[..<firstWrite].filter { $0 == "GET /v1/profiles" }.count == 2)
     // The four mapped capability types, each on the identifier whose entitlements need it.
     #expect(f.asc.created.map { "\($0.0) \($0.1)" } == [
         "\(extID) AUTOFILL_CREDENTIAL_PROVIDER", "\(extID) APP_GROUPS",
@@ -287,18 +289,19 @@ private func extEntitlements(group: String = "group.\(appID)", keychainGroup: St
     }
 }
 
-/// xless.yml and Tauri apps: no manifest, no extensions. The same requests in the same order and the same rcodesign
-/// arguments as before app extensions were signed.
+/// xless.yml and Tauri apps: no manifest, no extensions. An account that has everything is only read, and said to have it;
+/// the same rcodesign arguments as before app extensions were signed.
 @Test func aSingleBundleAppSignsAsBefore() async throws {
     let f = try SignFixture(profileEntitlements: teamProfile())
     let capture = SignCapture()
+    var said: [String] = []
     let app = try await SignStage.run(input: f.input, outputDir: f.outputDir, platform: .ios, config: f.config, project: f.project,
                                       secrets: Secrets(env: ["XLESS_DIST_KEY": f.key.pem]),
                                       client: ASCClient(credentials: testCreds, transport: f.transport, sleep: { _ in }),
-                                      manifest: nil, codesign: { try capture.record($0) })
+                                      manifest: nil, say: { said.append($0) }, codesign: { try capture.record($0) })
+    #expect(said == ["xless: sign: the account has what signing needs; nothing is changed there"])
     #expect(f.transport.requests.map { "\($0.httpMethod!) \($0.url!.path)" } == [
-        "GET /v1/certificates", "GET /v1/bundleIds", "GET /v1/profiles", "GET /v1/profiles/P1/relationships/certificates",
-        "GET /v1/profiles/P1/relationships/bundleId",
+        "GET /v1/certificates", "GET /v1/bundleIds", "GET /v1/profiles", "GET /v1/profiles/P1", "GET /v1/profiles/P1/relationships/certificates",
     ])
     let args = capture.arguments
     #expect(args.count == 10)
