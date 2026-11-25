@@ -52,6 +52,21 @@ func aCommandThatWindowsDoesNotHaveSaysSo(name: String) throws {
     try lock.run()
 }
 
+/// Nor offered: nobody is asked whether to keep what cannot be kept, whatever config.yml says.
+@Test(arguments: [KeepAnswer.ask, .always]) func keepingIsNotOfferedOnWindows(keep: KeepAnswer) {
+    let agents = HeldSecrets.agents, cache = HeldKeyCache(agents: agents, keyring: FakeKeyring(available: false), isOff: false, maximum: 7 * 86400, say: { _ in })
+    for offer in [KeepOffer(settings: UnlockSettings(keep: keep), isOff: false, command: "xless x"),
+                  KeepOffer(agents: agents, cache: cache, settings: UnlockSettings(keep: keep), isOff: false, command: "xless x")] {
+        let terminal = ScriptedTerminal(["y", "y", "y", "y"])
+        #expect(offer.offer(terminal) == nil && offer.session(terminal) == nil)
+        offer.also(.store, terminal)
+        offer.also(.session, terminal)
+        #expect(offer.agreedUntil() == nil && terminal.questions.isEmpty && terminal.said.isEmpty)
+        #expect(offer.announcement(reason: "unlocking", remember: nil)?.contains("unless you keep it") == false)
+        #expect(!offer.signInAnnouncement(offering: true).contains("unless you keep it"))
+    }
+}
+
 @Test func anOverlayIsRefusedOnWindows() throws {
     for command in [try StorePullCommand.parse(["--config", "o.yml"]).directory, try StorePushCommand.parse(["--config", "o.yml", "--dir", "d"]).directory] {
         let e = #expect(throws: XlessError.self) { _ = try command.project() }
