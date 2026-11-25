@@ -1,11 +1,14 @@
 import ArgumentParser
 import Foundation
+import XlessAgent
 import XlessCore
 import XlessVault
 
 @main
 enum Main {
     static func main() async {
+        // `xless __agent`, which xless starts itself (`xless unlock`): before anything else, with nothing of the environment.
+        if let status = AgentHost.runIfAsked(CommandLine.arguments) { exit(status) }
         // A native install's xtool, rcodesign and Swift, first on PATH for this process and every child.
         NativeLayout.activate()
         // A secret missing from the environment comes from the secret store, when it holds one (`xless secrets`).

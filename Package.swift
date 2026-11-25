@@ -59,7 +59,8 @@ let package = Package(
         ]),
         // C for what Swift cannot call: variadic prctl (SecretScope), explicit_bzero/memset_s (SecretBytes), and the kernel
         // keyring's add_key/keyctl syscalls (KernelKeyring) without libkeyutils, so the static musl build keeps working.
-        .target(name: "CXlessProcess"),
+        // libbsm (macOS): audit tokens, the identity of a process at the other end of a socket.
+        .target(name: "CXlessProcess", linkerSettings: [.linkedLibrary("bsm", .when(platforms: [.macOS]))]),
         // FIDO security keys spoken to directly (CBOR, CTAPHID, CTAP2 and U2F over Linux /dev/hidraw), with no libfido2
         // so the static musl build keeps working: the Apple ID sign-in's security-key second factor.
         .target(name: "XlessFIDO", dependencies: [
@@ -81,6 +82,12 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
+        // The xless agent (docs/security.md#the-xless-agent): the opt-in process that holds the store's data key and an
+        // Apple ID session in memory for `xless unlock`, `--remember` and `--keep`, and its client.
+        .target(name: "XlessAgent", dependencies: [
+            "XlessCore", "CXlessProcess",
+            .product(name: "Crypto", package: "swift-crypto"),
+        ]),
         // The App Store listing as an `appstore/` directory (docs/appstore-manifest.md): its model, `xless store pull`
         // (App Store Connect → files) and `validate` (offline checks); `store push` and `provision` build on it. App
         // Privacy goes through the Apple ID web session (XlessAppleID's `ASCWebPrivacy`).
@@ -91,7 +98,7 @@ let package = Package(
         ]),
         .executableTarget(name: "xless", dependencies: [
             "XlessCore", "XlessTauri", "XlessSDK", "XlessBuild", "XlessAssets", "XlessFinalize", "XlessSign", "XlessASC", "XlessPackage", "XlessIB",
-            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessStore",
+            "XlessXcode", "XlessReactNative", "XlessCargo", "XlessAppleID", "XlessVault", "XlessAgent", "XlessStore",
             .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ]),
         // Research tool: compares the storyboard compiler with ibtool outputs (scripts/ib-corpus/differential.py).
@@ -138,13 +145,17 @@ let package = Package(
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
         ]),
+        .testTarget(name: "XlessAgentTests", dependencies: [
+            "XlessAgent", "XlessCore", "CXlessProcess",
+            .product(name: "Crypto", package: "swift-crypto"),
+        ]),
         .testTarget(name: "XlessStoreTests", dependencies: [
             "XlessStore", "XlessASC", "XlessCore", "XlessAppleID",
             .product(name: "Yams", package: "Yams"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
-        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessSign", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
+        .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessAgent", "XlessSign", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
