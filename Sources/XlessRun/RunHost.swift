@@ -85,6 +85,8 @@ public protocol RunHost: AnyObject, Sendable {
     /// The same file or directory, whatever the spellings.
     func isSame(_ a: String, _ b: String) -> Bool
     func isReadable(_ path: String) -> Bool
+    /// A regular file, or a link to one.
+    func isFile(_ path: String) -> Bool
     /// A new empty file that only this user can read.
     func temporaryFile() throws -> String
     /// Makes `path` another name of `file`; false: there is a `path` already (or it cannot).

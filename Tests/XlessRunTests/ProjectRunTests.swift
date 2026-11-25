@@ -186,6 +186,30 @@ import XlessCore
         #expect(refused.lines.last?.contains("testflight.env, line 2 ") == true && !home.exists(marker) && refused.allSteps.isEmpty)
     }
 
+    @Test func aProblemOfTheEnvFileSaysNothingOfAValue() throws {
+        let file = try home.write("testflight.env", "A=1\nXLESS_DEMO_PASSWORD=\"hunter$SecretTail9\"\n")
+        let host = FakeRunHost(answer: home.answer())
+        #expect(try home.run([home.project], docker: false, host: host, environment: ["XLESS_TESTFLIGHT_ENV": file]) == 2)
+        #expect(host.lines.last?.contains("testflight.env, line 2 ") == true && host.lines.last?.contains("XLESS_DEMO_PASSWORD") == true)
+        #expect(!host.lines.joined().contains("Secret") && !host.lines.joined().contains("hunter"))
+    }
+
+    /// What is not a file (/dev/null, a pipe) is not read, as if it were not there.
+    @Test func anEnvFileIsARegularFile() throws {
+        let pipe = "\(home.root)/pipe"
+        #expect(mkfifo(pipe, 0o600) == 0)
+        for file in ["/dev/null", pipe, home.home] {
+            let host = FakeRunHost(answer: home.answer())
+            #expect(try home.run([home.project, "--to", "finalize"], docker: false, host: host, environment: ["XLESS_TESTFLIGHT_ENV": file]) == 0)
+            #expect(!host.lines.contains { $0.contains("testflight.env") || $0.hasPrefix("note: ") })
+        }
+        for arguments in [["--config", "/dev/null"], ["--config", pipe]] {
+            let host = FakeRunHost(answer: home.answer())
+            #expect(try home.run(arguments, docker: false, host: host) == 2)
+            #expect(host.lines.last?.hasSuffix("not found") == true)
+        }
+    }
+
     /// Once per run: not again when it starts anew inside a session.
     @Test func theEnvFileIsNamedAsTheOldWay() throws {
         let file = try home.write("testflight.env", "XLESS_IMAGE=x\n")

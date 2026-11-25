@@ -113,6 +113,7 @@ final class FakeRunHost: RunHost, @unchecked Sendable {
     func realPath(_ path: String) -> String? { files.realPath(path) }
     func isSame(_ a: String, _ b: String) -> Bool { files.isSame(a, b) }
     func isReadable(_ path: String) -> Bool { files.isReadable(path) }
+    func isFile(_ path: String) -> Bool { files.isFile(path) }
     func temporaryFile() throws -> String { try files.temporaryFile() }
     func link(_ file: String, _ path: String) -> Bool { files.link(file, path) }
     func rename(_ file: String, _ path: String) -> Bool { files.rename(file, path) }

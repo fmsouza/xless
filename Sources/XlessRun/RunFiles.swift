@@ -24,7 +24,8 @@ struct RunFiles {
         return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
     }
 
-    func isFile(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) && !isDirectory(path) }
+    /// A regular file, or a link to one.
+    func isFile(_ path: String) -> Bool { host.isFile(path) }
 
     static func parent(_ path: String) -> String {
         guard let slash = path.lastIndex(of: "/") else { return "." }

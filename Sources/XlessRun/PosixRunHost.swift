@@ -60,10 +60,7 @@ public final class PosixRunHost: RunHost {
     }
 
     public func program(_ name: String, path: String?) -> String? {
-        func runs(_ file: String) -> Bool {
-            var info = stat()
-            return stat(file, &info) == 0 && info.st_mode & S_IFMT == S_IFREG && access(file, X_OK) == 0
-        }
+        func runs(_ file: String) -> Bool { isFile(file) && access(file, X_OK) == 0 }
         if name.contains("/") { return runs(name) ? name : nil }
         for directory in (path ?? "/usr/bin:/bin").split(separator: ":", omittingEmptySubsequences: false) {
             let file = (directory.isEmpty ? "." : String(directory)) + "/" + name
@@ -192,6 +189,11 @@ public final class PosixRunHost: RunHost {
     }
 
     public func isReadable(_ path: String) -> Bool { access(path, R_OK) == 0 }
+
+    public func isFile(_ path: String) -> Bool {
+        var info = stat()
+        return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFREG
+    }
 
     public func temporaryFile() throws -> String {
         let given = ProcessInfo.processInfo.environment["TMPDIR"] ?? ""
