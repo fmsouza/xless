@@ -40,6 +40,15 @@ struct AgentDeadline {
 
     private init(continuous: Int64, wall: Date) { self.continuous = continuous; self.wall = wall }
 
+    func later(by seconds: Int) -> AgentDeadline {
+        AgentDeadline(continuous: continuous + Int64(seconds) * 1000, wall: wall + TimeInterval(seconds))
+    }
+
+    /// The seconds since this moment, by the clock that says the most.
+    func age(_ now: AgentClock.Now) -> Int {
+        max(0, Int((now.continuous - continuous + 999) / 1000), Int(now.wall.timeIntervalSince(wall).rounded(.up)))
+    }
+
     func remaining(_ now: AgentClock.Now) -> Int {
         max(0, min(Int((continuous - now.continuous + 999) / 1000), Int(wall.timeIntervalSince(now.wall).rounded(.up))))
     }

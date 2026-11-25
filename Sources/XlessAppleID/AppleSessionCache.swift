@@ -86,7 +86,7 @@ public struct AppleSessionCache: Sendable {
         var version = 1
         let appleID: String
         let created: Date
-        let expires: Date
+        var expires: Date
         let cookies: [CookieJar.Cookie]
         /// The hold's idle time and maximum, for a session kept again after Apple refused it (nil: an older xless).
         var idle: Int?
@@ -97,12 +97,17 @@ public struct AppleSessionCache: Sendable {
 
     let store: any SessionKeyStore
     let saved: (any SavedSession)?
+    let maximum: @Sendable () -> Int
     let now: @Sendable () -> Date
 
-    /// - Parameter saved: where a session is saved across reboots, when it is asked for; nil where none can be.
-    public init(store: any SessionKeyStore = KernelKeyringSessionStore(), saved: (any SavedSession)? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
+    /// - Parameters:
+    ///   - saved: where a session is saved across reboots, when it is asked for; nil where none can be.
+    ///   - maximum: the longest a session is kept, as the settings say now (one kept before they said so included).
+    public init(store: any SessionKeyStore = KernelKeyringSessionStore(), saved: (any SavedSession)? = nil,
+                maximum: @escaping @Sendable () -> Int = { HoldDuration.maximum }, now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
         self.saved = saved
+        self.maximum = maximum
         self.now = now
     }
 
@@ -225,8 +230,9 @@ public struct AppleSessionCache: Sendable {
     private func decode(_ plain: Data) -> Payload? {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
-        guard let payload = try? decoder.decode(Payload.self, from: plain), payload.version == 1, payload.expires > now() else { return nil }
-        return payload
+        guard var payload = try? decoder.decode(Payload.self, from: plain), payload.version == 1 else { return nil }
+        payload.expires = min(payload.expires, payload.created.addingTimeInterval(TimeInterval(maximum())))
+        return payload.expires > now() ? payload : nil
     }
 
     private func load(using: Bool) -> Payload? {

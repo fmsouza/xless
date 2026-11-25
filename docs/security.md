@@ -143,8 +143,12 @@ unlock:
   lockOnScreenLock: true    # … and when the screen is locked (macOS)
 ```
 
-Nothing lives longer than the maximum counted from when the passphrase or the password was last typed, however often it
-is renewed. The clock keeps running while the machine sleeps.
+Nothing lives longer than the maximum counted from when the passphrase or the password was last **typed**: a renewal, or a
+move from the kernel keyring to the agent, takes that time along (and where it is not known, the passphrase is asked). The
+clock keeps running while the machine sleeps. The settings count for what is held already, from the next command that uses
+it: a lowered maximum ends it sooner, and `lockOnSleep` or `lockOnScreenLock` switched on (or set for a second terminal
+that joins) holds for the agent from then on. They never loosen a hold: a raised maximum or a lock switched off counts for
+the next unlock after `xless lock`.
 
 ### Who may use what the agent holds
 

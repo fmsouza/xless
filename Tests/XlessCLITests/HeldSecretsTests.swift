@@ -10,7 +10,7 @@ import XlessCore
 final class FakeAgents: AgentHolding, @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: (seed: AgentSeed, bytes: SecretBytes)] = [:]
-    private(set) var typed: [Bool] = []
+    private(set) var typed: [Int] = []
     private(set) var witnessed = 0
     private(set) var locked = 0
     private(set) var dropped: [(String, String)] = []
@@ -33,13 +33,13 @@ final class FakeAgents: AgentHolding, @unchecked Sendable {
         lock.withLock { witnessed += 1 }
         return witness() == nil ? nil : bytes
     }
-    func put(_ seeds: [AgentSeed], typed: Bool, witness: () -> AgentWitness?) throws {
+    func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws {
         if let obstacle { throw obstacle }
         if refuses { throw AgentError(.unavailable, "no agent today", fix: "-") }
         lock.withLock {
             for seed in seeds {
                 items[seed.name] = (seed, seed.secret.withUnsafeBytes { SecretBytes(copying: $0) })
-                self.typed.append(typed)
+                typed.append(seed.typedAgo)
             }
         }
     }
@@ -72,15 +72,17 @@ final class FakeKeyring: VaultKeyCache, SessionKeyStore, @unchecked Sendable {
     private let lock = NSLock()
     private var keys: [String: SecretBytes] = [:]
     private(set) var seconds: [String: Int] = [:]
+    /// The seconds since what is held was typed.
+    var typedAgo: Int? = 0
     let isAvailable: Bool
     init(available: Bool = true) { isAvailable = available }
 
     var names: [String] { lock.withLock { keys.keys.sorted() } }
     func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes? { lock.withLock { keys[id].flatMap { accept($0) ? $0 : nil } } }
-    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typed: Bool) throws { try put(id, key, hold: hold) }
+    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws { try put(id, key, hold: hold); lock.withLock { self.typedAgo = typedAgo } }
     func forget(id: String) throws -> Bool { try revoke(id) }
     func forget(place: String) throws { lock.withLock { keys = [:] } }
-    func held(id: String) -> HeldUnlock? { lock.withLock { keys[id] == nil ? nil : HeldUnlock(backend: .keyring, expires: nil) } }
+    func held(id: String) -> HeldUnlock? { lock.withLock { keys[id] == nil ? nil : HeldUnlock(backend: .keyring, expires: nil, typedAgo: typedAgo) } }
     func allowed(_ hold: SecretHold) -> Int { min(hold.seconds, 3600) }
     func put(_ name: String, _ secret: SecretBytes, hold: SecretHold) throws {
         lock.withLock { keys[name] = secret; seconds[name] = hold.seconds }
@@ -101,18 +103,18 @@ private let half = SecretHold(seconds: 1800, idle: 1800, maximum: 7 * 86400)
 private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8](repeating: byte, count: 32)) }
 
 @Suite struct HeldKeyCacheTests {
-    private func cache(_ agents: FakeAgents, _ keyring: FakeKeyring, _ notes: Notes = Notes()) -> HeldKeyCache {
+    fileprivate func cache(_ agents: FakeAgents, _ keyring: FakeKeyring, _ notes: Notes = Notes()) -> HeldKeyCache {
         HeldKeyCache(agents: agents, keyring: keyring, say: notes.say)
     }
 
     @Test func aLongUnlockIsHeldByTheAgentForTheStoresPlace() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "ID", place: "/store", hold: day, typed: true)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         #expect(agents.names == ["xless-vault:ID"])
         #expect(agents.hold("xless-vault:ID") == day)
         #expect(agents.label("xless-vault:ID") == "/store")
-        #expect(agents.typed == [true])
+        #expect(agents.typed == [0])
         #expect(keyring.names.isEmpty)
         #expect(try c.load(id: "ID", using: true) { $0 == key() } == key())
         #expect(c.held(id: "ID")?.backend == .agent)
@@ -122,22 +124,22 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
     @Test func anHourOrLessStaysInTheKeyringWhereThereIsOne() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "ID", place: "/store", hold: half, typed: true)
+        try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
         #expect(agents.names.isEmpty)
         #expect(keyring.seconds["ID"] == 1800)
         #expect(try c.load(id: "ID", using: true) { _ in true } == key())
         #expect(c.held(id: "ID")?.backend == .keyring)
         let none = FakeKeyring(available: false) // macOS, Docker
         let d = cache(agents, none)
-        try d.store(key(), id: "ID", place: "/store", hold: half, typed: true)
+        try d.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
         #expect(agents.names == ["xless-vault:ID"])
     }
 
     @Test func aRenewalStaysWhereTheUnlockIs() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "ID", place: "/store", hold: day, typed: true)
-        try c.store(key(), id: "ID", place: "/store", hold: half, typed: false)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
+        try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 50)
         #expect(agents.hold("xless-vault:ID") == half)
         #expect(keyring.names.isEmpty)
     }
@@ -145,8 +147,8 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
     @Test func movingToTheAgentLeavesNothingInTheKeyring() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "ID", place: "/store", hold: half, typed: true)
-        try c.store(key(), id: "ID", place: "/store", hold: day, typed: true)
+        try c.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         #expect(keyring.names.isEmpty)
         #expect(agents.names == ["xless-vault:ID"])
     }
@@ -156,12 +158,12 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
         agents.obstacle = AgentError(.unavailable, "no session here", fix: "-")
         let c = cache(agents, keyring, notes)
         #expect(c.isAvailable)
-        try c.store(key(), id: "ID", place: "/store", hold: day, typed: true)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         #expect(keyring.seconds["ID"] == 3600)
         #expect(notes.lines.contains { $0.contains("1 h") && $0.contains("no session here") })
         let nowhere = cache(agents, FakeKeyring(available: false))
         #expect(!nowhere.isAvailable)
-        let error = #expect(throws: VaultError.self) { try nowhere.store(key(), id: "ID", place: "/store", hold: day, typed: true) }
+        let error = #expect(throws: VaultError.self) { try nowhere.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0) }
         #expect(error?.kind == .cacheUnavailable)
         #expect(error?.cause.contains("no session here") == true)
     }
@@ -169,7 +171,7 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
     @Test func aStaleKeyIsDroppedEverywhere() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "ID", place: "/store", hold: day, typed: true)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         #expect(try c.load(id: "ID", using: true) { _ in false } == nil)
         // An agent may be someone else's word: it is asked to drop, and nothing is taken from it.
         #expect(agents.names.isEmpty)
@@ -178,13 +180,13 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
     @Test func forgettingReachesBothBackends() throws {
         let agents = FakeAgents(), keyring = FakeKeyring()
         let c = cache(agents, keyring)
-        try c.store(key(), id: "A", place: "/store", hold: day, typed: true)
-        try c.store(key(), id: "B", place: "/store", hold: half, typed: true)
+        try c.store(key(), id: "A", place: "/store", hold: day, typedAgo: 0)
+        try c.store(key(), id: "B", place: "/store", hold: half, typedAgo: 0)
         #expect(try c.forget(id: "A"))
         #expect(try c.forget(id: "B"))
         #expect(try !c.forget(id: "B"))
-        try c.store(key(), id: "A", place: "/store", hold: day, typed: true)
-        try c.store(key(), id: "C", place: "/other", hold: day, typed: true)
+        try c.store(key(), id: "A", place: "/store", hold: day, typedAgo: 0)
+        try c.store(key(), id: "C", place: "/other", hold: day, typedAgo: 0)
         try c.forget(place: "/store")
         #expect(agents.names == ["xless-vault:C"])
     }
@@ -202,12 +204,34 @@ private func key(_ byte: UInt8 = 7) -> SecretBytes { SecretBytes(copying: [UInt8
     @Test func nothingOfItIsForBuildCode() throws {
         // XLESS_NO_SECRET_STORE=1: what a tool xless runs gets, when it runs xless.
         let agents = FakeAgents(), keyring = FakeKeyring()
-        try cache(agents, keyring).store(key(), id: "ID", place: "/store", hold: day, typed: true)
+        try cache(agents, keyring).store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0)
         let c = HeldKeyCache(agents: agents, keyring: keyring, isOff: true, say: { _ in })
         #expect(!c.isAvailable)
         #expect(try c.load(id: "ID", using: true) { _ in true } == nil)
-        #expect(throws: VaultError.self) { try c.store(key(), id: "ID", place: "/store", hold: day, typed: true) }
+        #expect(throws: VaultError.self) { try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 0) }
         #expect(c.held(id: "ID") == nil)
+    }
+}
+
+extension HeldKeyCacheTests {
+    @Test func whatMovesToTheAgentTakesTheTimeItWasTypedAlong() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        let c = cache(agents, keyring)
+        try c.store(key(), id: "ID", place: "/store", hold: day, typedAgo: 3540)
+        #expect(agents.typed == [3540])
+        #expect(c.held(id: "ID")?.typedAgo == 0) // the agent's word
+    }
+
+    @Test func aLoweredMaximumEndsAHoldOfTheKeyring() throws {
+        let agents = FakeAgents(), keyring = FakeKeyring()
+        try keyring.store(key(), id: "ID", place: "/store", hold: half, typedAgo: 0)
+        let c = HeldKeyCache(agents: agents, keyring: keyring, maximum: 600, say: { _ in })
+        keyring.typedAgo = 599
+        #expect(try c.load(id: "ID", using: true) { _ in true } != nil)
+        keyring.typedAgo = 600
+        #expect(c.held(id: "ID") == nil)
+        #expect(try c.load(id: "ID", using: true) { _ in true } == nil)
+        #expect(keyring.names.isEmpty)
     }
 }
 

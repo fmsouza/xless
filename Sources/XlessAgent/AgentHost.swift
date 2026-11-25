@@ -62,15 +62,18 @@ public enum AgentHost {
             // It serves the session it is in: anything else would be a session it cannot vouch for.
             guard session.isUsable, Int64(session.id) == wanted else { throw AgentError.limit("a session it is not in") }
             state.grant(session)
-            options.lockOnSleep = try r.bool()
-            options.lockOnScreenLock = try r.bool()
+            let terms = try AgentTerms(&r)
+            options.lockOnSleep = terms.lockOnSleep
+            options.lockOnScreenLock = terms.lockOnScreenLock
             for _ in 0..<(try r.uint32()) {
                 let name = try r.string(max: AgentLimits.nameBytes), label = try r.string(max: AgentLimits.labelBytes)
                 let hold = SecretHold(seconds: try r.int(), idle: try r.int(), maximum: try r.int())
+                let typedAgo = try r.int()
                 let secret = try r.secret(max: AgentLimits.itemBytes)
                 defer { secret.wipe() }
-                try state.put(name, label: label, secret, hold: hold, typed: true)
+                try state.put(name, label: label, secret, hold: hold, typedAgo: typedAgo)
             }
+            state.tighten(maximum: terms.maximum)
             return directory
         }
         #if os(macOS)

@@ -21,9 +21,11 @@ public struct HeldUnlock: Sendable, Equatable {
     /// The agent drops it after this many seconds without use.
     public let idle: Int?
     public let idleExpires: Date?
+    /// The seconds since the passphrase (or the password) was typed; nil: not known.
+    public let typedAgo: Int?
 
-    public init(backend: Backend, expires: Date?, idle: Int? = nil, idleExpires: Date? = nil) {
-        self.backend = backend; self.expires = expires; self.idle = idle; self.idleExpires = idleExpires
+    public init(backend: Backend, expires: Date?, idle: Int? = nil, idleExpires: Date? = nil, typedAgo: Int? = nil) {
+        self.backend = backend; self.expires = expires; self.idle = idle; self.idleExpires = idleExpires; self.typedAgo = typedAgo
     }
 }
 
@@ -36,8 +38,8 @@ public protocol VaultKeyCache: Sendable {
     func load(id: String, using: Bool, accept: (SecretBytes) -> Bool) throws -> SecretBytes?
     /// - Parameters:
     ///   - place: where the store is: a key held for another store at the same place is dropped.
-    ///   - typed: the passphrase was typed for this, so the longest hold starts again.
-    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typed: Bool) throws
+    ///   - typedAgo: the seconds since the passphrase was typed, which the longest hold counts from; 0: for this.
+    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws
     /// Drops the cached key; whether there was one.
     @discardableResult func forget(id: String) throws -> Bool
     /// The store at `place` was replaced: drops the keys held for what was there.
@@ -52,7 +54,8 @@ public struct KernelKeyringCache: VaultKeyCache {
     public init() {}
 
     static let prefix = "xless-vault:"
-    /// Beside each key, when the kernel drops it: it does not tell itself.
+    /// Beside each key, when the kernel drops it (it does not tell itself) and when the passphrase was typed, by the wall
+    /// clock and by the one that counts while the system sleeps.
     static let untilPrefix = "xless-vault-until:"
 
     static func keyName(_ id: String) -> String { prefix + id }
@@ -66,16 +69,20 @@ public struct KernelKeyringCache: VaultKeyCache {
         return nil
     }
 
-    public func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typed: Bool) throws {
+    public func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws {
         guard isAvailable else {
             throw VaultError(.cacheUnavailable, "the kernel keyring is not available here (macOS, or a container that blocks it)",
                              fix: "run without --remember; the passphrase is asked by each command that needs the store")
         }
-        let seconds = min(hold.seconds, KernelKeyring.maximumTimeout)
+        let seconds = min(hold.seconds, KernelKeyring.maximumTimeout, hold.maximum - typedAgo)
+        guard seconds > 0 else {
+            throw VaultError(.cacheUnavailable, "the store was unlocked longer ago than it may be kept unlocked", fix: "run `xless lock`, then `xless unlock`")
+        }
         do {
+            let now = Int(Date().timeIntervalSince1970), awake = SystemClock.seconds
+            // First what is known of the key, so the key is never there without it.
+            try KernelKeyring.store(name: Self.untilPrefix + id, secret: SecretBytes(utf8: "\(now + seconds) \(now - typedAgo) \(awake - typedAgo)"), timeout: seconds)
             try KernelKeyring.store(name: Self.keyName(id), secret: key, timeout: seconds)
-            let until = Int(Date().timeIntervalSince1970) + seconds
-            try KernelKeyring.store(name: Self.untilPrefix + id, secret: SecretBytes(utf8: "\(until)"), timeout: seconds)
         } catch {
             throw VaultError(.cacheUnavailable, "cannot keep the store unlocked: \(error)", fix: "run without --remember")
         }
@@ -105,8 +112,11 @@ public struct KernelKeyringCache: VaultKeyCache {
 
     public func held(id: String) -> HeldUnlock? {
         guard isAvailable, (try? KernelKeyring.find(name: Self.keyName(id))) ?? nil != nil else { return nil }
-        let until = ((try? KernelKeyring.find(name: Self.untilPrefix + id)) ?? nil).flatMap { try? KernelKeyring.read($0) }
-        return HeldUnlock(backend: .keyring, expires: until.flatMap { Double($0.utf8String()) }.map { Date(timeIntervalSince1970: $0) })
+        let text = ((try? KernelKeyring.find(name: Self.untilPrefix + id)) ?? nil).flatMap { try? KernelKeyring.read($0) }?.utf8String() ?? ""
+        let known = text.split(separator: " ").compactMap { Int($0) }
+        guard known.count == 3 else { return HeldUnlock(backend: .keyring, expires: nil) }
+        let age = max(0, Int(Date().timeIntervalSince1970.rounded(.up)) - known[1], SystemClock.seconds - known[2])
+        return HeldUnlock(backend: .keyring, expires: Date(timeIntervalSince1970: TimeInterval(known[0])), typedAgo: age)
     }
 }
 
@@ -124,8 +134,12 @@ public enum VaultUnlocker {
                                remember: SecretHold? = nil, reason: String) throws -> SymmetricKey {
         // A stale key (the store was re-created) is dropped, and the passphrase asked.
         if let cached = try? cache?.load(id: file.id, using: true, accept: { opens(file, $0) }) {
-            if let remember, let cache { try cache.store(cached, id: file.id, place: place, hold: remember, typed: false) }
-            return SymmetricKey(data: cached)
+            guard let remember, let cache else { return SymmetricKey(data: cached) }
+            if let age = cache.held(id: file.id)?.typedAgo, age < remember.maximum {
+                try cache.store(cached, id: file.id, place: place, hold: remember, typedAgo: max(age, 1))
+                return SymmetricKey(data: cached)
+            }
+            // Held since nobody knows when, or for the longest time already: kept on only by typing it again.
         }
         if InputGate.isOff {
             throw VaultError.inputNeeded("the secret store's passphrase (\(reason))",
@@ -140,7 +154,7 @@ public enum VaultUnlocker {
             let passphrase = try prompter.askSecret(passphrasePrompt)
             do {
                 let key = try VaultCrypto.unwrap(file, passphrase: passphrase)
-                if let remember, let cache { try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: place, hold: remember, typed: true) }
+                if let remember, let cache { try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: place, hold: remember, typedAgo: 0) }
                 return key
             } catch let e as VaultError where e.kind == .wrongPassphrase {
                 lastError = e

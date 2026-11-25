@@ -117,11 +117,32 @@ private final class Terminal: @unchecked Sendable {
     let got = try VaultUnlocker.dataKey(for: file, cache: cache, place: "/store", prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: hold, reason: "test")
     #expect(VaultCrypto.keyBytes(got) == VaultCrypto.keyBytes(key))
     #expect(cache.stored.map(\.1) == [1800])
-    #expect(cache.typed == [true])
+    #expect(cache.typed == [0])
     #expect(cache.places == ["/store"])
     // Again, with the key held: nothing is asked, and it is a renewal.
     _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, remember: hold, reason: "test")
-    #expect(cache.typed == [true, false])
+    #expect(cache.typed == [0, 100])
+    cache.typedAgo = 0 // within the second: still not typed for this
+    _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, remember: hold, reason: "test")
+    #expect(cache.typed == [0, 100, 1])
+}
+
+@Test func aRenewalAsksAgainWhenItIsNotKnownWhenThePassphraseWasTypedOrTooLongAgo() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    let (file, _) = try t.make()
+    let hold = SecretHold(seconds: 1800, idle: 600, maximum: 7200)
+    for age in [nil, 7200, 9000] {
+        let cache = MemoryCache()
+        _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { ScriptedPrompter(["correct horse battery"]) }, remember: hold, reason: "test")
+        cache.typedAgo = age
+        let prompter = ScriptedPrompter(["correct horse battery"])
+        _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { prompter }, remember: hold, reason: "test")
+        #expect(prompter.asked == 1)
+        #expect(cache.typed == [0, 0])
+        // Without a renewal it is used as it is.
+        _ = try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test")
+    }
 }
 
 @Test func newPassphrasesAreConfirmedAndLongEnough() throws {
@@ -188,7 +209,7 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     #expect(error?.fix.contains("xless unlock") == true)
     // Held: nothing is needed.
     let cache = MemoryCache()
-    try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: "", hold: SecretHold(seconds: 60, idle: 60, maximum: 60), typed: true)
+    try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: "", hold: SecretHold(seconds: 60, idle: 60, maximum: 60), typedAgo: 0)
     _ = try InputGate.$forced.withValue(true) { try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test") }
 }
 

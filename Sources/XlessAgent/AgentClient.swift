@@ -17,7 +17,7 @@ public struct AgentWitness: Sendable {
 /// when it may be believed, and what cannot be used counts as not held (`problem` says why).
 public final class AgentClient: @unchecked Sendable {
     private let directory: AgentDirectory
-    private let locking: AgentLocking
+    private let terms: AgentTerms
     private let findObstacle: @Sendable () -> AgentError?
     private let startAgent: @Sendable ([AgentSeed], AgentDirectory) throws -> Void
     private let lock = NSLock()
@@ -25,16 +25,16 @@ public final class AgentClient: @unchecked Sendable {
     /// For tests: no agent here is of this session.
     var seesEveryAgentAsAnotherSessions = false
 
-    public convenience init(directory: AgentDirectory = AgentDirectory(), locking: AgentLocking = AgentLocking()) {
-        self.init(directory: directory, locking: locking, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
-            try AgentLauncher.start(seeds, directory: directory, locking: locking)
+    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms()) {
+        self.init(directory: directory, terms: terms, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
+            try AgentLauncher.start(seeds, directory: directory, terms: terms)
         }
     }
 
-    init(directory: AgentDirectory, locking: AgentLocking = AgentLocking(), obstacle: @escaping @Sendable () -> AgentError?,
+    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), obstacle: @escaping @Sendable () -> AgentError?,
          start: @escaping @Sendable ([AgentSeed], AgentDirectory) throws -> Void) {
         self.directory = directory
-        self.locking = locking
+        self.terms = terms
         findObstacle = obstacle
         startAgent = start
     }
@@ -51,7 +51,7 @@ public final class AgentClient: @unchecked Sendable {
         do {
             for path in try directory.sockets() {
                 do {
-                    let link = try AgentLink.connect(path: path, directory: directory)
+                    let link = try AgentLink.connect(path: path, directory: directory, terms: terms)
                     if seesEveryAgentAsAnotherSessions { link.pretendAnotherSession() }
                     links.append(link)
                 } catch let e as AgentError where e.kind == .version || e.kind == .unsafePath {
@@ -98,12 +98,12 @@ public final class AgentClient: @unchecked Sendable {
     }
 
     /// Holds `seeds`, in an agent of this session, else one that has the witness's key, else a new one.
-    public func put(_ seeds: [AgentSeed], typed: Bool, witness: () -> AgentWitness? = { nil }) throws {
+    public func put(_ seeds: [AgentSeed], witness: () -> AgentWitness? = { nil }) throws {
         let links = links()
         if let problem, problem.kind == .unsafePath { throw problem }
         if let link = links.first(where: { $0.isGranted && $0.isSameSession }) ?? links.first(where: { link in witness().map { trusted(link, $0) } ?? false }) {
             do {
-                for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typed: typed) }
+                for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typedAgo: seed.typedAgo) }
                 return
             } catch let e as AgentError where e.kind == .gone {} // it ended meanwhile: a new one
         }

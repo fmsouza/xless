@@ -13,7 +13,7 @@ protocol AgentHolding: Sendable {
     var problem: AgentError? { get }
     func get(_ name: String, using: Bool, accept: (SecretBytes) -> Bool) -> SecretBytes?
     func get(_ name: String, using: Bool, witness: () -> AgentWitness?) -> SecretBytes?
-    func put(_ seeds: [AgentSeed], typed: Bool, witness: () -> AgentWitness?) throws
+    func put(_ seeds: [AgentSeed], witness: () -> AgentWitness?) throws
     func drop(prefix: String, label: String) -> Int
     func lockAll() throws -> Int
     func statuses() -> [AgentStatus]
@@ -28,9 +28,12 @@ enum HeldSecrets {
     /// `unlock:` in config.yml.
     static let settings = Result { try UserConfig.unlockSettings() }
 
+    /// The longest anything is held after it was typed.
+    static var maximum: Int { ((try? settings.get()) ?? UnlockSettings()).maximum }
+
     static let agents: AgentClient = {
         let s = (try? settings.get()) ?? UnlockSettings()
-        return AgentClient(locking: AgentLocking(onSleep: s.lockOnSleep, onScreenLock: s.lockOnScreenLock))
+        return AgentClient(terms: AgentTerms(maximum: s.maximum, lockOnSleep: s.lockOnSleep, lockOnScreenLock: s.lockOnScreenLock))
     }()
 
     static func say(_ line: String) { FileHandle.standardError.write(Data("\(line)\n".utf8)) }
@@ -69,13 +72,16 @@ struct HeldKeyCache: VaultKeyCache {
     let agents: any AgentHolding
     let keyring: any VaultKeyCache
     let isOff: Bool
+    /// The longest a hold lasts after the passphrase was typed, as the settings say now.
+    let maximum: Int
     private let say: SayOnce
 
     init(agents: any AgentHolding = HeldSecrets.agents, keyring: any VaultKeyCache = KernelKeyringCache(), isOff: Bool = HeldSecrets.isOff,
-         say: @escaping @Sendable (String) -> Void = HeldSecrets.say) {
+         maximum: Int = HeldSecrets.maximum, say: @escaping @Sendable (String) -> Void = HeldSecrets.say) {
         self.agents = agents
         self.keyring = keyring
         self.isOff = isOff
+        self.maximum = maximum
         self.say = SayOnce(say)
     }
 
@@ -87,19 +93,20 @@ struct HeldKeyCache: VaultKeyCache {
         var seen = false
         if let key = agents.get(name, using: using, accept: { seen = true; return accept($0) }) { return key }
         if seen { _ = agents.drop(prefix: name, label: "") }
+        if let age = keyring.held(id: id)?.typedAgo, age >= maximum { _ = try keyring.forget(id: id) }
         if let key = try keyring.load(id: id, using: using, accept: accept) { return key }
         say.problem(of: agents)
         return nil
     }
 
-    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typed: Bool) throws {
+    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws {
         guard !isOff else { throw VaultError(.cacheUnavailable, "XLESS_NO_SECRET_STORE=1 is set: nothing is kept unlocked", fix: "unset it") }
         let name = HeldSecrets.name(ofVault: id)
         if HeldSecrets.fitsKeyring(hold), keyring.isAvailable, held(id: id)?.backend != .agent {
-            return try keyring.store(key, id: id, place: place, hold: hold, typed: typed)
+            return try keyring.store(key, id: id, place: place, hold: hold, typedAgo: typedAgo)
         }
         do {
-            try agents.put([AgentSeed(name: name, label: place, secret: key, hold: hold)], typed: typed) { AgentWitness(item: name, key: key) }
+            try agents.put([AgentSeed(name: name, label: place, secret: key, hold: hold, typedAgo: typedAgo)]) { AgentWitness(item: name, key: key) }
             try keyring.forget(id: id)
         } catch let e as AgentError {
             guard keyring.isAvailable else {
@@ -107,7 +114,7 @@ struct HeldKeyCache: VaultKeyCache {
             }
             say("note: \(e.cause); the kernel keyring keeps the store unlocked instead, for \(HoldDuration.text(min(hold.seconds, KernelKeyring.maximumTimeout)))")
             let shorter = SecretHold(seconds: min(hold.seconds, KernelKeyring.maximumTimeout), idle: hold.idle, maximum: hold.maximum)
-            try keyring.store(key, id: id, place: place, hold: shorter, typed: typed)
+            try keyring.store(key, id: id, place: place, hold: shorter, typedAgo: typedAgo)
         }
     }
 
@@ -126,10 +133,10 @@ struct HeldKeyCache: VaultKeyCache {
         let name = HeldSecrets.name(ofVault: id), now = Date()
         for status in agents.statuses() where status.isGranted {
             if let item = status.items.first(where: { $0.name == name }) {
-                return HeldUnlock(backend: .agent, expires: now + TimeInterval(item.remaining), idle: item.idle, idleExpires: now + TimeInterval(item.idleRemaining))
+                return HeldUnlock(backend: .agent, expires: now + TimeInterval(item.remaining), idle: item.idle, idleExpires: now + TimeInterval(item.idleRemaining), typedAgo: item.typedAgo)
             }
         }
-        return keyring.held(id: id)
+        return keyring.held(id: id).flatMap { ($0.typedAgo ?? 0) < maximum ? $0 : nil }
     }
 }
 
@@ -162,7 +169,7 @@ struct HeldSessionStore: SessionKeyStore {
         guard isAvailable else { throw AppleSessionCache.unavailable(obstacle) }
         _ = try revoke(name)
         if HeldSecrets.fitsKeyring(hold), keyring.isAvailable { return try keyring.put(name, secret, hold: hold) }
-        try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], typed: true, witness: witness)
+        try agents.put([AgentSeed(name: name, label: "", secret: secret, hold: hold)], witness: witness)
     }
 
     func get(_ name: String, using: Bool) throws -> SecretBytes? {
@@ -179,7 +186,7 @@ struct HeldSessionStore: SessionKeyStore {
         let now = Date(), name = AppleSessionCache.prefix
         for status in agents.statuses() where status.isGranted {
             if let item = status.items.first(where: { $0.name == name }) {
-                return HeldUnlock(backend: .agent, expires: now + TimeInterval(item.remaining), idle: item.idle, idleExpires: now + TimeInterval(item.idleRemaining))
+                return HeldUnlock(backend: .agent, expires: now + TimeInterval(item.remaining), idle: item.idle, idleExpires: now + TimeInterval(item.idleRemaining), typedAgo: item.typedAgo)
             }
         }
         return ((try? keyring.get(name, using: false)) ?? nil) == nil ? nil : HeldUnlock(backend: .keyring, expires: nil)

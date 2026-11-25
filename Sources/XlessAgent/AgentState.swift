@@ -21,9 +21,12 @@ public struct AgentItemStatus: Sendable, Equatable {
     public let idle: Int
     /// Seconds until it is dropped when nobody uses it.
     public let idleRemaining: Int
+    /// Seconds since it was typed.
+    public let typedAgo: Int
 
-    public init(name: String, label: String, remaining: Int, idle: Int, idleRemaining: Int) {
+    public init(name: String, label: String, remaining: Int, idle: Int, idleRemaining: Int, typedAgo: Int = 0) {
         self.name = name; self.label = label; self.remaining = remaining; self.idle = idle; self.idleRemaining = idleRemaining
+        self.typedAgo = typedAgo
     }
 }
 
@@ -33,8 +36,9 @@ final class AgentState: @unchecked Sendable {
         let name: String
         let label: String
         let secret: SecretPages
-        /// The end of the longest hold since the secret was typed.
-        let cap: AgentDeadline
+        let typed: AgentDeadline
+        /// The end of the longest hold, counted from `typed`.
+        var cap: AgentDeadline
         var expires: AgentDeadline
         var idle: Int
         var idleEnds: AgentDeadline
@@ -49,20 +53,23 @@ final class AgentState: @unchecked Sendable {
 
     // MARK: items
 
-    /// Holds `secret` as `name`. `typed`: the person just gave it, so its longest hold starts again; else the same
-    /// secret is renewed within the longest hold it already has.
-    func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typed: Bool) throws {
+    /// Holds `secret` as `name`.
+    /// - Parameter typedAgo: the seconds since the person typed it, from where its longest hold counts; 0 when they just
+    ///   did. A secret renewed later keeps the earliest time known and the shortest longest hold it was given.
+    func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typedAgo: Int) throws {
         lock.lock()
         defer { lock.unlock() }
         guard !name.isEmpty, name.utf8.count <= AgentLimits.nameBytes else { throw AgentError.limit("that name") }
         guard label.utf8.count <= AgentLimits.labelBytes else { throw AgentError.limit("a label that long") }
         guard secret.count <= AgentLimits.itemBytes else { throw AgentError.limit("more than \(AgentLimits.itemBytes) bytes at once") }
         guard hold.seconds > 0, hold.idle > 0, hold.maximum > 0 else { throw AgentError.limit("a time of 0") }
+        guard typedAgo >= 0, typedAgo < min(hold.maximum, AgentLimits.seconds) else { throw AgentError.limit("what was typed too long ago") }
         dropExpired()
         let now = clock.now
         let seconds = min(hold.seconds, AgentLimits.seconds), idle = min(hold.idle, AgentLimits.seconds)
         let old = items[name]
-        let renews = !typed && (old.map { SecretPages.same($0.secret, secret) } ?? false)
+        let same = old.map { SecretPages.same($0.secret, secret) } ?? false
+        let renews = same && typedAgo > 0
         if !label.isEmpty {
             // Another secret for the same place: the store was replaced, so its old key opens nothing any more.
             for (other, item) in items where other != name && item.label == label {
@@ -71,8 +78,11 @@ final class AgentState: @unchecked Sendable {
             }
         }
         guard items[name] != nil || items.count < AgentLimits.items else { throw AgentError.limit("more than \(AgentLimits.items) secrets") }
-        let cap = renews ? old!.cap : AgentDeadline(now, in: min(hold.maximum, AgentLimits.seconds))
-        items[name] = Item(name: name, label: label, secret: renews ? old!.secret : SecretPages(secret), cap: cap,
+        var origin = AgentDeadline(now, in: -typedAgo)
+        if renews { origin = .earlier(origin, old!.typed) }
+        var cap = origin.later(by: min(hold.maximum, AgentLimits.seconds))
+        if renews { cap = .earlier(cap, old!.cap) }
+        items[name] = Item(name: name, label: label, secret: same ? old!.secret : SecretPages(secret), typed: origin, cap: cap,
                            expires: .earlier(AgentDeadline(now, in: seconds), cap), idle: idle, idleEnds: AgentDeadline(now, in: idle))
     }
 
@@ -87,6 +97,17 @@ final class AgentState: @unchecked Sendable {
             items[name] = item
         }
         return item.secret
+    }
+
+    /// A maximum a command was given since: nothing is held longer than that after it was typed.
+    func tighten(maximum: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        for name in items.keys {
+            let cap = AgentDeadline.earlier(items[name]!.cap, items[name]!.typed.later(by: max(0, min(maximum, AgentLimits.seconds))))
+            items[name]!.cap = cap
+            items[name]!.expires = .earlier(items[name]!.expires, cap)
+        }
     }
 
     /// Without using it.
@@ -130,7 +151,7 @@ final class AgentState: @unchecked Sendable {
         let now = clock.now
         return items.values.sorted { $0.name < $1.name }.map {
             AgentItemStatus(name: $0.name, label: $0.label, remaining: $0.expires.remaining(now), idle: $0.idle,
-                            idleRemaining: min($0.idleEnds.remaining(now), $0.expires.remaining(now)))
+                            idleRemaining: min($0.idleEnds.remaining(now), $0.expires.remaining(now)), typedAgo: $0.typed.age(now))
         }
     }
 

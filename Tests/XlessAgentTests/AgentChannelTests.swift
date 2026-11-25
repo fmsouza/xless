@@ -119,7 +119,7 @@ private func pair(_ kernel: Kernel) throws -> (AgentChannel, far: Int32) {
     kernel.alter { $0.token.7 += 1 }
     #expect(throws: AgentError.self) { try link.get("a") } // what it gave is not taken
     #expect(throws: AgentError.self) { // and it is sent nothing
-        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typed: true)
+        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typedAgo: 0)
     }
     #expect(agent.state.status(of: "b") == nil)
 }

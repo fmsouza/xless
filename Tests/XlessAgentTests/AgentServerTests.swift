@@ -27,7 +27,7 @@ final class TestAgent: @unchecked Sendable {
         state = AgentState(clock: clock.clock)
         for session in grant ?? [Self.ownSession] { state.grant(session) }
         for (name, text) in items {
-            try state.put(name, label: name, SecretBytes(utf8: text), hold: SecretHold(seconds: 3600, idle: 600, maximum: 7200), typed: true)
+            try state.put(name, label: name, SecretBytes(utf8: text), hold: SecretHold(seconds: 3600, idle: 600, maximum: 7200), typedAgo: 0)
         }
         let bound = try directory.bind()
         path = bound.path
@@ -47,7 +47,9 @@ final class TestAgent: @unchecked Sendable {
         done.wait(timeout: .now() + seconds) == .success ? exit : nil
     }
 
-    func link(timeout: Int = 5000) throws -> AgentLink { try AgentLink.connect(path: path, directory: directory, timeout: timeout) }
+    func link(timeout: Int = 5000, terms: AgentTerms = AgentTerms()) throws -> AgentLink {
+        try AgentLink.connect(path: path, directory: directory, terms: terms, timeout: timeout)
+    }
 }
 
 /// A short-named directory (a socket's path is short), removed when the tests end: the agents of the tests, which run
@@ -136,7 +138,7 @@ private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck
     let link = try agent.link()
     let big = SecretBytes(count: AgentLimits.itemBytes)
     big.withUnsafeMutableBytes { for i in 0..<$0.count { $0[i] = UInt8(truncatingIfNeeded: i &* 31) } }
-    try link.put("big", label: "here", big, hold: SecretHold(seconds: 100, idle: 100, maximum: 100), typed: true)
+    try link.put("big", label: "here", big, hold: SecretHold(seconds: 100, idle: 100, maximum: 100), typedAgo: 0)
     #expect(try agent.link().get("big")?.secret == big)
     #expect(try link.status()?.items.map(\.name) == ["a", "big"])
     #expect(try link.drop(prefix: "bi") == 1)
@@ -173,7 +175,7 @@ private func elsewhere(_ session: AgentSession = other) -> AgentServer.PeerCheck
     #expect(!link.isGranted)
     #expect(throws: AgentError.self) { try link.get("a") }
     #expect(throws: AgentError.self) {
-        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typed: true)
+        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typedAgo: 0)
     }
     let status = try #require(try link.status())
     #expect(!status.isGranted)
@@ -244,7 +246,7 @@ def handshake(s):
     s.sendall(frame(1, field(b'n' * 16) + field(b'0')))
     code, body = answer(s)
     nonce = body[4 + 16 + 4:4 + 16 + 4 + 16]
-    s.sendall(frame(2, field(nonce) + field(b'm' * 16)))
+    s.sendall(frame(2, field(nonce) + field(b'm' * 16) + struct.pack('>q??', 604800, True, True)))
     return answer(s)
 def get(s, name=b'a'):
     s.sendall(frame(11, field(name) + field(b'k' * 16) + b'\\x01'))
@@ -294,7 +296,7 @@ def get(s, name=b'a'):
     raw.send(w.frame(code: .hello))
     let (_, welcome) = try #require(raw.answer())
     var r = WireWriter()
-    r.put(bytes: Array(welcome[24..<40])); r.put(bytes: [UInt8](repeating: 2, count: 16))
+    r.put(bytes: Array(welcome[24..<40])); r.put(bytes: [UInt8](repeating: 2, count: 16)); AgentTerms().write(&r)
     raw.send(r.frame(code: .prove))
     let (_, verdict) = try #require(raw.answer())
     #expect(verdict.last == 1)
@@ -328,7 +330,7 @@ def get(s, name=b'a'):
     wrong.send(hello.frame(code: .hello))
     _ = try #require(wrong.answer())
     var proof = WireWriter()
-    proof.put(bytes: [UInt8](repeating: 0, count: 16)); proof.put(bytes: [UInt8](repeating: 2, count: 16))
+    proof.put(bytes: [UInt8](repeating: 0, count: 16)); proof.put(bytes: [UInt8](repeating: 2, count: 16)); AgentTerms().write(&proof)
     wrong.send(proof.frame(code: .prove))
     #expect(try #require(wrong.answer()).0.code == AgentCode.refused.rawValue)
     #expect(wrong.isClosed())
@@ -416,7 +418,7 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
     let link = try agent.link()
     link.pretendAnotherSession()
     #expect(throws: AgentError.self) {
-        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typed: true)
+        try link.put("b", label: "", SecretBytes(utf8: "x"), hold: SecretHold(seconds: 9, idle: 9, maximum: 9), typedAgo: 0)
     }
     #expect(agent.state.statuses().map(\.name) == ["a"])
 }
@@ -576,10 +578,10 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
     var options = AgentServer.Options()
     options.lockOnSleep = false
     let kept = try TestAgent(options: options)
-    _ = try kept.link()
+    _ = try kept.link(terms: AgentTerms(lockOnSleep: false, lockOnScreenLock: false))
     kept.clock.sleep(60)
     usleep(200_000)
-    #expect(try kept.link().get("a") != nil)
+    #expect(try kept.link(terms: AgentTerms(lockOnSleep: false, lockOnScreenLock: false)).get("a") != nil)
 }
 
 @Test func theAgentLocksWhenTheScreenIsLockedUnlessToldNotTo() throws {
@@ -593,7 +595,7 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
     locked.set()
     #expect(agent.waitForExit() == .screenLocked)
     usleep(200_000)
-    #expect(try kept.link().get("a") != nil)
+    #expect(try kept.link(terms: AgentTerms(lockOnSleep: false, lockOnScreenLock: false)).get("a") != nil)
     // Started with the screen locked already (over ssh): only a later lock counts.
     options.lockOnScreenLock = true
     let remote = try TestAgent(options: options)

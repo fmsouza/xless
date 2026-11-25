@@ -34,7 +34,7 @@ private struct Fixture {
     let f = try Fixture()
     defer { f.cleanup() }
     #expect(f.saved.expires == nil && f.asked.count == 0)
-    let until = Date(timeIntervalSince1970: 2_000_000_000)
+    let until = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 + 5000).rounded(.down))
     try f.saved.save(SecretBytes(utf8: "COOKIES"), expires: until)
     try f.saved.save(SecretBytes(utf8: "COOKIES-2"), expires: until)
     #expect(f.saved.expires == until)
@@ -51,6 +51,16 @@ private struct Fixture {
     #expect(try f.saved.remove())
     #expect(try !f.saved.remove())
     #expect(f.saved.expires == nil && f.asked.count == before + 1)
+}
+
+@Test func aLoweredMaximumEndsASavedSessionSooner() throws {
+    let f = try Fixture()
+    defer { f.cleanup() }
+    let until = Date() + 5000
+    try f.saved.save(SecretBytes(utf8: "COOKIES"), expires: until)
+    #expect(abs(try #require(f.saved.expires).timeIntervalSince(until)) < 1)
+    let lower = VaultSavedSession({ [vault = f.vault] in vault }, maximum: { 600 })
+    #expect(abs(try #require(lower.expires).timeIntervalSince(Date() + 600)) < 30)
 }
 
 @Test func aSessionIsSavedInTheEncryptedStoreOnly() {

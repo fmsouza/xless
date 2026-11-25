@@ -10,8 +10,14 @@ struct VaultSavedSession: SavedSession {
     private static let reason = "the saved Apple ID session"
     /// The encrypted store; throws where the secrets are elsewhere.
     let vault: @Sendable () throws -> VaultSecretStore
+    let maximum: @Sendable () -> Int
 
-    init(_ vault: @escaping @Sendable () throws -> VaultSecretStore = { try VaultSavedSession.configured() }) { self.vault = vault }
+    /// - Parameter maximum: the longest a session is kept, as the settings say now.
+    init(_ vault: @escaping @Sendable () throws -> VaultSecretStore = { try VaultSavedSession.configured() },
+         maximum: @escaping @Sendable () -> Int = { HeldSecrets.maximum }) {
+        self.vault = vault
+        self.maximum = maximum
+    }
 
     static func configured() throws -> VaultSecretStore {
         if HeldSecrets.isOff { throw unsupported("XLESS_NO_SECRET_STORE=1 is set") }
@@ -41,7 +47,11 @@ struct VaultSavedSession: SavedSession {
         return try vault.secret(entry, in: catalog, reason: Self.reason)
     }
 
-    var expires: Date? { ((try? vault().catalog()) ?? nil)?.entry(named: SecretEnvironment.savedSession)?.metadata.expires }
+    /// At the end of its time, or of the longest time the settings allow now.
+    var expires: Date? {
+        guard let metadata = ((try? vault().catalog()) ?? nil)?.entry(named: SecretEnvironment.savedSession)?.metadata, let end = metadata.expires else { return nil }
+        return metadata.created.map { min(end, $0.addingTimeInterval(TimeInterval(maximum()))) } ?? end
+    }
 
     @discardableResult func remove() throws -> Bool {
         let vault = try vault()

@@ -8,18 +8,33 @@ public struct AgentSeed: Sendable {
     public let label: String
     public let secret: SecretBytes
     public let hold: SecretHold
+    /// The seconds since it was typed, rounded up: 0 only when it was typed for this.
+    public let typedAgo: Int
 
-    public init(name: String, label: String, secret: SecretBytes, hold: SecretHold) {
-        self.name = name; self.label = label; self.secret = secret; self.hold = hold
+    public init(name: String, label: String, secret: SecretBytes, hold: SecretHold, typedAgo: Int = 0) {
+        self.name = name; self.label = label; self.secret = secret; self.hold = hold; self.typedAgo = typedAgo
     }
 }
 
-/// What an agent does besides waiting for its time to run out.
-public struct AgentLocking: Sendable, Equatable {
-    public var onSleep: Bool
-    public var onScreenLock: Bool
+/// What a command's settings (`unlock:` in config.yml) ask of an agent it uses: an agent keeps to the strictest of those
+/// it was told, for as long as it runs.
+public struct AgentTerms: Sendable, Equatable {
+    /// The longest anything is held after it was typed, in seconds.
+    public var maximum: Int
+    public var lockOnSleep: Bool
+    public var lockOnScreenLock: Bool
 
-    public init(onSleep: Bool = true, onScreenLock: Bool = true) { self.onSleep = onSleep; self.onScreenLock = onScreenLock }
+    public init(maximum: Int = HoldDuration.maximum, lockOnSleep: Bool = true, lockOnScreenLock: Bool = true) {
+        self.maximum = maximum; self.lockOnSleep = lockOnSleep; self.lockOnScreenLock = lockOnScreenLock
+    }
+
+    init(_ r: inout WireReader) throws { self.init(maximum: try r.int(), lockOnSleep: try r.bool(), lockOnScreenLock: try r.bool()) }
+
+    func write(_ w: inout WireWriter) {
+        w.put(maximum)
+        w.put(lockOnSleep)
+        w.put(lockOnScreenLock)
+    }
 }
 
 /// Starts an agent: this very program, detached, in this POSIX session (so the two can tell each other from everything
@@ -64,7 +79,7 @@ public enum AgentLauncher {
     }
 
     /// Starts an agent that holds `seeds` for this session. Returns once it listens.
-    static func start(_ seeds: [AgentSeed], directory: AgentDirectory, locking: AgentLocking, executable: String? = nil) throws {
+    static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, executable: String? = nil) throws {
         if let obstacle = obstacle() { throw obstacle }
         guard let program = executable ?? executablePath else {
             throw AgentError(.unavailable, "xless does not find its own program file to start its agent", fix: "run it by its full path")
@@ -79,12 +94,12 @@ public enum AgentLauncher {
         var w = WireWriter()
         w.put(directory.path)
         w.put(Int64(AgentSession.current.id))
-        w.put(locking.onSleep)
-        w.put(locking.onScreenLock)
+        terms.write(&w)
         w.put(UInt32(seeds.count))
         for seed in seeds {
             w.put(seed.name); w.put(seed.label)
             w.put(seed.hold.seconds); w.put(seed.hold.idle); w.put(seed.hold.maximum)
+            w.put(seed.typedAgo)
             w.put(secret: seed.secret)
         }
         mine.send(w.frame(code: .configure))

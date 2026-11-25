@@ -34,6 +34,7 @@ public struct AgentHeld: Sendable {
 final class AgentLink {
     private let channel: AgentChannel
     private let timeout: Int
+    private let terms: AgentTerms
     private var nonce: [UInt8] = []
     private var id: [UInt8] = []
     private(set) var isGranted = false
@@ -43,14 +44,14 @@ final class AgentLink {
     var isTrusted: Bool { isSameSession || hasProved }
 
     /// - Parameter timeout: milliseconds for each answer.
-    static func connect(path: String, directory: AgentDirectory, timeout: Int = 1500,
+    static func connect(path: String, directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int = 1500,
                         readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws -> AgentLink {
-        let link = try AgentLink(path: path, directory: directory, timeout: timeout, readPeer: readPeer)
+        let link = try AgentLink(path: path, directory: directory, terms: terms, timeout: timeout, readPeer: readPeer)
         try link.handshake()
         return link
     }
 
-    private init(path: String, directory: AgentDirectory, timeout: Int, readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws {
+    private init(path: String, directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int, readPeer: @escaping AgentChannel.PeerReader = AgentChannel.kernelPeer) throws {
         guard try directory.verify(), let identity = directory.identity(of: path) else { throw AgentError.gone }
         // Refused: nobody listens, or (macOS) too many are waiting. A busy agent takes them in no time.
         var fd = xless_unix_connect(path)
@@ -62,6 +63,7 @@ final class AgentLink {
         guard fd >= 0 else { throw AgentError.gone }
         channel = try AgentChannel(fd: fd, readPeer: readPeer)
         self.timeout = timeout
+        self.terms = terms
     }
 
     /// A socket nobody listens on is left by an agent that was killed. One made a moment ago may be about to be listened on.
@@ -127,6 +129,7 @@ final class AgentLink {
         let verdict = try request(.prove, .verdict) {
             $0.put(bytes: nonce)
             $0.put(bytes: second)
+            terms.write(&$0)
         }
         let answer: [UInt8]
         (answer, isGranted) = try verdict.body { (try $0.bytes(max: 16), try $0.bool()) }
@@ -159,7 +162,7 @@ final class AgentLink {
         return try answer.body { r in
             guard try r.bool() else { return nil }
             let secret = try r.secret(max: AgentLimits.itemBytes)
-            let status = AgentItemStatus(name: name, label: try r.string(max: AgentLimits.labelBytes), remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int())
+            let status = AgentItemStatus(name: name, label: try r.string(max: AgentLimits.labelBytes), remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int(), typedAgo: try r.int())
             return (AgentHeld(secret: secret, status: status), try r.bytes(max: 32))
         }
     }
@@ -175,13 +178,13 @@ final class AgentLink {
     }
 
     /// Holds `secret`. Only a trusted agent is sent one.
-    func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typed: Bool) throws {
+    func put(_ name: String, label: String, _ secret: SecretBytes, hold: SecretHold, typedAgo: Int) throws {
         guard isTrusted else { throw AgentError(.refused, "the xless agent is not one this command can trust", fix: "run `xless lock`, then `xless unlock`") }
         _ = try channel.peer() // still the process that was looked at
         try request(.put) {
             $0.put(name); $0.put(label)
             $0.put(hold.seconds); $0.put(hold.idle); $0.put(hold.maximum)
-            $0.put(typed)
+            $0.put(typedAgo)
             $0.put(secret: secret)
         }.body { _ in }
     }
@@ -211,7 +214,7 @@ final class AgentLink {
             guard named <= AgentLimits.items else { throw AgentError.malformed("\(named) items") }
             let items = try (0..<named).map { _ in
                 AgentItemStatus(name: try r.string(max: AgentLimits.nameBytes), label: try r.string(max: AgentLimits.labelBytes),
-                                remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int())
+                                remaining: try r.int(), idle: try r.int(), idleRemaining: try r.int(), typedAgo: try r.int())
             }
             return AgentStatus(isGranted: granted, count: count, remaining: remaining, sessions: sessions, items: items)
         }

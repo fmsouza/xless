@@ -174,7 +174,7 @@ struct SecretsInitCommand: ParsableCommand {
             try vault.vault.create(file)
             // An unlock of a store that was here before opens nothing any more.
             try? SecretStoreCLI.cache.forget(place: location.file.path)
-            if let remember { try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: remember, typed: true) }
+            if let remember { try SecretStoreCLI.cache.store(VaultCrypto.keyBytes(key), id: file.id, place: location.file.path, hold: remember, typedAgo: 0) }
             print("created the secret store at \(location.file.path)")
         }
     }

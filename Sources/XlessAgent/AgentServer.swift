@@ -67,6 +67,7 @@ final class AgentServer: @unchecked Sendable {
         let nonce = AgentProof.nonce()
         var proved = false
         var granted = false
+        var terms: AgentTerms?
         var requests = 0
         /// Closed as soon as what was said has been sent.
         var ending = false
@@ -247,13 +248,25 @@ final class AgentServer: @unchecked Sendable {
     }
 
     private func prove(_ message: AgentMessage, _ c: Connection) throws {
-        let (echo, nonce) = try message.body { (try $0.bytes(max: 16), try $0.bytes(max: 16)) }
+        let (echo, nonce, terms) = try message.body { (try $0.bytes(max: 16), try $0.bytes(max: 16), try AgentTerms(&$0)) }
         guard AgentProof.equal(echo, c.nonce) else { return refuse(c, .malformed, "not the nonce it was given") }
         c.proved = true
+        c.terms = terms
         var w = WireWriter()
         w.put(bytes: nonce)
         w.put(isGranted(c))
+        if c.granted { keep(to: terms) }
         c.channel.send(w.frame(code: .verdict))
+    }
+
+    /// The settings of a command that is served: they tighten what they can, and loosen nothing.
+    private func keep(to terms: AgentTerms) {
+        state.tighten(maximum: terms.maximum)
+        if terms.lockOnSleep { options.lockOnSleep = true }
+        if terms.lockOnScreenLock, !options.lockOnScreenLock {
+            options.lockOnScreenLock = true
+            screenWasLocked = options.screenIsLocked()
+        }
     }
 
     /// The process at the other end, once it has shown it is there now (it answered with what it was sent).
@@ -286,7 +299,7 @@ final class AgentServer: @unchecked Sendable {
         w.put(UInt32(state.sessions))
         w.put(UInt32(granted ? items.count : 0))
         for item in items where granted {
-            w.put(item.name); w.put(item.label); w.put(item.remaining); w.put(item.idle); w.put(item.idleRemaining)
+            w.put(item.name); w.put(item.label); w.put(item.remaining); w.put(item.idle); w.put(item.idleRemaining); w.put(item.typedAgo)
         }
         c.channel.send(w.frame(code: .ok))
     }
@@ -298,7 +311,7 @@ final class AgentServer: @unchecked Sendable {
         if let secret = state.get(name, using: using), let status = state.status(of: name) {
             w.put(true)
             w.put(secret: secret)
-            w.put(status.label); w.put(status.remaining); w.put(status.idle); w.put(status.idleRemaining)
+            w.put(status.label); w.put(status.remaining); w.put(status.idle); w.put(status.idleRemaining); w.put(status.typedAgo)
             w.put(bytes: AgentProof.holds(name, key: secret.withUnsafeBytes { SymmetricKey(data: $0) }, nonce: nonce, agent: id))
         } else {
             w.put(false)
@@ -314,10 +327,10 @@ final class AgentServer: @unchecked Sendable {
         guard requireGranted(c) else { return }
         try message.body { r in
             let name = try r.string(max: AgentLimits.nameBytes), label = try r.string(max: AgentLimits.labelBytes)
-            let hold = try Self.hold(&r), typed = try r.bool()
+            let hold = try Self.hold(&r), typedAgo = try r.int()
             let secret = try r.secret(max: AgentLimits.itemBytes)
             defer { secret.wipe() }
-            try state.put(name, label: label, secret, hold: hold, typed: typed)
+            try state.put(name, label: label, secret, hold: hold, typedAgo: typedAgo)
         }
         c.channel.send(WireWriter().frame(code: .ok))
     }
@@ -340,7 +353,7 @@ final class AgentServer: @unchecked Sendable {
             return refuse(c, .notGranted, "this process did not show that it has the key", end: false)
         }
         state.grant(peer.session)
-        _ = isGranted(c)
+        if isGranted(c), let terms = c.terms { keep(to: terms) }
         c.channel.send(WireWriter().frame(code: .ok))
     }
 }

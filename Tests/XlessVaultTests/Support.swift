@@ -59,7 +59,9 @@ final class MemoryCache: VaultKeyCache, @unchecked Sendable {
     private let lock = NSLock()
     private var keys: [String: [UInt8]] = [:]
     private(set) var stored: [(String, Int)] = []
-    private(set) var typed: [Bool] = []
+    private(set) var typed: [Int] = []
+    /// The seconds since the passphrase of what is held was typed; nil: not known.
+    var typedAgo: Int? = 100
     private(set) var places: [String] = []
     var isAvailable: Bool { true }
 
@@ -72,18 +74,18 @@ final class MemoryCache: VaultKeyCache, @unchecked Sendable {
         }
     }
     func store(id: String, key: SecretBytes, seconds: Int) throws {
-        try store(key, id: id, place: "", hold: SecretHold(seconds: seconds, idle: seconds, maximum: seconds), typed: true)
+        try store(key, id: id, place: "", hold: SecretHold(seconds: seconds, idle: seconds, maximum: seconds), typedAgo: 0)
     }
-    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typed: Bool) throws {
+    func store(_ key: SecretBytes, id: String, place: String, hold: SecretHold, typedAgo: Int) throws {
         lock.withLock {
             keys[id] = key.withUnsafeBytes { Array($0) }
             stored.append((id, hold.seconds))
-            self.typed.append(typed)
+            self.typed.append(typedAgo)
             places.append(place)
         }
     }
     func forget(place: String) throws { lock.withLock { keys = [:] } }
-    func held(id: String) -> HeldUnlock? { lock.withLock { keys[id] == nil ? nil : HeldUnlock(backend: .agent, expires: nil) } }
+    func held(id: String) -> HeldUnlock? { lock.withLock { keys[id] == nil ? nil : HeldUnlock(backend: .agent, expires: nil, typedAgo: typedAgo) } }
     func forget(id: String) throws -> Bool { lock.withLock { keys.removeValue(forKey: id) != nil } }
 }
 

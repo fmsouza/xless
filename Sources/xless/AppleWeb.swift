@@ -30,7 +30,7 @@ enum AppleWebHelp {
 enum AppleWebCLI {
     static let saved = VaultSavedSession()
     static let held = HeldSessionStore(witness: { SecretStoreCLI.witness() })
-    static let cache = AppleSessionCache(store: held, saved: saved)
+    static let cache = AppleSessionCache(store: held, saved: saved, maximum: { HeldSecrets.maximum })
 
     /// The terminal for the sign-in of an account command.
     static func prompter() throws -> TerminalPrompter {

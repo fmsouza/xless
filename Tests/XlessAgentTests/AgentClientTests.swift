@@ -18,8 +18,8 @@ private let keyText = String(decoding: [UInt8](repeating: 9, count: 32), as: UTF
 private let hold = SecretHold(seconds: 500, idle: 400, maximum: 5000)
 private let witness = AgentWitness(item: "xless-vault:1", key: key)
 
-private func client(_ directory: AgentDirectory, _ starts: Starts = Starts(), obstacle: AgentError? = nil) -> AgentClient {
-    AgentClient(directory: directory, obstacle: { obstacle }, start: { seeds, _ in starts.note(seeds) })
+private func client(_ directory: AgentDirectory, _ starts: Starts = Starts(), terms: AgentTerms = AgentTerms(), obstacle: AgentError? = nil) -> AgentClient {
+    AgentClient(directory: directory, terms: terms, obstacle: { obstacle }, start: { seeds, _ in starts.note(seeds) })
 }
 
 private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
@@ -45,7 +45,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     let c = client(agent.directory)
     #expect(c.get("a") { _ in true } == nil)
     #expect(c.problem?.kind == .unsafePath)
-    #expect(throws: AgentError.self) { try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)], typed: true) }
+    #expect(throws: AgentError.self) { try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)]) }
 }
 
 @Test func aSecretIsTakenOnlyWhenTheCommandAcceptsIt() throws {
@@ -58,11 +58,11 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
 @Test func aSecretGoesToTheAgentOfThisSessionElseToANewOne() throws {
     let agent = try TestAgent()
     let starts = Starts()
-    try client(agent.directory, starts).put([AgentSeed(name: "b", label: "", secret: key, hold: hold)], typed: true)
+    try client(agent.directory, starts).put([AgentSeed(name: "b", label: "", secret: key, hold: hold)])
     #expect(starts.count == 0)
     #expect(agent.state.heldBytes("b")?.copy() == key)
     let foreign = try TestAgent(grant: [far])
-    try client(foreign.directory, starts).put([AgentSeed(name: "b", label: "", secret: key, hold: hold)], typed: true)
+    try client(foreign.directory, starts).put([AgentSeed(name: "b", label: "", secret: key, hold: hold)])
     #expect(starts.names == [["b"]])
     #expect(foreign.state.heldBytes("b") == nil)
 }
@@ -71,7 +71,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     let (box, directory) = sharedDirectory()
     let no = AgentError(.unavailable, "no way", fix: "none")
     let c = client(directory, obstacle: no)
-    #expect(throws: no) { try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)], typed: true) }
+    #expect(throws: no) { try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)]) }
     _ = box
 }
 
@@ -81,7 +81,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     let c = client(agent.directory, starts)
     #expect(c.get("xless-vault:1") { $0 == key } == nil)
     #expect(c.get("xless-apple-session", witness: { nil }) == nil)
-    try c.put([AgentSeed(name: "xless-vault:1", label: "xless-vault:1", secret: key, hold: hold)], typed: true, witness: { witness })
+    try c.put([AgentSeed(name: "xless-vault:1", label: "xless-vault:1", secret: key, hold: hold)], witness: { witness })
     #expect(starts.count == 0) // no second agent
     #expect(c.get("xless-vault:1") { $0 == key } == key)
     #expect(agent.state.status(of: "xless-vault:1")?.remaining == 500)
@@ -120,7 +120,7 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(c.get("xless-vault:1") { $0 == key } == nil)
     #expect(c.get("xless-apple-session", witness: { nil }) == nil)
     #expect(c.get("xless-apple-session", witness: { witness }) == nil)
-    try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)], typed: true, witness: { witness })
+    try c.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)], witness: { witness })
     #expect(starts.names == [["b"]]) // a new one instead
     #expect(agent.state.heldBytes("b") == nil)
 }
@@ -172,4 +172,56 @@ private func sharedDirectory() -> (ScratchBox, AgentDirectory) {
     #expect(agent.state.statuses().map(\.name) == ["b"])
     #expect(c.drop(prefix: "b", label: "elsewhere") == 0)
     #expect(c.drop(prefix: "b", label: "b") == 1)
+}
+
+// MARK: the settings of the commands that use an agent
+
+@Test func aLoweredMaximumEndsAHoldAtTheNextCommand() throws {
+    let agent = try TestAgent(items: [("a", "one"), ("b", "two")]) // 3600 s, at most 7200
+    agent.clock.advance(500)
+    let c = client(agent.directory, terms: AgentTerms(maximum: 1000))
+    #expect(c.get("a") { _ in true } != nil)
+    #expect(agent.state.statuses().map(\.remaining) == [500, 500])
+    #expect(c.statuses().first?.items.map(\.typedAgo) == [500, 500])
+    #expect(client(agent.directory, terms: AgentTerms(maximum: 500)).get("a") { _ in true } == nil)
+    #expect(agent.waitForExit() == .empty)
+}
+
+@Test func aProcessThatIsNotServedChangesNoTerms() throws {
+    let agent = try TestAgent(grant: [far])
+    #expect(client(agent.directory, terms: AgentTerms(maximum: 1)).statuses().first?.isGranted == false)
+    #expect(agent.state.statuses().map(\.remaining) == [3600])
+}
+
+@Test func theSettingsOfATerminalThatJoinsCountAndOnlyTighten() throws {
+    let locked = Flag()
+    var options = AgentServer.Options()
+    options.lockOnSleep = false
+    options.lockOnScreenLock = false
+    options.screenIsLocked = { locked.isSet }
+    let lax = AgentTerms(lockOnSleep: false, lockOnScreenLock: false)
+    // A lax command changes nothing; one that minds sleep does, and a lax one after it does not undo that.
+    let agent = try TestAgent(options: options)
+    #expect(client(agent.directory, terms: lax).get("a") { _ in true } != nil)
+    agent.clock.sleep(60)
+    usleep(100_000)
+    #expect(client(agent.directory, terms: lax).get("a") { _ in true } != nil)
+    #expect(client(agent.directory, terms: AgentTerms(lockOnSleep: true, lockOnScreenLock: false)).get("a") { _ in true } != nil)
+    #expect(client(agent.directory, terms: lax).get("a") { _ in true } != nil)
+    agent.clock.sleep(60)
+    #expect(agent.waitForExit() == .slept)
+    // By joining, with the store's key.
+    let other = try TestAgent(grant: [far], items: [("xless-vault:1", keyText), ("a", "one")], options: options)
+    #expect(client(other.directory, terms: AgentTerms(maximum: 1000, lockOnSleep: false, lockOnScreenLock: true)).get("a", witness: { witness }) != nil)
+    #expect(other.state.statuses().map(\.remaining) == [1000, 1000])
+    locked.set()
+    #expect(other.waitForExit() == .screenLocked)
+}
+
+@Test func aSecretMovedToAnAgentKeepsTheTimeItWasTyped() throws {
+    let agent = try TestAgent()
+    let seed = AgentSeed(name: "b", label: "", secret: key, hold: hold, typedAgo: 4800)
+    try client(agent.directory).put([seed])
+    #expect(agent.state.status(of: "b")?.remaining == 200) // of at most 5000
+    #expect(agent.state.status(of: "b")?.typedAgo == 4800)
 }

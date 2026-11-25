@@ -151,6 +151,25 @@ final class AppleSessionCacheTests: XCTestCase {
         XCTAssertNil(saved.bytes) // and it is gone
     }
 
+    func testALoweredMaximumEndsAKeptAndASavedSession() async throws {
+        let clock = TestClock(t0)
+        let saved = MemorySavedSession()
+        let store = MemoryKeyStore(clock: clock)
+        try await AppleSessionCache(store: store, saved: saved, now: { clock.now })
+            .keep(try await signedInClient(clock: clock), appleID: "me@example.com", hold: hold(1800), acrossReboots: true)
+        clock.now = t0.addingTimeInterval(500)
+        let lower = AppleSessionCache(store: store, saved: saved, maximum: { 600 }, now: { clock.now })
+        XCTAssertEqual(lower.info()?.expires, t0.addingTimeInterval(600))
+        XCTAssertEqual(lower.remainingHold()?.seconds, 100)
+        clock.now = t0.addingTimeInterval(600)
+        XCTAssertNil(lower.info())
+        XCTAssertEqual(store.names, [])
+        let web = AppleWebClient(transport: MockTransport { _ in .init(status: 200) })
+        let restored = try await lower.restore(into: web)
+        XCTAssertNil(restored)
+        XCTAssertNil(saved.bytes)
+    }
+
     func testASessionThatCannotBeSavedIsNotKept() async throws {
         let clock = TestClock(t0)
         let store = MemoryKeyStore(clock: clock)
