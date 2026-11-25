@@ -7,20 +7,30 @@ import XlessIB
 enum LaunchStoryboard {
     /// Compiles `storyboard` into `<app>/<name>.storyboardc` (the bundle root, where Xcode links it), sets
     /// `UILaunchStoryboardName` to `<name>` and removes `UILaunchScreen`. Every failure is an `[assets]` error.
-    static func compile(_ storyboard: URL, into app: URL, minimumOS: String, profile: XcodeToolsProfile) throws {
+    static func compile(_ storyboard: URL, into app: URL, minimumOS: String, xcode: XcodeAssets? = nil, profile: () throws -> XcodeToolsProfile) throws {
         let name = storyboard.deletingPathExtension().lastPathComponent
         guard FileManager.default.fileExists(atPath: storyboard.path) else {
             throw XlessError(.assets, "launch storyboard \(storyboard.path) does not exist", fix: "check `launchStoryboard` in xless.yml (relative to the project)")
         }
         let plistURL = app.appendingPathComponent(BundleLayout(platform: .ios).infoPlist)
         var info = try Plist.read(plistURL, stage: .assets)
+        let out = app.appendingPathComponent("\(name).storyboardc", isDirectory: true)
+        if let xcode, let ibtool = xcode.ibtool {
+            try? FileManager.default.removeItem(at: out)
+            try xcode.compile(storyboard, with: ibtool, to: out, minimumOS: minimumOS, info: info)
+        } else { try compileOwn(storyboard, to: out, minimumOS: minimumOS, info: info, profile: profile()) }
+        info["UILaunchStoryboardName"] = name
+        info.removeValue(forKey: "UILaunchScreen")
+        try Plist.write(info, to: plistURL, stage: .assets)
+    }
+
+    private static func compileOwn(_ storyboard: URL, to out: URL, minimumOS: String, info: [String: Any], profile: XcodeToolsProfile) throws {
         let options = IBCompileOptions(targetDevices: try targetDevices(info), minimumDeploymentTarget: minimumOS)
 
         let result: IBCompileResult
         do { result = try StoryboardCompiler.compile(url: storyboard, options: options, profile: profile) } catch {
             throw assetsError(error, storyboard: storyboard)
         }
-        let out = app.appendingPathComponent("\(name).storyboardc", isDirectory: true)
         do {
             let fm = FileManager.default
             try? fm.removeItem(at: out)
@@ -29,9 +39,6 @@ enum LaunchStoryboard {
         } catch {
             throw XlessError(.assets, "cannot write \(out.path): \(error.localizedDescription)", fix: "check disk space and permissions")
         }
-        info["UILaunchStoryboardName"] = name
-        info.removeValue(forKey: "UILaunchScreen")
-        try Plist.write(info, to: plistURL, stage: .assets)
     }
 
     /// Any compiler failure as an `[assets]` error naming the storyboard (the compiler throws `XlessError`s; anything
