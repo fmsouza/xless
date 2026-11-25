@@ -270,7 +270,7 @@ private func stapleTicket(_ app: URL) throws { try Data("ticket".utf8).write(to:
 // MARK: - What a build may leave
 
 /// Names are a file's, and no pattern of `unzip`.
-@Test(arguments: ["X [beta].app", "X*?.app", "X\\a.app", "-x.app"])
+@Test(arguments: ["X [beta].app", "X*?.app", "X\\a.app", "-x.app", "\u{dc}x.app", "X[\u{301}b]\u{301}*\u{301}.app"])
 func theVersionsOfAnIPAAreThoseOfItsAppWhateverItsName(_ name: String) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("pk-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
