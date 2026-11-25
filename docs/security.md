@@ -210,9 +210,10 @@ knows who it is. An agent of another xless version is never misunderstood: the c
 - The time given, the idle time, `xless lock` (every agent of yours, in every terminal, the keyring and a saved session:
   every step is taken, whatever the others came to). `xless auth logout` drops the Apple ID session, `xless secrets lock`
   the store's unlock.
-- An agent that **does not answer** (a stopped process, say) is never taken for nothing held: `xless lock` ends it where
-  the kernel says that it is this very xless (macOS), else names its process and fails, as `xless secrets lock`, `xless
-  auth logout` and `passwd` do. A command that looks for something held says so, waits for it once (1.5 s) and goes on.
+- An agent that **does not answer** (a stopped process, say) is never taken for nothing held, also when its queue is full
+  and the system refuses a connection as if nobody listened (macOS): its socket's name says which process made it. `xless
+  lock` ends that process where it can ask who listens and the kernel says that it is the one, and this very xless
+  (macOS); else it names the agent and fails, as `xless secrets lock`, `xless auth logout` and `passwd` do. A command that looks for something held says so, waits for it once (1.5 s) and goes on.
 - **The terminals are closed**: when no granted session's leader is left (you closed the window, logged out of SSH, quit
   the shell), the agent ends within 2 seconds. Logging out ends every session.
 - **The machine sleeps**: the agent compares a clock that stops during sleep with one that does not, and drops everything
@@ -224,8 +225,10 @@ knows who it is. An agent of another xless version is never misunderstood: the c
   against the store before use), the agent's socket or its directory removed, and the agent process killed.
 
 No agent can be used where xless itself leads its POSIX session (`ssh host xless …`, `docker exec … xless`, without a
-shell: nothing of it would be left to serve), nor on Linux before 5.3 (no pidfd). There, and only there, `xless unlock` uses
-the kernel keyring if it works, for at most an hour, and says so and what that lacks; else it is refused with the reason.
+shell: nothing of it would be left to serve), on Linux before 5.3 (no pidfd), nor where its directory or socket cannot be
+made at all (a read-only file system, a path too long, no Unix sockets). There, and only there, `xless unlock` uses the
+kernel keyring if it works, for at most an hour, and says so and what that lacks; else it is refused with the reason. An
+agent that could run and did not start this time is an error.
 
 ### The kernel keyring
 

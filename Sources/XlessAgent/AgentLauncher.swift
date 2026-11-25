@@ -104,15 +104,15 @@ public enum AgentLauncher {
         }
         mine.send(w.frame(code: .configure))
         guard let answer = try mine.wait(limit: AgentLimits.smallMessage, milliseconds: 10_000) else {
-            throw AgentError(.unavailable, "the xless agent did not start in time", fix: "try again")
+            throw AgentError(.failed, "the xless agent did not start in time", fix: "try again")
         }
         guard answer.code == .ok else {
-            let (_, text) = try answer.body { (try $0.uint8(), try $0.string(max: 2048)) }
-            throw AgentError(.unavailable, text, fix: "fix that, and try again")
+            let (why, text) = try answer.body { (try $0.uint8(), try $0.string(max: 2048)) }
+            throw AgentError(AgentRefusal(rawValue: why) == .unavailable ? .unavailable : .failed, text, fix: "fix that, and try again")
         }
     }
 
     private static func failure(_ what: String, _ code: Int32) -> AgentError {
-        AgentError(.unavailable, "cannot start the xless agent (\(what): \(String(cString: strerror(code))))", fix: "try again")
+        AgentError(.failed, "cannot start the xless agent (\(what): \(String(cString: strerror(code))))", fix: "try again")
     }
 }

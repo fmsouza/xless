@@ -39,7 +39,7 @@ public enum AgentHost {
             server = try configure(message)
         } catch {
             var w = WireWriter()
-            w.put(AgentRefusal.limit.rawValue)
+            w.put(refusal(of: error).rawValue)
             w.put((error as? AgentError)?.cause ?? "the xless agent cannot start")
             channel.send(w.frame(code: .refused))
             try? channel.flush()
@@ -51,6 +51,8 @@ public enum AgentHost {
         _ = server.run()
         return 0
     }
+
+    static func refusal(of error: any Error) -> AgentRefusal { (error as? AgentError)?.kind == .unavailable ? .unavailable : .limit }
 
     private static func configure(_ message: AgentMessage) throws -> AgentServer {
         let state = AgentState(clock: .system)

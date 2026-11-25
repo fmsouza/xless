@@ -1,3 +1,4 @@
+import Foundation
 import XlessCore
 
 /// A failure of the xless agent or of a command talking to it. Names paths and what to do, never a secret.
@@ -13,12 +14,22 @@ public struct AgentError: Error, Equatable, Sendable, StageReportableError, Cust
         case unsafePath
         /// No agent can run here.
         case unavailable
+        /// One can, and could not be started this time.
+        case failed
         /// The other end closed.
         case gone
         /// The other end is there and did not answer in time.
         case silent
         /// What was asked is outside the agent's limits.
         case limit
+
+        /// What an errno value that keeps the agent from its directory or its socket means.
+        init(system error: Int32) {
+            switch error {
+            case EACCES, EPERM, EROFS, ENOENT, ENOTDIR, ELOOP, ENAMETOOLONG, ENOSYS, EAFNOSUPPORT, EOPNOTSUPP, EPROTONOSUPPORT: self = .unavailable
+            default: self = .failed
+            }
+        }
     }
 
     public let kind: Kind

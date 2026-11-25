@@ -57,7 +57,7 @@ public struct AgentDirectory: Sendable {
             // mkdir takes bits off with the umask, never adds any: give the owner theirs back.
             _ = chmod(path, 0o700)
         } else if errno != EEXIST {
-            throw AgentError(.unavailable, "the xless agent's directory \(path) cannot be made: \(String(cString: strerror(errno)))",
+            throw AgentError(.init(system: errno), "the xless agent's directory \(path) cannot be made: \(String(cString: strerror(errno)))",
                              fix: "set XDG_RUNTIME_DIR to a directory of yours")
         }
         try verify()
@@ -137,7 +137,7 @@ public struct AgentDirectory: Sendable {
         }
         let fd = xless_unix_listen(path, 128)
         guard fd >= 0 else {
-            throw AgentError(.unavailable, "the xless agent cannot listen on \(path): \(String(cString: strerror(-fd)))", fix: "set XDG_RUNTIME_DIR to a directory of yours")
+            throw AgentError(.init(system: -fd), "the xless agent cannot listen on \(path): \(String(cString: strerror(-fd)))", fix: "set XDG_RUNTIME_DIR to a directory of yours")
         }
         guard let identity = identity(of: path) else {
             close(fd)

@@ -5,7 +5,7 @@ import XlessCore
 
 /// Why a request was refused, on the wire.
 enum AgentRefusal: UInt8 {
-    case version = 1, notGranted = 2, malformed = 3, limit = 4
+    case version = 1, notGranted = 2, malformed = 3, limit = 4, unavailable = 5
 }
 
 /// Proofs that one has the key held as an item, for one connection only.

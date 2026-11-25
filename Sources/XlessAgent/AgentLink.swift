@@ -146,7 +146,7 @@ final class AgentLink {
         case .notGranted:
             return AgentError(.refused, "the xless agent does not serve this terminal session", fix: "run `xless unlock` in it")
         case .limit: return AgentError(.limit, "the xless agent refused what it was sent: \(printable(text))", fix: "run `xless lock`, then `xless unlock`")
-        case .malformed, nil: return .malformed(printable(text))
+        case .malformed, .unavailable, nil: return .malformed(printable(text))
         }
     }
 
