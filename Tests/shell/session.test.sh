@@ -85,6 +85,12 @@ class Terminal:
         os.write(self.fd, (text + "\n").encode())
         return shown
 
+    def answer_after(self, act, text):
+        """`text` at the next prompt, once `act` was done while it asks; what was shown until then."""
+        self.seen = self.until(PROMPT).encode() + self.seen
+        act()
+        return self.answer(text)
+
     def type(self, command): os.write(self.fd, (command + "; echo __DONE:$?:\n").encode())
 
     def done(self):
@@ -312,6 +318,14 @@ shown = b.run("XLESS_SESSION=$T/run/xless-agent/0000000000000000.sock $X unlock"
 check("holds nothing" in shown and "unset XLESS_SESSION" in shown, "a command still in a session that ended keeps nothing, and says what a shell that outlived it does", shown)
 os.kill(child, signal.SIGTERM)
 a.run("true")
+for option, code, ran in (("", 10, False), ("--if-possible ", 0, True)):
+    a.type(f"$X session {option}-- sh -c 'touch $T/asked-away'")
+    shown = a.answer_after(lambda: (b.run("$X lock"), gone()), PASS)
+    rc, rest = a.done()
+    shown += rest
+    check(rc == code and os.path.exists(t + "/asked-away") == ran and "the session ended before the command started" in shown and "unset XLESS_SESSION" not in shown,
+          f"`xless lock` elsewhere while it asks: {option or 'nothing runs, and '}it says what happened", (rc, shown))
+os.remove(t + "/asked-away")
 pid, child = started("close")
 a.close()
 check(gone(15), "closing the terminal ends it", agents())

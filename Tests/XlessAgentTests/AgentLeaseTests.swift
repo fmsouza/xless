@@ -199,6 +199,11 @@ private func client(_ directory: AgentDirectory, session: String? = nil, starts:
     #expect(error?.cause.contains("xless session") == true)
     #expect(error?.fix.contains("unset XLESS_SESSION") == true)
     #expect(started.count == 0)
+    // for the command that started it, which is in none
+    let own = AgentClient(directory: agent.directory, session: path, isOwn: true, obstacle: { nil }, start: { _, _ in started.note() })
+    let ended = #expect(throws: AgentError.self) { try own.put([AgentSeed(name: "b", label: "", secret: key, hold: hold)]) }
+    #expect(ended?.kind == .refused && ended?.cause.contains("ended before the command started") == true && ended?.fix.contains("XLESS_SESSION") == false)
+    #expect(started.count == 0)
 }
 
 @Test func aLeasedAgentIsJoinedByNobody() throws {

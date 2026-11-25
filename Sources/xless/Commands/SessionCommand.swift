@@ -89,7 +89,7 @@ struct SessionCommand: AsyncParsableCommand {
                 if let obstacle = client.leaseObstacle { throw obstacle }
                 lease = try client.lease([], command: purpose ?? "xless session (\(name))", seconds: hold.seconds)
             }
-            let session = lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path) } ?? client
+            let session = lease.map { AgentClient(terms: HeldSecrets.terms, session: $0.path, isOwn: true) } ?? client
             if let (vault, file) = store { try session.put([try SecretStoreCLI.run { try seed(vault, file, hold) }]) }
             if signIn { try await signInNow(hold, in: session) }
             return lease

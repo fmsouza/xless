@@ -58,6 +58,8 @@ public final class AgentClient: @unchecked Sendable {
     private let terms: AgentTerms
     /// The socket of the session's agent (`xless session`) this command runs in.
     private let session: String?
+    /// This command started that session, and has no other.
+    private let isOwn: Bool
     private let findObstacle: @Sendable () -> AgentError?
     private let startAgent: @Sendable ([AgentSeed], AgentDirectory) throws -> Void
     private let lock = NSLock()
@@ -73,18 +75,20 @@ public final class AgentClient: @unchecked Sendable {
     /// - Parameters:
     ///   - session: the socket of the agent of the `xless session` this command runs in: the only agent on a lease it
     ///     uses, and where what it keeps goes.
+    ///   - isOwn: this command starts that session, rather than running in it.
     ///   - timeout: milliseconds for the answers to one question, however many agents there are.
-    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms(), session: String? = nil, timeout: Int = 1500) {
-        self.init(directory: directory, terms: terms, session: session, timeout: timeout, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
+    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms(), session: String? = nil, isOwn: Bool = false, timeout: Int = 1500) {
+        self.init(directory: directory, terms: terms, session: session, isOwn: isOwn, timeout: timeout, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
             try AgentLauncher.start(seeds, directory: directory, terms: terms)
         }
     }
 
-    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), session: String? = nil, timeout: Int = 1500, obstacle: @escaping @Sendable () -> AgentError?,
+    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), session: String? = nil, isOwn: Bool = false, timeout: Int = 1500, obstacle: @escaping @Sendable () -> AgentError?,
          start: @escaping @Sendable ([AgentSeed], AgentDirectory) throws -> Void) {
         self.directory = directory
         self.terms = terms
         self.session = session
+        self.isOwn = isOwn
         self.timeout = timeout
         findObstacle = obstacle
         startAgent = start
@@ -196,6 +200,7 @@ public final class AgentClient: @unchecked Sendable {
         if let problem, problem.kind == .unsafePath { throw problem }
         if session != nil {
             guard let link = links.first(where: { isMySession($0) && $0.isGranted && $0.isSameSession }) else {
+                if isOwn { throw AgentError(.refused, "the session ended before the command started (`xless lock`, the system slept, or the screen was locked)", fix: "start it again") }
                 throw AgentError(.refused, "the `xless session` this runs in holds nothing any more (it ended, the system slept, or the screen was locked)",
                                  fix: "start it again; in a shell that outlived it (a tmux server started in it, say), `unset XLESS_SESSION`")
             }
