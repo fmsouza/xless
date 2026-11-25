@@ -52,7 +52,7 @@ jobs:
         run: sh scripts/ci-swift.sh test --package-path ThirdParty/AssetKit
       # Every Tests/shell/*.test.sh runs. A test that genuinely needs docker or macOS starts with a guard that exits 0 with
       # "SKIP: <reason>"; each such test is listed here, one line per test, with its reason:
-      #   xcode-native: it builds with an installed Xcode, which is on a Mac only
+      #   xcode-native, overlay-native: they build with an installed Xcode, which is on a Mac only
       - name: Shell tests
         run: |
           failed=""
@@ -90,10 +90,11 @@ jobs:
       # As in the Linux job. Skipped here, with the guard's reason:
       #   native-toolchain: it prepares Linux's open-source toolchain, which a native setup on Linux alone uses
       # xcode-native builds an app with this runner's Xcode and signs it with a throw-away certificate; nothing of it is uploaded.
+      # overlay-native builds a stand-in overlay app in the sandbox; the runner needs no rustup for it.
       - name: Shell tests
         timeout-minutes: 30
         env:
-          XLESS_TEST_XCODE: "1"   # xcode-native may skip nothing
+          XLESS_TEST_XCODE: "1"   # xcode-native and overlay-native may skip nothing
         run: |
           swift build --product xless
           XLESS_BIN="$(swift build --product xless --show-bin-path)/xless"
