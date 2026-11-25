@@ -41,8 +41,9 @@ description re-runs; the others are `.github/workflows/pr.yml`, which runs when 
 | `package (x86_64)`, `package (arm64)` | The release tarball built as a release would build it, installed with `scripts/install.sh` from a local release, and run |
 | `shellcheck` | shellcheck on the shipped scripts |
 
-These run on every pull request too, and a red one is to be fixed like any other; the nightly does not release a commit
-whose `pr.yml` run failed:
+These run on every pull request too, and a red one is to be fixed like any other. The nightly does not release a commit whose
+`pr.yml` run failed or has not ended, for any system: while GitHub has no macOS runner for it, a Linux release waits too, and
+the release run says so in a warning.
 
 | Check | What it runs |
 |---|---|

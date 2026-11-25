@@ -6,7 +6,7 @@ repo="$(cd "$(dirname "$0")/../.." && pwd)"
 t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
-export XLESS_CHECKOUTS="$t/checkouts" XLESS_STRIP=true XLESS_CODESIGN=true XLESS_CHECK_BINARY=true XLESS_UNAME_S=Linux XLESS_UNAME_M=x86_64
+export XLESS_CHECKOUTS="$t/checkouts" XLESS_STRIP=true XLESS_CODESIGN=true XLESS_CHECK_BINARY=true XLESS_CHECK_MAP=true XLESS_STUB=true XLESS_UNAME_S=Linux XLESS_UNAME_M=x86_64
 mkdir -p "$t/checkouts"
 for id in $(sed -n 's/.*"identity" : "\(.*\)",/\1/p' "$repo/Package.resolved"); do
   mkdir -p "$t/checkouts/$id"; echo "licence of $id" > "$t/checkouts/$id/LICENSE"
@@ -37,6 +37,12 @@ grep -q 'latest: xless 1.4.0 installed' <<<"$out" || fail "latest install not ch
 mkdir -p "$t/mac"; printf '#!/bin/sh\necho 14.0\n' > "$t/mac/sw_vers"; printf '#!/bin/sh\nexit 1\n' > "$t/mac/sysctl"; chmod +x "$t/mac"/*
 out=$(PATH="$t/mac:$PATH" XLESS_UNAME_S=Darwin XLESS_UNAME_M=arm64 bash "$repo/scripts/verify-release.sh" 1.4.0 "$t/good" 2>&1) || fail "verify refused a good release on a Mac: $out"
 [[ "$(grep -c 'downloading xless-1.4.0-macos-arm64.tar.gz' <<<"$out")" == 2 ]] || fail "not the macOS tarball: $out"
+printf '#!/bin/sh\necho "checked $*" >> "%s/checked"\n' "$t" > "$t/checks"; chmod +x "$t/checks"
+out=$(PATH="$t/mac:$PATH" XLESS_CHECK_BINARY="$t/checks" XLESS_UNAME_S=Darwin XLESS_UNAME_M=arm64 bash "$repo/scripts/verify-release.sh" 1.4.0 "$t/good" 2>&1) || fail "verify with a check: $out"
+[[ "$(grep -cE '^checked .*/(pinned|latest)/bin/xless arm64$' "$t/checked")" == 2 ]] || fail "the installed programs are not checked: $(cat "$t/checked")"
+PATH="$t/mac:$PATH" XLESS_CHECK_BINARY=false XLESS_UNAME_S=Darwin XLESS_UNAME_M=arm64 bash "$repo/scripts/verify-release.sh" 1.4.0 "$t/good" >/dev/null 2>&1 && fail "an installed program that fails its check is released"
+rm "$t/checked"; XLESS_CHECK_BINARY="$t/checks" bash "$repo/scripts/verify-release.sh" 1.4.0 "$t/good" >/dev/null 2>&1 || fail "verify on Linux"
+[[ ! -e "$t/checked" ]] || fail "a Linux program is checked as a macOS one"
 printf '#!/bin/sh\necho 13.7.1\n' > "$t/mac/sw_vers"
 out=$(PATH="$t/mac:$PATH" XLESS_UNAME_S=Darwin XLESS_UNAME_M=arm64 bash "$repo/scripts/verify-release.sh" 1.4.0 "$t/good" 2>&1) && fail "installed on macOS 13"
 grep -q 'xless needs macOS 14 or later (this is macOS 13.7.1)' <<<"$out" || fail "wrong message: $out"
@@ -92,4 +98,20 @@ diff <(inputs pr.yml package-macos) <(inputs release.yml build-macos) && diff <(
 for r in macos-15 macos-15-intel; do
   grep -q "runner: $r }" <<<"$(job pr.yml install-macos)" && grep -q "runner: $r }" <<<"$(job release.yml verify)" || fail "$r installs not in both"
 done
+# The plan step, with stand-ins: what it says last is why nothing is released.
+job release.yml plan | awk '/- name: Next version/ { on = 1 } on && /^        run: \|/ { body = 1; next } body && /^ {0,9}[^ ]/ { exit } body { sub(/^          /, ""); print }' > "$t/plan.sh"
+grep -q next-version.sh "$t/plan.sh" || fail "no plan step: $(cat "$t/plan.sh")"
+pl="$t/plan"; mkdir -p "$pl/scripts"
+git init -q "$pl"; git -C "$pl" -c user.name=t -c user.email=t@localhost commit -q --allow-empty -m x
+printf '#!/bin/sh\nexit 0\n' > "$pl/scripts/release-tag-check.sh"
+plan() {  # <the next version> <whether CI passed> <event>
+  printf '#!/bin/sh\necho "%s"\n' "$1" > "$pl/scripts/next-version.sh"; printf '#!/bin/sh\necho "the pr workflow is still queued"; exit %s\n' "$2" > "$pl/scripts/ci-passed.sh"
+  chmod +x "$pl/scripts"/*; : > "$t/github"
+  rc=0; out=$(cd "$pl" && GITHUB_OUTPUT="$t/github" EVENT="$3" FIRST_VERSION='' bash -e "$t/plan.sh" 2>&1) || rc=$?
+}
+plan 1.5.0 0 schedule; [[ $rc == 0 && "$out" == *"Releasing v1.5.0"* ]] && grep -qx version=1.5.0 "$t/github" || fail "plan: $rc $out"
+plan "" 0 schedule; [[ $rc == 0 && "$out" == "No releasable change." ]] && grep -qx version= "$t/github" || fail "nothing to release: $rc $out"
+plan 1.5.0 1 schedule; [[ $rc == 0 && "$out" == *"::warning::not releasing v1.5.0"*"still queued"* && "$out" != *"No releasable change"* ]] && grep -qx version= "$t/github" || fail "a blocked night: $rc $out"
+[[ "$(tail -n1 <<< "$out")" == *"Not releasing v1.5.0"* ]] || fail "a blocked night ends with: $out"
+plan 1.5.0 1 workflow_dispatch; [[ $rc != 0 ]] || fail "a blocked dispatch succeeds"
 echo "verify-release.test.sh: ok"

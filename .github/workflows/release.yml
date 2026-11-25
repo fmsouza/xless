@@ -52,15 +52,19 @@ jobs:
           fi
           version=$(scripts/next-version.sh ${FIRST_VERSION:+--first "$FIRST_VERSION"})
           SHA=$(git rev-parse HEAD)
+          blocked=""
           # Only a commit whose main CI (the pr workflow's push run) succeeded is released: a night without that skips,
           # a manual dispatch fails loudly.
           if [ -n "$version" ] && ! why=$(scripts/ci-passed.sh "$SHA" 2>&1); then
             echo "::warning::not releasing v$version from $SHA: $why"
             if [ "$EVENT" != schedule ]; then exit 1; fi
+            blocked="$version"
             version=""
           fi
           { echo "version=$version"; echo "sha=$SHA"; echo "prev=$prev"; } >> "$GITHUB_OUTPUT"
-          if [ -n "$version" ]; then echo "Releasing v$version from $(git rev-parse HEAD)"; else echo "No releasable change."; fi
+          if [ -n "$version" ]; then echo "Releasing v$version from $(git rev-parse HEAD)"
+          elif [ -n "$blocked" ]; then echo "Not releasing v$blocked: see the warning above."
+          else echo "No releasable change."; fi
 
   build:
     name: build (${{ matrix.name }})
