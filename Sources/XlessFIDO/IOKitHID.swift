@@ -44,16 +44,11 @@ public enum IOKitHIDDevices {
         }
     }
 
-    /// The maker and the product, as the device says, without what a terminal would act on.
+    /// The maker and the product, as the device says, as far as a terminal shows them.
     private static func name(_ properties: [String: Any]) -> String {
-        func text(_ key: String) -> String {
-            let said = properties[key] as? String ?? ""
-            guard !said.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else { return "" }
-            return said.trimmingCharacters(in: .whitespaces)
-        }
+        func text(_ key: String) -> String { HIDName.printable(properties[key] as? String ?? "") ?? "" }
         let maker = text(kIOHIDManufacturerKey), product = text(kIOHIDProductKey)
-        let name = product.hasPrefix(maker) ? product : "\(maker) \(product)".trimmingCharacters(in: .whitespaces)
-        return name.isEmpty ? "security key" : name
+        return HIDName.printable(product.hasPrefix(maker) ? product : "\(maker) \(product)") ?? "security key"
     }
 }
 
@@ -95,10 +90,16 @@ final class HIDPortConnection: HIDConnection {
     let reportSize: Int
     private let port: any HIDPort
     private let queue: HIDReportQueue
+    private let writeTimeout: Double
+    private let writer = DispatchQueue(label: "xless.hid.write")
+    /// A report was not taken in time: the call that sends it may still be there.
+    private var isStuck = false
 
-    init(_ port: any HIDPort, name: String, reportSize: Int) throws {
+    /// - Parameter writeTimeout: seconds a report may take to be sent (IOKit's call has no limit of its own).
+    init(_ port: any HIDPort, name: String, reportSize: Int, writeTimeout: Double = 3) throws {
         self.reportSize = reportSize
         self.port = port
+        self.writeTimeout = writeTimeout
         let queue = HIDReportQueue()
         self.queue = queue
         switch port.open(input: { queue.push($0) }, removed: { queue.end() }) {
@@ -112,7 +113,21 @@ final class HIDPortConnection: HIDConnection {
     deinit { port.close() }
 
     func write(_ report: [UInt8]) throws {
-        let code = port.send(report)
+        final class Answer: @unchecked Sendable {
+            let done = DispatchSemaphore(value: 0)
+            var code: IOReturn = kIOReturnTimeout
+        }
+        nonisolated(unsafe) let port = port
+        let answer = Answer()
+        if !isStuck {
+            writer.async {
+                answer.code = port.send(report)
+                answer.done.signal()
+            }
+            isStuck = answer.done.wait(timeout: .now() + writeTimeout) == .timedOut
+        }
+        guard !isStuck else { throw FIDOError.io("the security key does not take what it is sent") }
+        let code = answer.code
         guard code == kIOReturnSuccess else { throw FIDOError.io("writing to the security key failed: \(Self.describe(code))") }
     }
 

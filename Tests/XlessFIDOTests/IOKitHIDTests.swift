@@ -11,7 +11,8 @@ private final class FakePort: HIDPort, @unchecked Sendable {
     let key: SimulatedKey
     var openResult = kIOReturnSuccess
     var sendResult = kIOReturnSuccess
-    private(set) var opened = 0, closed = 0
+    private(set) var opened = 0, closed = 0, sends = 0
+    var beforeSend: (() -> Void)?
     private var input: (@Sendable ([UInt8]) -> Void)?
     private(set) var remove: (@Sendable () -> Void)?
 
@@ -25,6 +26,8 @@ private final class FakePort: HIDPort, @unchecked Sendable {
     }
 
     func send(_ report: [UInt8]) -> IOReturn {
+        sends += 1
+        beforeSend?()
         guard sendResult == kIOReturnSuccess else { return sendResult }
         do {
             try key.write(report)
@@ -70,6 +73,38 @@ final class IOKitHIDTests: XCTestCase {
         XCTAssertEqual(devices.map(\.name), ["security key", "SoloKeys Solo 2", "Yubico YubiKey OTP+FIDO+CCID"])
         XCTAssertEqual(devices.map(\.path), ["ioreg:6", "ioreg:7", "ioreg:8589934599"])
         XCTAssertEqual(p.opened, 0)
+    }
+
+    /// A name is printed beside the question for a PIN: nothing in it changes the line, and it is short.
+    func testANameIsPrintableAndShort() throws {
+        func name(_ product: String, _ maker: String = "") throws -> String {
+            try IOKitHIDDevices.list { [service(port(), ["Manufacturer": maker, "Product": product])] }[0].name
+        }
+        for bad in ["a\u{202E}b", "a\u{2028}b", "a\u{2029}b", "a\u{200B}b", "a\u{FEFF}b", "a\u{E000}b", "a\u{0378}b", "a\u{85}b", "a\u{7F}b", "a\tb", "a\u{2066}b", "a\u{A0}b"] {
+            XCTAssertEqual(try name(bad), "security key", bad.debugDescription)
+            XCTAssertEqual(try name("Key", bad), "Key", bad.debugDescription)
+        }
+        XCTAssertEqual(try name("Schlüssel №5 (日本)", "Ünïted"), "Ünïted Schlüssel №5 (日本)")
+        XCTAssertEqual(try name(String(repeating: "x", count: 5000)), String(repeating: "x", count: 64))
+        XCTAssertEqual(try name(String(repeating: "x", count: 60), "Maker").unicodeScalars.count, 64)
+        XCTAssertEqual(try name("e" + String(repeating: "\u{301}", count: 5000)).unicodeScalars.count, 64)
+    }
+
+    /// A device that never takes a report does not hold the sign-in.
+    func testAKeyThatTakesNoReportIsGivenUp() throws {
+        let p = port()
+        let stuck = DispatchSemaphore(value: 0)
+        p.beforeSend = { stuck.wait() }
+        let connection = try HIDPortConnection(p, name: "key", reportSize: 64, writeTimeout: 0.2)
+        for _ in 0..<2 { // the second one waits for nothing
+            let start = Date()
+            XCTAssertThrowsError(try connection.write(Array(repeating: 0, count: 64))) {
+                XCTAssertEqual($0 as? FIDOError, .io("the security key does not take what it is sent"))
+            }
+            XCTAssertLessThan(Date().timeIntervalSince(start), 30)
+        }
+        XCTAssertEqual(p.sends, 1)
+        stuck.signal()
     }
 
     /// The real listing opens nothing, so it asks the person for no permission, and works where no key is plugged in.

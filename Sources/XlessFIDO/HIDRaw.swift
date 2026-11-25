@@ -82,8 +82,7 @@ public struct HIDRawDevices {
     static func name(uevent path: String) -> String? {
         guard let data = FileManager.default.contents(atPath: path), let text = String(data: data, encoding: .utf8) else { return nil }
         for line in text.split(separator: "\n") where line.hasPrefix("HID_NAME=") {
-            let value = line.dropFirst("HID_NAME=".count).trimmingCharacters(in: .whitespaces)
-            return value.isEmpty ? nil : value
+            return HIDName.printable(String(line.dropFirst("HID_NAME=".count)))
         }
         return nil
     }
