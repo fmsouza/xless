@@ -7,6 +7,9 @@ t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 s="$repo/scripts/ci-session.sh"
+# Not one that has ended and that nothing reaped (a container's first process may not).
+alive() { local state; state=$(ps -o stat= -p "$1" 2>/dev/null) || return 1; [[ -n "$state" && "$state" != *Z* ]]; }
+alive $$ || fail "ps does not say the state of a process"
 
 out=$("$s" printf '<%s>' 'a b' '' '$x' "'") || fail "printf failed"
 [[ "$out" == "<a b><><\$x><'>" ]] || fail "the arguments: $out"
@@ -39,8 +42,8 @@ os.wait(); os.write(w, b"x")
 for _ in $(seq 100); do [[ -s "$t/pid" ]] && break; sleep 0.1; done
 kill -TERM "$p"; rc=0; wait "$p" || rc=$?
 [[ $rc -ne 0 ]] || fail "stopped, and says it succeeded"
-for _ in $(seq 50); do kill -0 "$(cat "$t/pid")" 2>/dev/null || break; sleep 0.1; done
-kill -0 "$(cat "$t/pid")" 2>/dev/null && fail "the command outlived the script"
+for _ in $(seq 50); do alive "$(cat "$t/pid")" || break; sleep 0.1; done
+alive "$(cat "$t/pid")" && fail "the command outlived the script"
 # ... also by a signal that comes right after it started the command: here the script is slow to go on from there.
 mkdir "$t/slow"
 cat > "$t/slow/python3" <<P
@@ -55,7 +58,7 @@ PATH="$t/slow:$PATH" "$s" sh -c 'echo $$ > "$0/pid"; exec sleep 100' "$t" & p=$!
 for _ in $(seq 100); do [[ -s "$t/pid" ]] && break; sleep 0.1; done
 kill -TERM "$p"; rc=0; wait "$p" || rc=$?
 [[ $rc -ne 0 ]] || fail "stopped early, and says it succeeded"
-gone=no; for _ in $(seq 50); do kill -0 "$(cat "$t/pid")" 2>/dev/null || { gone=yes; break; }; sleep 0.1; done
+gone=no; for _ in $(seq 50); do alive "$(cat "$t/pid")" || { gone=yes; break; }; sleep 0.1; done
 [[ $gone == yes ]] || { kill "$(cat "$t/pid")"; fail "the command outlived a script that was stopped early"; }   # this test's own sleep
 # A command does not inherit what the script does with signals.
 [[ "$("$s" python3 -I -c 'import signal; print(signal.pthread_sigmask(signal.SIG_BLOCK, []), signal.getsignal(signal.SIGTERM) == signal.SIG_DFL)')" == "set() True" ]] || fail "the command's signals"

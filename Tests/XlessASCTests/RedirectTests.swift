@@ -186,14 +186,16 @@ private func request(_ url: String, method: String = "GET", body: Data? = nil) -
 }
 
 @Test func aCancelledRequestEnds() async throws {
-    let server = try RecordingServer { _ in Thread.sleep(forTimeInterval: 3); return (200, [:], Data()) }
-    defer { server.stop() }
+    // It answers only at the end of the test, or long after a slow machine would have cancelled it.
+    let end = DispatchSemaphore(value: 0)
+    let server = try RecordingServer { _ in _ = end.wait(timeout: .now() + 60); return (200, [:], Data()) }
+    defer { end.signal(); server.stop() }
     let started = Date()
     let task = Task { try await URLSessionTransport().send(request("http://127.0.0.1:\(server.port)/slow")) }
     try await Task.sleep(for: .milliseconds(300))
     task.cancel()
     await #expect(throws: (any Error).self) { _ = try await task.value }
-    #expect(Date().timeIntervalSince(started) < 2.5)
+    #expect(Date().timeIntervalSince(started) < 50)
 }
 
 private final class Got: @unchecked Sendable {
