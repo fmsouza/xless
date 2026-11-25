@@ -46,7 +46,7 @@ copy_tracked() {
 }
 copy_tracked docker
 copy_tracked samples/HelloShip
-[[ -f "$share/docker/Dockerfile.base" && -f "$share/samples/HelloShip/Package.swift" ]] || { echo "package-release: no tracked docker/ or samples/ files (not a git checkout?)" >&2; exit 1; }
+[[ -f "$share/docker/Dockerfile" && -f "$share/samples/HelloShip/Package.swift" ]] || { echo "package-release: no tracked docker/ or samples/ files (not a git checkout?)" >&2; exit 1; }
 
 "$root/scripts/third-party-licenses.sh" "$share/licenses"
 

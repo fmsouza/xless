@@ -24,7 +24,7 @@ if grep -rn -E 'swift:[0-9$][^@[:space:]]*-jammy([^@]|$)' "$root/.github" "$root
   fail "a swift image referenced by tag only (above): use versions.env's SWIFT_IMAGE"
 fi
 from_line="FROM \${SWIFT_IMAGE}"
-for f in Dockerfile.base Dockerfile.rn; do
-  grep -qF "$from_line" "$root/docker/$f" || fail "$f does not build $from_line"
-done
+grep -qF "$from_line" "$root/docker/Dockerfile" || fail "docker/Dockerfile does not build $from_line"
+# docker/react-native is a Dockerfile on its own (its folder is all it is built from), so it repeats it.
+grep -qxF "ARG BUILD_IMAGE=$image" "$root/docker/react-native/Dockerfile" || fail "docker/react-native/Dockerfile's BUILD_IMAGE is not versions.env's SWIFT_IMAGE '$image'"
 echo "swift-image: ok ($image, $n containers)"

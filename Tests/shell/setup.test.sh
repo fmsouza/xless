@@ -27,6 +27,15 @@ if [[ "$1" == info ]]; then
   esac
   [[ -z "${DOCKER_ROOT:-}" ]] || echo "$DOCKER_ROOT|[]"
 fi
+# the images of $FAKE_IMAGES; a `build` adds the image its arguments name
+if [[ -n "${FAKE_IMAGES:-}" ]]; then
+  if [[ "$1" == image && "$2" != rm ]]; then exec "$FAKE" "$@"; fi
+  if [[ "$1" == build && -z "${BUILD_LOST:-}" ]]; then
+    for a in "$@"; do case "$a" in dev.xless.kit=*) kit="${a#dev.xless.kit=}" ;; esac; done
+    "$FAKE" kit "$kit" "$XLESS_SHARE" arm64 27.0 27A266a >> "$FAKE_IMAGES"
+    echo "builder=${BUILDX_BUILDER-unset}" >> "$DOCKER_LOG"
+  fi
+fi
 exit 0
 D
 chmod +x "$t/bin/docker"
@@ -38,7 +47,7 @@ log="$t/docker.log"
 run() {   # STUB ARGS…: runs xless setup with a clean environment; stdout → $t/out, stderr → $t/err, exit code → $code
   local stub="$1"; shift
   : > "$log"; code=0
-  env -i HOME="$t/home" PATH="${path:-$t/bin:/usr/bin:/bin}" XLESS_SHARE="${share:-$repo}" DOCKER_STUB="$stub" DOCKER_LOG="$log" \
+  env -i HOME="$t/home" PATH="${path:-$t/bin:/usr/bin:/bin}" XLESS_SHARE="${share:-$repo}" DOCKER_STUB="$stub" DOCKER_LOG="$log" FAKE="$repo/Tests/shell/fake-images.sh" \
     ${extra[@]+"${extra[@]}"} "$x" setup "$@" >"$t/out" 2>"$t/err" || code=$?
 }
 
@@ -109,12 +118,13 @@ run ok --docker --xcode "$xip" --arch arm64 --dry-run
 [[ $code == 0 ]] || fail "--dry-run exits $code: $(cat "$t/err")"
 grep -q 'xtool sdk build' "$t/out" || fail "the plan does not export the SDK: $(cat "$t/out")"
 grep -q "Xcode copy.xip:/xcode/Xcode copy.xip:ro" "$t/out" || fail "the .xip is not mounted read-only: $(cat "$t/out")"
-grep -q 'docker-images.sh rn' "$t/out" || fail "the plan does not build xless-rn: $(cat "$t/out")"
+grep -q 'docker-images.sh image --arch arm64 --xcode 27.0 --xcode-build 27A266a --sdk-dir ' "$t/out" || fail "the plan does not build the image: $(cat "$t/out")"
 grep -q 'disk: the check asks for about .* GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "--dry-run does not print the disk check: $(cat "$t/out")"
-grep -q 'xless-rn:local-arm64-xcode27.0' "$t/out" || fail "the plan does not tag xless-rn: $(cat "$t/out")"
+grep -qx '\[4/5\] xless:local-arm64-xcode27.0 (.*)' "$t/out" || fail "the plan does not name the image: $(cat "$t/out")"
+grep -q 'xless-base\|xless-tauri\|xless-rn\|docker build ' "$t/out" && fail "the plan builds more than one image: $(cat "$t/out")"
 grep -q '^run' "$log" && fail "--dry-run ran docker: $(cat "$log")"
 grep -q 'next: xless run' "$t/out" && fail "--dry-run promised the next step"
-# The xless that goes into xless-base is always a copy in the setup work dir (<arch>-bin/xless): its source directory
+# The xless that goes into the image is always a copy in the setup work dir (<arch>-bin/xless): its source directory
 # (~/.local/bin, say) is never what docker-images.sh gets as the build context.
 mkdir -p "$t/ext"; echo stub > "$t/ext/xless"; echo "do not send me to docker" > "$t/ext/other-file"
 extra=(XLESS_BIN_ARM64="$t/ext/xless")
@@ -124,9 +134,55 @@ binline="$(grep 'docker-images.sh' "$t/out" | grep -E '(^|[ =])[^ ]*xless-setup-
 [[ -n "$binline" ]] || fail "the build context is not the work dir's arm64-bin/xless: $(cat "$t/out")"
 grep -F "$t/ext" "$t/out" && fail "the plan names the binary's own directory $t/ext: $(cat "$t/out")"
 extra=()
+# --with: the kits too, by the kinds of app they are for, each once; another name, or a native setup, is refused.
+run ok --docker --xcode "$xip" --arch arm64 --with cargo,react-native,tauri --dry-run
+[[ $code == 0 ]] || fail "--with exits $code: $(cat "$t/err")"
+grep -q '^\[6/7\] xless:local-arm64-xcode27.0-tauri: ' "$t/out" && grep -q '^\[7/7\] xless:local-arm64-xcode27.0-react-native: ' "$t/out" || fail "--with plans: $(cat "$t/out")"
+for bad in rust '' , ; do
+  run ok --docker --xcode "$xip" --with "$bad" --dry-run
+  [[ $code == 11 ]] && grep -q 'tauri, cargo, react-native, expo' "$t/err" || fail "--with '$bad': $code $(cat "$t/err")"
+done
+run ok --xcode "$xip" --with tauri --dry-run
+[[ $code == 11 ]] && grep -q 'add --docker' "$t/err" || fail "--with without --docker: $code $(cat "$t/err")"
 # The same .xip under the default (unregistered) table is refused: identification is by content.
 share="$repo" run ok --docker --xcode "$xip" --dry-run
 [[ $code == 11 ]] || fail "an unregistered .xip exits $code, want 11"
+
+# --with alone: the kits, on the newest Xcode's image that is here. Nothing is exported, pulled or pushed, and an image that is
+# there already is not built again. docker's own builder builds it: another could not see the local image.
+img="$repo/Tests/shell/fake-images.sh"; images="$t/images"
+{ "$img" base arm64 27.0 27A266a; "$img" base arm64 26.6 17F113; } > "$images"
+extra=(FAKE_IMAGES="$images" BUILDX_BUILDER=other)
+share="$repo" run ok --docker --arch arm64 --with tauri,expo --dry-run
+[[ $code == 0 ]] || fail "--with alone, dry run, exits $code: $(cat "$t/err")"
+[[ "$(sed -n 1p "$t/out")" == "==> on xless:local-arm64-xcode27.0" ]] || fail "--with alone is on: $(cat "$t/out")"
+grep -q '^build\|^run' "$log" && fail "--dry-run built: $(cat "$log")"
+share="$repo" run ok --docker --arch arm64 --with tauri,expo
+[[ $code == 0 ]] || fail "--with alone exits $code: $(cat "$t/err")"
+[[ "$(grep -c '^build ' "$log")" == 2 && "$(grep -c '^builder=unset$' "$log")" == 2 ]] || fail "--with alone runs: $(cat "$log")"
+grep -q "^build --platform linux/arm64 --pull=false --provenance=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 --label dev.xless.kit=tauri --label dev.xless.kit.base=sha256:base27.0 --label dev.xless.kit.recipe=[0-9a-f]* -t xless:local-arm64-xcode27.0-tauri $repo/docker/tauri$" "$log" || fail "the kit's build: $(cat "$log")"
+grep -q -- '--push\|^pull\|^push\|^buildx' "$log" && fail "--with alone runs: $(cat "$log")"
+share="$repo" run ok --docker --arch arm64 --with tauri,expo
+[[ $code == 0 ]] && ! grep -q '^build ' "$log" || fail "built again: $code $(cat "$log")"
+grep -q 'it is there already' "$t/out" || fail "not said to be there: $(cat "$t/out")"
+# A build that leaves no image of that kit (or one on something else) is a failure.
+"$img" base arm64 27.0 27A266a > "$images"
+extra=(FAKE_IMAGES="$images" BUILD_LOST=1)
+share="$repo" run ok --docker --arch arm64 --with tauri
+[[ $code == 11 ]] && grep -q 'xless:local-arm64-xcode27.0-tauri is not what was built' "$t/err" || fail "a lost build: $code $(cat "$t/err")"
+# No image here: as without --with, from the cache's export (there is none).
+: > "$images"
+extra=(FAKE_IMAGES="$images")
+share="$repo" run ok --docker --arch arm64 --with tauri
+[[ $code == 11 ]] && ! grep -q '^build' "$log" || fail "--with alone without an image: $code $(cat "$log")"
+# Two builds of one Xcode version: refused, naming the variable that keeps the other one's image.
+"$img" base arm64 27.0 27A1111 > "$images"
+extra=(FAKE_IMAGES="$images" XLESS_SETUP_CACHE_GB=0 XLESS_SETUP_DOCKER_GB=0 XLESS_BIN_ARM64="$t/elf/xless")
+mkdir -p "$t/elf"; { printf '\177ELF\002\001\001'; head -c 11 /dev/zero; printf '\267\000'; head -c 44 /dev/zero; } > "$t/elf/xless"
+run ok --docker --xcode "$xip" --arch arm64
+[[ $code == 11 ]] && grep -q 'xless:local-arm64-xcode27.0 is another build of Xcode 27.0 (27A1111, this is 27A266a)' "$t/err" && grep -q 'XLESS_XCODE_RETAG=1 .* stays as xless:local-arm64-xcode27.0-27A1111' "$t/err" || fail "another build: $code $(cat "$t/err")"
+grep -q '^run\|^buildx build' "$log" && fail "another build's image: docker was used: $(cat "$log")"
+extra=()
 
 # Native (the default).
 case "$(uname -m)" in arm64|aarch64) host=arm64 other=amd64 dl=aarch64 ;; *) host=amd64 other=arm64 dl=x86_64 ;; esac
@@ -192,7 +248,7 @@ run ok --docker --arch arm64 --dry-run
 [[ $code == 0 ]] || fail "--docker from the cache's export exits $code: $(cat "$t/err")"
 grep -qF "from its SDK export $cached (no Xcode needed)" "$t/out" || fail "the plan does not name the export: $(cat "$t/out")"
 grep -q 'xtool sdk build' "$t/out" && fail "the plan exports from an export: $(cat "$t/out")"
-grep -qF -- "docker-images.sh sdk --arch arm64 --suffix -xcode27.0-27A266a --sdk-dir $cached --xcode-build 27A266a" "$t/out" \
+grep -qF -- "docker-images.sh image --arch arm64 --xcode 27.0 --xcode-build 27A266a --sdk-dir $cached" "$t/out" \
   || fail "the sdk image does not read the export: $(cat "$t/out")"
 grep -q 'about 0 GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "the cache check still asks for room: $(cat "$t/out")"
 grep -q 'xless sdk meta' "$t/out" && fail "the plan rewrites the export's toolchain-meta.json: $(cat "$t/out")"

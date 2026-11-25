@@ -1,20 +1,22 @@
 import ArgumentParser
 import Foundation
 import XlessCore
+import XlessImages
 import XlessSDK
 
 /// `xless clean`: frees the disk space `xless setup` and `xless run` use. It removes only what xless made: the native
-/// install (`NativeLayout`, with the SDK and metadata it installed), the four images' local tags (and the older builds of
-/// them setup left untagged), xless's Docker volumes, and the cache directory.
+/// install (`NativeLayout`, with the SDK and metadata it installed), the local tags of its images (those of older ones too, and
+/// the older builds that setup left untagged), xless's Docker volumes, and the cache directory.
 /// BuildKit's build cache is shared with every other Docker project, so it is only pointed at, never pruned.
 struct CleanCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "clean",
         abstract: "Remove the xless images, Docker volumes and cache, to free disk space.",
         discussion: """
-        With no option it lists what there is and removes nothing. --images removes every local tag of xless-base, xless, \
-        xless-tauri and xless-rn, then the older builds of them that a later xless setup left untagged (label \
-        \(CleanPlan.imageLabel)); --old removes only those older builds, which is what an upgrade leaves behind. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
+        With no option it lists what there is and removes nothing. --images removes every local tag of xless's images \
+        (xless:local-…, and xless-base, xless-tauri and xless-rn of xless 0.9 and older), then the older builds that a later \
+        xless setup left untagged (label \(CleanPlan.imageLabel)); --old removes only what an upgrade leaves behind: the tags of \
+        xless 0.9 and older, and those older builds. --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
         and \(CleanPlan.volumePrefix)*). --cache removes $XDG_CACHE_HOME/xless (default ~/.cache/xless): the exported SDKs, \
         Tauri work copies and downloads. --native removes the native install: $XLESS_NATIVE_HOME (default \
         ~/.local/share/xless-native: the Swift toolchain, xtool, rcodesign), the installed Darwin SDK and its \
@@ -23,7 +25,7 @@ struct CleanCommand: AsyncParsableCommand {
         """)
 
     @Flag(help: "Remove the xless images (every tag, and older untagged builds).") var images = false
-    @Flag(help: "Remove only the older builds of the images that a later xless setup left untagged (after an upgrade).") var old = false
+    @Flag(help: "Remove only what an upgrade leaves: the images of xless 0.9 and older, and the older builds that a later xless setup left untagged.") var old = false
     @Flag(help: "Remove the Docker volumes xless docker creates.") var volumes = false
     @Flag(help: "Remove the cache directory ($XDG_CACHE_HOME/xless, default ~/.cache/xless).") var cache = false
     @Flag(help: "Remove the native install (toolchain, tools, the installed SDK and its metadata).") var native = false
@@ -45,10 +47,13 @@ struct CleanCommand: AsyncParsableCommand {
         let removing = !listOnly && !dryRun
 
         var imageRefs: [String] = [], volumeNames: [String] = []
-        if listOnly || doImages || doVolumes {
+        if listOnly || doOld || doVolumes {
             do {
-                if listOnly || doImages {
-                    imageRefs = CleanPlan.images(fromListing: try Shell.run("docker", ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], stage: .sdk).stdout)
+                let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
+                if listOnly || doOld {
+                    let all = try Shell.run("docker", ls, stage: .sdk).stdout
+                    imageRefs = listOnly || doImages ? CleanPlan.images(fromListing: all)
+                        : CleanPlan.old(fromListing: all, labelled: try Shell.run("docker", ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout)
                 }
                 if listOnly || doVolumes {
                     volumeNames = CleanPlan.volumes(fromListing: try Shell.run("docker", ["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout)
@@ -64,12 +69,12 @@ struct CleanCommand: AsyncParsableCommand {
         let cacheExists = fm.fileExists(atPath: cacheRoot.path)
 
         let verb = removing ? "removing" : (dryRun ? "would remove" : "found")
-        if listOnly || doImages {
+        if listOnly || doOld {
             say("\(verb) \(imageRefs.count) image tag\(imageRefs.count == 1 ? "" : "s")" + (imageRefs.isEmpty ? "" : ":"))
             for r in imageRefs { say("  \(r)") }
         }
         if doOld {
-            say("\(doImages ? (removing ? "then removing" : "and") : verb) the untagged older builds (docker image prune --filter label=\(CleanPlan.imageLabel))")
+            say("\(removing ? "then removing" : "and") the untagged older builds (docker image prune --filter label=\(CleanPlan.imageLabel))")
         }
         if listOnly || doVolumes {
             say("\(verb) \(volumeNames.count) volume\(volumeNames.count == 1 ? "" : "s")" + (volumeNames.isEmpty ? "" : ":"))
@@ -94,7 +99,7 @@ struct CleanCommand: AsyncParsableCommand {
                 failures.append("some volumes were not removed (one in use by a container? docker ps -a)")
             }
         }
-        if doImages && !imageRefs.isEmpty {
+        if !imageRefs.isEmpty {
             do { try Shell.run("docker", ["image", "rm"] + imageRefs, stage: .sdk, passthrough: true) } catch {
                 failures.append("some images were not removed (one in use by a container? docker ps -a)")
             }

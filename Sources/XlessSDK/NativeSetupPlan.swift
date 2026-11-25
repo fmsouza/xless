@@ -4,7 +4,7 @@ import XlessCore
 /// One download of a native setup: checked against its versions.env sha256, unpacked into `final`'s `.partial`
 /// sibling, and renamed into place only once complete (a leftover `.partial` is removed, never reused).
 public struct NativeDownload: Equatable, Sendable {
-    /// `appImage`: xtool's AppImage, extracted with its own runtime (`--appimage-extract`, as docker/Dockerfile.base does);
+    /// `appImage`: xtool's AppImage, extracted with its own runtime (`--appimage-extract`, as docker/Dockerfile does);
     /// linked as `bin/xtool`. `rcodesign`: the release tarball's binary, linked as `bin/rcodesign`. `swiftToolchain`: a
     /// swift.org toolchain tarball, unpacked without its top directory (`<final>/usr/bin/swiftc`).
     public enum Kind: Equatable, Sendable { case appImage, rcodesign, swiftToolchain }

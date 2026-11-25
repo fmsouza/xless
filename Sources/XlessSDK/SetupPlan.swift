@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessImages
 
 /// One step of `xless setup`: what it does, the command it runs (printed by --dry-run), and roughly how long it takes.
 public struct SetupStep: Equatable, Sendable {
@@ -9,12 +10,16 @@ public struct SetupStep: Equatable, Sendable {
     /// Native setup only: `download`, a pinned tool fetched, checked and unpacked in-process (the argv is its curl);
     /// `sdkInstall`, the SDK installed in-process with `toolchain` (the Swift toolchain the setup installs) first on xtool's PATH (the
     /// argv is the equivalent `xless sdk install`).
+    /// Docker setup only: `kit`, the image of a kit on that Xcode's, built unless it is there already; `tidy`, the argv, whose
+    /// failure is none of the setup's.
     public enum Action: Equatable, Sendable {
         case run
         case export(partial: URL, final: URL)
         case meta(xtoolSDK: URL, out: URL)
         case download(NativeDownload)
         case sdkInstall(xtoolSDK: URL, meta: URL, toolchain: URL)
+        case kit(Kit, arch: String, xcode: String)
+        case tidy
     }
 
     public let title: String
@@ -27,25 +32,19 @@ public struct SetupStep: Equatable, Sendable {
     }
 }
 
-/// The image chain `xless setup` builds from one Xcode, as scripts/build-images.sh does on the Mac: per arch, xless-base
-/// (with that arch's Linux xless), the Darwin SDK export (xtool in xless-base, the Xcode mounted read-only), xless,
-/// xless-tauri and xless-rn, all tagged `-xcode<V>-<B>`; then the `-xcode<V>` tags, and the plain `local-<arch>` tags
-/// when the Xcode is versions.env's default (XCODE_VERSION / XCODE_BUILD).
+/// The image `xless setup --docker` builds from one Xcode, as scripts/build-images.sh does on the Mac: per arch, the Darwin SDK
+/// export (xtool, in an image without an SDK that is removed again; the Xcode mounted read-only), the image
+/// `xless:local-<arch>-xcode<V>`, with that arch's Linux xless, and the kits asked for on top of it.
 public enum SetupPlan {
-    public static let images = ["xless-base", "xless", "xless-tauri", "xless-rn"]
-
     /// Printed before the steps: what the per-step times are.
     public static let estimateNote = "step times are rough: measured on an 8-core arm64 machine with a fast network; yours depend on your CPU and network"
 
     public static func make(source: XcodeSource.Identified, archs: [String], hostArch: String, share: URL, cacheRoot: URL,
-                            xlessBinaries: [String: URL], reexport: Bool, existing: (URL) -> Bool) -> [SetupStep] {
+                            xlessBinaries: [String: URL], reexport: Bool, kits: [Kit] = [], existing: (URL) -> Bool) -> [SetupStep] {
         let x = source.xcode
         let version = canonicalVersion(x.shortVersion)
-        let suffix = "-xcode\(version)", bsuffix = "\(suffix)-\(x.build)"
         let sdkDir = self.sdkDir(source: source, cacheRoot: cacheRoot)
         let script = share.appendingPathComponent("scripts/docker-images.sh").path
-        let env = (try? String(contentsOf: share.appendingPathComponent("versions.env"), encoding: .utf8)).map(KnownXcodes.parseEnv) ?? [:]
-        let isDefault = env["XCODE_BUILD"] == x.build && env["XCODE_VERSION"] == version
         let ext = source.kind == .xip ? ".xip" : ".app"
         let name = source.url.lastPathComponent.hasSuffix(ext) ? source.url.lastPathComponent : source.url.lastPathComponent + ext
         let inContainer = "/xcode/\(name)"
@@ -53,24 +52,21 @@ public enum SetupPlan {
         var steps: [SetupStep] = []
         var wroteMeta = false
         for a in archs {
-            let emulated = a != hostArch
-            // Measured on an 8-core arm64 Linux machine with a fast network (docs/acceptance-m5.md); `estimateNote` says so.
-            func est(_ s: String, disk: String = "") -> String { (emulated ? "\(s) natively; emulated: 2-3x slower under Rosetta, slower still under QEMU" : s) + disk }
-            var base = [script, "base", "--arch", a, "--suffix", bsuffix]
-            if let bin = xlessBinaries[a] { base += ["--xless-bin", bin.path] }
-            steps.append(SetupStep(title: "xless-base:local-\(a)\(bsuffix)", argv: base, estimate: est("~3 min")))
-
+            let est = { (s: String, disk: String) in estimate(s, arch: a, hostArch: hostArch) + disk }
             let final = sdkDir.appendingPathComponent(a), partial = sdkDir.appendingPathComponent("\(a).partial")
             let xtoolSDK = final.appendingPathComponent("darwin.xtoolsdk")
+            let tools = ImageName.tools(arch: a), image = ImageName.base(arch: a, xcode: version)
             // An export source has no Xcode to export from (setup refuses an export that lacks this arch).
-            if source.kind != .export, reexport || !existing(xtoolSDK) {
+            let exports = source.kind != .export && (reexport || !existing(xtoolSDK))
+            if exports {
+                steps.append(SetupStep(title: "\(tools), to export the SDK with", argv: [script, "tools", "--arch", a], estimate: est("~3 min", "")))
                 steps.append(SetupStep(
                     title: "export the Darwin SDK for \(a) from Xcode \(x.shortVersion) (\(x.build)) into \(final.path)",
-                    argv: ["docker", "run", "--rm", "--platform", "linux/\(a)", "--user", "\(getuid()):\(getgid())",
+                    argv: ["docker", "run", "--rm", "--pull=never", "--platform", "linux/\(a)", "--user", "\(getuid()):\(getgid())",
                            "-e", "HOME=/tmp", "-w", "/tmp",
                            "-v", "\(source.url.path):\(inContainer):ro", "-v", "\(partial.path):/out",
-                           "xless-base:local-\(a)\(bsuffix)", "xtool", "sdk", "build", inContainer, "/out"],
-                    estimate: est("~2 min", disk: source.kind == .xip ? "; up to ~15 GB in the cache while the .xip is unpacked, ~3.5 GB stays" : "; ~3 GB on disk"),
+                           tools, "xtool", "sdk", "build", inContainer, "/out"],
+                    estimate: est("~2 min", source.kind == .xip ? "; up to ~15 GB in the cache while the .xip is unpacked, ~3.5 GB stays" : "; ~3 GB on disk"),
                     action: .export(partial: partial, final: final)))
             }
             // An export source is read, not written (it may be read-only): its metadata is written only when it has none.
@@ -82,24 +78,25 @@ public enum SetupPlan {
                     argv: ["xless", "sdk", "meta", "--from-xtoolsdk", xtoolSDK.path, "--xcode-build", x.build, "--out", out.path],
                     estimate: "seconds", action: .meta(xtoolSDK: xtoolSDK, out: out)))
             }
-            steps.append(SetupStep(title: "xless:local-\(a)\(bsuffix)",
-                                   argv: [script, "sdk", "--arch", a, "--suffix", bsuffix, "--sdk-dir", sdkDir.path, "--xcode-build", x.build],
-                                   estimate: est("~5 min")))
-            steps.append(SetupStep(title: "xless-tauri:local-\(a)\(bsuffix)", argv: [script, "tauri", "--arch", a, "--suffix", bsuffix],
-                                   estimate: est("~1 min")))
-            steps.append(SetupStep(title: "xless-rn:local-\(a)\(bsuffix)", argv: [script, "rn", "--arch", a, "--suffix", bsuffix],
-                                   estimate: est("~6 min")))
-        }
-        for a in archs {
-            for i in images {
-                var tags = ["\(i):local-\(a)\(suffix)"]
-                if isDefault { tags.append("\(i):local-\(a)") }
-                for t in tags {
-                    steps.append(SetupStep(title: "tag \(t)", argv: ["docker", "tag", "\(i):local-\(a)\(bsuffix)", t], estimate: "seconds"))
-                }
-            }
+            var build = [script, "image", "--arch", a, "--xcode", version, "--xcode-build", x.build, "--sdk-dir", sdkDir.path]
+            if let bin = xlessBinaries[a] { build += ["--xless-bin", bin.path] }
+            steps.append(SetupStep(title: image, argv: build, estimate: est("~10 min", "")))
+            if exports { steps.append(SetupStep(title: "remove \(tools)", argv: ["docker", "image", "rm", tools], estimate: "seconds", action: .tidy)) }
+            steps += kits.map { kit($0, arch: a, xcode: version, hostArch: hostArch, share: share) }
         }
         return steps
+    }
+
+    /// A kit's image on the image of `xcode`.
+    public static func kit(_ kit: Kit, arch: String, xcode: String, hostArch: String, share: URL) -> SetupStep {
+        let image = ImageName.base(arch: arch, xcode: xcode)
+        return SetupStep(title: "\(image)-\(kit.rawValue): \(kit.holds), for \(kit.apps)",
+                         argv: ["docker", "build", "--platform", "linux/\(arch)", "--build-arg", "XLESS_IMAGE=\(image)", "-t", "\(image)-\(kit.rawValue)", kit.directory(share: share).path],
+                         estimate: estimate(kit.estimate, arch: arch, hostArch: hostArch), action: .kit(kit, arch: arch, xcode: xcode))
+    }
+
+    private static func estimate(_ s: String, arch: String, hostArch: String) -> String {
+        arch == hostArch ? s : "\(s) natively; emulated: 2-3x slower under Rosetta, slower still under QEMU"
     }
 
     /// `$XDG_CACHE_HOME/xless`, else `~/.cache/xless`.
@@ -109,7 +106,7 @@ public enum SetupPlan {
     }
 
     /// Where the SDK exported from `xcode` lives: `<arch>/darwin.xtoolsdk` and toolchain-meta.json, the build context
-    /// docker/Dockerfile.sdk reads.
+    /// docker/Dockerfile reads.
     public static func sdkDir(cacheRoot: URL, xcode: KnownXcode) -> URL {
         cacheRoot.appendingPathComponent("sdk/xcode\(canonicalVersion(xcode.shortVersion))-\(xcode.build)")
     }

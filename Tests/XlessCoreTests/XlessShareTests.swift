@@ -32,7 +32,7 @@ private func touch(_ url: URL) throws { try write("x", url) }
 @Test func sourceCheckout() throws {
     let t = try tempDir()
     try touch(t.appendingPathComponent("versions.env"))
-    try touch(t.appendingPathComponent("docker/Dockerfile.base"))
+    try touch(t.appendingPathComponent("docker/Dockerfile"))
     let root = try XlessShare.locate(env: [:], executable: t.appendingPathComponent(".build/release/xless"))
     #expect(root.resolvingSymlinksInPath().path == t.path)
 }

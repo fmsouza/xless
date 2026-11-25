@@ -1,4 +1,0 @@
-*
-!docker/shims
-# React Native-only shims go into xless-rn (Dockerfile.rn), not this image
-docker/shims/rn

@@ -20,7 +20,12 @@ cat > "$t/bin/docker" <<'D'
 printf '%s\n' "$*" >> "$DOCKER_LOG"
 [[ "${DOCKER_DOWN:-0}" != 1 ]] || { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
 case "$1 $2" in
-  "image ls") printf '%s\n' xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0 xless-rn:'<none>' postgres:16 ;;
+  "image ls")
+    case "$*" in
+      *label=dev.xless.sdk) printf '%s\n' xless:local-arm64-xcode27.0 xless:local-arm64-xcode27.0-tauri ;;
+      *) printf '%s\n' xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0 xless:local-arm64-xcode27.0-tauri xless-rn:'<none>' xless:mine \
+           registry.example.com/xless-rn:local-arm64 postgres:16 ;;
+    esac ;;
   "volume ls") printf '%s\n' xless-cargo xless-rn-work-ov-12345678 pgdata ;;
 esac
 exit 0
@@ -40,9 +45,9 @@ removed() { grep -E '^(image rm|image prune|volume rm)' "$log" || true; }
 mkcache; extra=()
 run
 [[ $code == 0 ]] || fail "list exits $code: $(cat "$t/err")"
-grep -q '^found 3 image tags:' "$t/out" || fail "image count: $(cat "$t/out")"
+grep -q '^found 4 image tags:' "$t/out" || fail "image count: $(cat "$t/out")"
 grep -qx '  xless:local-arm64-xcode27.0' "$t/out" || fail "tag not listed: $(cat "$t/out")"
-grep -q 'postgres' "$t/out" && fail "another project's image listed"
+grep -q 'postgres\|registry\|xless:mine' "$t/out" && fail "another project's image listed"
 grep -q '^found 2 volumes:' "$t/out" || fail "volume count: $(cat "$t/out")"
 grep -q 'pgdata' "$t/out" && fail "another project's volume listed"
 grep -q "^found the cache $cache" "$t/out" || fail "cache not listed: $(cat "$t/out")"
@@ -52,7 +57,7 @@ grep -q '^nothing removed' "$t/out" || fail "no hint: $(cat "$t/out")"
 # --dry-run: says what --all would remove, removes nothing.
 run --all --dry-run
 [[ $code == 0 ]] || fail "dry run exits $code"
-grep -q '^would remove 3 image tags' "$t/out" || fail "dry run images: $(cat "$t/out")"
+grep -q '^would remove 4 image tags' "$t/out" || fail "dry run images: $(cat "$t/out")"
 grep -q '^would remove the cache' "$t/out" || fail "dry run cache: $(cat "$t/out")"
 [[ -z "$(removed)" && -d "$cache" ]] || fail "dry run removed something: $(removed)"
 
@@ -60,17 +65,25 @@ grep -q '^would remove the cache' "$t/out" || fail "dry run cache: $(cat "$t/out
 run --all
 [[ $code == 0 ]] || fail "--all exits $code: $(cat "$t/err")"
 grep -qx 'volume rm xless-cargo xless-rn-work-ov-12345678' "$log" || fail "volumes: $(removed)"
-grep -qx 'image rm xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0' "$log" || fail "images: $(removed)"
+grep -qx 'image rm xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0 xless:local-arm64-xcode27.0-tauri' "$log" || fail "images: $(removed)"
 grep -qx 'image prune --force --filter label=org.xless.image' "$log" || fail "no label prune: $(removed)"
 grep -q 'builder prune\|system prune' "$log" && fail "pruned Docker-wide caches"
 [[ ! -e "$cache" ]] || fail "cache left behind"
 grep -q 'docker builder prune' "$t/out" || fail "no build cache hint: $(cat "$t/out")"
 
-# --old: only the label prune (what an upgrade leaves), no tag, volume or cache removed.
+# --old: what an upgrade leaves (the images of xless 0.9 and older, shown, and the label prune): no image of this xless, no
+# volume, no cache.
 mkcache
+run --old --dry-run
+[[ $code == 0 && -z "$(removed)" ]] || fail "--old --dry-run: $code $(removed)"
+[[ "$(sed -n 1,3p "$t/out")" == "would remove 2 image tags:
+  xless-base:local-arm64
+  xless:local-arm64" ]] || fail "--old --dry-run says: $(cat "$t/out")"
 run --old
 [[ $code == 0 ]] || fail "--old exits $code: $(cat "$t/err")"
-[[ "$(removed)" == 'image prune --force --filter label=org.xless.image' ]] || fail "--old removed: $(removed)"
+[[ "$(sed -n 1p "$t/out")" == "removing 2 image tags:" ]] || fail "--old says: $(cat "$t/out")"
+[[ "$(removed)" == 'image rm xless-base:local-arm64 xless:local-arm64
+image prune --force --filter label=org.xless.image' ]] || fail "--old removed: $(removed)"
 [[ -d "$cache" ]] || fail "--old removed the cache"
 
 # --cache alone needs no Docker; --images with a Docker that doesn't answer fails (exit 11) and removes nothing.
