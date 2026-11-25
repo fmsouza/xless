@@ -90,7 +90,8 @@ grep -qE 'pattern:|merge-multiple' "$action" && fail "artifacts are taken by a p
 grep -qE 'continue-on-error|if:' "$action" && fail "the comparison may be gone without"
 
 # The two steps as they are there.
-step() { awk -v n="- name: $2" 'index($0, n) { on = 1 } on && /^ +run: \|/ { body = 1; match($0, /^ +/); ind = RLENGTH; next } body && $0 !~ "^ {" ind + 1 "}" && NF { exit } body { print substr($0, ind + 3) }' "$1"; }
+# (no interval in the pattern: mawk has none)
+step() { awk -v n="- name: $2" 'index($0, n) { on = 1 } on && /^ +run: \|/ { body = 1; match($0, /^ +/); ind = RLENGTH; next } body && NF { match($0, /^ */); if (RLENGTH <= ind) exit } body { print substr($0, ind + 3) }' "$1"; }
 step "$wf" "The packages' sums" > "$t/built.sh"; step "$action" "They are the packages that were built" > "$t/check.sh"
 grep -q 'package-sums.sh all' "$t/built.sh" && grep -q 'package-sums.sh check' "$t/check.sh" || fail "no such steps: $(cat "$t/built.sh" "$t/check.sh")"
 value() { local p; for p in "${pairs[@]}"; do [[ "${p%%=*}" != "$1" ]] || echo "${p#*=}"; done; }
