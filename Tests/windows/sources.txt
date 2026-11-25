@@ -1,5 +1,6 @@
 # The Swift files of the targets that Windows builds: "+" is built there, "-" is not (Package.swift, notOnWindows).
 # A new file gets its line here; WindowsSourcesTests checks both lists.
+- Sources/XlessCore/AppleSignature.swift
 - Sources/XlessCore/BuildSDKCheck.swift
 + Sources/XlessCore/BundleLayout.swift
 - Sources/XlessCore/ChildProcess.swift
@@ -15,11 +16,13 @@
 + Sources/XlessCore/FoundationScalar.swift
 + Sources/XlessCore/HTTPTrace.swift
 + Sources/XlessCore/InputGate.swift
+- Sources/XlessCore/InstalledXcode.swift
 + Sources/XlessCore/KernelKeyring.swift
 + Sources/XlessCore/KnownXcodes.swift
 + Sources/XlessCore/MacArchitecture.swift
 - Sources/XlessCore/MemoryFileSystem.swift
 - Sources/XlessCore/NativeLayout.swift
+- Sources/XlessCore/NativeTools.swift
 + Sources/XlessCore/PEM.swift
 + Sources/XlessCore/Platform.swift
 + Sources/XlessCore/Plist.swift
@@ -43,6 +46,7 @@
 + Sources/XlessCore/TerminalText.swift
 + Sources/XlessCore/TextRedaction.swift
 + Sources/XlessCore/ToolchainMeta.swift
+- Sources/XlessCore/TrustedPath.swift
 + Sources/XlessCore/UnlockSettings.swift
 + Sources/XlessCore/UserConfig.swift
 + Sources/XlessCore/UserPaths.swift
@@ -184,6 +188,7 @@
 + Sources/XlessStore/StorePushReview.swift
 + Sources/XlessStore/StorePushText.swift
 + Sources/XlessStore/StoreSender.swift
+- Tests/XlessCoreTests/AppleSignatureTests.swift
 - Tests/XlessCoreTests/BuildSDKCheckTests.swift
 - Tests/XlessCoreTests/ChildProcessTests.swift
 - Tests/XlessCoreTests/DittoShimTests.swift
@@ -194,9 +199,11 @@
 + Tests/XlessCoreTests/HTTPTraceTests.swift
 + Tests/XlessCoreTests/IdentifierReplacementTests.swift
 + Tests/XlessCoreTests/InputGateTests.swift
+- Tests/XlessCoreTests/InstalledXcodeTests.swift
 + Tests/XlessCoreTests/KernelKeyringTests.swift
 + Tests/XlessCoreTests/KnownXcodesTests.swift
 - Tests/XlessCoreTests/NativeLayoutTests.swift
+- Tests/XlessCoreTests/NativeToolsTests.swift
 + Tests/XlessCoreTests/PEMTests.swift
 - Tests/XlessCoreTests/PlistBuddyShimTests.swift
 + Tests/XlessCoreTests/PrivateFileTests.swift
@@ -215,6 +222,7 @@
 - Tests/XlessCoreTests/SwiftToolchainTests.swift
 + Tests/XlessCoreTests/TerminalTextTests.swift
 + Tests/XlessCoreTests/TextRedactionTests.swift
+- Tests/XlessCoreTests/TrustedPathTests.swift
 + Tests/XlessCoreTests/UnlockSettingsTests.swift
 + Tests/XlessCoreTests/UserConfigTests.swift
 + Tests/XlessCoreTests/VersionTests.swift
