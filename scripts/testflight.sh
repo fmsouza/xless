@@ -968,6 +968,12 @@ if [[ $step3 == 1 ]]; then
       exit 0
     fi
     # native (a macOS host run): the same two channels, xless straight from the env.
+    if [[ "${XLESS_TESTFLIGHT_DRY_RUN:-0}" == 1 ]]; then
+      run "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"}
+      [[ "$(index "$to")" -lt 6 ]] || run "$xself" ship --platform macos "${xl[@]}" --distribution app-store --from sign --to upload ${extra[@]+"${extra[@]}"}
+      echo "==> TestFlight: stopped after $to (--to), nothing delivered" >&2
+      exit 0
+    fi
     set +e
     shiplog="$(mktemp)"; shipout="$(mktemp)"; tmpfiles+=("$shiplog" "$shipout")
     waited ${told[@]+"${told[@]}"} "$xself" ship --platform macos "${xl[@]}" --from "$sfrom" --to "$mac_tf_to" ${extra[@]+"${extra[@]}"} >"$shipout" 2>"$shiplog"

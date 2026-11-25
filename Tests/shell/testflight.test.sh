@@ -279,6 +279,15 @@ X
 grep -q -- "--platform macos .*--to finalize | DEVID=unset ASC_KEY_ID=unset$" "$t/xlog" || fail "macos step 2 env: $(cat "$t/xlog")"
 grep -q -- "--from sign --to package | DEVID=$t/devid.pem ASC_KEY_ID=KEYID$" "$t/xlog" || fail "macos step 3 env: $(cat "$t/xlog")"
 [[ "$msg" == *"==> DMG: /work/out/App_1.0.0_universal.dmg"* ]] || fail "DMG path not reported: $msg"
+# a native dry run prints every step of both channels and runs none
+: > "$t/xlog"; out=$("${lane[@]}" XLESS_USE_DOCKER=0 XLOG="$t/xlog" "$S" --config "$t/ov/my.overlay.yml" --platform macos 2>"$t/err") || fail "native macos dry run: $(cat "$t/err")"
+! grep -q "^ship" "$t/xlog" || fail "a native macos dry run started xless: $(cat "$t/xlog")"
+[[ $(wc -l <<<"$out") -eq 2 && "$(sed -n 2p <<<"$out")" == "xless ship --platform macos --config $t/ov/my.overlay.yml --from sign --to package " ]] || fail "native macos dry run: $out"
+grep -q "nothing delivered" "$t/err" || fail "native macos dry run ends as if it had run: $(cat "$t/err")"
+out=$("${lane[@]}" XLESS_USE_DOCKER=0 XLOG="$t/xlog" "$S" --config "$t/ov/my.overlay.yml" --platform macos --to upload --dry-run --no-provisioning-updates 2>"$t/err") || fail "native macos lane dry run: $(cat "$t/err")"
+! grep -q "^ship" "$t/xlog" || fail "a native macos lane dry run started xless: $(cat "$t/xlog")"
+[[ $(wc -l <<<"$out") -eq 3 && "$(sed -n 2p <<<"$out")" == "xless ship --platform macos --config $t/ov/my.overlay.yml --from sign --to package --no-provisioning-updates " ]] || fail "native macos lane dry run, DMG: $out"
+[[ "$(sed -n 3p <<<"$out")" == "xless ship --platform macos --config $t/ov/my.overlay.yml --distribution app-store --from sign --to upload --no-provisioning-updates " ]] || fail "native macos lane dry run, pkg: $out"
 # --config with a React Native overlay: step 1 (`xless next-build`) and step 3 in the base image, step 2 in xless-rn with
 # its caches on docker volumes (a case-sensitive work copy); no Rust volumes, no host work folder
 mkdir -p "$t/rn/app"
