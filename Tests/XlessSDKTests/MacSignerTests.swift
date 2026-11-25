@@ -108,6 +108,24 @@ import XlessCore
         #expect(try said(prepare(signer())) == "genuine\n")
     }
 
+    @Test func aFileThatOthersCanWriteIsRefused() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let signer = try signer(), program = try prepare(signer), archive = program.deletingLastPathComponent().appendingPathComponent("rcodesign.tar.gz")
+        func refused(_ file: URL) {
+            do {
+                _ = try prepare(signer)
+                Issue.record("expected throw")
+            } catch let e as XlessError { #expect(e.cause.contains("\(file.path) can be written by other users"), "\(e.cause)") } catch { Issue.record(error) }
+        }
+        chmod(archive.path, 0o666)
+        refused(archive)
+        chmod(archive.path, 0o600)
+        try Shell.run("/bin/chmod", ["+a", "everyone allow write", program.path], stage: .sdk) // (its mode says nothing of that)
+        refused(program)
+        try Shell.run("/bin/chmod", ["-N", program.path], stage: .sdk)
+        #expect(try said(prepare(signer)) == "genuine\n")
+    }
+
     @Test func aRelativePlaceIsRefused() throws {
         defer { try? FileManager.default.removeItem(at: root) }
         let table = ["RCODESIGN_VERSION": "0.29.0", "RCODESIGN_SHA256_DARWIN_AARCH64": "da"]
