@@ -138,7 +138,7 @@ extra=()
 run ok --docker --xcode "$xip" --arch arm64 --with cargo,react-native,tauri --dry-run
 [[ $code == 0 ]] || fail "--with exits $code: $(cat "$t/err")"
 grep -q '^\[6/7\] xless:local-arm64-xcode27.0-tauri: ' "$t/out" && grep -q '^\[7/7\] xless:local-arm64-xcode27.0-react-native: ' "$t/out" || fail "--with plans: $(cat "$t/out")"
-for bad in rust '' , ; do
+for bad in rust '' ','; do
   run ok --docker --xcode "$xip" --with "$bad" --dry-run
   [[ $code == 11 ]] && grep -q 'tauri, cargo, react-native, expo' "$t/err" || fail "--with '$bad': $code $(cat "$t/err")"
 done
