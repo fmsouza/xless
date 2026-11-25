@@ -50,6 +50,19 @@ come from the same release (the share's `VERSION` file) whenever it reads the sh
 | `Apple resumed … at the wrong place …` | Nothing wrong was kept: the `.part` was deleted and the file was retried from the start. If it still fails, run it again. |
 | `… is not an Xcode .xip` (an existing file) | A file of that name that is not a `.xip` is in the output directory. Move it away. |
 
+## In WSL
+
+The tools that xless starts on the kernel of WSL are kept from Windows, and cannot get more rights than you have
+([why](security.md#in-wsl)). In a build:
+
+| Symptom | What to do |
+|---|---|
+| `sudo: … the "no new privileges" flag is set …`, `effective uid is not 0`, a program installed with snap does not start, `ping` or `newuidmap` is refused | A build cannot become another user there. Do what needs it before the run; install the tool without snap. |
+| A `.exe` (`git-credential-manager.exe`, `op.exe`, `ssh.exe`, `powershell.exe`) cannot be started by a build, or git asks for a user name | A build cannot start Windows programs there. Fetch what is private before the run (`swift package resolve`, `git fetch`), or use a credential helper or an SSH key of the distribution's own. |
+| `Bad system call` (status 159, signal 31) | A 32-bit program. Use a 64-bit one of the distribution's architecture. |
+| `cannot keep … from Windows (seccomp: …), so it is not started` | WSL 1, or an xless that another architecture's emulator runs: neither has the filter. `wsl --set-version <distribution> 2`, and the xless (or image) of your processor. |
+| The passphrase is asked after the build | Nothing is unlocked while the project's code runs there. For a run that nobody waits for: `xless run <dir> --to finalize`, then `xless run <dir> --from sign`. |
+
 ## `xless setup`
 
 Natively (the default):
