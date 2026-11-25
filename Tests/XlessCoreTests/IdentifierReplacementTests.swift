@@ -125,6 +125,7 @@ private func appTree() throws -> URL {
     #expect(try IdentifierReplacement.none.rewriteInfoPlists(in: app, stage: .finalize).isEmpty)
 }
 
+#if !os(Windows) // (where Foundation's linkItem makes a symbolic link)
 @Test func aRewrittenInfoPlistIsANewFile() throws {
     let app = try appTree(), own = app.deletingLastPathComponent().appendingPathComponent("own-\(UUID().uuidString)")
     try FileManager.default.linkItem(at: app.appendingPathComponent("Info.plist"), to: own)
@@ -134,7 +135,6 @@ private func appTree() throws -> URL {
     #expect(try Data(contentsOf: app.appendingPathComponent("Info.plist")) != before)
 }
 
-#if !os(Windows)
 @Test(arguments: [0o644, 0o664, 0o755]) func aRewrittenInfoPlistKeepsItsMode(mode: Int) throws {
     let app = try appTree(), plist = app.appendingPathComponent("Info.plist").path
     try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: plist)

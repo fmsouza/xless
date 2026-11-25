@@ -181,7 +181,7 @@ public struct IdentifierReplacement: Sendable, Equatable {
             }
             do {
                 let new = try PropertyListSerialization.data(fromPropertyList: rewritten, format: format, options: 0)
-                // (a new file: what else the old one is, is not written. Not `.atomic`: on Windows that writes into the old file.)
+                // (a new file: what else the old one is, is not written. Not `.atomic`, which may not keep its mode.)
                 let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions]
                 try FileManager.default.removeItem(at: url)
                 try new.write(to: url, options: .withoutOverwriting)
