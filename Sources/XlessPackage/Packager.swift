@@ -44,7 +44,7 @@ public enum Packager {
         guard (try? fm.attributesOfItem(atPath: dSYMs.path)) != nil else { return nil }
         let built = copy.appendingPathComponent(dSYMs.lastPathComponent, isDirectory: true), shipped = copy.appendingPathComponent("shipped", isDirectory: true)
         do {
-            try fm.createDirectory(at: copy, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try fm.createDirectory(at: copy, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             try BuiltTree.copy(dSYMs, to: built, stage: .package)
             try BuiltTree.check(built, stage: .package)
             let images = DSYM.imageUUIDs(in: app), all = DSYM.bundles(under: built)
