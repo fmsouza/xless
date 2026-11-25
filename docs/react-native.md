@@ -284,7 +284,7 @@ xcode: "26.2"      # the Xcode of the app's release pipeline
 - **`xless run --docker`** reads the `xcode:` line and runs every step in that Xcode's image or the kit on it. A missing image stops the run with the command that builds it:
 
   ```
-  testflight: …/my-app.yml pins xcode: "26.2", but the image xless:local-arm64-xcode26.2 is missing; build it from Xcode 26.2: xless setup --docker --xcode <Xcode 26.2's .xip or .app> --arch arm64
+  testflight: …/my-app.yml pins xcode: "26.2", but the image xless:local-arm64-xcode26.2 is missing; build it from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64
   ```
 
   The pin is looked up as the tags spell versions: `xcode: "26"` selects `-xcode26.0`, `"26.2.0"` selects `-xcode26.2`. An image named with `XLESS_IMAGE` or `image:` must hold the pinned Xcode's SDK too: a mismatch is refused before anything runs.
