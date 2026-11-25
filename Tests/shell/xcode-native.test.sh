@@ -45,6 +45,7 @@ fi
 
 cp -R "$repo/samples/HelloShip" "$t/p"
 rm -rf "$t/p/.xless" "$t/p/.build"
+sed 's/^  # macos: /  macos: /' "$repo/samples/HelloShip/xless.yml" > "$t/p/xless.yml"   # a macOS app too
 build="$t/p/.xless/build"
 
 # A device: an arm64 iOS app of that Xcode's SDK, with its icon.

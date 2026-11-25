@@ -1,10 +1,11 @@
 bundleID: com.example.helloship
 teamID: ABCDE12345
-version: 1.0.0
+version: "1.0"
 build: 1
 platforms:
   ios:   { minimumOS: "17.0", product: HelloShip, entitlements: ios.entitlements }
-  macos: { minimumOS: "14.0", product: HelloShip, entitlements: macos.entitlements, distribution: developer-id }
+  # A macOS app too, for direct download (its Developer ID certificate is made by the account holder):
+  # macos: { minimumOS: "14.0", product: HelloShip, entitlements: macos.entitlements, distribution: developer-id }
 assets: Resources/Assets.xcassets
 privacyManifest: Resources/PrivacyInfo.xcprivacy
 infoPlist: Resources/Info.plist
