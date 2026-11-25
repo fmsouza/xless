@@ -100,7 +100,10 @@ out=$("${runs[@]}" XLESS_USE_DOCKER=0 "$x" run --docker "$t/p" --dry-run --to fi
 [[ "$out" == docker* ]] || fail "--docker lost to XLESS_USE_DOCKER=0: $out"
 code=0; "${runs[@]}" STUB_EXIT=23 "$x" run --docker "$t/p" --to finalize >/dev/null 2>&1 || code=$?
 [[ $code -eq 23 ]] || fail "xless run exits $code, want the container's 23"
-# natively: the exit code of this xless's ship
+# natively: the exit code of this xless's ship, which refuses an option that the run passes on to it
+code=0; "${runs[@]}" "$x" run "$t/p" --to finalize --no-such-option >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 64 ]] && grep -q "Usage: xless ship " "$t/err" || fail "xless run exits $code, want its ship's 64: $(cat "$t/err")"
+# an xless.yml that is not YAML: the run itself says so, before ship does
 code=0; echo 'nonsense: [' > "$t/p/xless.yml"; "${runs[@]}" "$x" run "$t/p" --to finalize >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 10 ]] || fail "xless run of an unreadable xless.yml exits $code, want 10: $(cat "$t/err")"
 # On Linux, an overlay builds in the images only: refused natively, naming --docker, before anything runs.
