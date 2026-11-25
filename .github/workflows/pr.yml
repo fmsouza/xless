@@ -104,7 +104,7 @@ jobs:
           if [ -n "$failed" ]; then echo "::error::failed shell tests:$failed"; exit 1; fi
 
   # The release tarball, built the way the release build will build it (a static musl binary), installed with the
-  # one-line installer from a file:// release, and run.
+  # one-line installer from a file:// release, and run, through the tests of the xless agent too.
   package:
     name: package (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
@@ -127,7 +127,7 @@ jobs:
             || printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\noptions edns0\n' > /etc/resolv.conf
           apt="apt-get -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for attempt in 1 2 3; do
-            timeout -k 10 180 $apt update && timeout -k 10 300 $apt install -y git curl ca-certificates >/dev/null && break
+            timeout -k 10 180 $apt update && timeout -k 10 300 $apt install -y git python3 curl ca-certificates >/dev/null && break
             [ "$attempt" -lt 3 ] || exit 1
             echo "::warning::installing the tools failed (attempt $attempt of 3), retrying"
             dpkg --configure -a >/dev/null 2>&1 || true    # an install stopped while dpkg ran would block the next one
@@ -168,6 +168,12 @@ jobs:
           echo "$err" | grep -F 'Xcode 27.0 (27A266a)'
           echo "$err" | grep -F 'Xcode 27.1 (27A9275)'
           echo "$err" | grep -F 'Xcode 27.2 (27B52)'
+      # As in the macOS job, with the optimised, static program: linux-tests runs a debug build.
+      - name: The installed xless holds secrets in its agent and forgets them
+        timeout-minutes: 20
+        run: |
+          export XLESS_BIN="$HOME/.local/bin/xless"
+          for t in agent session; do bash "Tests/shell/$t.test.sh"; done
 
   # The macOS tarballs, built the way the release build will build them: both on one machine, the x86_64 one cross-compiled.
   package-macos:

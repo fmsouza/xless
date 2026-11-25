@@ -98,6 +98,12 @@ diff <(inputs pr.yml package-macos) <(inputs release.yml build-macos) && diff <(
 for r in macos-15 macos-15-intel; do
   grep -q "runner: $r }" <<<"$(job pr.yml install-macos)" && grep -q "runner: $r }" <<<"$(job release.yml verify)" || fail "$r installs not in both"
 done
+# How an agent and a command know each other is tested with the optimised program that is released, as installed, on both systems.
+for j in package install-macos; do
+  step=$(job pr.yml $j | awk '/^      - / { on = 0 } /- name: The installed xless .*agent/ { on = 1 } on { print }')
+  grep -qxF '          export XLESS_BIN="$HOME/.local/bin/xless"' <<<"$step" && grep -qE '^          for t in agent session( [a-z-]+)*; do .* "Tests/shell/\$t\.test\.sh"; done$' <<<"$step" || fail "$j tests no agent: $step"
+  grep -q 'continue-on-error' <<<"$(job pr.yml $j)" && fail "$j goes on after a failure"
+done
 # The plan step, with stand-ins: what it says last is why nothing is released.
 job release.yml plan | awk '/- name: Next version/ { on = 1 } on && /^        run: \|/ { body = 1; next } body && /^ {0,9}[^ ]/ { exit } body { sub(/^          /, ""); print }' > "$t/plan.sh"
 grep -q next-version.sh "$t/plan.sh" || fail "no plan step: $(cat "$t/plan.sh")"

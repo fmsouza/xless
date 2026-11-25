@@ -38,7 +38,7 @@ description re-runs; the others are `.github/workflows/pr.yml`, which runs when 
 |---|---|
 | `title` | The pull request title against the regular expression above |
 | `linux-tests (x86_64)`, `linux-tests (arm64)` | `swift test`, AssetKit's tests and every `Tests/shell/*.test.sh`, in `swift:6.4.0-jammy`, pinned by digest (`SWIFT_IMAGE` in `versions.env`) |
-| `package (x86_64)`, `package (arm64)` | The release tarball built as a release would build it, installed with `scripts/install.sh` from a local release, and run |
+| `package (x86_64)`, `package (arm64)` | The release tarball built as a release would build it, installed with `scripts/install.sh` from a local release, and run, the agent included |
 | `shellcheck` | shellcheck on the shipped scripts |
 
 These run on every pull request too, and a red one is to be fixed like any other. The nightly does not release a commit whose
