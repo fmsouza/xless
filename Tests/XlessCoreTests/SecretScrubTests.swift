@@ -108,6 +108,7 @@ private func testflight(_ demo: String?) throws -> TestFlightConfig {
         #expect(SecretEnvironment.passwordNameProblem(name) != nil, "\(name)")
     }
     #expect(SecretEnvironment.passwordNameProblem("ASC_KEY_P8") == "names a key or token, not a password")
+    #expect(SecretEnvironment.passwordNameProblem("xless-apple-session")?.contains("xless's own") == true)
     #expect(SecretEnvironment.passwordNameProblem("PATH")?.contains("the system, the shell or xless's scripts use (PATH)") == true)
     #expect(SecretEnvironment.passwordNameProblem("XLESS_RN_CLEAN")?.contains("xless's own variables") == true)
     for name in ["XLESS_DEMO_PASSWORD", "XLESS_DEMO_PASSWORD@ABCDE12345", "APP_REVIEW_PASSWORD", "MY_REVIEW_PW", "DEMO_LOGIN@ABCDE12345", "PATHWAY_PASSWORD"] {

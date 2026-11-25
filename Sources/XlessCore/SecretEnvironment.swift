@@ -62,6 +62,7 @@ public enum SecretEnvironment {
         let base = (name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name).uppercased()
         if isKeyOrToken(name) { return "names a key or token, not a password" }
         if base.hasSuffix("_FILE") { return "names a _FILE variable (the path of a secret's file), not a secret" }
+        if base.hasPrefix("XLESS-") { return "names one of xless's own entries, not a password" }
         if base.hasPrefix("XLESS_"), !entries.contains(where: { $0.name == base }) { return "names one of xless's own variables, not a password" }
         if reservedVariables.contains(base) || reservedPrefixes.contains(where: base.hasPrefix) {
             return "names a variable the system, the shell or xless's scripts use (\(base)), not a password"
@@ -141,4 +142,11 @@ private final class Registered: @unchecked Sendable {
     private var stored: Set<String> = []
     func add(_ name: String) { lock.withLock { _ = stored.insert(name) } }
     var names: Set<String> { lock.withLock { stored } }
+}
+
+extension SecretEnvironment {
+    /// What the names of the store's entries of xless's own start with (`savedSession`): no value of theirs is given out.
+    public static let ownEntryPrefix = "xless-"
+    /// The entry of an Apple ID session kept across reboots (`xless auth login --across-reboots`).
+    public static let savedSession = "xless-apple-session"
 }

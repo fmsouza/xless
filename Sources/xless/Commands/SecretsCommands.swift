@@ -317,6 +317,9 @@ struct SecretsExportCommand: ParsableCommand {
 
     func run() throws {
         try SecretStoreCLI.run {
+            if name.lowercased().hasPrefix(SecretEnvironment.ownEntryPrefix) {
+                throw XlessError(.config, "\(name) is xless's own (an Apple ID session): it is never written in clear", fix: "remove it with `xless auth logout`")
+            }
             let remember = try SecretStoreCLI.remember(options.remember)
             let store = try SecretStoreCLI.store()
             let file = try store.existingCatalog()

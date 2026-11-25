@@ -41,6 +41,7 @@ public final class VaultResolver: SecretFallback, @unchecked Sendable {
 
     /// The value of `name` (or the ID it stands for) from the entry `pick` chooses; nil when there is none.
     func lookup(_ name: String, stage: Stage, pick: (String, SecretCatalog) throws -> VaultEntry?) throws -> String? {
+        guard !name.lowercased().hasPrefix(SecretEnvironment.ownEntryPrefix) else { return nil }
         do {
             guard let catalog = try store.catalog() else { return nil }
             if let field = Self.metadataField(name) {

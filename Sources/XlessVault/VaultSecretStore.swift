@@ -75,11 +75,12 @@ public final class VaultSecretStore: SecretStore, @unchecked Sendable {
     }
 
     /// The data key of `file` without asking: the one this process unlocked, else a valid one in the unlock cache.
-    public func heldKey(for file: VaultFile) -> SymmetricKey? {
+    /// - Parameter using: false to look only (an unlock's idle time goes on).
+    public func heldKey(for file: VaultFile, using: Bool = true) -> SymmetricKey? {
         SecretScope.enter()
         return lock.withLock {
             if let dataKey, dataKey.id == file.id { return dataKey.key }
-            guard let cached = try? cache?.load(id: file.id, using: true, accept: { VaultUnlocker.opens(file, $0) }) else { return nil }
+            guard let cached = try? cache?.load(id: file.id, using: using, accept: { VaultUnlocker.opens(file, $0) }) else { return nil }
             let key = SymmetricKey(data: cached)
             dataKey = (file.id, key)
             return key

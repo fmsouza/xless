@@ -191,3 +191,13 @@ private let twoTeams: [(String, VaultEntry.Kind, VaultEntry.Metadata, String)] =
     try cache.store(VaultCrypto.keyBytes(key), id: file.id, place: "", hold: SecretHold(seconds: 60, idle: 60, maximum: 60), typed: true)
     _ = try InputGate.$forced.withValue(true) { try VaultUnlocker.dataKey(for: file, cache: cache, prompter: { nil }, reason: "test") }
 }
+
+@Test func xlessOwnEntriesAreNoSecretOfTheEnvironment() throws {
+    let t = try TempStore()
+    defer { t.cleanup() }
+    try t.make()
+    let store = VaultSecretStore(store: t.store, cache: nil, prompter: { ScriptedPrompter(Array(repeating: "correct horse battery", count: 3)) })
+    try store.update(reason: "test") { _ in [.add(name: SecretEnvironment.savedSession, kind: .generic, metadata: .init(), secret: SecretBytes(utf8: "cookies"))] }
+    #expect(try VaultResolver(secrets: store).lookup(SecretEnvironment.savedSession, stage: .config) == nil)
+    #expect(try VaultResolver(secrets: store).preferring(team: "ABCDE12345").lookup("xless-apple-session", stage: .config) == nil)
+}

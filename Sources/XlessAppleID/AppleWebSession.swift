@@ -24,7 +24,7 @@ public final class AppleWebSession: Sendable {
     /// The kept session when there is one (`cache`), else a sign-in through `prompter` (asked for only then).
     public static func open(web: AppleWebClient, cache: AppleSessionCache?,
                             prompter: () throws -> any SignInPrompter) async throws -> AppleWebSession {
-        if let cache, let kept = await cache.restore(into: web) {
+        if let cache, let kept = try await cache.restore(into: web) {
             let session = AppleWebSession(web: web, appleID: kept.appleID, kept: kept)
             guard await session.isRefused() else { return session }
             return try await signInAgain(web: web, kept: kept, cache: cache, prompter: try prompter())
@@ -44,11 +44,11 @@ public final class AppleWebSession: Sendable {
     private static func signInAgain(web: AppleWebClient, kept: KeptSessionInfo, cache: AppleSessionCache,
                                     prompter: any SignInPrompter) async throws -> AppleWebSession {
         prompter.say("Apple no longer accepts the kept session: signing in again as \(kept.appleID) (it is kept as before).")
-        let hold = cache.remainingHold()
+        let hold = cache.remainingHold(), saved = cache.isSaved
         await web.keepTrustedDevice()
         let appleID = try await AppleSignIn(client: web, prompter: prompter, stage: web.stage).run(as: kept.appleID)
         var info: KeptSessionInfo?
-        if let hold { info = try? await cache.keep(web, appleID: appleID, hold: hold) } // too little left: not kept
+        if let hold { info = try? await cache.keep(web, appleID: appleID, hold: hold, acrossReboots: saved) } // too little left: not kept
         return AppleWebSession(web: web, appleID: appleID, kept: info)
     }
 

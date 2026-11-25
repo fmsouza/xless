@@ -30,17 +30,32 @@ struct AuthLoginCommand: AsyncParsableCommand {
         `unlock` says (at most 7 days, never past the session's own expiry), so the commands of this terminal that need it \
         do not sign in again. The tools xless runs never reach it. Without --keep nothing is kept: this only checks the \
         sign-in.
+
+        --across-reboots also saves the session in the encrypted secret store, sealed as its other entries are: after a \
+        reboot it is there once the store is unlocked (its passphrase), until the time given. `xless auth logout` and \
+        `xless lock` remove it.
         """)
 
     @Option(help: ArgumentHelp("Keep the session for later commands of this terminal, for this long (e.g. 30m, 8h) or, without a duration, as long as config.yml's `unlock` says. Off by default.", valueName: "duration"))
     var keep: String?
+    @Flag(help: "With --keep: also save the session in the encrypted secret store, so it is there after a reboot too, once the store is unlocked. Off by default.")
+    var acrossReboots = false
     @OptionGroup var trace: VerboseOption
+
+    func validate() throws {
+        if acrossReboots, keep == nil { throw ValidationError("--across-reboots needs --keep (for how long)") }
+    }
 
     func run() async throws {
         try await AccountSession.run {
             SecretScope.enter()
             let hold = try keep.map { try HeldSecrets.settings.get().hold($0, option: "--keep", stage: .account) }
             if hold != nil, !AppleWebCLI.cache.isAvailable { throw AppleSessionCache.unavailable(AppleWebCLI.held.obstacle) }
+            if acrossReboots {
+                // The store's passphrase, before the sign-in.
+                let store = try VaultSavedSession.configured()
+                try store.unlock(try store.existingCatalog(), remember: nil, reason: "saving the Apple ID session")
+            }
             let prompter = try AppleWebCLI.prompter()
             let (web, transport) = AppleWebCLI.client(verbose: trace.verbose)
             defer { transport.invalidate() }
@@ -50,9 +65,10 @@ struct AuthLoginCommand: AsyncParsableCommand {
             print(TeamListing.table(teams, providers: nil, saved: AccountSession.savedTeam()), terminator: "")
             await AppleWebCLI.warnAboutAgreements(session)
             if let hold {
-                let info = try await AppleWebCLI.cache.keep(web, appleID: session.appleID, hold: hold)
+                let info = try await AppleWebCLI.cache.keep(web, appleID: session.appleID, hold: hold, acrossReboots: acrossReboots)
                 let place = AppleWebCLI.held.held()?.backend == .keyring ? "the kernel keyring" : "the xless agent"
                 print("kept the session in \(place) for \(AuthStatusReport.duration(info.expires.timeIntervalSince(info.created))) (until \(AuthStatusReport.time(info.expires))); `xless auth logout` drops it")
+                if acrossReboots { print("and saved it in the secret store until then: after a reboot, `xless unlock` is enough") }
             } else {
                 print("nothing was kept: each command that needs the Apple ID session signs in (or use --keep)")
             }
@@ -90,7 +106,7 @@ struct AuthStatusCommand: ParsableCommand {
         let held = AppleWebCLI.held
         let session = AppleWebCLI.cache.info()
         let report = AuthStatusReport.build(env: ProcessInfo.processInfo.environment, storeKey: storeKey, teamFlag: team.team, savedTeam: saved,
-                                            canKeep: held.isAvailable, session: session, sessionHeld: session == nil ? nil : held.held(),
+                                            canKeep: held.isAvailable, session: session, sessionHeld: session == nil ? nil : held.held(), savedUntil: AppleWebCLI.cache.savedUntil,
                                             store: AuthStatusReport.Store.current(), neededBy: AppleWebHelp.commands, now: Date())
         print(output.json ? try ASCOutput.json(report) : report.text, terminator: "")
     }
@@ -107,18 +123,20 @@ struct AuthStatusReport: Encodable, Equatable {
     }
 
     struct Session: Encodable, Equatable {
-        /// kept, none or unavailable (nothing to keep one in here).
+        /// kept, saved (in the secret store, which is locked), none or unavailable (nothing to keep one in here).
         let state: String
         let appleID: String?
         let expires: String?
         let remainingSeconds: Int?
-        /// agent or keyring, when kept.
+        /// agent, keyring or store (saved, and the store is unlocked), when kept.
         var backend: String? = nil
         /// When kept in the agent: it is dropped after this long without use, the soonest in `idleRemainingSeconds`.
         var idleSeconds: Int? = nil
         var idleRemainingSeconds: Int? = nil
         /// The commands that need it; the others need the API key at most.
         var neededBy: [String] = []
+        /// When it is (also) saved in the secret store (`--across-reboots`): until when.
+        var savedUntil: String? = nil
     }
 
     /// The secret store's lock.
@@ -179,7 +197,7 @@ struct AuthStatusReport: Encodable, Equatable {
     static let names = ["ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8"]
 
     static func build(env: [String: String], storeKey: Result<StoreKey?, any Error>, teamFlag: String?, savedTeam: String?,
-                      canKeep: Bool, session info: KeptSessionInfo?, sessionHeld: HeldUnlock? = nil, store: Store = Store(state: "missing"),
+                      canKeep: Bool, session info: KeptSessionInfo?, sessionHeld: HeldUnlock? = nil, savedUntil: Date? = nil, store: Store = Store(state: "missing"),
                       neededBy: [String] = [], now: Date) -> AuthStatusReport {
         var keyTeam: String?
         var keyRole: String?
@@ -199,15 +217,16 @@ struct AuthStatusReport: Encodable, Equatable {
                 return Credential(name: name, source: "store", detail: name == "ASC_KEY_P8" ? key.name : "\(key.name)'s \(name == "ASC_KEY_ID" ? "key" : "issuer") ID")
             }
         }
-        let session: Session
+        var session: Session
         if let info, info.expires > now {
             session = Session(state: "kept", appleID: info.appleID, expires: iso(info.expires),
-                              remainingSeconds: Int(info.expires.timeIntervalSince(now)), backend: sessionHeld?.backend.rawValue,
+                              remainingSeconds: Int(info.expires.timeIntervalSince(now)), backend: sessionHeld?.backend.rawValue ?? (savedUntil == nil ? nil : "store"),
                               idleSeconds: sessionHeld?.idle,
                               idleRemainingSeconds: sessionHeld?.idleExpires.map { max(0, Int($0.timeIntervalSince(now).rounded())) }, neededBy: neededBy)
         } else {
-            session = Session(state: canKeep ? "none" : "unavailable", appleID: nil, expires: nil, remainingSeconds: nil, neededBy: neededBy)
+            session = Session(state: savedUntil != nil ? "saved" : canKeep ? "none" : "unavailable", appleID: nil, expires: nil, remainingSeconds: nil, neededBy: neededBy)
         }
+        session.savedUntil = savedUntil.map(iso)
         let team = teamFlag ?? savedTeam
         return AuthStatusReport(team: team, teamSource: teamFlag != nil ? "flag" : (savedTeam != nil ? "saved" : "none"),
                                 apiKey: credentials, keyTeam: keyTeam, keyRole: keyRole, session: session, store: store)
@@ -244,6 +263,8 @@ struct AuthStatusReport: Encodable, Equatable {
         case "kept":
             let left = session.remainingSeconds.map { Self.duration(TimeInterval($0)) } ?? "?"
             lines.append("  kept for \(session.appleID ?? "?")\(session.backend.map { " in \(Self.place($0))" } ?? "") until \(session.expires ?? "?") (\(left) left\(Self.idle(session.idleSeconds))); `xless auth logout` drops it")
+        case "saved":
+            lines.append("  saved in the secret store until \(session.savedUntil ?? "?"), which is locked: a command that needs it asks the passphrase (`xless unlock` opens it for this terminal)")
         case "unavailable":
             lines.append("  none kept (it cannot be kept here): each command that needs it signs in")
         default:
@@ -253,7 +274,7 @@ struct AuthStatusReport: Encodable, Equatable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func place(_ backend: String?) -> String { backend == HeldUnlock.Backend.keyring.rawValue ? "the kernel keyring" : "the xless agent" }
+    private static func place(_ backend: String?) -> String { ["keyring": "the kernel keyring", "store": "the secret store"][backend ?? ""] ?? "the xless agent" }
 
     private static func idle(_ seconds: Int?) -> String { seconds.map { ", or \(duration(TimeInterval($0))) without use" } ?? "" }
 

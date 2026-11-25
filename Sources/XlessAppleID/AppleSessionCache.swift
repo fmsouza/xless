@@ -44,6 +44,19 @@ public struct KernelKeyringSessionStore: SessionKeyStore {
     }
 }
 
+/// Where a session kept across reboots is (`xless auth login --across-reboots`): an entry of the secret store, sealed
+/// under the store's key, which only the passphrase (or an unlock of the store) opens.
+public protocol SavedSession: Sendable {
+    /// Replaces the saved one.
+    func save(_ plain: SecretBytes, expires: Date) throws
+    /// nil when there is none or, unless `asking`, when the store is locked.
+    func load(asking: Bool) throws -> SecretBytes?
+    /// Of the saved one, known without opening it.
+    var expires: Date? { get }
+    /// Whether there was one.
+    @discardableResult func remove() throws -> Bool
+}
+
 /// What `xless auth status` shows of a kept session (never a cookie).
 public struct KeptSessionInfo: Sendable, Equatable {
     public let appleID: String
@@ -78,22 +91,28 @@ public struct AppleSessionCache: Sendable {
         /// The hold's idle time and maximum, for a session kept again after Apple refused it (nil: an older xless).
         var idle: Int?
         var maximum: Int?
+        /// Whether it is saved too.
+        var saved: Bool?
     }
 
     let store: any SessionKeyStore
+    let saved: (any SavedSession)?
     let now: @Sendable () -> Date
 
-    public init(store: any SessionKeyStore = KernelKeyringSessionStore(), now: @escaping @Sendable () -> Date = { Date() }) {
+    /// - Parameter saved: where a session is saved across reboots, when it is asked for; nil where none can be.
+    public init(store: any SessionKeyStore = KernelKeyringSessionStore(), saved: (any SavedSession)? = nil, now: @escaping @Sendable () -> Date = { Date() }) {
         self.store = store
+        self.saved = saved
         self.now = now
     }
 
     public var isAvailable: Bool { store.isAvailable }
 
     /// Seals `web`'s cookies and keeps them for the hold, or less when Apple's session cookie (`myacinfo`; any of them when
-    /// there is none) expires sooner. Replaces a kept session.
+    /// there is none) expires sooner. Replaces a kept session. `acrossReboots` also saves it, until then.
     @discardableResult
-    public func keep(_ web: AppleWebClient, appleID: String, hold: SecretHold) async throws -> KeptSessionInfo {
+    public func keep(_ web: AppleWebClient, appleID: String, hold: SecretHold, acrossReboots: Bool = false) async throws -> KeptSessionInfo {
+        if acrossReboots, saved == nil { throw Self.notSaved() }
         guard store.isAvailable else { throw Self.unavailable() }
         let created = Self.whole(now())
         var lifetime = store.allowed(hold)
@@ -112,7 +131,7 @@ public struct AppleSessionCache: Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .secondsSince1970
         var plain = try encoder.encode(Payload(appleID: appleID, created: info.created, expires: info.expires, cookies: cookies,
-                                                   idle: hold.idle, maximum: hold.maximum))
+                                                   idle: hold.idle, maximum: hold.maximum, saved: acrossReboots))
         defer { plain.withUnsafeMutableBytes { SecretBytes.zero($0) } }
         let key = SymmetricKey(size: .bits256)
         let sealed = try AES.GCM.seal(plain, using: key, authenticating: Self.associatedData)
@@ -123,6 +142,11 @@ public struct AppleSessionCache: Sendable {
         let keyBytes = key.withUnsafeBytes { SecretBytes(copying: $0) }
         defer { blob.wipe(); keyBytes.wipe() }
         forget()
+        if acrossReboots, let saved {
+            let bytes = plain.withUnsafeBytes { SecretBytes(copying: $0) }
+            defer { bytes.wipe() }
+            try saved.save(bytes, expires: info.expires)
+        }
         do {
             let kept = SecretHold(seconds: lifetime, idle: min(hold.idle, lifetime), maximum: hold.maximum)
             try store.put(Self.blobName, blob, hold: kept)
@@ -136,13 +160,17 @@ public struct AppleSessionCache: Sendable {
 
     /// The kept session's Apple ID and expiry, without its cookies; nil when none is kept.
     public func info() -> KeptSessionInfo? {
-        guard let payload = load(using: false) else { return nil }
+        guard let payload = look() else { return nil }
         return KeptSessionInfo(appleID: payload.appleID, created: payload.created, expires: payload.expires)
     }
 
-    /// Puts the kept session's cookies into `web`; its info, or nil when none is kept (nothing changes then).
-    public func restore(into web: AppleWebClient) async -> KeptSessionInfo? {
-        guard let payload = load(using: true) else { return nil }
+    /// When the saved session, opened or not, ends; nil when there is none.
+    public var savedUntil: Date? { saved?.expires.flatMap { $0 > now() ? $0 : nil } }
+
+    /// Puts the kept session's cookies into `web`; its info, or nil when none is kept (nothing changes then). For one
+    /// that is only saved the store's passphrase may be asked: not given, that is the error.
+    public func restore(into web: AppleWebClient) async throws -> KeptSessionInfo? {
+        guard let payload = try load(using: true) ?? loadSaved(asking: true) else { return nil }
         await web.restoreCookies(payload.cookies)
         return KeptSessionInfo(appleID: payload.appleID, created: payload.created, expires: payload.expires)
     }
@@ -152,41 +180,73 @@ public struct AppleSessionCache: Sendable {
     public func forget() -> Bool {
         let a = (try? store.revoke(Self.blobName)) ?? false
         let b = (try? store.revoke(Self.keyName)) ?? false
-        return a || b
+        let c = (try? saved?.remove()) ?? false
+        return a || b || c
+    }
+
+    /// Drops what is held, not what is saved.
+    private func forgetHeld() {
+        _ = try? store.revoke(Self.blobName)
+        _ = try? store.revoke(Self.keyName)
     }
 
     /// What is left of the kept session's hold, to keep the session that replaces it for no longer.
     func remainingHold() -> SecretHold? {
-        guard let payload = load(using: false) else { return nil }
+        guard let payload = look() else { return nil }
         let seconds = Int(payload.expires.timeIntervalSince(now()))
         guard seconds > 0 else { return nil }
         return SecretHold(seconds: seconds, idle: payload.idle ?? seconds, maximum: payload.maximum ?? seconds)
     }
 
+    /// Whether the kept session is saved too.
+    var isSaved: Bool { look()?.saved == true }
+
+    /// The held session, else the saved one when the store is unlocked: nothing is asked for, and nothing counts as used.
+    private func look() -> Payload? { load(using: false) ?? (try? loadSaved(asking: false)) ?? nil }
+
+    /// The saved session; one that has ended is removed.
+    private func loadSaved(asking: Bool) throws -> Payload? {
+        guard let saved, let expires = saved.expires else { return nil }
+        guard expires > now() else {
+            _ = try? saved.remove()
+            return nil
+        }
+        guard let bytes = try saved.load(asking: asking) else { return nil }
+        defer { bytes.wipe() }
+        var plain = bytes.withUnsafeBytes { Data($0) }
+        defer { plain.withUnsafeMutableBytes { SecretBytes.zero($0) } }
+        guard let payload = decode(plain) else {
+            _ = try? saved.remove()
+            return nil
+        }
+        return payload
+    }
+
+    private func decode(_ plain: Data) -> Payload? {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        guard let payload = try? decoder.decode(Payload.self, from: plain), payload.version == 1, payload.expires > now() else { return nil }
+        return payload
+    }
+
     private func load(using: Bool) -> Payload? {
         let blob = try? store.get(Self.blobName, using: using), keyBytes = try? store.get(Self.keyName, using: using)
         guard let blob, let keyBytes else {
-            if blob != nil || keyBytes != nil { forget() }
+            if blob != nil || keyBytes != nil { forgetHeld() }
             return nil
         }
         defer { blob.wipe(); keyBytes.wipe() }
         let key = keyBytes.withUnsafeBytes { SymmetricKey(data: $0) }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
         guard var plain = try? blob.withUnsafeBytes({ bytes -> Data in
             let box = try AES.GCM.SealedBox(combined: Data(bytes))
             return try AES.GCM.open(box, using: key, authenticating: Self.associatedData)
         }) else {
-            forget()
+            forgetHeld()
             return nil
         }
         defer { plain.withUnsafeMutableBytes { SecretBytes.zero($0) } }
-        guard let payload = try? decoder.decode(Payload.self, from: plain), payload.version == 1 else {
-            forget()
-            return nil
-        }
-        guard payload.expires > now() else {
-            forget()
+        guard let payload = decode(plain) else {
+            forgetHeld()
             return nil
         }
         return payload
@@ -196,6 +256,10 @@ public struct AppleSessionCache: Sendable {
     public static func unavailable(_ why: String? = nil) -> XlessError {
         XlessError(.account, "the Apple ID session cannot be kept here\(why.map { ": \($0)" } ?? "")",
                    fix: "run without --keep; each command that needs the Apple ID session signs in")
+    }
+
+    static func notSaved() -> XlessError {
+        XlessError(.account, "the Apple ID session cannot be saved across reboots here", fix: "run without --across-reboots")
     }
 
     static func whole(_ d: Date) -> Date { Date(timeIntervalSince1970: d.timeIntervalSince1970.rounded(.down)) }

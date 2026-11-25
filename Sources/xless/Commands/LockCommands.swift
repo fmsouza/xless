@@ -42,7 +42,8 @@ struct LockCommand: ParsableCommand {
         commandName: "lock",
         abstract: "Forget everything held for later commands, now: the store's unlock and a kept Apple ID session.",
         discussion: """
-        Ends every xless agent of yours, in every terminal, and drops what is in the Linux kernel keyring. Your screen \
+        Ends every xless agent of yours, in every terminal, drops what is in the Linux kernel keyring and removes a session \
+        saved across reboots. Your screen \
         locker can run it too (docs/security.md).
         """)
 
@@ -50,8 +51,9 @@ struct LockCommand: ParsableCommand {
         try SecretStoreCLI.run {
             let agents = Result { try HeldSecrets.agents.lockAll() }
             let keys = try KernelKeyringCache().forgetAll() + KernelKeyring.revokeAll(prefix: AppleSessionCache.prefix)
+            let saved = AppleWebCLI.saved.expires == nil ? 0 : try AppleWebCLI.saved.remove() ? 1 : 0
             let ended = try agents.get()
-            print(ended + keys > 0 ? "locked: everything held was dropped" : "nothing was held")
+            print(ended + keys + saved > 0 ? "locked: everything held was dropped" : "nothing was held")
         }
     }
 }
