@@ -3,23 +3,25 @@ import XlessASC
 import XlessCore
 
 public enum SignStage {
+    /// `updatesOff`: what turned provisioning updates off (`--no-provisioning-updates`): then nothing on the account is
+    /// changed, and what would have to be is the error. nil: what signing needs is made.
     /// `say`: where the plan of what changes on the account is printed (standard error).
     /// `manifest`: the bundles' entitlements as the build recorded them (React Native). Without it the app's come from
     /// `platforms.<p>.entitlements` and an app extension, if any, gets none.
     public static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
                            secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest? = nil,
-                           say: (String) -> Void = standardError) async throws -> URL {
+                           updatesOff: String? = nil, say: (String) -> Void = standardError) async throws -> URL {
         try await run(input: input, outputDir: outputDir, platform: platform, config: config, project: project, secrets: secrets,
-                      client: client, manifest: manifest, say: say, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
+                      client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: { try Shell.run("rcodesign", $0, stage: .sign) })
     }
 
     /// `codesign` runs rcodesign with the given arguments (a test seam: tests read the entitlement files it names).
     static func run(input: URL, outputDir: URL, platform: Platform, config: ProjectConfig, project: URL, secrets: Secrets,
-                    client: ASCClient, manifest: EntitlementsManifest?, say: (String) -> Void = { _ in },
+                    client: ASCClient, manifest: EntitlementsManifest?, updatesOff: String? = nil, say: (String) -> Void = { _ in },
                     codesign: ([String]) throws -> Void) async throws -> URL {
         try await Files.atomicOutput(outputDir) { partial in
             try await sign(input: input, into: partial, platform: platform, config: config, project: project, secrets: secrets,
-                           client: client, manifest: manifest, say: say, codesign: codesign)
+                           client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: codesign)
         }
     }
 
@@ -33,7 +35,7 @@ public enum SignStage {
     }
 
     static func sign(input: URL, into outputDir: URL, platform: Platform, config: ProjectConfig, project: URL,
-                     secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest?, say: (String) -> Void,
+                     secrets: Secrets, client: ASCClient, manifest: EntitlementsManifest?, updatesOff: String?, say: (String) -> Void,
                      codesign: ([String]) throws -> Void) async throws -> URL {
         let pc = try config.platform(platform)
         let distribution = config.distribution(for: platform)
@@ -61,6 +63,7 @@ public enum SignStage {
             SigningTarget(platform: platform, distribution: distribution, bundleID: $0.bundleID, entitlements: $0.entitlements,
                           extensionPath: $0.path.isEmpty ? nil : $0.path)
         }, certificate: cert.id)
+        if let updatesOff { try plan.requireNothing(off: updatesOff) }
         say(plan.text)
         let profiles = try await SigningApplier(account: account).apply(plan)
         let provisioned = try zip(targets, profiles).map { Provisioned(target: $0, profile: $1, granted: try Entitlements.extract(fromProfile: $1)) }

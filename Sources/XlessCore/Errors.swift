@@ -31,12 +31,20 @@ public struct XlessError: Error, CustomStringConvertible, Equatable, Sendable {
     public let stage: Stage
     public let cause: String
     public let fix: String
+    /// The process's exit code when it is not the stage's own.
+    public let code: Int32?
 
-    public init(_ stage: Stage, _ cause: String, fix: String) {
+    /// `sign` needs changes on the account that it may not make (`--no-provisioning-updates`).
+    public static let provisioningNeeded: Int32 = 24
+
+    public init(_ stage: Stage, _ cause: String, fix: String, code: Int32? = nil) {
         self.stage = stage
         self.cause = cause
         self.fix = fix
+        self.code = code
     }
+
+    public var exitCode: Int32 { code ?? stage.exitCode }
 
     public var description: String { "[\(stage.rawValue)] \(cause) — \(fix)" }
 }

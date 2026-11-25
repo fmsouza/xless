@@ -170,3 +170,12 @@ func refusesBadReactNativeOverlays(_ swap: (String, String)) {
     #expect(perTarget.isDisjoint(with: linux.overrides(toolset: URL(fileURLWithPath: "/t.json")).keys))
     #expect(ReactNativeEnvironment.buildSettings(overlay: o) == ["DEVELOPMENT_TEAM": "ABCDE12345", "HERMES_CLI_PATH": "/usr/local/bin/hermesc"])
 }
+
+@Test func provisioningUpdatesReachTheConfig() throws {
+    let base = "type: react-native\nscheme: A\nbundleIDs: { A: com.example.a }\nteamID: ABCDE12345\nversion: \"1.0\"\n"
+    for (extra, want) in [("", true), ("provisioningUpdates: false\n", false)] {
+        let o = try ReactNativeOverlay.parse(yaml: base + extra, name: "a")
+        let nowhere = URL(fileURLWithPath: "/nonexistent")
+        #expect(try ReactNativeProject.resolve(overlay: o, source: nowhere, work: nowhere).config.provisioningUpdates == want)
+    }
+}

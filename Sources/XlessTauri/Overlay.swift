@@ -85,6 +85,8 @@ public struct TauriOverlay: Sendable, Equatable {
     public var testflight: TestFlightConfig?
     /// `xcode:`: the Xcode whose SDK must build the app (`XcodePin`); nil: the image's SDK.
     public var xcode: String? = nil
+    /// `provisioningUpdates: false`: `sign` changes nothing on the account; nil: it may.
+    public var provisioningUpdates: Bool? = nil
 
     /// The cargo features of the macOS build: `macos.features` when set, else `tauri.features`.
     public var macFeatures: [String] { macos?.features ?? features }
@@ -119,6 +121,7 @@ private struct Raw: Decodable {
     var usesNonExemptEncryption: Bool?
     var testflight: TestFlightConfig?
     var xcode: String?
+    var provisioningUpdates: Bool?
 }
 
 extension TauriOverlay {
@@ -129,6 +132,7 @@ extension TauriOverlay {
         } catch {
             throw XlessError(.config, "overlay \(name) is invalid: \(error)", fix: "see samples/HelloTauri/xless.overlay.example.yml for the schema")
         }
+        try ProvisioningUpdates.refuseMisspelt(yaml: yaml, file: "overlay \(name)")
         guard raw.type == "tauri" else {
             throw XlessError(.config, "overlay \(name): type '\(raw.type)' is not supported", fix: "set type: tauri (type: react-native is a React Native / Expo overlay, type: cargo a plain Cargo app)")
         }
@@ -158,7 +162,7 @@ extension TauriOverlay {
             bundleID: raw.bundleID, teamID: raw.teamID, version: (version == nil || version == "tauri") ? nil : version,
             build: raw.build?.value ?? "dated", ios: raw.ios, macos: raw.macos, assets: raw.assets, launchStoryboard: raw.launchStoryboard,
             infoPlist: raw.infoPlist, privacyManifest: raw.privacyManifest, linkFlags: raw.linkFlags ?? [], binaryDependencies: deps, scripts: raw.scripts ?? [:],
-            usesNonExemptEncryption: raw.usesNonExemptEncryption, testflight: raw.testflight, xcode: raw.xcode)
+            usesNonExemptEncryption: raw.usesNonExemptEncryption, testflight: raw.testflight, xcode: raw.xcode, provisioningUpdates: raw.provisioningUpdates)
     }
 }
 

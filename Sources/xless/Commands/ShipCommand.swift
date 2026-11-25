@@ -11,6 +11,8 @@ struct ShipCommand: AsyncParsableCommand {
     @Option(help: "Stop after this stage (default: upload, or package for macOS; build with --destination simulator).") var to: Stage?
     @Option(help: "Distribution for this run, overriding the config's `distribution`: app-store or developer-id (macOS; iOS is always app-store). Sign/package/upload all see it; the config file is untouched.") var distribution: Distribution?
 
+    @OptionGroup var updatesOff: ProvisioningUpdatesOption
+
     /// The last stage: `--to`, else upload (build for a simulator build, which has no later stage).
     var last: Stage { StagePolicy.lastStage(to: to, simulator: options.destination == .simulator) }
 
@@ -27,7 +29,7 @@ struct ShipCommand: AsyncParsableCommand {
             (.build, { try await StageRunner.build($0).path }),
             (.assets, { try await StageRunner.assets($0).path }),
             (.finalize, { try await StageRunner.finalize($0).path }),
-            (.sign, { try await StageRunner.sign($0).path }),
+            (.sign, { [updatesOff] in try await StageRunner.sign($0, noUpdates: updatesOff.flag).path }),
             (.package, { try await StageRunner.package($0).path }),
             (.upload, { try await StageRunner.upload($0).report() }),
         ]

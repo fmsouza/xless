@@ -53,11 +53,11 @@ enum Main {
         if let refused {
             if let error = error as? XlessError, error != refused { say(error) }
             say(refused)
-            exit(refused.stage.exitCode)
+            exit(refused.exitCode)
         }
         guard let error else { return }
         guard let error = error as? XlessError else { Xless.exit(withError: error) }
         say(error)
-        exit(error.stage.exitCode)
+        exit(error.exitCode)
     }
 }

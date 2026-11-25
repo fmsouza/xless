@@ -315,6 +315,9 @@ prints `{"data": [capabilities]}`, `enable` prints the capability and `disable` 
 
 ### What `sign` enables
 
+`sign` prints what it changes on the account first, or changes nothing with `--no-provisioning-updates`
+([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)).
+
 `sign` enables, on each bundle's identifier, the capability of every entitlement key that has one, with the setting
 the entitlements imply: iCloud with CloudKit (`XCODE_6`), Sign in with Apple as its own primary app, and Data Protection
 at the level `com.apple.developer.default-data-protection` names (`NSFileProtectionComplete…`; Complete otherwise). A

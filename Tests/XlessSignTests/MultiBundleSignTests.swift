@@ -67,7 +67,8 @@ struct MultiBundleFixture {
     }
 
     /// `capture`: record what rcodesign would get instead of running it; nil runs rcodesign.
-    func run(rewrites: EntitlementRewrites = .none, capture: SignCapture? = SignCapture()) async throws -> URL {
+    func run(rewrites: EntitlementRewrites = .none, capture: SignCapture? = SignCapture(), updatesOff: String? = nil,
+             say: (String) -> Void = { _ in }) async throws -> URL {
         let secrets = Secrets(env: ["XLESS_DIST_KEY": key.pem])
         let client = ASCClient(credentials: testCreds, transport: asc, sleep: { _ in })
         let manifest = EntitlementsManifest(file: manifestURL, rewrites: rewrites)
@@ -76,7 +77,7 @@ struct MultiBundleFixture {
                                            secrets: secrets, client: client, manifest: manifest)
         }
         return try await SignStage.run(input: input, outputDir: outputDir, platform: .ios, config: config, project: root, secrets: secrets,
-                                       client: client, manifest: manifest, codesign: { try capture.record($0) })
+                                       client: client, manifest: manifest, updatesOff: updatesOff, say: say, codesign: { try capture.record($0) })
     }
 
     /// Moves the extension to `PlugIns/<name>` and its manifest entry with it.
@@ -537,4 +538,45 @@ private func signSingle(_ entitlements: [String: Any], asc: FakeASC, key: Signin
                                     nestedEntitlements: [("PlugIns/Ext.appex", u.appendingPathComponent("e1"))])
     #expect(a == ["sign", "--pem-file", "/t/k", "--pem-file", "/t/c", "--entitlements-xml-file", "/t/e",
                   "--entitlements-xml-file", "PlugIns/Ext.appex:/t/e1", "--timestamp-url", "none", "/t/X.app"])
+}
+
+// MARK: - Provisioning updates off
+
+@Test func thePlanIsPrintedBeforeAnythingIsChanged() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    var said: [String] = [], before: [String] = []
+    _ = try await f.run(say: { said.append($0); before = f.asc.log })
+    #expect(said.count == 1 && said[0].hasPrefix("xless: sign: 4 changes on the account:\n  register bundle ID \(extID) "))
+    #expect(!before.isEmpty && before.allSatisfy { $0.hasPrefix("GET ") })
+}
+
+@Test func withProvisioningUpdatesOffNothingIsChangedAndTheErrorListsWhatIsMissing() async throws {
+    let f = try MultiBundleFixture(app: ["aps-environment": "development"], ext: [:])
+    f.asc.bundleIDs[appID] = "B9"
+    f.asc.profiles = [.init(id: "P9", name: "xless \(appID) IOS_APP_STORE", bundleResource: "B9", content: try fakeProfile(f.asc.entitlements(of: appID)))]
+    do { _ = try await f.run(updatesOff: "--no-provisioning-updates"); Issue.record("expected throw") }
+    catch let e as XlessError {
+        #expect(e.stage == .sign && e.exitCode == 24)
+        #expect(e.cause.hasPrefix("signing needs 4 changes on the account, and provisioning updates are off (--no-provisioning-updates): register bundle ID \(extID) "))
+        #expect(e.cause.contains("; enable PUSH_NOTIFICATIONS (Push Notifications) on \(appID); replace profile xless \(appID) IOS_APP_STORE (P9, which xless made): "))
+        #expect(e.fix == "make them with `xless provision apply` (and `xless profiles renew P9`), or run `xless sign` once where xless may change the account, then re-run")
+    }
+    #expect(!f.asc.log.isEmpty && f.asc.log.allSatisfy { $0.hasPrefix("GET ") })
+    #expect(f.leftApps.isEmpty)
+}
+
+@Test func withProvisioningUpdatesOffAnAccountThatHasEverythingSigns() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    _ = try await f.run()
+    let before = f.asc.log.count
+    _ = try await f.run(updatesOff: "provisioningUpdates: false")
+    #expect(f.asc.log[before...].allSatisfy { $0.hasPrefix("GET ") })
+}
+
+/// The certificate is not something `sign` makes: its exit code does not depend on the setting.
+@Test func aMissingCertificateIsTheSameErrorWithProvisioningUpdatesOff() async throws {
+    let f = try MultiBundleFixture(app: [:], ext: [:])
+    f.asc.certificate = certJSON(id: "C1", der: try selfSigned(try SigningKey.generate()))
+    do { _ = try await f.run(updatesOff: "--no-provisioning-updates"); Issue.record("expected throw") }
+    catch let e as XlessError { #expect(e.exitCode == 15 && e.cause.contains("no distribution certificate")) }
 }

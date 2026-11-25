@@ -24,7 +24,7 @@ private func repo(_ tracked: [String: String], untracked: [String: String] = [:]
     return dir
 }
 
-private func overlay(version: String? = nil, build: String = "dated", macos: Bool = false) throws -> CargoOverlay {
+private func overlay(version: String? = nil, build: String = "dated", macos: Bool = false, extra: String = "") throws -> CargoOverlay {
     try CargoOverlay.parse(yaml: """
     type: cargo
     bundleID: com.example.hello
@@ -35,6 +35,7 @@ private func overlay(version: String? = nil, build: String = "dated", macos: Boo
     testflight: { groups: [Internal] }
     usesNonExemptEncryption: false
     xcode: "26.2"
+    \(extra)
     ios:
       package: hello-mobile
       product: Hello
@@ -130,6 +131,15 @@ private let hello = "[package]\nname = \"hello-mobile\"\nversion = \"1.2.3\"\n"
         let r = try CargoProject.resolve(overlay: overlay(version: "2.0.0"), platform: .ios, source: dir)
         #expect(r.config.version == "2.0.0")
         #expect(r.fullVersion == "2.0.0")
+    }
+
+    @Test func provisioningUpdatesReachTheConfigOfBothPlatforms() throws {
+        let dir = try repo(["Cargo.toml": hello])
+        #expect(try CargoProject.resolve(overlay: overlay(), platform: .ios, source: dir).config.provisioningUpdates)
+        let off = try overlay(version: "1.0", extra: "provisioningUpdates: false")
+        for platform in Platform.allCases {
+            #expect(try !CargoProject.resolve(overlay: off, platform: platform, source: dir).config.provisioningUpdates)
+        }
     }
 
     @Test func iosConfig() throws {

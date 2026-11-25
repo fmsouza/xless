@@ -255,3 +255,29 @@ func badExtensionsAreConfigErrors(list: String, platform: String, needle: String
         return e.stage == .config && e.cause.contains(needle) && e.cause.contains("platforms.\(platform).extensions")
     }
 }
+
+private func yaml(_ extra: String) -> String {
+    "bundleID: com.example.app\nteamID: ABCDE12345\nversion: \"1.0\"\nbuild: 1\nplatforms:\n  ios: { minimumOS: \"17.0\", product: X }\n\(extra)\n"
+}
+
+@Test func provisioningUpdatesAreOnUnlessTheConfigSaysNot() throws {
+    #expect(try ProjectConfig.parse(yaml: yaml("")).provisioningUpdates)
+    #expect(try ProjectConfig.parse(yaml: yaml("provisioningUpdates: true")).provisioningUpdates)
+    #expect(try !ProjectConfig.parse(yaml: yaml("provisioningUpdates: false")).provisioningUpdates)
+    #expect(throws: XlessError.self) { _ = try ProjectConfig.parse(yaml: yaml("provisioningUpdates: \"no\"")) }
+}
+
+/// A restriction that is misspelt would be dropped silently (xless.yml ignores keys it does not know): refused.
+@Test(arguments: ["provisioningUpdate: false", "provisioning_updates: false", "ProvisioningUpdates: false", "noProvisioningUpdates: true", "provisioning: false"])
+func aMisspeltProvisioningUpdatesIsRefused(line: String) {
+    #expect { _ = try ProjectConfig.parse(yaml: yaml(line)) } throws: {
+        ($0 as? XlessError)?.stage == .config && ($0 as? XlessError)?.fix == "write it as provisioningUpdates: false"
+    }
+}
+
+@Test func anErrorsExitCodeIsItsStagesUnlessItHasItsOwn() {
+    #expect(XlessError(.sign, "a", fix: "b").exitCode == 15)
+    let e = XlessError(.sign, "a", fix: "b", code: XlessError.provisioningNeeded)
+    #expect(e.exitCode == 24 && e.description == "[sign] a — b" && XlessError.wrapping(e, stage: .sign) == e)
+    #expect(Stage.allCases.allSatisfy { $0.exitCode != XlessError.provisioningNeeded })
+}

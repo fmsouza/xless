@@ -54,7 +54,7 @@ public enum ReactNativeProject {
             // Without the overlay's, the app's own (Expo writes one from its config): finalize checks it is in the bundle.
             assets: nil, privacyManifest: overlay.privacyManifest ?? "PrivacyInfo.xcprivacy", infoPlist: nil, launchStoryboard: nil,
             testflight: overlay.testflight, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
-            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)
+            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode, provisioningUpdates: overlay.provisioningUpdates)
         try config.validate()
         return ResolvedReactNative(config: config, appDir: overlay.appDir, appTarget: appTarget, versionSource: versionSource)
     }

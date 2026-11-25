@@ -9,7 +9,7 @@ import FoundationNetworking
 /// Store Connect: something enabled later reaches only a regenerated profile.
 final class FakeASC: HTTPTransport, @unchecked Sendable {
     let team: String
-    let certificate: String
+    var certificate: String
     /// identifier → resource ID.
     var bundleIDs: [String: String] = [:]
     /// resource ID → enabled capability types.

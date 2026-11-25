@@ -13,6 +13,19 @@ enum Destination: String, ExpressibleByArgument, CaseIterable {
     case simulator
 }
 
+/// `sign` and `ship`: `--no-provisioning-updates`. It only restricts: nothing on the command line lifts a config's
+/// `provisioningUpdates: false`.
+struct ProvisioningUpdatesOption: ParsableArguments {
+    @Flag(name: .customLong("no-provisioning-updates"),
+          help: "Change nothing on the Apple account: when signing needs a bundle ID, a capability or a profile that is not there, fail with the list (exit 24). Config: provisioningUpdates: false.")
+    var flag = false
+
+    /// What turned provisioning updates off; nil when they are on.
+    static func reason(flag: Bool, config: Bool) -> String? {
+        flag ? "--no-provisioning-updates" : config ? nil : "\(ProvisioningUpdates.key): false"
+    }
+}
+
 struct ProjectOptions: ParsableArguments {
     @Option(help: "Project directory containing xless.yml and Package.swift.")
     var project: String = "."

@@ -37,7 +37,7 @@ public enum CargoProject {
                                                  distribution: ios ? .appStore : .developerID, bundleID: block.bundleID, extensions: block.extensions)],
             assets: block.assets, privacyManifest: ios ? overlay.privacyManifest : nil, infoPlist: block.infoPlist,
             testflight: ios ? overlay.testflight : nil, usesNonExemptEncryption: overlay.usesNonExemptEncryption,
-            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode)
+            buildScheme: dated ? .dated : .fixed, xcode: overlay.xcode, provisioningUpdates: overlay.provisioningUpdates)
         config = try config.overridingDistribution(distribution, for: platform)
         // The macOS App-Store lane ends in TestFlight like iOS does; a DMG has none.
         if !ios, config.distribution(for: .macos) == .appStore { config.testflight = overlay.testflight }

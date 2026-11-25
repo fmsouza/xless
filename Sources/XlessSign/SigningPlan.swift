@@ -90,6 +90,16 @@ public struct SigningPlan: Sendable {
         }
     }
 
+    /// Refuses a plan that changes something: `off` is what turned provisioning updates off.
+    public func requireNothing(off: String) throws {
+        let changes = self.changes
+        guard !changes.isEmpty else { return }
+        let renewed = items.flatMap { item in if case .replace(let old, _) = item.profile { old.map { "`xless profiles renew \($0.id)`" } } else { [String]() } }
+        throw XlessError(.sign, "signing needs \(changes.count) change\(changes.count == 1 ? "" : "s") on the account, and provisioning updates are off (\(off)): \(changes.joined(separator: "; "))",
+                         fix: "make them with `xless provision apply`\(renewed.isEmpty ? "" : " (and \(renewed.joined(separator: ", ")))"), or run `xless sign` once where xless may change the account, then re-run",
+                         code: XlessError.provisioningNeeded)
+    }
+
     /// What `sign` prints before it changes anything.
     public var text: String {
         let changes = self.changes

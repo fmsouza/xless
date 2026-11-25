@@ -14,7 +14,8 @@ struct SignCommand: AsyncParsableCommand {
 struct SignRunCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "run", abstract: "Sign the finalized bundle.")
     @OptionGroup var options: ProjectOptions
-    func run() async throws { print(try await StageRunner.sign(Context.load(options)).path) }
+    @OptionGroup var updatesOff: ProvisioningUpdatesOption
+    func run() async throws { print(try await StageRunner.sign(Context.load(options), noUpdates: updatesOff.flag).path) }
 }
 
 struct SignBootstrapCommand: AsyncParsableCommand {

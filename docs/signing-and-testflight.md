@@ -188,6 +188,37 @@ The app's `CFBundleVersion` is the dated build number. On macOS that is `<versio
 ([build numbers](tauri.md#macos)); Apple documents at most three period-separated integers for a Mac App Store
 build, so if App Store Connect refuses it, set a fixed `build:` of up to three integers in the overlay.
 
+## What `sign` changes on the account
+
+`sign` needs three things on the account for each bundle it signs: its bundle ID, the capabilities its entitlements
+use, and a profile named `xless <bundle ID> <TYPE>`. Before it changes anything it reads them all and prints, on
+standard error, what is missing (or that nothing is), then does just that:
+
+```
+xless: sign: 3 changes on the account:
+  enable PUSH_NOTIFICATIONS (Push Notifications) on com.example.app
+  replace profile xless com.example.app IOS_APP_STORE (8U3T4X5YZA, which xless made): it does not carry PUSH_NOTIFICATIONS, enabled above
+  create profile xless com.example.app.Widget IOS_APP_STORE (iOS App Store Connect for PlugIns/Widget.appex, with certificate 5B2C9D7E1F)
+```
+
+- It asks nothing and needs no Apple ID: the App Store Connect API key makes these changes, in CI too.
+- It registers bundle IDs, enables capabilities (a capability that is enabled keeps its settings) and creates
+  profiles. The only thing it ever deletes is a profile of that name, which xless made, when the profile cannot be
+  used: expired or about to (within 7 days), invalid, for another certificate or bundle ID, or made before a capability
+  the app uses. The plan gives the reason.
+- It never makes or revokes a certificate (`xless sign bootstrap`), and never touches any other profile, app group,
+  iCloud container, device or the app record. `xless provision` plans and makes those
+  ([apple-account.md](apple-account.md#xless-provision)), from the same checks.
+- A request whose answer is lost (a dropped connection, HTTP 5xx) is not sent again blindly: `sign` looks whether the
+  bundle ID or the profile was made, and sends it again only when it was not.
+
+To let `sign` change nothing, pass `--no-provisioning-updates` (`xless sign`, `xless ship`, `xless run …
+--no-provisioning-updates`), or set `provisioningUpdates: false` in xless.yml or the overlay. `sign` then only reads:
+when the account lacks something, it fails with exit code **24** and the list of it, and signs nothing. Make the
+changes where that is wanted (`xless provision apply`, `xless profiles renew <id>`, or a `sign` without the
+restriction), then run again. The flag only restricts: nothing on the command line turns the config's `false` off. A
+missing certificate is exit 15 either way.
+
 ## Running `xless ship` yourself
 
 You can also run xless directly in the image, passing secrets by name (`-e NAME`) so their values stay out of your
