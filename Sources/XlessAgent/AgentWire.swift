@@ -5,7 +5,7 @@ import XlessCore
 /// The agent's protocol. A change that an older or newer xless would not understand takes a new version; the header, and
 /// `lock` with an empty body, never change.
 enum AgentProtocol {
-    static let version: UInt16 = 1
+    static let version: UInt16 = 2
 }
 
 enum AgentCode: UInt16 {

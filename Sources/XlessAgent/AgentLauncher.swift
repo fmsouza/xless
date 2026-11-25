@@ -59,12 +59,12 @@ public enum AgentLauncher {
     }
 
     /// Why no agent can serve this process's session; nil when one can.
-    public static func obstacle() -> AgentError? {
-        let session = AgentSession.current
+    /// - Parameter lease: for one that ends with this process (`xless session`), which may lead the session.
+    public static func obstacle(session: AgentSession = .current, lease: Bool = false) -> AgentError? {
         guard session.isUsable else {
             return AgentError(.unavailable, "this terminal session has no leader the xless agent could watch", fix: "run it in an interactive shell")
         }
-        guard session.id != getpid() else {
+        guard lease || session.id != getpid() else {
             return AgentError(.unavailable, "xless leads its own session here (docker exec, ssh <host> xless …), which ends with it", fix: "run it in a shell that stays open")
         }
         #if os(Linux)
@@ -80,7 +80,18 @@ public enum AgentLauncher {
 
     /// Starts an agent that holds `seeds` for this session. Returns once it listens.
     static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, executable: String? = nil) throws {
-        if let obstacle = obstacle() { throw obstacle }
+        _ = try start(seeds, directory: directory, terms: terms, lease: false, executable: executable)
+    }
+
+    /// Starts one that ends with this process.
+    static func lease(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, executable: String? = nil) throws -> AgentLease {
+        let (channel, path) = try start(seeds, directory: directory, terms: terms, lease: true, executable: executable)
+        return AgentLease(channel: channel, path: path)
+    }
+
+    private static func start(_ seeds: [AgentSeed], directory: AgentDirectory, terms: AgentTerms, lease: Bool,
+                              executable: String?) throws -> (AgentChannel, String) {
+        if let obstacle = obstacle(lease: lease) { throw obstacle }
         guard let program = executable ?? executablePath else {
             throw AgentError(.unavailable, "xless does not find its own program file to start its agent", fix: "run it by its full path")
         }
@@ -94,6 +105,7 @@ public enum AgentLauncher {
         var w = WireWriter()
         w.put(directory.path)
         w.put(Int64(AgentSession.current.id))
+        w.put(lease)
         terms.write(&w)
         w.put(UInt32(seeds.count))
         for seed in seeds {
@@ -110,9 +122,29 @@ public enum AgentLauncher {
             let (why, text) = try answer.body { (try $0.uint8(), try $0.string(max: 2048)) }
             throw AgentError(AgentRefusal(rawValue: why) == .unavailable ? .unavailable : .failed, text, fix: "fix that, and try again")
         }
+        return (mine, try answer.body { try $0.string(max: 4096) })
     }
 
     private static func failure(_ what: String, _ code: Int32) -> AgentError {
         AgentError(.failed, "cannot start the xless agent (\(what): \(String(cString: strerror(code))))", fix: "try again")
+    }
+}
+
+/// The process's end of an agent it started for itself. The agent ends when this is closed: by `end`, by `deinit`, or by
+/// the kernel with the process, however that ends.
+public final class AgentLease: @unchecked Sendable {
+    /// The agent's socket.
+    public let path: String
+    private let lock = NSLock()
+    private var channel: AgentChannel?
+
+    init(channel: AgentChannel, path: String) { self.channel = channel; self.path = path }
+
+    /// Has the agent drop everything and end, and waits (two seconds at most) until it has.
+    public func end() {
+        guard let channel = lock.withLock({ () -> AgentChannel? in defer { self.channel = nil }; return self.channel }) else { return }
+        shutdown(channel.fd, Int32(SHUT_WR))
+        _ = try? channel.wait(limit: AgentLimits.smallMessage, milliseconds: 2000) // nothing comes but its end
+        channel.end()
     }
 }

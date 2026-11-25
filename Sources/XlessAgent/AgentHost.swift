@@ -36,7 +36,7 @@ public enum AgentHost {
         do {
             guard let message = try channel.wait(limit: AgentLimits.items * AgentLimits.message, milliseconds: 10_000), message.code == .configure,
                   message.header.version == AgentProtocol.version else { return 64 }
-            server = try configure(message)
+            server = try configure(message, channel)
         } catch {
             var w = WireWriter()
             w.put(refusal(of: error).rawValue)
@@ -45,16 +45,18 @@ public enum AgentHost {
             try? channel.flush()
             return 1
         }
-        channel.send(WireWriter().frame(code: .ok))
+        var w = WireWriter()
+        w.put(server.path)
+        channel.send(w.frame(code: .ok))
         try? channel.flush()
-        channel.end()
+        if server.options.lease == nil { channel.end() }
         _ = server.run()
         return 0
     }
 
     static func refusal(of error: any Error) -> AgentRefusal { (error as? AgentError)?.kind == .unavailable ? .unavailable : .limit }
 
-    private static func configure(_ message: AgentMessage) throws -> AgentServer {
+    private static func configure(_ message: AgentMessage, _ channel: AgentChannel) throws -> AgentServer {
         let state = AgentState(clock: .system)
         var options = AgentServer.Options()
         let directory = try message.body { r in
@@ -64,6 +66,7 @@ public enum AgentHost {
             // It serves the session it is in: anything else would be a session it cannot vouch for.
             guard session.isUsable, Int64(session.id) == wanted else { throw AgentError.limit("a session it is not in") }
             state.grant(session)
+            if try r.bool() { options.lease = channel }
             let terms = try AgentTerms(&r)
             options.lockOnSleep = terms.lockOnSleep
             options.lockOnScreenLock = terms.lockOnScreenLock

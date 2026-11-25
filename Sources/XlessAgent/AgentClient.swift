@@ -43,6 +43,8 @@ public struct AgentLocked: Sendable, Equatable {
 public final class AgentClient: @unchecked Sendable {
     private let directory: AgentDirectory
     private let terms: AgentTerms
+    /// The socket of the session's agent (`xless session`) this command runs in.
+    private let session: String?
     private let findObstacle: @Sendable () -> AgentError?
     private let startAgent: @Sendable ([AgentSeed], AgentDirectory) throws -> Void
     private let lock = NSLock()
@@ -56,17 +58,21 @@ public final class AgentClient: @unchecked Sendable {
     /// For tests: no agent here is of this session.
     var seesEveryAgentAsAnotherSessions = false
 
-    /// - Parameter timeout: milliseconds for the answers to one question, however many agents there are.
-    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms(), timeout: Int = 1500) {
-        self.init(directory: directory, terms: terms, timeout: timeout, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
+    /// - Parameters:
+    ///   - session: the socket of the agent of the `xless session` this command runs in: the only agent on a lease it
+    ///     uses, and where what it keeps goes.
+    ///   - timeout: milliseconds for the answers to one question, however many agents there are.
+    public convenience init(directory: AgentDirectory = AgentDirectory(), terms: AgentTerms = AgentTerms(), session: String? = nil, timeout: Int = 1500) {
+        self.init(directory: directory, terms: terms, session: session, timeout: timeout, obstacle: { AgentLauncher.obstacle() }) { seeds, directory in
             try AgentLauncher.start(seeds, directory: directory, terms: terms)
         }
     }
 
-    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), timeout: Int = 1500, obstacle: @escaping @Sendable () -> AgentError?,
+    init(directory: AgentDirectory, terms: AgentTerms = AgentTerms(), session: String? = nil, timeout: Int = 1500, obstacle: @escaping @Sendable () -> AgentError?,
          start: @escaping @Sendable ([AgentSeed], AgentDirectory) throws -> Void) {
         self.directory = directory
         self.terms = terms
+        self.session = session
         self.timeout = timeout
         findObstacle = obstacle
         startAgent = start
@@ -83,11 +89,16 @@ public final class AgentClient: @unchecked Sendable {
 
     private var deadline: Int64 { xless_clock_awake_ms() + Int64(timeout) }
 
-    /// Connections to the agents.
+    /// Connections to the agents this command uses: another session's is not one.
     private func links() -> [AgentLink] {
         let (links, problem) = links { try directory.sockets() }
         lock.withLock { lastProblem = problem }
-        return links
+        return links.filter { !$0.isLease || isMySession($0) }
+    }
+
+    private func isMySession(_ link: AgentLink) -> Bool {
+        guard let session, link.isLease else { return false }
+        return link.path == session || directory.identity(of: session) == link.socket.identity
     }
 
     /// Connections to the agents at `paths`, which are all asked at once; and why one that is there could not be used.
@@ -168,10 +179,19 @@ public final class AgentClient: @unchecked Sendable {
         return (try? link.prove(has: witness.item, key: witness.symmetric)) == true
     }
 
-    /// Holds `seeds`, in an agent of this session, else one that has the witness's key, else a new one.
+    /// Holds `seeds`: in the agent of the `xless session` this runs in; with none, in an agent of this terminal's session,
+    /// else one that has the witness's key, else a new one.
     public func put(_ seeds: [AgentSeed], witness: () -> AgentWitness? = { nil }) throws {
         let links = links()
         if let problem, problem.kind == .unsafePath { throw problem }
+        if session != nil {
+            guard let link = links.first(where: { isMySession($0) && $0.isGranted && $0.isSameSession }) else {
+                throw AgentError(.refused, "the `xless session` this runs in holds nothing any more (it ended, the system slept, or the screen was locked)",
+                                 fix: "start it again")
+            }
+            for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typedAgo: seed.typedAgo) }
+            return
+        }
         if let link = links.first(where: { $0.isGranted && $0.isSameSession }) ?? links.first(where: { link in witness().map { trusted(link, $0) } ?? false }) {
             do {
                 for seed in seeds { try link.put(seed.name, label: seed.label, seed.secret, hold: seed.hold, typedAgo: seed.typedAgo) }
@@ -237,6 +257,11 @@ public final class AgentClient: @unchecked Sendable {
             let again = try? AgentLink.open([link.path], directory: directory, timeout: timeout)
             return again.map { $0.links.isEmpty && $0.busy.isEmpty } ?? true ? .gone : .unanswered
         }
+    }
+
+    /// Starts an agent for this process alone to keep: it ends with it, or with `end()`.
+    public func lease(_ seeds: [AgentSeed]) throws -> AgentLease {
+        try AgentLauncher.lease(seeds, directory: directory, terms: terms)
     }
 
     public func statuses() -> [AgentStatus] { links().compactMap { try? $0.status() } }

@@ -230,7 +230,7 @@ private func inAnotherSession(_ script: String, _ arguments: [String]) throws ->
 
 private let pythonClient = """
 import os, socket, struct, sys
-def frame(code, body, version=1): return b'XLAG' + struct.pack('>HHHH', version, code, len(body) >> 16, len(body) & 0xffff) + body
+def frame(code, body, version=\(AgentProtocol.version)): return b'XLAG' + struct.pack('>HHHH', version, code, len(body) >> 16, len(body) & 0xffff) + body
 def field(b): return struct.pack('>I', len(b)) + b
 def read(s, n):
     out = b''
@@ -264,7 +264,7 @@ def get(s, name=b'a'):
     let said = try inAnotherSession(pythonClient + """
     s = connect(sys.argv[1])
     code, body = handshake(s)
-    print('granted', body[-1])
+    print('granted', body[-2])
     code, body = get(s)
     print('get', code, b'one' in body)
     """, [agent.path])
@@ -283,7 +283,7 @@ def get(s, name=b'a'):
             if how == 'double' and os.fork(): os._exit(0)
             s = connect(sys.argv[1])
             code, body = handshake(s)
-            print(how, 'granted', body[-1], 'get', get(s)[0])
+            print(how, 'granted', body[-2], 'get', get(s)[0])
             sys.stdout.flush()
             os._exit(0)
         os.waitpid(pid, 0)
@@ -304,7 +304,7 @@ def get(s, name=b'a'):
     r.put(bytes: Array(welcome[24..<40])); r.put(bytes: [UInt8](repeating: 2, count: 16)); AgentTerms().write(&r)
     raw.send(r.frame(code: .prove))
     let (_, verdict) = try #require(raw.answer())
-    #expect(verdict.last == 1)
+    #expect(verdict.dropLast().last == 1) // granted; then whether it is on a lease
     let copy = dup(raw.fd) // not close-on-exec; passed on as the child's standard error
     let child = try ChildProcess.start("/usr/bin/env", ["python3", "-I", "-c", pythonClient + """
     s = socket.socket(fileno=os.dup(2)); s.settimeout(10)
@@ -432,8 +432,8 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
 
 @Test func junkLiesAndOversizedMessagesAreClosedAndTheAgentGoesOn() throws {
     let agent = try TestAgent()
-    let huge = Array("XLAG".utf8) + [0, 1, 0, 12, 0xFF, 0xFF, 0xFF, 0xFF]      // a put of 4 GiB
-    let notYet = Array("XLAG".utf8) + [0, 1, 0, 12, 0, 1, 0, 0]                // 64 KiB before it said who it is
+    let huge = Array("XLAG".utf8) + [0, UInt8(AgentProtocol.version), 0, 12, 0xFF, 0xFF, 0xFF, 0xFF]      // a put of 4 GiB
+    let notYet = Array("XLAG".utf8) + [0, UInt8(AgentProtocol.version), 0, 12, 0, 1, 0, 0]                // 64 KiB before it said who it is
     for bytes in [Array("GET / HTTP/1.0\r\n\r\n".utf8), [UInt8](repeating: 0, count: 64), huge, notYet] {
         let raw = try RawPeer(agent.path)
         raw.send(bytes)
@@ -458,7 +458,7 @@ private let vaultItem = ("xless-vault:1", String(decoding: Data(repeating: 9, co
         var bytes = (0..<Int.random(in: 1...300, using: &rng)).map { _ in UInt8.random(in: 0...255, using: &rng) }
         if Bool.random(using: &rng) {
             let code = UInt8.random(in: 0...25, using: &rng)
-            bytes = Array("XLAG".utf8) + [0, 1, 0, code, 0, 0, UInt8((bytes.count >> 8) & 0xFF), UInt8(bytes.count & 0xFF)] + bytes
+            bytes = Array("XLAG".utf8) + [0, UInt8(AgentProtocol.version), 0, code, 0, 0, UInt8((bytes.count >> 8) & 0xFF), UInt8(bytes.count & 0xFF)] + bytes
         }
         guard bytes.count < 8 || bytes[7] != UInt8(AgentCode.lock.rawValue) else { continue } // lock is for everyone
         raw.send(bytes)

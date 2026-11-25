@@ -39,7 +39,8 @@ enum AgentProof {
 }
 
 /// The agent: one thread, one `poll`. It answers the commands of the sessions it was granted, and ends (everything
-/// zeroed) when it holds nothing, serves nobody, is told to lock, or the system sleeps or locks the screen.
+/// zeroed) when it holds nothing, serves nobody, is told to lock, or the system sleeps or locks the screen; one on a
+/// lease (`xless session`), when the process it is for ends.
 ///
 /// Who may use it: a process of this user, whose POSIX session (by the kernel's word about the process that speaks, see
 /// `AgentChannel`) was granted; on macOS running the program the agent runs. The tools xless runs are in sessions of
@@ -48,7 +49,7 @@ final class AgentServer: @unchecked Sendable {
     typealias PeerCheck = (AgentChannel) throws -> AgentPeer
 
     enum Exit: Equatable {
-        case empty, locked, noSessions, socketGone, slept, screenLocked, stopped
+        case empty, locked, noSessions, socketGone, slept, screenLocked, stopped, leaseEnded
     }
 
     struct Options {
@@ -59,6 +60,9 @@ final class AgentServer: @unchecked Sendable {
         var screenIsLocked: () -> Bool = { false }
         var isAlive: (AgentSession) -> Bool = { $0.isAlive }
         var tickMilliseconds = 2000
+        /// The channel of the process this agent is for (`xless session`): it ends when that one does, whatever ends it, and
+        /// not before for holding nothing; and no other session joins it.
+        var lease: AgentChannel?
     }
 
     private final class Connection {
@@ -99,6 +103,9 @@ final class AgentServer: @unchecked Sendable {
         self.options = options
     }
 
+    /// Its socket.
+    var path: String { bound.path }
+
     /// Ends `run` soon, from any thread.
     func stop() { stopping.withLock { stopped = true } }
 
@@ -124,9 +131,12 @@ final class AgentServer: @unchecked Sendable {
             }
             var polled = [pollfd(fd: bound.fd, events: Int16(POLLIN), revents: 0)]
             polled += connections.map { pollfd(fd: $0.channel.fd, events: Int16(POLLIN) | ($0.channel.hasOutput ? Int16(POLLOUT) : 0), revents: 0) }
+            // Nothing is said there after the start: whatever comes, the end of the process first, is the end.
+            if let lease = options.lease { polled.append(pollfd(fd: lease.fd, events: Int16(POLLIN), revents: 0)) }
             let ready = poll(&polled, nfds_t(polled.count), Int32(max(1, nextTick - xless_clock_awake_ms())))
             guard ready > 0 else { continue }
             checkTriggers() // a sleep or an expiry between two ticks counts before anything is answered
+            if options.lease != nil, let last = polled.last, last.revents != 0, exit == nil { exit = .leaseEnded }
             guard exit == nil else { continue }
             for (connection, p) in zip(connections, polled.dropFirst()) where p.revents != 0 && exit == nil { serve(connection) }
             connections.removeAll { $0.ending && !$0.channel.hasOutput }
@@ -159,7 +169,7 @@ final class AgentServer: @unchecked Sendable {
         if options.lockOnSleep, slept - asleep > 2000 { exit = .slept; return }
         asleep = slept
         state.pruneSessions(options.isAlive)
-        if state.sessions == 0 { exit = .noSessions } else if state.isEmpty { exit = .empty }
+        if state.sessions == 0 { exit = .noSessions } else if state.isEmpty, options.lease == nil { exit = .empty }
     }
 
     private func finish() {
@@ -168,6 +178,7 @@ final class AgentServer: @unchecked Sendable {
         connections = []
         if directory.identity(of: bound.path) == bound.identity { unlink(bound.path) }
         close(bound.fd)
+        options.lease?.end()
     }
 
     private func accept() {
@@ -255,6 +266,7 @@ final class AgentServer: @unchecked Sendable {
         var w = WireWriter()
         w.put(bytes: nonce)
         w.put(isGranted(c))
+        w.put(options.lease != nil)
         if c.granted { keep(to: terms) }
         c.channel.send(w.frame(code: .verdict))
     }
@@ -348,7 +360,7 @@ final class AgentServer: @unchecked Sendable {
     private func join(_ message: AgentMessage, _ c: Connection) throws {
         let (name, proof) = try message.body { (try $0.string(max: AgentLimits.nameBytes), try $0.bytes(max: 32)) }
         state.dropExpired()
-        guard let peer = peer(c), let key = state.heldBytes(name)?.withUnsafeBytes({ SymmetricKey(data: $0) }),
+        guard options.lease == nil, let peer = peer(c), let key = state.heldBytes(name)?.withUnsafeBytes({ SymmetricKey(data: $0) }),
               AgentProof.equal(proof, AgentProof.join(name, key: key, session: peer.session, nonce: c.nonce, agent: id)) else {
             return refuse(c, .notGranted, "this process did not show that it has the key", end: false)
         }

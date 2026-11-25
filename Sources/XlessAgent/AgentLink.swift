@@ -42,6 +42,8 @@ final class AgentLink {
     private(set) var isGranted = false
     private(set) var isSameSession = false
     private(set) var hasProved = false
+    /// It is a session's (`xless session`).
+    private(set) var isLease = false
 
     var isTrusted: Bool { isSameSession || hasProved }
 
@@ -203,7 +205,7 @@ final class AgentLink {
     /// Takes the verdict, and looks at who gave it.
     func settle(until deadline: Int64) throws {
         let echo: [UInt8]
-        (echo, isGranted) = try answer(.verdict, until: deadline).body { (try $0.bytes(max: 16), try $0.bool()) }
+        (echo, isGranted, isLease) = try answer(.verdict, until: deadline).body { (try $0.bytes(max: 16), try $0.bool(), try $0.bool()) }
         guard AgentProof.equal(echo, second) else { throw AgentError.malformed("not the nonce it was given") }
         let peer = try channel.peer()
         let mine = AgentSession.current
