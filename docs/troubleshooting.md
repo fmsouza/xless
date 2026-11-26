@@ -87,7 +87,7 @@ Natively (the default):
 | `--arch … needs --docker` | A native setup installs for this machine's architecture only. Drop `--arch`, or build the images with `--docker`. |
 | `on a Mac xless builds with the Xcode that is installed, not with an exported SDK` (with a `.xip`, `--sdk` or `--reexport`) | Run `xless setup` with no source, or with `--xcode <Xcode.app>`. With `--docker` it takes the `.xip`. |
 | `xcode: "…" is pinned, but … SDK from Xcode …` when building | The native install holds another Xcode. Run `xless setup --xcode <that Xcode's .xip>` (it replaces the installed one), or build in its images with `--docker`. |
-| `a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images` | Overlays build in Docker only: `xless setup --docker --xcode …` once, then `xless run --docker --config …`. |
+| `a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images` | On Linux overlays build in Docker only: `xless setup --docker --xcode …` once, then `xless run --docker --config …`. |
 
 On a Mac, natively ([native-install.md](native-install.md#on-a-mac)):
 
@@ -103,6 +103,12 @@ On a Mac, natively ([native-install.md](native-install.md#on-a-mac)):
 | `Xcode … cannot build: …` | Open that Xcode once: it asks for its license and installs what is missing. |
 | `XLESS_TOOLS has '…'` | `xcode`, `xless`, or one for each tool: `actool=xless,ibtool=xcode`. |
 | `… loads @rpath/…, which the build did not make` (a `libswift…` library) | The app's lowest system needs a Swift library that only newer ones have. Raise `minimumOS` in xless.yml and the platform in Package.swift. |
+| `Operation not permitted`, `EPERM` in an overlay's build | It wanted a file that the build's [sandbox](security.md#an-overlays-build-on-a-mac) does not open. A package or file of yours that the app needs: name it in `XLESS_BUILD_READ` (absolute paths, with `:` between them). Else build with `--docker`. |
+| `… would open a home directory to the app's build code` | The overlay is right in your home directory, or the app's checkout is it. Keep the overlay in a directory of its own. |
+| `… which is readable to the app's build code` | A secret's file is in the app's checkout, the overlay's directory or a path input. Keep it elsewhere, or in the store. |
+| `rustup is not on PATH, and the app is written in Rust` | Install [rustup](https://rustup.rs), or build with `--docker`. |
+| `XLESS_TOOLS asks for Xcode's actool or ibtool, which do not work in the sandbox …` | Unset it for overlays. |
+| `xcodebuild failed: …` | The errors are above it, and the whole log is in the file that it names. |
 | `xless.yml is not what it was when this run began, so nothing is signed` | The build changed xless.yml, or you did meanwhile. Look at it (`git diff`), then run again, or `--from sign`. |
 
 With `--docker`:

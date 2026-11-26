@@ -14,11 +14,13 @@ public struct ReactNativeBuildContext: Sendable {
     public var env: [String: String]
     /// The device (`iphoneos`, the default) or the iOS Simulator (`SimulatorBuild`).
     public var destination: BuildRequest.Destination
+    /// On a Mac, the Xcode that builds; nil: Swift Build, in the image.
+    public var xcode: XcodeBuild?
 
     public init(overlay: ReactNativeOverlay, resolved: ResolvedReactNative, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                env: [String: String] = ProcessInfo.processInfo.environment, destination: BuildRequest.Destination = .iphoneos) {
+                env: [String: String] = ProcessInfo.processInfo.environment, destination: BuildRequest.Destination = .iphoneos, xcode: XcodeBuild? = nil) {
         self.overlay = overlay; self.resolved = resolved; self.sourceRoot = sourceRoot; self.workRoot = workRoot
-        self.paths = paths; self.env = env; self.destination = destination
+        self.paths = paths; self.env = env; self.destination = destination; self.xcode = xcode
     }
 
     var appDir: URL { workRoot.appendingPathComponent(overlay.appDir, isDirectory: true).standardizedFileURL }
@@ -53,7 +55,7 @@ public enum ReactNativeBuilder {
     @discardableResult
     public static func prepare(ctx: ReactNativeBuildContext) async throws -> URL {
         try await withStage(.prepare) {
-            let image = try SwiftBuildEnvironment.fromProcess(ctx.env, stage: .prepare)
+            let shims = try ctx.xcode == nil ? SwiftBuildEnvironment.fromProcess(ctx.env, stage: .prepare).shimDirectory : nil
             let o = ctx.overlay
             try ReactNativeContract.checkRuby(appDir: ctx.sourceRoot.appendingPathComponent(o.appDir), root: ctx.sourceRoot)
             let iosTracked = try isTracked(ios: "\(o.appDir == "." ? "" : o.appDir + "/")ios", in: ctx.sourceRoot, env: ctx.env)
@@ -67,11 +69,13 @@ public enum ReactNativeBuilder {
             let count = try WorkCopy.sync(source: ctx.sourceRoot, to: ctx.workRoot, origin: origin, baseEnvironment: ctx.env)
             log("\(count) tracked files")
 
-            let env = ReactNativeEnvironment.prepare(overlay: o, shimDirectory: image.shimDirectory, base: ctx.env)
+            try ctx.xcode?.writeTools(work: ctx.workRoot, temporary: ctx.env["TMPDIR"])
+            let env = shims.map { ReactNativeEnvironment.prepare(overlay: o, shimDirectory: $0, base: ctx.env) } ?? ReactNativeEnvironment.native(overlay: o, work: ctx.workRoot, base: ctx.env)
             let app = ctx.appDir
-            guard let jsRoot = jsRoot(app: app, work: ctx.workRoot), let install = try TauriBuilder.installCommand(appRoot: jsRoot) else {
+            guard let jsRoot = jsRoot(app: app, work: ctx.workRoot), var install = try TauriBuilder.installCommand(appRoot: jsRoot) else {
                 throw XlessError(.prepare, "no package.json with a lockfile in \(o.appDir) or above it", fix: "commit the app's package.json and its lockfile")
             }
+            if ctx.xcode != nil { install.arguments = TauriBuilder.ownManager(install.arguments, appRoot: jsRoot, path: ctx.env["PATH"] ?? "") }
             // Before the install: whether it starts from empty dependency trees depends on the toolchain (Ruling R6).
             let tools = try toolVersions(installer: Array(install.arguments.prefix(install.arguments.first == "corepack" ? 2 : 1)), jsRoot: jsRoot, env: env, ctx: ctx)
             let toolchain = toolchainIdentity(ctx, tools: tools)
@@ -102,7 +106,7 @@ public enum ReactNativeBuilder {
             case .upToDate:
                 log("native project up to date (sources, overlay, image and pods unchanged): no prebuild, no pod install")
                 // Normally a no-op (the last prepare switched them); it repairs a tree a hand-run build switched back.
-                try ConfigurationSwitches.run(ios: ctx.iosDir, configuration: o.configuration, env: env, baseEnvironment: ctx.env)
+                if ctx.xcode == nil { try ConfigurationSwitches.run(ios: ctx.iosDir, configuration: o.configuration, env: env, baseEnvironment: ctx.env) }
                 return ctx.workRoot
             case .pods:
                 log("ios/ is tracked: no expo prebuild")
@@ -135,9 +139,12 @@ public enum ReactNativeBuilder {
                 throw XlessError(.prepare, "pod install finished but Pods/Manifest.lock differs from Podfile.lock", fix: "check the pod install output above")
             }
             _ = try ReactNativeProject.workspaceURL(ios: ctx.iosDir, scheme: o.scheme, stage: .prepare)
-            // The pods' configuration switches (prebuilt Debug → the overlay's configuration), now rather than mid-build.
-            log("configuration switches of the prebuilt pods (\(o.configuration))")
-            try ConfigurationSwitches.run(ios: ctx.iosDir, configuration: o.configuration, env: env, baseEnvironment: ctx.env)
+            // The pods' configuration switches (prebuilt Debug → the overlay's configuration), now rather than mid-build (Xcode runs them
+            // in its build).
+            if ctx.xcode == nil {
+                log("configuration switches of the prebuilt pods (\(o.configuration))")
+                try ConfigurationSwitches.run(ios: ctx.iosDir, configuration: o.configuration, env: env, baseEnvironment: ctx.env)
+            }
             try Data(fingerprint.utf8).write(to: ctx.stateFile, options: .atomic)
             return ctx.workRoot
         }
@@ -218,6 +225,7 @@ public enum ReactNativeBuilder {
         add((try? Data(contentsOf: ToolchainMeta.defaultLocation(env: ctx.env))).map { String(decoding: $0, as: UTF8.self) } ?? "(no toolchain metadata)")
         add((try? SwiftToolchain.load(env: ctx.env)).flatMap { $0 }.map { "swift \($0.version) at \($0.root)" } ?? "(no swift toolchain record)")
         add(executableDigest())
+        if let xcode = ctx.xcode { add(xcode.identity) }
         for t in tools { add(t) }
         return h.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }
@@ -330,7 +338,7 @@ public enum ReactNativeBuilder {
     static func buildApp(_ ctx: ReactNativeBuildContext) throws -> URL {
         let o = ctx.overlay, config = ctx.resolved.config
         let simulator = ctx.destination == .iphonesimulator, platform = ctx.destination.platformName
-        let environment = try SwiftBuildEnvironment.fromProcess(ctx.env, stage: .build)
+        let environment = try ctx.xcode == nil ? SwiftBuildEnvironment.fromProcess(ctx.env, stage: .build) : nil
         let fm = FileManager.default
         for f in [ctx.entitlementsFile, ctx.packagesFile] { try? fm.removeItem(at: f) }
 
@@ -344,50 +352,32 @@ public enum ReactNativeBuilder {
         log("scheme \(o.scheme): app \(app.target.name) (\(ids[app.target.name]!))\(embedded.map { ", \($0.target.name) (\(ids[$0.target.name]!))" }.joined())")
 
         let dd = ctx.derivedData, xlessDir = dd.appendingPathComponent("xless")
-        let products = dd.appendingPathComponent("Products/\(o.configuration)-\(platform)")
+        let products = dd.appendingPathComponent("\(environment == nil ? "Build/" : "")Products/\(o.configuration)-\(platform)")
         let extra = ReactNativeEnvironment.buildSettings(overlay: o).merging(simulator ? SimulatorBuild.buildSettings : [:]) { $1 }
-        let overrides = try SwiftBuildRunner.prepareOverrides(environment, directory: xlessDir, extra: extra, stage: .build)
+        let overrides = try environment.map { try SwiftBuildRunner.prepareOverrides($0, directory: xlessDir, extra: extra, stage: .build) }
+            ?? ["DEVELOPMENT_TEAM": o.teamID, "CODE_SIGNING_ALLOWED": "NO"]
         let entitlements = try entitlementsByTarget(bundleTargets, ids: ids, configuration: o.configuration, platform: platform,
                                                     overrides: overrides)
 
         // Per-target settings: the overlay's bundle IDs and the run's version (ReactNativeEnvironment.targetSettings);
         // for the simulator, the simulated entitlements linked into each bundle's executable.
-        var perTarget: [String: [String: String]] = [:]
+        var perTarget: [(project: XcodeProject, target: Target, settings: [String: String])] = []
         for (p, t) in bundleTargets {
             var settings = ReactNativeEnvironment.targetSettings(bundleID: ids[t.name]!, version: config.version, build: config.build)
             if simulator {
                 let simulated = SimulatorBuild.simulatedEntitlements(entitlements[t.name]!, teamID: o.teamID, rewrites: o.entitlements)
                 settings.merge(try SimulatorBuild.entitlementSections(simulated, target: t.name, in: xlessDir.appendingPathComponent("entitlements"))) { $1 }
             }
-            perTarget[PIFWriter.targetGUID(t, in: p, workspace: ws)] = settings
+            perTarget.append((p, t, settings))
         }
-        let built = try ws.overridingTargetSettings(perTarget)
-
-        let (packages, records) = try SwiftPackageCheckouts.resolve(ws, in: xlessDir.appendingPathComponent("packages"), env: ctx.env)
-        let aliases = try XCFrameworkAliases.create(pods: ctx.iosDir.appendingPathComponent("Pods"),
-                                                    intermediates: products.appendingPathComponent("XCFrameworkIntermediates"))
-        if aliases > 0 { log("\(aliases) lowercase framework aliases in XCFrameworkIntermediates") }
-
-        guard fm.isExecutableFile(atPath: ReactNativeEnvironment.hermesc) else {
-            throw XlessError(.build, "\(ReactNativeEnvironment.hermesc) is missing", fix: "run in xless's React Native image, which builds hermesc from source (xless run builds that image)")
+        var records: [SwiftPackageCheckouts.Record] = []
+        if let xcode = ctx.xcode {
+            records = try xcodebuild(xcode, ctx, workspace: ws, perTarget: perTarget.map { ($0.project.name, $0.target.name, $0.settings) }, overrides: overrides, directory: xlessDir)
+        } else if let environment {
+            records = try swiftBuild(environment, ctx, workspace: ws, scheme: scheme,
+                                     perTarget: Dictionary(perTarget.map { (PIFWriter.targetGUID($0.target, in: $0.project, workspace: ws), $0.settings) }) { $1 },
+                                     overrides: overrides, directory: xlessDir, products: products)
         }
-        let pif = try PIFWriter.write(built, to: xlessDir, packages: packages)
-        let request = xlessDir.appendingPathComponent("request.json")
-        try BuildRequest.make(workspace: built, scheme: scheme, configuration: o.configuration, overrides: overrides, destination: ctx.destination)
-            .write(to: request, options: .atomic)
-
-        log("swbuild \(o.scheme) (\(o.configuration), \(platform)) — log: \(xlessDir.appendingPathComponent("swbuild.log").path)")
-        let start = Date()
-        let summary = try SwiftBuildRunner.build(pif: pif, request: request, derivedData: dd, environment: environment,
-                                                 log: xlessDir.appendingPathComponent("swbuild.log"),
-                                                 extraEnvironment: ReactNativeEnvironment.build(overlay: o), stage: .build, baseEnvironment: ctx.env)
-        for w in summary.warnings { FileHandle.standardError.write(Data("warning: \(w)\n".utf8)) }
-        for e in summary.errors { FileHandle.standardError.write(Data("error: \(e)\n".utf8)) }
-        FileHandle.standardError.write(Data(failedTasksReport(summary).utf8))
-        log("swbuild: \(summary.succeeded ? "succeeded" : "failed"), \(summary.tasks) tasks in \(Int(Date().timeIntervalSince(start))) s")
-        let allowedMissing = try checkPhaseOutput(summary, allowed: o.allowMissingCommands,
-                                                  log: xlessDir.appendingPathComponent("swbuild.log"))
-        for line in allowedMissing { FileHandle.standardError.write(Data("warning: a build phase ran a missing command (allowed by allowMissingCommands): \(line)\n".utf8)) }
 
         guard let productRef = app.target.productReferenceID, let product = app.project.fileReferences[productRef] else {
             throw XlessError(.build, "the app target \(app.target.name) has no product reference", fix: "regenerate the project (expo prebuild)")
@@ -418,6 +408,60 @@ public enum ReactNativeBuilder {
             log("dSYMs: \(dSYMs.isEmpty ? "none (DEBUG_INFORMATION_FORMAT is not dwarf-with-dsym)" : dSYMs.joined(separator: ", "))")
         }
         return result
+    }
+
+    /// Swift Build's build, and the Swift packages that it was made of.
+    private static func swiftBuild(_ environment: SwiftBuildEnvironment, _ ctx: ReactNativeBuildContext, workspace ws: Workspace, scheme: Scheme,
+                                   perTarget: [String: [String: String]], overrides: [String: String], directory xlessDir: URL, products: URL) throws -> [SwiftPackageCheckouts.Record] {
+        let o = ctx.overlay, fm = FileManager.default, platform = ctx.destination.platformName, dd = ctx.derivedData
+        let built = try ws.overridingTargetSettings(perTarget)
+
+        let (packages, records) = try SwiftPackageCheckouts.resolve(ws, in: xlessDir.appendingPathComponent("packages"), env: ctx.env)
+        let aliases = try XCFrameworkAliases.create(pods: ctx.iosDir.appendingPathComponent("Pods"),
+                                                    intermediates: products.appendingPathComponent("XCFrameworkIntermediates"))
+        if aliases > 0 { log("\(aliases) lowercase framework aliases in XCFrameworkIntermediates") }
+
+        guard fm.isExecutableFile(atPath: ReactNativeEnvironment.hermesc) else {
+            throw XlessError(.build, "\(ReactNativeEnvironment.hermesc) is missing", fix: "run in xless's React Native image, which builds hermesc from source (xless run builds that image)")
+        }
+        let pif = try PIFWriter.write(built, to: xlessDir, packages: packages)
+        let request = xlessDir.appendingPathComponent("request.json")
+        try BuildRequest.make(workspace: built, scheme: scheme, configuration: o.configuration, overrides: overrides, destination: ctx.destination)
+            .write(to: request, options: .atomic)
+
+        log("swbuild \(o.scheme) (\(o.configuration), \(platform)) — log: \(xlessDir.appendingPathComponent("swbuild.log").path)")
+        let start = Date()
+        let summary = try SwiftBuildRunner.build(pif: pif, request: request, derivedData: dd, environment: environment,
+                                                 log: xlessDir.appendingPathComponent("swbuild.log"),
+                                                 extraEnvironment: ReactNativeEnvironment.build(overlay: o), stage: .build, baseEnvironment: ctx.env)
+        for w in summary.warnings { FileHandle.standardError.write(Data("warning: \(w)\n".utf8)) }
+        for e in summary.errors { FileHandle.standardError.write(Data("error: \(e)\n".utf8)) }
+        FileHandle.standardError.write(Data(failedTasksReport(summary).utf8))
+        log("swbuild: \(summary.succeeded ? "succeeded" : "failed"), \(summary.tasks) tasks in \(Int(Date().timeIntervalSince(start))) s")
+        let allowedMissing = try checkPhaseOutput(summary, allowed: o.allowMissingCommands,
+                                                  log: xlessDir.appendingPathComponent("swbuild.log"))
+        for line in allowedMissing { FileHandle.standardError.write(Data("warning: a build phase ran a missing command (allowed by allowMissingCommands): \(line)\n".utf8)) }
+        return records
+    }
+
+    /// The same by an installed Xcode. What is pinned of the Swift packages is checked as Swift Build's is; what they depend on is
+    /// resolved by Xcode, from the workspace's Package.resolved where it has one.
+    private static func xcodebuild(_ xcode: XcodeBuild, _ ctx: ReactNativeBuildContext, workspace ws: Workspace, perTarget: [(project: String, target: String, values: [String: String])],
+                                   overrides: [String: String], directory xlessDir: URL) throws -> [SwiftPackageCheckouts.Record] {
+        let references = try SwiftPackageCheckouts.references(ws), o = ctx.overlay
+        try FileManager.default.createDirectory(at: xlessDir, withIntermediateDirectories: true)
+        let xcconfig = xlessDir.appendingPathComponent("xless.xcconfig"), output = xlessDir.appendingPathComponent("xcodebuild.log")
+        try Data(XcodeBuild.configuration(perTarget).utf8).write(to: xcconfig, options: .atomic)
+        try xcode.writeTools(work: ctx.workRoot, temporary: ctx.env["TMPDIR"])
+        let arguments = XcodeBuild.arguments(workspace: ws.path, scheme: o.scheme, configuration: o.configuration, destination: ctx.destination, derivedData: ctx.derivedData,
+                                             xcconfig: xcconfig, tools: RustApple.wrapperDirectory(workRoot: ctx.workRoot), settings: overrides)
+        log("xcodebuild \(o.scheme) (\(o.configuration), \(ctx.destination.platformName)) — log: \(output.path)")
+        let start = Date()
+        try xcode.run(arguments, log: output, env: ReactNativeEnvironment.native(overlay: o, work: ctx.workRoot, base: ctx.env), baseEnvironment: ctx.env)
+        log("xcodebuild: succeeded in \(Int(Date().timeIntervalSince(start))) s")
+        let pinned = try? Data(contentsOf: ws.path.appendingPathComponent("xcshareddata/swiftpm/Package.resolved"))
+        let pins = try pinned.map { try SwiftPackageCheckouts.pins(resolvedFile: $0) } ?? []
+        return references.map { .init(identity: $0.identity, location: $0.location, revision: $0.revision, resolved: pins) }
     }
 
     /// The overlay's bundle IDs checked against the project: the app target and every bundle it embeds need one, and
@@ -529,6 +573,7 @@ public enum ReactNativeBuilder {
             throw XlessError(.build, "dyld would refuse \(problems.count) image(s) of the simulator app: \(problems.joined(separator: ", "))",
                              fix: "report this binary to the xless maintainers")
         }
+        if ctx.xcode != nil { return try SimulatorBuild.signAdHocOnAMac(app, nested: nested, scratch: scratch, baseEnvironment: ctx.env) }
         log("signing \(app.lastPathComponent) ad hoc for the simulator (rcodesign, no key)")
         try SimulatorBuild.signAdHoc(app, nested: nested, scratch: scratch, baseEnvironment: ctx.env)
     }

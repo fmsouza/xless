@@ -214,3 +214,7 @@ public struct XcodeFinder {
         }.first
     }
 }
+
+extension DarwinSDK {
+    public init(xcode: InstalledXcode) { self.init(bundle: xcode.app.appendingPathComponent("Contents"), isXcode: true) }
+}

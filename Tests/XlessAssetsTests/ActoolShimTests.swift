@@ -362,3 +362,9 @@ struct CARHeaderFields {
         mainVersion = string(20, 128); versionString = string(148, 256)
     }
 }
+
+/// (To Swift a character and a mark that combines with it are one, which is not the character.)
+@Test func namesOfAssetsAreEscapedInWhatIsGenerated() {
+    #expect(Array(AssetSymbols.swiftString("\"\u{301}\\\u{301}").unicodeScalars) == Array("\\\"\u{301}\\\\\u{301}".unicodeScalars))
+    #expect(Array(ActoolShim.xmlEscape("&\u{301}<\u{301}>").unicodeScalars) == Array("&amp;\u{301}&lt;\u{301}&gt;".unicodeScalars))
+}

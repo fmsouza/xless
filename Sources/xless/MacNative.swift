@@ -37,12 +37,13 @@ struct MacNative: Sendable {
         }
     }
 
-    /// The one for an xless.yml project, whose overlays build in the images; nil off a Mac. It says once which Xcode and tools it is.
+    /// The one for an xless.yml project or, in its sandbox, an overlay's (`NativeOverlay`); nil off a Mac. It says once which Xcode and
+    /// tools it is.
     static func here(for ctx: Context, stage: Stage) throws -> MacNative? {
-        guard isMac, !ctx.hasPrepare else { return nil }
+        guard isMac, try !ctx.hasPrepare || NativeOverlay.isInside() else { return nil }
         return try found.value {
             let native = try find(pin: ctx.config.xcode, stage: stage)
-            say("\(native.xcode.summary); \(native.tools.summary(of: native.xcode))")
+            if !ctx.hasPrepare { say("\(native.xcode.summary); \(native.tools.summary(of: native.xcode))") }
             return native
         }
     }

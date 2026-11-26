@@ -34,6 +34,27 @@ public enum SwiftPackages {
     public static let swiftRs = (url: "https://github.com/Brendonovich/swift-rs", version: "1.0.9",
                                  revision: "207e4bfe5d36fdd0cc08f28d1849ff94ac7e24b8")
 
+    /// The Package.resolved of that pin.
+    static var pins: String {
+        """
+        {
+          "pins" : [
+            {
+              "identity" : "swift-rs",
+              "kind" : "remoteSourceControl",
+              "location" : "\(swiftRs.url)",
+              "state" : {
+                "revision" : "\(swiftRs.revision)",
+                "version" : "\(swiftRs.version)"
+              }
+            }
+          ],
+          "version" : 2
+        }
+
+        """
+    }
+
     /// The Swift FFI a Tauri crate imports: one `init_plugin_<name>` per plugin, tauri's `ios.rs` (`log_stdout`,
     /// `register_plugin`, `run_plugin_command`, `on_webview_created`) and swift-rs's SRObject/SRString helpers
     /// (contract doc, spike A step 6).
@@ -229,23 +250,7 @@ public enum SwiftPackages {
             .write(to: agg.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
         try "// Intentionally empty: the product carries its dependencies.\n"
             .write(to: sources.appendingPathComponent("\(aggregateName).swift"), atomically: true, encoding: .utf8)
-        try """
-            {
-              "pins" : [
-                {
-                  "identity" : "swift-rs",
-                  "kind" : "remoteSourceControl",
-                  "location" : "\(swiftRs.url)",
-                  "state" : {
-                    "revision" : "\(swiftRs.revision)",
-                    "version" : "\(swiftRs.version)"
-                  }
-                }
-              ],
-              "version" : 2
-            }
-
-            """.write(to: agg.appendingPathComponent("Package.resolved"), atomically: true, encoding: .utf8)
+        try pins.write(to: agg.appendingPathComponent("Package.resolved"), atomically: true, encoding: .utf8)
         return agg
     }
 

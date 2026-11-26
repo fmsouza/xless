@@ -37,7 +37,7 @@ public enum CargoInputs {
     /// Absolute, `~`-prefixed (with `env`'s HOME) or relative to the source root; may leave the source root.
     static func resolve(_ path: String, sourceRoot: URL, env: [String: String]) -> URL {
         var path = path
-        if path == "~" || path.hasPrefix("~/"), let home = env["HOME"], !home.isEmpty {
+        if path == "~" || path.hasPrefix("~/"), let home = env[OverlayPaths.homeVariable] ?? env["HOME"], !home.isEmpty {
             path = home + path.dropFirst()
         }
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : sourceRoot.appendingPathComponent(path)

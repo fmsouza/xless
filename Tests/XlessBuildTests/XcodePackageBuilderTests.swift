@@ -88,6 +88,7 @@ private func temporary() throws -> URL {
 @Test func onlyTheSystemsAndTheAppsOwnRunPathsStay() {
     #expect(XcodePackageBuilder.isForeign("/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/iphoneos"))
     #expect(XcodePackageBuilder.isForeign("/var/run/com.apple.security.cryptexd/mnt/x"))
+    #expect(XcodePackageBuilder.isForeign("/\u{301}x"))
     for path in ["/usr/lib/swift", "@loader_path", "@executable_path/Frameworks"] { #expect(!XcodePackageBuilder.isForeign(path)) }
     // of a library in Frameworks, only what names this Mac's Xcode
     let xcode = InstalledXcode(app: URL(fileURLWithPath: "/Applications/Xcode.app"), version: "27.2", build: "27B52", source: "-")
@@ -184,7 +185,7 @@ private func temporary() throws -> URL {
 
     #expect(try XcodePackageBuilder.embedded(exe, products: products).map(\.library).sorted() == ["A.framework/A", "B.framework/Versions/A/B", "libC.dylib"])
 
-    for library in ["", "/", "/A", "../A.framework/A", "./libC.dylib", "A.framework//A", "A.framework/../libC.dylib", "..", "libC.dylib/"] {
+    for library in ["", "/", "/A", "../A.framework/A", "./libC.dylib", "A.framework//A", "A.framework/../libC.dylib", "..", "../\u{301}/A.framework", "libC.dylib/"] {
         let bad = try write("Bad", ["@rpath/\(library)"])
         do {
             _ = try XcodePackageBuilder.embedded(bad, products: products)

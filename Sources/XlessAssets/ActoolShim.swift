@@ -207,7 +207,7 @@ public enum ActoolShim {
             return
         }
 
-        let scratch = fm.temporaryDirectory.appendingPathComponent("xless-actool-\(UUID().uuidString)", isDirectory: true)
+        let scratch = Files.temporary.appendingPathComponent("xless-actool-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: scratch) }
         let catalog = c.catalogs.count == 1 ? c.catalogs[0] : try merged(c.catalogs, in: scratch)
         let sets = try setNames(catalog)
@@ -344,6 +344,6 @@ public enum ActoolShim {
     }
 
     static func xmlEscape(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        s.replacing(scalar: "&", with: "&amp;").replacing(scalar: "<", with: "&lt;").replacing(scalar: ">", with: "&gt;")
     }
 }

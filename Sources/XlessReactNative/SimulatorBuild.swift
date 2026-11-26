@@ -78,6 +78,22 @@ public enum SimulatorBuild {
         try Shell.run("rcodesign", adHocSignArguments(app: app, nested: nested, emptyEntitlements: empty), baseEnvironment: baseEnvironment, stage: .build)
     }
 
+    /// The same by a Mac's codesign, from the inside out: the frameworks, each extension, the app.
+    static func signAdHocOnAMac(_ app: URL, nested: [String], scratch: URL, baseEnvironment: [String: String]) throws {
+        let empty = scratch.appendingPathComponent("empty.xcent")
+        do { try EntitlementsEncoding.xml(.object([:])).write(to: empty, options: .atomic) } catch {
+            throw XlessError(.build, "cannot write \(empty.path): \(error.localizedDescription)", fix: "check the derived data directory")
+        }
+        func sign(_ code: URL, _ more: [String] = []) throws {
+            try Shell.run("/usr/bin/codesign", ["--force", "--sign", "-", "--timestamp=none"] + more + [code.path], baseEnvironment: baseEnvironment, stage: .build)
+        }
+        for bundle in nested.sorted(by: { $0.split(separator: "/").count > $1.split(separator: "/").count }).map({ app.appendingPathComponent($0) }) + [app] {
+            let frameworks = (try? FileManager.default.contentsOfDirectory(at: bundle.appendingPathComponent("Frameworks"), includingPropertiesForKeys: nil)) ?? []
+            for code in frameworks.sorted(by: { $0.path < $1.path }) { try sign(code) }
+            try sign(bundle, ["--entitlements", empty.path])
+        }
+    }
+
     /// The Mach-O images under `app` whose LINKEDIT tables dyld would refuse (as `finalize` checks device builds), as
     /// `<path>: <problems>`.
     public static func linkeditProblems(in app: URL) throws -> [String] {

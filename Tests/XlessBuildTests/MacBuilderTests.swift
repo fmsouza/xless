@@ -155,6 +155,64 @@ func anAppHasEveryBundleOfItsPackagesAndNoOther(blind: Bool) throws {
     #expect(try swift.app() == [] && swift.builds == 1 && swift.notes.isEmpty)
 }
 
+@Test func theRecordOfABuildsBundlesIsReadOnlyWhereItIsOne() throws {
+    let fm = FileManager.default, swift = Products(["A_A.bundle"], blind: false)
+    defer { try? fm.removeItem(at: swift.scratch) }
+    let record = swift.scratch.appendingPathComponent("xless-bundles"), other = swift.scratch.appendingPathComponent("other")
+    _ = try swift.app()
+    // what is no bundle's name
+    try Data("secret\nup/Gone.bundle\nup/\u{301}Gone.bundle\n\u{1B}[2J.bundle\n\u{9B}2J.bundle\r\n".utf8).write(to: record)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
+    // a link, also to a good one; a directory is told by the write that does not work
+    try Data("Gone.bundle\n".utf8).write(to: other)
+    try fm.removeItem(at: record)
+    try fm.createSymbolicLink(at: record, withDestinationURL: other)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
+    #expect(try String(contentsOf: other, encoding: .utf8) == "Gone.bundle\n")
+    // one that is larger than any
+    try Data(String(repeating: "Gone.bundle\n", count: 1 << 17).utf8).write(to: record)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 1 && swift.notes.isEmpty)
+    try Data("Gone.bundle\n".utf8).write(to: record)
+    #expect(try swift.app() == ["A_A.bundle"] && swift.builds == 2 && swift.notes.count == 1)
+}
+
+@Test func aScratchDirectoryThatIsALinkIsRefusedBeforeAnythingIsBuilt() throws {
+    let fm = FileManager.default, swift = Products(["A_A.bundle"], blind: true)
+    let other = URL(fileURLWithPath: swift.scratch.path + "-other")
+    defer { for url in [swift.scratch, other] { try? fm.removeItem(at: url) } }
+    let kept = other.appendingPathComponent("out/Products/Release/Mine.bundle")
+    try fm.createDirectory(at: kept, withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: swift.scratch, withDestinationURL: other)
+    #expect(throws: XlessError.self) { try swift.app() }
+    #expect(swift.builds == 0 && fm.fileExists(atPath: kept.path))
+}
+
+@Test func theBundlesOfAFailedBuildAreFoundWhereverItsSwiftPMLeftThem() throws {
+    let fm = FileManager.default, swift = Products([], blind: false)
+    defer { try? fm.removeItem(at: swift.scratch) }
+    for path in ["arm64-apple-macosx/release/A_A.bundle/nested.bundle", "checkouts/dep/Tests/fixture.bundle"] {
+        try fm.createDirectory(at: swift.scratch.appendingPathComponent(path), withIntermediateDirectories: true)
+    }
+    #expect(ResourceBundles.directories(in: swift.scratch).map(\.lastPathComponent) == ["release"])
+    #expect(ResourceBundles.directories(in: swift.scratch.appendingPathComponent("none")).isEmpty)
+}
+
+@Test func oneBuildOfAProjectWaitsForAnother() throws {
+    let project = FileManager.default.temporaryDirectory.appendingPathComponent("xless-lock-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: project) }
+    let first = try BuildLock(project: project, note: { _ in Issue.record("nobody else builds it") })
+    let said = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+        let second = try? BuildLock(project: project, note: { _ in said.signal() })
+        second?.release()
+        if second != nil { done.signal() }
+    }
+    said.wait()
+    #expect(done.wait(timeout: .now() + 0.05) == .timedOut)
+    first.release()
+    done.wait()
+}
+
 extension FileManager {
     fileprivate func removeItem(at url: URL, ifThere: Bool) throws { if fileExists(atPath: url.path) { try removeItem(at: url) } }
 }

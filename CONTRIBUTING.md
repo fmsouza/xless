@@ -47,7 +47,7 @@ the release run says so in a warning.
 
 | Check | What it runs |
 |---|---|
-| `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner. One (`xcode-native`) builds the sample with the runner's Xcode, for a device, the simulator and macOS, and signs it with a throw-away certificate |
+| `macos-tests (arm64)` | `swift test`, AssetKit's tests and every shell test that can run on macOS, on GitHub's `xcode-27` runner. One (`xcode-native`) builds the sample with the runner's Xcode, for a device, the simulator and macOS, and signs it with a throw-away certificate; another (`overlay-native`) builds an overlay whose "cargo" tries the sandbox of the build, and a small React Native workspace with xcodebuild |
 | `package (macos-arm64)`, `package (macos-x86_64)` | The macOS tarballs built as a release would build them (the x86_64 one cross-compiled) and checked: nothing of Apple's in them, only the system's libraries needed |
 | `install (macos-arm64)`, `install (macos-x86_64)` | Each one installed with `scripts/install.sh` and run on a Mac of its architecture, the agent and the prompts included |
 | `windows-tests (x86_64)` | The account commands, their libraries and their tests on GitHub's `windows-2022` runner; what can be seen only of a process of its own (no dump of one with a secret, locks, where libraries come from), what counts as a secure connection, and PSScriptAnalyzer on the PowerShell scripts ([maintainers.md](docs/maintainers.md#windows)) |

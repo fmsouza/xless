@@ -36,6 +36,34 @@ private func tree(_ files: [String]) throws -> URL {
         #expect(throws: XlessError.self) { try TauriBuilder.installCommand(appRoot: tree(["package.json"])) }
     }
 
+    /// On a Mac, corepack only where package.json names a release for it, or where there is nothing else.
+    @Test func onAMacThePackageManagerIsTheUsersOwn() throws {
+        let root = try tree(["both/pnpm", "both/corepack", "pnpm/pnpm", "corepack/corepack", "app/package.json", "pinned/package.json"])
+        defer { try? fm.removeItem(at: root) }
+        for program in ["both/pnpm", "both/corepack", "pnpm/pnpm", "corepack/corepack"] {
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.appendingPathComponent(program).path)
+        }
+        try Data(#"{"packageManager": "pnpm@10.1.0"}"#.utf8).write(to: root.appendingPathComponent("pinned/package.json"))
+        try Data("{}".utf8).write(to: root.appendingPathComponent("app/package.json"))
+        func manager(_ app: String, _ path: String) -> String {
+            TauriBuilder.ownManager(["corepack", "pnpm", "install"], appRoot: root.appendingPathComponent(app), path: "/nonexistent:\(root.path)/\(path)").joined(separator: " ")
+        }
+        #expect(manager("app", "both") == "pnpm install" && manager("pinned", "both") == "corepack pnpm install")
+        #expect(manager("app", "pnpm") == "pnpm install" && manager("pinned", "pnpm") == "pnpm install")
+        #expect(manager("app", "corepack") == "corepack pnpm install" && manager("app", "none") == "pnpm install")
+        #expect(TauriBuilder.ownManager(["npm", "ci"], appRoot: root, path: "") == ["npm", "ci"])
+    }
+
+    @Test func thePackagesOfAnImageAreNotAMacsNorTheOtherWayRound() throws {
+        let work = try tree([".xless/source"]), modules = work.appendingPathComponent("app/node_modules")
+        func isKept(_ isMac: Bool) throws -> Bool {
+            try FileManager.default.createDirectory(at: modules, withIntermediateDirectories: true)
+            try TauriBuilder.dropForeignPackages(appRoot: work.appendingPathComponent("app"), work: work, isMac: isMac)
+            return FileManager.default.fileExists(atPath: modules.path)
+        }
+        for (isMac, kept) in [(false, true), (true, false), (true, true), (false, false), (false, true)] { #expect(try isKept(isMac) == kept) }
+    }
+
     /// Every .m/.mm/.c/.cpp under the target's sources, skipping resources, folder references and `buildPhase: none`.
     @Test func findsNativeSources() throws {
         let apple = try tree(["Sources/app/main.mm", "Sources/app/bindings/bindings.h", "Sources/app/util.c", "Externals/arm64/release/libapp.a",

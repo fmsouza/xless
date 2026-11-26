@@ -22,10 +22,13 @@ public struct CargoBuildContext: Sendable {
     }
 
     var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
-    /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it).
-    var tools: [String: String] { ["PATH": "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"] }
+    /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it); with an installed Xcode, before
+    /// it xless's `swift`.
+    var tools: [String: String] {
+        ["PATH": (sdk.isXcode ? RustApple.wrapperDirectory(workRoot: workRoot).path + ":" : "") + "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"]
+    }
     /// The cargo targets of this platform: on macOS, those of `macos.architectures`.
-    var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
+    public var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
     var inputsRecord: URL { workRoot.appendingPathComponent(".xless/cargo-inputs.json") }
 }
 
@@ -59,8 +62,10 @@ public enum CargoBuilder {
                 byEnv[input.env].map { (input.name, $0) }
             })), to: ctx.inputsRecord)
 
-            try RustApple.bootstrap(searchFrom: ctx.workRoot, workRoot: ctx.workRoot, toolchain: ctx.overlay.toolchain, targets: ctx.rustTargets,
-                                    env: ctx.tools, baseEnvironment: ctx.env, log: { log($0) })
+            if !ctx.sdk.isXcode { // (on a Mac it is the user's own: RustApple.prepareNative)
+                try RustApple.bootstrap(searchFrom: ctx.workRoot, workRoot: ctx.workRoot, toolchain: ctx.overlay.toolchain, targets: ctx.rustTargets,
+                                        env: ctx.tools, baseEnvironment: ctx.env, log: { log($0) })
+            }
             return ctx.workRoot
         }
     }
@@ -74,6 +79,7 @@ public enum CargoBuilder {
             let r = ctx.resolved, block = r.platform, work = ctx.workRoot
             let minOS = try r.config.platform(ctx.platform).minimumOS
             let record = try readRecord(ctx)
+            if ctx.sdk.isXcode { try RustApple.writeSwiftWrapper(sdk: ctx.sdk, workRoot: work) }
             let inputURLs = record.paths.mapValues { URL(fileURLWithPath: $0, isDirectory: true) }
             let swift = try SwiftToolchain.load(env: ctx.env)
             let toolchain = ctx.overlay.toolchain

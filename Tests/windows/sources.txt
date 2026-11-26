@@ -1,7 +1,9 @@
 # The Swift files of the targets that Windows builds: "+" is built there, "-" is not (Package.swift, notOnWindows).
 # A new file gets its line here; WindowsSourcesTests checks both lists.
 - Sources/XlessCore/AppleSignature.swift
+- Sources/XlessCore/BuildPlaces.swift
 - Sources/XlessCore/BuildSDKCheck.swift
+- Sources/XlessCore/BuildSandbox.swift
 - Sources/XlessCore/BuiltTree.swift
 + Sources/XlessCore/BundleLayout.swift
 - Sources/XlessCore/ChildProcess.swift
@@ -269,6 +271,7 @@
 - Sources/xless/LiveCheck.swift
 - Sources/xless/MacNative.swift
 + Sources/xless/Main.swift
+- Sources/xless/NativeOverlay.swift
 + Sources/xless/OldName.swift
 + Sources/xless/Options.swift
 - Sources/xless/Overlays.swift
@@ -290,7 +293,9 @@
 + Sources/xless/Webhooks.swift
 + Sources/xless/Xless.swift
 - Tests/XlessCoreTests/AppleSignatureTests.swift
+- Tests/XlessCoreTests/BuildPlacesTests.swift
 - Tests/XlessCoreTests/BuildSDKCheckTests.swift
+- Tests/XlessCoreTests/BuildSandboxTests.swift
 - Tests/XlessCoreTests/BuiltTreeTests.swift
 - Tests/XlessCoreTests/ChildProcessTests.swift
 - Tests/XlessCoreTests/DittoShimTests.swift
@@ -460,6 +465,7 @@
 + Tests/XlessCLITests/KeyRescueTests.swift
 - Tests/XlessCLITests/LiveCheckTests.swift
 + Tests/XlessCLITests/LockCommandTests.swift
+- Tests/XlessCLITests/NativeOverlayTests.swift
 - Tests/XlessCLITests/NextCommandTests.swift
 + Tests/XlessCLITests/OneUnlockTests.swift
 + Tests/XlessCLITests/ProductCommandTests.swift

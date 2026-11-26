@@ -18,7 +18,8 @@ enum StageRunner {
     /// The image is checked first (`BuildSDKCheck`, as the build stage will): a wrong or missing SDK or Swift toolchain
     /// is refused before the work copy, the JS install, prebuild and CocoaPods run.
     static func prepare(_ ctx: Context) async throws -> String {
-        if ctx.hasPrepare {
+        let ctx = try await native(ctx, .prepare)
+        if ctx.hasPrepare, ctx.native == nil {
             try await withStage(.prepare) { _ = try BuildSDKCheck.check(pin: ctx.config.xcode, platform: ctx.platform, file: pinFile(ctx), stage: .prepare) }
         }
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.prepare(ctx: rn).path }
@@ -28,7 +29,17 @@ enum StageRunner {
         return try await TauriBuilder.prepare(ctx: tauri).path
     }
 
+    /// `ctx` with the Mac's Xcode that an overlay is built with on a Mac, in the sandbox.
+    private static func native(_ ctx: Context, _ stage: Stage) async throws -> Context {
+        try await withStage(stage) {
+            var ctx = ctx
+            ctx.native = try NativeOverlay.mac(for: ctx, stage: stage)
+            return ctx
+        }
+    }
+
     static func build(_ ctx: Context) async throws -> URL {
+        let ctx = try await native(ctx, .build)
         try await withStage(.build) { try checkSDK(ctx) }
         // The dSYMs of an earlier build never outlive this one: the builders that keep some write them afresh, and a
         // build that keeps none (xtool, Cargo, Tauri) leaves none for `package` to zip.
@@ -79,9 +90,10 @@ enum StageRunner {
     static func assets(_ ctx: Context) async throws -> URL {
         try await withStage(.assets) {
             try ctx.requireDevice(.assets)
+            _ = try NativeOverlay.mac(for: ctx, stage: .assets)
             let input = try ctx.paths.bundle(in: ctx.paths.app, stage: .assets)
             // Tauri on macOS: nothing to compile (the icon is bundle.icon's .icns, copied by the build); React Native:
-            // Swift Build compiled the asset catalogs and storyboards (actool/ibtool shims); cargo on macOS without an
+            // Swift Build or xcodebuild compiled the asset catalogs and storyboards (actool/ibtool shims); cargo on macOS without an
             // asset catalog: the build copied `icon`'s .icns, or there is no icon. Copy through.
             if ctx.tauriMac != nil || ctx.isReactNative || cargoMacWithoutCatalog(ctx) { return try Files.atomicOutput(ctx.paths.assets) { try Files.copyBundle(input, intoFreshDir: $0) } }
             let mac = try MacNative.here(for: ctx, stage: .assets)
@@ -100,6 +112,7 @@ enum StageRunner {
     static func finalize(_ ctx: Context) async throws -> URL {
         try await withStage(.finalize) {
             try ctx.requireDevice(.finalize)
+            _ = try NativeOverlay.mac(for: ctx, stage: .finalize)
             let input = try ctx.paths.bundle(in: ctx.paths.assets, stage: .finalize)
             let meta = try MacNative.here(for: ctx, stage: .finalize)?.meta ?? ToolchainMeta.load(from: ToolchainMeta.defaultLocation())
             let kind: ProjectKind = ctx.isReactNative ? .reactNative : ctx.isCargo ? .cargo : ctx.isTauri ? .tauri : .xlessYML

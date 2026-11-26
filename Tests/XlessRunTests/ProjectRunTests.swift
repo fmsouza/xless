@@ -415,6 +415,33 @@ import XlessCore
         }
     }
 
+    /// What its sandbox opens holds no secret, as what a container mounts.
+    @Test func onAMacAnOverlayIsBuiltNativelyInThreeSteps() throws {
+        var secrets = try home.files()
+        let notes = Notes(), host = FakeRunHost(isMac: true, answer: home.answer())
+        #expect(try home.run(["--config", home.overlay], docker: false, host: host, environment: secrets, session: "/agent",
+                             prepareMac: { pin, builds, signs in notes.add("\(pin ?? "-") \(builds) \(signs)") }) == 0)
+        #expect(notes.lines == ["- true true"])
+        let ships = host.allSteps.filter { $0.words.contains("ship") }
+        #expect(ships.count == 2 && ships[0].line.contains("--from build --to finalize") && ships[1].line.contains("--from sign --to upload"))
+        #expect(secretsIn(ships[0], secrets).isEmpty && ships[0].environment["XLESS_NO_SECRET_STORE"] == "1" && ships[1].environment["XLESS_DIST_KEY"] == "DIST-VALUE")
+        func refused(_ environment: [String: String], _ why: String) throws {
+            for (mac, code) in [(true, Int32(2)), (false, 0)] { // (elsewhere nothing is opened)
+                let host = FakeRunHost(isMac: mac, answer: home.answer())
+                #expect(try home.run(["--config", home.overlay], docker: false, host: host, environment: environment) == code)
+                #expect(host.lines.contains { $0.contains(why) && $0.contains("readable to the app's build code") } == mac, "\(host.lines)")
+                #expect(mac == !host.allSteps.contains { $0.words.contains("ship") })
+            }
+        }
+        for (place, what) in [("src", "is inside the app source"), ("ov", "is inside the overlay's directory")] {
+            secrets["XLESS_DIST_KEY_FILE"] = try home.write("\(place)/dist.pem", "dist")
+            try refused(secrets, what)
+        }
+        secrets["XLESS_DIST_KEY_FILE"] = nil
+        secrets["XLESS_SOURCE"] = home.home
+        try refused(secrets, "holds your home directory")
+    }
+
     @Test func theStoresSecretsGoContainerByContainer() throws {
         let home = home
         let left = Notes()

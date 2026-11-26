@@ -1,6 +1,6 @@
 # Plain Cargo apps (iOS and macOS)
 
-xless builds an app that is just a Cargo workspace on Linux, with no Mac and no Xcode on the build machine: an iOS app that it ships to TestFlight, and a macOS app that it ships as a notarized DMG or, from the App-Store lane, to TestFlight ([macOS](#macos)). The app has no Xcode project, no Tauri and no Swift. Its binary crate runs the platform's event loop itself (winit, eframe/egui, objc2…), and the repository holds an `Info.plist` and an icon. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
+xless builds an app that is just a Cargo workspace on Linux, with no Mac and no Xcode on the build machine (or [on a Mac](native-install.md#tauri-cargo-and-react-native-apps-on-a-mac) with the Xcode that is installed): an iOS app that it ships to TestFlight, and a macOS app that it ships as a notarized DMG or, from the App-Store lane, to TestFlight ([macOS](#macos)). The app has no Xcode project, no Tauri and no Swift. Its binary crate runs the platform's event loop itself (winit, eframe/egui, objc2…), and the repository holds an `Info.plist` and an icon. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
 
 ```sh
 xless run --docker --config ~/ci/my-app.overlay.yml
@@ -196,7 +196,8 @@ What differs for cargo:
 - **Mounts.** As for Tauri, plus `~/.cache/xless/inputs` at `/cache/inputs` (the clones of git inputs) and each path input read-only at `/inputs/<name>`, with `XLESS_INPUTS_MOUNTED=1`, in step 2 only. The path inputs are the ones `xless cargo inputs` lists on your machine. Its refusals (exit 2) are in [build inputs](#build-inputs).
 - **Caches.** `~/.cache/xless/work`, `~/.cache/xless/downloads` and the docker volumes `xless-rustup` and `xless-cargo`: the Rust toolchains and the crates survive between runs. The first build downloads Rust and compiles the whole dependency graph, which takes several minutes and several GB.
 - **Stages.** `xless prepare|build|assets|finalize|sign|package|upload --config <overlay> [--source <dir>] --platform ios|macos`. Exit codes are the ones in [pipeline.md](pipeline.md#stages): config 10, prepare 19, build 12, assets 13, finalize 14, sign 15 (24 with provisioning updates off), package 16, upload 17.
-- **Native.** As for Tauri: `xless run` refuses an overlay without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds are untested in this milestone.
+- **On a Mac**, `xless run --config` without `--docker` builds with the Mac's own rustup and Xcode, as for Tauri, in [a sandbox](security.md#an-overlays-build-on-a-mac). The path inputs are opened to it, read-only, where they are.
+- **Native, on Linux.** As for Tauri: `xless run` refuses an overlay without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the same three steps without docker, with the limits described there. Native cargo builds on Linux are untested in this milestone.
 
 ## macOS
 
@@ -243,7 +244,7 @@ From the milestone's non-goals and what was left out:
 - `xless inspect --config` does not support cargo overlays.
 - Versions are read by a line-based reader. It expects `name` and `version` as plain `key = "value"` lines (or the workspace forms above) in `[package]`; a manifest that states them any other way is reported as having none or not found. Set `version:` in the overlay then.
 - A plist placeholder is replaced in string values only; keys, numbers and data are left alone.
-- Native (non-docker) cargo builds are untested, and `make test-cargo-linux` has not yet been run anywhere (see below).
+- Native (non-docker) cargo builds on Linux are untested, and `make test-cargo-linux` has not yet been run anywhere (see below).
 
 ## Linux parity test
 

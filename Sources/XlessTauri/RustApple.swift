@@ -34,9 +34,9 @@ public enum RustApple {
         var env = [
             "SDKROOT": sdkRoot,
             "IPHONEOS_DEPLOYMENT_TARGET": minOS,
-            "CC_aarch64_apple_ios": swift?.tool("clang") ?? "clang",
-            "CXX_aarch64_apple_ios": swift?.tool("clang++") ?? "clang++",
-            "AR_aarch64_apple_ios": "llvm-ar",
+            "CC_aarch64_apple_ios": sdk.compiler("clang", swift: swift),
+            "CXX_aarch64_apple_ios": sdk.compiler("clang++", swift: swift),
+            "AR_aarch64_apple_ios": sdk.ar,
             "CFLAGS_aarch64_apple_ios": cflags,
             "CXXFLAGS_aarch64_apple_ios": cflags,
             "CARGO_TARGET_AARCH64_APPLE_IOS_LINKER": iosLinkerWrapper(workRoot: workRoot).path,
@@ -64,9 +64,9 @@ public enum RustApple {
         var env = [
             "SDKROOT": sdkRoot,
             "MACOSX_DEPLOYMENT_TARGET": minOS,
-            "CC_\(t)": swift?.tool("clang") ?? "clang",
-            "CXX_\(t)": swift?.tool("clang++") ?? "clang++",
-            "AR_\(t)": "llvm-ar",
+            "CC_\(t)": sdk.compiler("clang", swift: swift),
+            "CXX_\(t)": sdk.compiler("clang++", swift: swift),
+            "AR_\(t)": sdk.ar,
             "CFLAGS_\(t)": cflags,
             "CXXFLAGS_\(t)": cflags,
             "CARGO_TARGET_\(t.uppercased())_LINKER": try macLinkerWrapper(target: target, workRoot: workRoot).path,
@@ -115,7 +115,7 @@ public enum RustApple {
     public static func writeIOSLinkerWrapper(minOS: String, sdk: DarwinSDK, workRoot: URL, swift: SwiftToolchain? = nil,
                                              stripLocalSymbols: Bool = false, debugLink: DebugLink? = nil) throws -> URL {
         let url = iosLinkerWrapper(workRoot: workRoot)
-        let clang = "\(swift.map { quote($0.tool("clang")) } ?? "clang") -target arm64-apple-ios\(minOS) -isysroot \(quote(try sdk.sdkPath("iphoneos").path)) -fuse-ld=\(quote(sdk.ld64.path)) -mlinker-version=907"
+        let clang = "\(compiler(sdk, swift)) -target arm64-apple-ios\(minOS) -isysroot \(quote(try sdk.sdkPath("iphoneos").path))\(linker(sdk))"
         try write(wrapper(comment: "cargo's linker for aarch64-apple-ios (dependencies that declare a cdylib crate type)", clang: clang,
                           stripLocalSymbols: stripLocalSymbols, runtime: quote(try sdk.clangRuntime(platform: "ios").path), debugLink: debugLink), to: url)
         return url
@@ -130,7 +130,7 @@ public enum RustApple {
                                              debugLink: DebugLink? = nil) throws -> URL {
         let arch = try macArch(of: target)
         let url = try macLinkerWrapper(target: target, workRoot: workRoot)
-        let clang = "\(swift.map { quote($0.tool("clang")) } ?? "clang") --target=\(arch)-apple-macos\(minOS) -isysroot \(quote(try sdk.sdkPath("macosx").path)) -fuse-ld=\(quote(sdk.ld64.path)) -mlinker-version=907 -Wl,-framework,Foundation"
+        let clang = "\(compiler(sdk, swift)) --target=\(arch)-apple-macos\(minOS) -isysroot \(quote(try sdk.sdkPath("macosx").path))\(linker(sdk)) -Wl,-framework,Foundation"
         try write(wrapper(comment: "cargo's linker for \(target)", clang: clang, stripLocalSymbols: true,
                           runtime: quote(try sdk.clangRuntime(platform: "osx").path), debugLink: debugLink), to: url)
         return url
@@ -231,12 +231,45 @@ public enum RustApple {
             """
     }
 
+    /// The wrapper's compiler, and what it says of the linker.
+    private static func compiler(_ sdk: DarwinSDK, _ swift: SwiftToolchain?) -> String {
+        sdk.isXcode || swift != nil ? quote(sdk.compiler("clang", swift: swift)) : "clang"
+    }
+    private static func linker(_ sdk: DarwinSDK) -> String { sdk.isXcode ? "" : " -fuse-ld=\(quote(sdk.ld64.path)) -mlinker-version=907" }
+
     private static func quote(_ s: String) -> String { ShellWord.inQuotes(s) }
 
     /// The wrappers run as soon as cargo links (ExecutableFile: never "Text file busy" while other threads start tools).
     private static func write(_ text: String, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try ExecutableFile.write(text, to: url, stage: .build)
+    }
+
+    /// Where the programs are that a build finds before those on PATH.
+    public static func wrapperDirectory(workRoot: URL) -> URL { workRoot.appendingPathComponent(".xless/bin", isDirectory: true) }
+
+    /// On a Mac, the `swift` of a crate's build script (swift-rs builds packages with it) starts no sandbox: the build is in xless's
+    /// own, and one cannot start another. Tauri's crates have no Package.resolved, so in their directories the SwiftRs that xless pins on Linux
+    /// is the one that they get (`SwiftPackages.swiftRs`).
+    public static func writeSwiftWrapper(sdk: DarwinSDK, workRoot: URL) throws {
+        let directory = wrapperDirectory(workRoot: workRoot), pins = directory.appendingPathComponent("swift-rs.resolved")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try SwiftPackages.pins.write(to: pins, atomically: true, encoding: .utf8)
+        try write("""
+            #!/bin/sh
+            # Generated by xless: the build is in a sandbox already, which can hold no other.
+            case "$1" in
+            build|package|run|test)
+                command=$1
+                shift
+                if [ -f Package.swift ] && [ ! -e Package.resolved ] && grep -q \(quote(SwiftPackages.swiftRs.url)) Package.swift ../.tauri/tauri-api/Package.swift 2>/dev/null; then
+                    cp \(quote(pins.path)) Package.resolved
+                fi
+                exec \(quote(sdk.compiler("swift", swift: nil))) "$command" --disable-sandbox "$@" ;;
+            esac
+            exec \(quote(sdk.compiler("swift", swift: nil))) "$@"
+
+            """, to: directory.appendingPathComponent("swift"))
     }
 
     // MARK: rustup
@@ -273,19 +306,49 @@ public enum RustApple {
         }
         var toolchainFile = false, active = true
         if toolchain == nil {
-            let fm = FileManager.default
-            var dir = searchFrom.standardizedFileURL
-            let root = workRoot.standardizedFileURL.path
-            while dir.path.hasPrefix(root) {
-                if ["rust-toolchain.toml", "rust-toolchain"].contains(where: { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }) { toolchainFile = true; break }
-                if dir.path == root { break }
-                dir = dir.deletingLastPathComponent()
-            }
+            toolchainFile = hasToolchainFile(searchFrom: searchFrom, root: workRoot)
             active = toolchainFile || (try? Shell.run("rustup", ["show", "active-toolchain"], cwd: searchFrom, env: env,
                                                       baseEnvironment: baseEnvironment, stage: .prepare)) != nil
         }
         for step in rustupSteps(toolchainFile: toolchainFile, activeToolchain: active, toolchain: toolchain, targets: targets) {
             try run(step, cwd: searchFrom)
+        }
+    }
+
+    /// Whether a `rust-toolchain(.toml)` is in `searchFrom`, or above it up to `root`.
+    private static func hasToolchainFile(searchFrom: URL, root: URL) -> Bool {
+        let fm = FileManager.default
+        var dir = searchFrom.standardizedFileURL
+        let root = root.standardizedFileURL.path
+        while dir.path.hasPrefix(root) {
+            if ["rust-toolchain.toml", "rust-toolchain"].contains(where: { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }) { return true }
+            if dir.path == root { return false }
+            dir = dir.deletingLastPathComponent()
+        }
+        return false
+    }
+
+    /// On a Mac the Rust is the user's own, of rustup: what the app's toolchain lacks of `targets` is added to it, as on Linux, and
+    /// nothing is asked of the network when nothing is missing. rustup itself is not installed. It reads the toolchain file of the
+    /// source and runs no code of the app, so it is outside the build's sandbox, which cannot write to ~/.rustup. `llvmTools`: that
+    /// component as well (tauri's build of its Swift, swift-rs, asks for its `llvm-objcopy` with Xcode 27).
+    public static func prepareNative(source: URL, searchFrom: URL, toolchain: String?, targets: [String], llvmTools: Bool = false,
+                                     env: [String: String] = ProcessInfo.processInfo.environment, log: (String) -> Void) throws {
+        guard let path = (try? Shell.run("/bin/sh", ["-c", "command -v rustup"], baseEnvironment: env, stage: .prepare))?.stdout, path.hasPrefix("/") else {
+            throw XlessError(.prepare, "rustup is not on PATH, and the app is written in Rust", fix: "install it from https://rustup.rs, or build in Docker: add --docker")
+        }
+        func installed(_ what: String) -> [Substring]? {
+            (try? Shell.run("rustup", [what, "list", "--installed"] + (toolchain.map { ["--toolchain", $0] } ?? []), cwd: searchFrom, baseEnvironment: env, stage: .prepare))?
+                .stdout.split(whereSeparator: \.isWhitespace)
+        }
+        let present = installed("target")
+        let missing = targets.filter { target in present?.contains { $0 == target } != true }
+        let tools = llvmTools && installed("component")?.contains { $0.hasPrefix("llvm-tools") } != true
+        if missing.isEmpty && !tools { return }
+        log("rustup: adding \((missing + (tools ? ["llvm-tools"] : [])).joined(separator: ", "))\(toolchain.map { " to \($0)" } ?? "")")
+        let steps = rustupSteps(toolchainFile: hasToolchainFile(searchFrom: searchFrom, root: source), activeToolchain: present != nil, toolchain: toolchain, targets: missing)
+        for step in steps where step[1] == "target" ? !missing.isEmpty : step[1] == "component" ? tools : present == nil {
+            try Shell.run(step[0], Array(step.dropFirst()), cwd: searchFrom, baseEnvironment: env, stage: .prepare, passthrough: true)
         }
     }
 

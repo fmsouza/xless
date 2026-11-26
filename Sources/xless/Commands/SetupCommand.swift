@@ -67,8 +67,8 @@ struct SetupCommand: AsyncParsableCommand {
 
     /// What this run sets up from, as its arguments spell it: for a fix that names the same setup with other flags.
     private var sourceArgs: String {
-        if let xcode { return " --xcode \(Self.quote(xcode))" }
-        if let sdk { return " --sdk \(Self.quote(sdk))" }
+        if let xcode { return " --xcode \(ShellWord.quoted(xcode))" }
+        if let sdk { return " --sdk \(ShellWord.quoted(sdk))" }
         return " [--xcode <Xcode .xip or Xcode.app>]"
     }
 
@@ -154,7 +154,7 @@ struct SetupCommand: AsyncParsableCommand {
         let signer = try MacNative.signer(env: env)
         say("    rcodesign, which signs: " + (signer.isInstalled ? "in \(signer.download.final.path)" : "the first run that signs fetches it (\(signer.download.url.lastPathComponent), checked against its SHA-256)"))
         if given != nil, chosen?.app != native.xcode.app {
-            say("note: a build uses \(chosen?.summary ?? "no Xcode yet"): to build with this one, export DEVELOPER_DIR=\(Self.quote(native.xcode.developer.path))")
+            say("note: a build uses \(chosen?.summary ?? "no Xcode yet"): to build with this one, export DEVELOPER_DIR=\(ShellWord.quoted(native.xcode.developer.path))")
         }
         if !launched { say("note: this Xcode has not finished its first launch: if a tool of it fails, open it once (it installs what is missing and asks for its license)") }
         say("==> ready: nothing to install")
@@ -185,7 +185,7 @@ struct SetupCommand: AsyncParsableCommand {
             say("disk: the check asks for about \(need.cache.spoken) free under \(cacheRoot.path) (\(need.cache.key)) and \(need.native.spoken) under \(layout.root.path) (\(need.native.key))")
             for (n, s) in steps.enumerated() {
                 say("[\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
-                say("    " + s.argv.map(Self.quote).joined(separator: " "))
+                say("    " + s.argv.map(ShellWord.quoted).joined(separator: " "))
             }
             if steps.isEmpty { say("nothing to do: Xcode \(x.shortVersion) is installed") }
             return
@@ -296,7 +296,7 @@ struct SetupCommand: AsyncParsableCommand {
     private func list(_ steps: [SetupStep]) {
         for (n, s) in steps.enumerated() {
             say("[\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
-            say("    " + s.argv.map(Self.quote).joined(separator: " "))
+            say("    " + s.argv.map(ShellWord.quoted).joined(separator: " "))
         }
     }
 
@@ -615,11 +615,6 @@ struct SetupCommand: AsyncParsableCommand {
         case .app: "\(source.url.path) (.app)"
         case .export: "its SDK export \(source.url.path) (no Xcode needed)"
         }
-    }
-
-    static func quote(_ s: String) -> String {
-        s.allSatisfy({ $0.isLetter || $0.isNumber || "-_./:=@,+%{}".contains($0) }) && !s.isEmpty
-            ? s : ShellWord.inQuotes(s)
     }
 
     static func minutes(since t: Date) -> String {

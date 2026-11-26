@@ -1,6 +1,6 @@
 # React Native / Expo apps (iOS)
 
-xless builds a React Native app that uses Expo on Linux and ships it to TestFlight, with no Mac and no Xcode on the build machine. It runs the same steps as a Mac build: the JS install, `expo prebuild`, `pod install`, then the Xcode workspace. The workspace is built with [Swift Build](https://github.com/swiftlang/swift-build), the open-source engine behind `xcodebuild`, instead of Xcode. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
+xless builds a React Native app that uses Expo on Linux and ships it to TestFlight, with no Mac and no Xcode on the build machine, and [on a Mac](#on-a-mac) with the Xcode that is installed. On Linux it runs the same steps as a Mac build: the JS install, `expo prebuild`, `pod install`, then the Xcode workspace. The workspace is built with [Swift Build](https://github.com/swiftlang/swift-build), the open-source engine behind `xcodebuild`, instead of Xcode. The app repository stays untouched: everything xless needs to know lives in an **overlay** file kept outside it.
 
 ```sh
 xless run --docker --config ~/ci/my-app.overlay.yml
@@ -171,7 +171,21 @@ Docker creates every volume on first use.
 
 **Getting the build out.** The `.ipa` stays in the volume, at `/cache/work/<overlay name>/.xless/build/ios/out/`. Copy it out with `docker run --rm -v <work volume>:/w -v "$PWD":/out alpine cp /w/<overlay name>/.xless/build/ios/out/<Product>.ipa /out/` (with `--context` as the run chose it: `DOCKER_CONTEXT`, else `colima-xless` when it exists). A build stopped at `finalize` is in `/w/<overlay name>/.xless/build/ios/final/` instead; copy it with `cp -r`.
 
-**Native.** `xless run` refuses an overlay without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the three steps without docker. Step 2 needs everything the images add (Ruby, Bundler, Swift Build, `hermesc`, the shims in `docker/shims`, `/bin/sh` as bash). Native React Native builds are untested.
+### On a Mac
+
+`xless run --config ~/ci/my-app.overlay.yml`, without `--docker`, builds with the Mac's own Node, Ruby and Xcode: the same steps (JS install, `prepare.run`, `expo prebuild`, `pod install`), then `xcodebuild`, all of them in [a sandbox](security.md#an-overlays-build-on-a-mac). [native-install.md](native-install.md#tauri-cargo-and-react-native-apps-on-a-mac) says what has to be installed. What differs from the images:
+
+- **The app is Xcode's.** The versions of the [contract](#what-is-supported) are required as in the images, and so is a pinned revision of each remote Swift package. Hermes is the `hermesc` of React Native's own npm package. `allowMissingCommands` has no meaning: every command of a Mac is there. The pods' configuration switches are left to their own phases.
+- **Build settings** (bundle IDs, the version) go to `xcodebuild` in an `-xcconfig`, per target. A target or project whose name is not ASCII, and two targets whose names differ only in punctuation, are refused.
+- **The app stays in the work copy**, `~/.cache/xless/work/<overlay name>/.xless/build/ios/`, and no volume. The log of `xcodebuild` is `.xless/derived-data/xless/xcodebuild.log` in there.
+- **Simulator:** `xless run --config … --destination simulator`. The app is signed ad hoc by `codesign`, from the inside out.
+- **Not supported:** build phases that start Xcode's own `actool` or `ibtool` by their whole path, or a simulator.
+
+This was tried with a small workspace (an app with an extension, a Swift package with a plugin, a build phase), not with an Expo app of a real size.
+
+### From a source checkout
+
+On Linux `xless run` refuses an overlay without `--docker`; from a source checkout, `XLESS_USE_DOCKER=0 make testflight CONFIG=…` runs the three steps without docker. Step 2 needs everything the images add (Ruby, Bundler, Swift Build, `hermesc`, the shims in `docker/shims`, `/bin/sh` as bash). Native React Native builds on Linux are untested.
 
 ## dSYMs
 

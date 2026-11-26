@@ -356,6 +356,6 @@ public enum AssetSymbols {
         return try PropertyListSerialization.data(fromPropertyList: root, format: .xml, options: 0)
     }
 
-    static func swiftString(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") }
+    static func swiftString(_ s: String) -> String { s.replacing(scalar: "\\", with: "\\\\").replacing(scalar: "\"", with: "\\\"") }
     static func objcString(_ s: String) -> String { swiftString(s) }
 }
