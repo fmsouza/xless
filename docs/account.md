@@ -3,15 +3,16 @@
 xless can set up and run everything an app needs on your Apple developer account and in App Store Connect: API
 keys, bundle IDs and capabilities, certificates and their private keys, profiles, app groups and iCloud containers,
 push notification keys, the app record, the App Store listing with its screenshots, App Privacy, pricing, TestFlight,
-users, the review submission and the release. This page goes through it by task. Every command, option and JSON shape
-is in the reference, [apple-account.md](apple-account.md); what xless keeps, where, and what it sends to which host is
+users, the review submission and the release. This page has what you need first, and the account's tasks; a whole first app is in
+[get-started.md](get-started.md). Every command, option and JSON shape is in the reference, [apple-account.md](apple-account.md); what xless keeps, where, and what it sends to which host is
 in [security.md](security.md).
 
-> **Status.** These commands are tested against recorded Apple answers, not yet end to end on a real Apple account:
-> that acceptance is [#105](https://github.com/fmsouza/xless/issues/105). The parts that use the Apple ID web session
-> (marked *web session* below) rely on Apple's undocumented web interfaces and are the most likely to need a fix
-> once tried for real. If something fails, the error says which interface it was and which page to use in a browser
-> meanwhile; please report it.
+> **Status.** The way of a new app was run once on a real Apple account, from its first API key to a build on a tester's
+> device and the submission to App Review ([the record](acceptance-m7.md#record), 2026-11-24). The approval and `release publish`
+> were not ([#181](https://github.com/fmsouza/xless/issues/181)); what that run did not use is tested against recorded Apple
+> answers. The parts that use the Apple ID web session (marked *web session* below) rely on Apple's undocumented web interfaces and
+> are the most likely to need a fix when Apple changes them. If something fails, the error says which interface it was and which
+> page to use in a browser meanwhile; please report it.
 
 ## Before you start
 
@@ -20,7 +21,7 @@ You need:
 - an **Apple Developer Program** membership, and an Apple ID that is its **Account Holder**, or an **Admin** the
   Account Holder allowed to generate API keys, with two-factor authentication by code or a USB security key
   ([apple-account.md](apple-account.md#signing-in-with-a-security-key));
-- xless installed on a Linux machine ([README](../README.md)).
+- xless [installed](../README.md#install), on Linux, macOS or Windows.
 
 A few things only a person can do, in a browser, and xless never does for you:
 
@@ -35,94 +36,8 @@ A few things only a person can do, in a browser, and xless never does for you:
 
 ## Your first app, from zero
 
-`xless provision` does the account's part in one go, from what the project already declares: `xless.yml` (or an
-overlay for Tauri, Cargo and React Native apps) and the `appstore/` listing next to it.
-
-**1. A secret store and an API key.** Everything xless creates for you goes into the encrypted store, so make it
-first. The first API key can only be made with your Apple ID (*web session*):
-
-```sh
-xless secrets init                          # asks a new passphrase, twice; it cannot be recovered
-xless auth login --keep                     # sign in once (Apple ID, password, the two-factor code); lists your teams
-xless team use ABCDE12345                   # your team ID, from that list
-xless auth api-key create --role ADMIN      # the key goes straight into the store, checked, never on disk in clear
-```
-
-`--keep` keeps the session in memory for the next commands of this terminal (8 hours, at most 2 without use; `--keep 30m`
-for less, `xless auth logout` drops it) and asks whether to keep the store unlocked too, once its passphrase is typed. With a
-yes, everything below asks each secret **once**: the passphrase at `api-key create`, and no more sign-in
-([how it is kept, and for whom](secrets.md#staying-unlocked)). Without it each command asks for itself, once. `--role ADMIN` because provisioning (bundle IDs, certificates, profiles, devices)
-and users need it; a key that only ships builds, edits the listing and releases can be `APP_MANAGER`, the default
-([roles](apple-account.md#xless-auth-api-key)).
-
-**2. The project.** In `xless.yml` (or the overlay), set `teamID` to that team and `bundleID` to the app's identifier
-([xless-yml.md](xless-yml.md)). The entitlements you list there (push notifications, app groups, iCloud, Sign in with
-Apple…) are what `provision` reads to decide the capabilities, groups, containers and keys. An iOS app that embeds
-app extensions declares each one, with its bundle ID and entitlements, under `platforms.ios.extensions`
-([xless-yml.md](xless-yml.md#app-extensions)); a React Native app's come from its last build.
-
-**3. The listing, at least its name.** A new app record takes its name, primary locale and first version from
-`appstore/`:
-
-```text
-appstore/
-  app.yml          primaryLocale: en-US
-                   version: "1.0"
-                   sku: EXAMPLE1          (optional; default: the bundle ID)
-  en-US/
-    name.txt       Example
-```
-
-Add what you already have (the description, keywords, support and privacy URLs, screenshots, price, App Privacy
-answers): [appstore-manifest.md](appstore-manifest.md) has every file and key. `xless store validate --draft` checks it
-without contacting Apple. Without `appstore/`, `provision` leaves the app record, the listing, App Privacy and TestFlight
-out, with a note; `xless apps create` makes the record by hand ([below](#an-app-record-without-provision)).
-
-**4. Plan, then apply.**
-
-```sh
-xless provision plan                                  # what the account lacks; reads only
-xless provision apply --company-name "Example Ltd"    # asks, then does it; --company-name for the team's first app
-```
-
-(With the session still kept, `apply` asks nothing but to go ahead.) `plan` lists the steps by area (bundle IDs, capabilities, app groups, iCloud containers, certificates, keys,
-profiles, the app record, the listing, App Privacy, TestFlight groups), marks the ones that need the web session, and
-says what blocks it and what differs from the project without being changed (drift). `apply` runs them in that order
-in one process: one passphrase, at most one Apple ID sign-in, both before the first step. A new signing key is generated into the store before
-its certificate is requested; an APNs key is created and stored when an entitlement uses push notifications. It
-never deletes or revokes anything; running it again does only what is left, so after a failure, fix the cause and run
-it again. In CI, `apply --yes --json` prints what was done, the step that failed and what is left as one JSON document
-even when it fails (exit 20). Details: [`xless provision`](apple-account.md#xless-provision).
-
-**5. Build and ship.** Install the SDK once (`xless setup --xcode Xcode_27.xip`, [README](../README.md#set-up)), then:
-
-```sh
-xless run .                             # build, sign, upload, deliver to the TestFlight groups of xless.yml
-```
-
-`sign` prints what it makes on the account (a bundle ID, a capability, a profile) before it makes it, and after `provision
-apply` that is nothing; `--no-provisioning-updates` refuses instead
-([what `sign` changes](signing-and-testflight.md#what-sign-changes-on-the-account)). At its end the run prints the
-`xless release submit` command of the build it uploaded.
-
-The build runs the project's SwiftPM plugins and macros as you, but in a session and an empty keyring of their own and
-without the secret variables: a held unlock or a kept Apple ID session is out of their reach
-([security.md](security.md#the-build-and-your-secrets)). The keys come from the store: one passphrase per run, nothing in a secrets file
-([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)). For CI, export what it needs once
-(`xless secrets export ASC_KEY_P8@ABCDE12345 --out key.p8`, and the same for `XLESS_DIST_KEY@…`), put the contents into
-the CI's secret store, and delete the files ([CI](signing-and-testflight.md#continuous-integration)).
-
-**6. The App Store.** Complete the listing and send the build you tested:
-
-```sh
-xless store push                        # the listing and the App Store version of appstore/
-xless release submit --dry-run          # the pre-flight: every problem at once; names the build
-xless release submit                    # to App Review
-```
-
-Nothing is sent to App Review but by that command: not by `run`, `ship` or `provision`. Without `--build` it takes the
-build the version carries, else the one this project uploaded last, when that is the version's newest valid build
-([Release a version](#release-a-version)).
+[Get started: I have nothing yet](get-started.md#i-have-nothing-yet) goes from here to the App Store: the secret store, the API
+key, the project, `xless provision`, the first build and the submission.
 
 ### An app record without `provision`
 
@@ -136,17 +51,7 @@ is not registered yet ([`xless apps`](apple-account.md#xless-apps)). The step-by
 
 ## An app that already exists
 
-Pull its listing into `appstore/`, commit it, and `provision` takes it from there:
-
-```sh
-xless store pull --app com.example.app     # writes appstore/ from App Store Connect
-xless store privacy pull --app com.example.app   # App Privacy too (web session)
-xless provision plan                       # what is still missing for this project (often only signing)
-```
-
-Certificates made elsewhere have private keys xless does not have: `provision` makes a new key and certificate for
-this machine, and leaves the others alone. To use a key you already have instead, import it before planning:
-`xless secrets import XLESS_DIST_KEY@ABCDE12345 --file dist-key.pem --team-id ABCDE12345` ([secrets.md](secrets.md)).
+[Get started: I have an app on App Store Connect](get-started.md#i-have-an-app-on-app-store-connect).
 
 ## Add a device
 
@@ -212,62 +117,11 @@ and assigned by `provision`; by hand, [`xless app-groups` and `xless icloud-cont
 
 ## Invite a tester
 
-**Internal testers** (up to 100, every build at once, no review) must be App Store Connect users of the team. Invite
-them with an Admin key, then add them to a group once they accepted Apple's email:
-
-```sh
-xless users invite ada@example.com --first-name Ada --last-name Lovelace --role developer --app com.example.app
-xless users invitations list                       # until Ada accepts
-xless testflight testers add ada@example.com --group Internal --app com.example.app
-```
-
-Or list them in `xless.yml`, and every `xless ship` adds the missing ones to its groups:
-
-```yaml
-testflight:
-  groups: [Internal]
-  testers: [ada@example.com]
-```
-
-**External testers** can be anyone; Apple emails them once beta app review approved the build:
-
-```sh
-xless testflight groups create "Public Beta" --external --app com.example.app
-xless testflight testers add grace@example.com --group "Public Beta" --app com.example.app
-xless testflight builds add 1.0+42 --group "Public Beta" --app com.example.app
-xless testflight beta-review submit 1.0+42 --app com.example.app
-xless testflight public-link enable "Public Beta" --app com.example.app --limit 500   # or a link to share
-```
-
-`testflight.external` in `xless.yml` does the same at every ship, with the beta information and review contact
-([xless-yml.md](xless-yml.md#testflight), [`xless users`](apple-account.md#xless-users),
-[`xless testflight`](apple-account.md#xless-testflight)).
+[testflight.md](testflight.md): internal testers, external testers, a public link.
 
 ## Release a version
 
-The listing lives in `appstore/`: change it there, review it like code, push it.
-
-```sh
-xless store validate                          # what a submission needs, offline
-xless store push --dry-run                    # what would change on App Store Connect
-xless store push                              # sends only what differs; asks before deleting anything
-xless run .                                   # build 1.1 (42), upload it, deliver it to TestFlight; ends once it is processed
-xless release submit --release manual --dry-run   # the pre-flight: every problem at once; names the build it would send
-xless release submit --release manual             # the build the testers have
-xless release status                          # waiting for review, in review, approved…
-xless release publish                         # once approved, when you choose
-```
-
-`store push` creates the App Store version from app.yml's `version` when it does not exist yet (`xless release create
-1.1` does it on its own). `release submit` checks first, and sends nothing when something is missing: the listing in
-every locale, screenshots, App Privacy published, a price and territories, the build valid with its export compliance
-answered, the App Review contact. Run it again after fixing: it resumes where it stopped. The build is the one `--build 1.1+42`
-names (`xless run` prints the command), else the one attached to the version (`xless release attach`), else the one
-uploaded last from this project, if App Store Connect says that it is the version's newest valid build; it is named
-before anything is sent. `--release auto` releases on
-approval, a date (`2026-12-01`) not before then, and `--phased` spreads an update over seven days (`xless release phased
-pause|resume|complete`). App Review's reasons for a rejection are not in the API: Apple emails them
-([`xless release`](apple-account.md#xless-release)).
+[release.md](release.md): the listing, the pre-flight, App Review, publishing.
 
 ## Which credential each command uses
 
@@ -277,10 +131,7 @@ pause|resume|complete`). App Review's reasons for a rejection are not in the API
 | Apple ID web session (*web session*) | `auth login`, `team list`, `auth api-key create/list/revoke`, `apps create`, `store privacy`, `app-groups`, `icloud-containers`, `keys`, and the steps of `provision apply` that need them |
 | Neither | `auth status`, `auth logout`, `unlock`, `lock`, `session`, `team use`, `secrets`, `store validate` |
 
-**Scripts.** `xless session -- ./script.sh` asks the passphrase once for the whole script (`--sign-in`: and signs in once)
-and drops both when it ends ([one unlock for a script](secrets.md#one-unlock-for-a-script)). Or `xless unlock` (and `xless auth login --keep`, for the web-session commands) at the start of the day lets the
-scripts of that terminal run without asking, and `--no-input` makes them fail instead of waiting for an answer
-([staying unlocked](secrets.md#staying-unlocked), [checking first](apple-account.md#xless-auth)).
+**Scripts:** [automate.md](automate.md), and [ci.md](ci.md) for CI.
 
 Once an app exists, only new apps, new keys and App Privacy answers need the Apple ID: the rest of a release runs on
 the API key, including in CI. Why, and what each sends where: [security.md](security.md#the-apple-id-web-session).

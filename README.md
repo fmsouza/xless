@@ -1,211 +1,116 @@
 # xless
 
-xless builds iOS and macOS apps on Linux, with no Mac, and on a Mac with the Xcode that is installed. It compiles a Swift package, a React Native (Expo) app, a
-Tauri app or a plain Cargo app against Apple's SDK, and can then sign it, package it and upload it to TestFlight. By
-default it installs everything it needs straight onto your Linux machine, from the Xcode download Apple gives you. The
-alternative is a set of Docker images that you build once on your own machine: add `--docker` to the commands. On Linux, React
-Native, Tauri and plain Cargo apps build in the images only.
+xless is one command-line tool for the whole life of an Apple app: it sets up the account and the app, manages the App Store
+listing, builds and signs, sends builds to TestFlight, releases to the App Store, and does all of that in scripts. It builds
+Swift packages, Tauri and plain Cargo apps for iOS and macOS, and React Native (Expo) apps for iOS: with the Xcode that is installed
+on a Mac, or on Linux with no Mac. The account half also runs on Windows.
 
-## On a Mac
+## What it does
 
-With Xcode installed (and opened once), [install xless](#install) and build. Nothing else is set up:
+| | | |
+|---|---|---|
+| **Set up the account and the app** | API keys, bundle IDs and capabilities, certificates, profiles, devices, push keys, users, the app record | `xless provision apply` makes what a project lacks ([account](docs/account.md)) |
+| **Configure the listing** | the texts in every language, screenshots, App Privacy, age rating, price, in-app purchases, as files in your repository | `xless store pull`, `xless store push` ([listing](docs/appstore-manifest.md)) |
+| **Build and sign** | an `.ipa`, a notarized macOS app, a Mac App Store package | `xless run <project-dir>` ([build](docs/build.md), [sign and ship](docs/signing-and-testflight.md)) |
+| **TestFlight** | upload, groups, internal and external testers, beta review | `xless testflight …` ([testers](docs/testflight.md)) |
+| **Release** | a check of what App Review asks for, the submission, phased releases | `xless release submit` ([release](docs/release.md)) |
+| **Automate** | several apps, checks, JSON output, runs that nobody answers, CI | `xless session -- ./script.sh` ([automate](docs/automate.md), [CI](docs/ci.md)) |
 
-```sh
-xless run <project-dir> --build-number 1 --to finalize     # builds
-xless run <project-dir>                                    # builds, signs and ships (docs/signing-and-testflight.md)
-```
+Your keys go into an encrypted store on your own machine. [What xless keeps and sends](docs/security.md), to which host, and what that
+protects from whom.
 
-`xless run --config <overlay.yml>` builds a React Native, Tauri or plain Cargo app, with the Mac's own Node, Ruby or Rust; the
-app's build code runs [in a sandbox](docs/security.md#an-overlays-build-on-a-mac).
+### Where it runs
 
-`xless setup` there only checks what it finds. xless uses Apple's tools where they are, and its own for signing, packaging
-and uploading ([docs/native-install.md](docs/native-install.md#on-a-mac)). `--docker` builds [in Docker](#build-in-docker-instead)
-on a Mac too. The rest of this page is about Linux.
+| | Linux | macOS 14 or later | Windows 10, 11 | WSL 2 |
+|---|---|---|---|---|
+| Account, listing, TestFlight, release | yes | yes | yes | yes |
+| Build Swift packages, sign and ship | yes | yes, with your Xcode | no | as Linux |
+| Build React Native, Tauri, Cargo apps | in Docker | yes, with your Xcode, or in Docker | no | as Linux |
 
-## What you need
-
-- A Linux machine, x86_64 or arm64. Debian and Ubuntu are what xless is tested on. (On Windows xless installs for its
-  [account commands](docs/native-install.md#windows); to build, install it inside WSL2.)
-- A few system packages: `curl`, `tar`, `zip`, `unzip`, `git`, `python3` and the libraries of Swift's Linux toolchain.
-  `xless setup` checks for the commands and prints the `apt-get install` line that adds whatever is missing. It never
-  runs `sudo` itself.
-- Free disk space, per Xcode version: about 17 GB in your home directory's cache (`~/.cache`) while the SDK is taken
-  out of the `.xip` (about 3.5 GB of it stays), and about 10 GB for the native install (`~/.local/share/xless-native`
-  and the installed SDK), plus a few GB for each app's build caches. `xless setup` checks both before it starts.
-- Xcode 27.0 or 26.2 from Apple, as the `.xip` file Apple distributes. xless takes Apple's SDK out of it; it never runs
-  a program from it. See [Get Xcode](#get-xcode).
-- Only for `--docker`: [Docker Engine](https://docs.docker.com/engine/install/) with the buildx plugin, usable without
-  `sudo` (your user is in the `docker` group), and about 40 GB where Docker keeps its data ([Build in Docker
-  instead](#build-in-docker-instead)).
-
-You do not need a Mac, and you do not need to unpack the `.xip`.
-
-### Get Xcode
-
-The quickest way is to let xless download it: it asks for your Apple ID, password and two-factor code in the terminal,
-signs in to Apple once and downloads every version you name, keeping nothing of the sign-in unless you say so
-([docs/xcode-download.md](docs/xcode-download.md)):
-
-```sh
-xless xcode download 27.0 26.2 --output-dir ~/Downloads
-```
-
-Or in a browser:
-
-1. Open <https://developer.apple.com/download/all/> and sign in with your Apple ID. A free Apple ID is enough.
-2. Search for the Xcode version and download its `.xip`. Where Apple offers a "Universal" and an "Apple silicon"
-   file, take the Universal one (for 26.2, xless also accepts the Apple silicon file).
-
-   | Xcode | File to download |
-   |---|---|
-   | 27.2 (build 27B52) | `Xcode_27.2.xip` |
-   | 27.1 (build 27A9275) | `Xcode_27.1.xip` |
-   | 27.0 (build 27A266a) | `Xcode_27.xip` |
-   | 26.6 (build 17F113) | `Xcode_26.6_Universal.xip` |
-   | 26.5 (build 17F42) | `Xcode_26.5_Universal.xip` |
-   | 26.4.1 (build 17E202) | `Xcode_26.4.1_Universal.xip` |
-   | 26.4 (build 17E192) | `Xcode_26.4_Universal.xip` |
-   | 26.3 (build 17C529) | `Xcode_26.3_Universal.xip` |
-   | 26.2 (build 17C52) | `Xcode_26.2_Universal.xip` |
-   | 26.1.1 (build 17B100) | `Xcode_26.1.1_Universal.xip` |
-   | 26.1 (build 17B55) | `Xcode_26.1_Universal.xip` |
-   | 26.0.1 (build 17A400) | `Xcode_26.0.1_Universal.xip` |
-
-3. Keep the file where your browser saved it. The commands below assume `~/Downloads`.
-
-xless recognises the file by its content, not by its name, and refuses any other Xcode version
-([what to do then](docs/troubleshooting.md#xless-setup)).
-[docs/apple-requirements.md](docs/apple-requirements.md) lists everything xless uses from Apple, and why.
+The [whole table](docs/systems.md), with what was tried, what is not there and what is planned.
 
 ## Install
+
+On Linux (x86_64, arm64) and macOS 14 or later (Intel, Apple silicon), and inside WSL 2 (read [what a build can reach
+there](docs/security.md#in-wsl) before you build):
 
 ```sh
 curl -fsSL https://github.com/fmsouza/xless/releases/latest/download/install.sh | sh
 ```
 
-This puts `xless` in `~/.local/bin` and its support files in `~/.local/share/xless`, on Linux and on macOS 14 or later
-(x86_64 or arm64), after checking the download against the release's checksums. It needs no `sudo`. Run it again to upgrade: it replaces both, and xless refuses
-support files from another release than its own ([troubleshooting](docs/troubleshooting.md#installing)). If it says
-that `~/.local/bin` is not on `PATH` in this shell, open a new terminal (many Linux systems add `~/.local/bin` at login
-once it exists) or run the `export` line it prints. If a new terminal still cannot find `xless`, add that line to your shell's startup file. Then check:
-
-```sh
-xless --version
-```
-
 On Windows 10 (1809 or later) or 11, in a PowerShell that is not "as administrator", for the
-[account commands](docs/native-install.md#windows) (builds run inside WSL2, with the line above, or on a Mac or Linux):
+[account commands](docs/native-install.md#windows):
 
 ```powershell
 irm https://github.com/fmsouza/xless/releases/latest/download/install.ps1 | iex
 ```
 
-Each release asset also carries a signed build provenance attestation: proof that the release workflow of
-`fmsouza/xless` built it, from which commit. To check a download yourself with the [GitHub CLI](https://cli.github.com/)
-(signed in with `gh auth login`):
+The installers check the download against the release's checksums, and need no `sudo` and no administrator. Run the line again to
+upgrade. Then check with `xless --version`; if `xless` is not found, or to pick a version, another place, or
+[check a download](docs/install.md#check-a-download) yourself with `gh attestation verify`: [install](docs/install.md). To remove
+it: [uninstall](docs/uninstall.md).
+
+## A first app
+
+You need an Apple Developer Program membership ([before you start](docs/account.md#before-you-start)). This is the short form;
+[get started](docs/get-started.md) explains each step, and has the paths for an app that exists already, for building only, for the
+account only, and for CI.
 
 ```sh
-gh attestation verify xless-<version>-<linux|macos>-<arch>.tar.gz -R fmsouza/xless
+xless secrets init                       # the encrypted store for your keys
+xless auth login --keep                  # your Apple ID, once; lists your teams (on Windows without --keep)
+xless team use ABCDE12345                # your team ID, from that list
+xless auth api-key create --role ADMIN   # the key goes straight into the store
+
+cd MyApp                                 # a project with an xless.yml and an appstore/ directory
+xless provision plan                     # what the account lacks for it
+xless provision apply --company-name "Example Ltd"   # makes it (--company-name for the team's first app)
+
+xless run .                              # builds, signs, uploads, delivers to TestFlight
+xless store push                         # the listing
+xless release submit --release manual    # to App Review
+xless release publish                    # once approved, when you choose
 ```
 
-The Windows zip, `SHA256SUMS`, `install.sh` and `install.ps1` are attested too. The installers themselves check the checksum only; they
-do not need `gh`.
-The macOS program is signed ad hoc, not by an Apple developer: [what that means](docs/security.md#linux-and-macos).
+`xless run` needs Apple's SDK: on a Mac, Xcode, opened once; on Linux, `xless setup` once, below.
 
-## Set up
+<a id="what-you-need"></a>
+<a id="on-a-mac"></a>
+<a id="build-the-sample-app"></a>
+## Build
 
-```sh
-xless setup --xcode ~/Downloads/Xcode_27.xip
-```
+To build only, with no Apple account: `xless run <project-dir> --build-number 1 --to finalize`. It ends with an unsigned app.
 
-This installs, under `~/.local/share/xless-native`, the tools xless builds with: [xtool](https://github.com/xtool-org/xtool),
-[rcodesign](https://github.com/indygreg/apple-platform-rs) and the open-source Swift toolchain that matches the Swift of
-that Xcode (swift.org's, about a 1.1 GB download). Each download is checked against a checksum pinned in xless. It
-then takes Apple's SDK out of the `.xip` and installs it for Swift. It needs no Docker and no `sudo`, leaves any Swift
-you already have alone, and does not touch your shell's startup files: xless finds its own tools. It first checks the
-commands it needs and your free disk space, then prints each step. When it finishes it prints the next command to run.
-To see the plan and the disk space it asks for without running anything, add `--dry-run`.
+- **On a Mac**, with Xcode installed and opened once, nothing else is set up ([build: on a Mac](docs/build.md#on-a-mac)). React
+  Native, Tauri and Cargo apps build with the Mac's own Node, Ruby or Rust ([how](docs/build.md#overlays-on-a-mac)).
+- **On Linux**, <a id="set-up"></a>`xless setup --xcode ~/Downloads/Xcode_27.xip`, once per Xcode version
+  ([build: on Linux](docs/build.md#on-linux): what it needs and installs).
+- <a id="build-in-docker-instead"></a>**In Docker**, on either: `xless setup --docker --xcode …` once, then
+  `xless run --docker …`. On Linux, React Native, Tauri and Cargo apps build there
+  ([build: in Docker](docs/build.md#in-docker)).
+- **In WSL 2**, as on Linux, but read [what a build can reach there](docs/security.md#in-wsl) first.
+- <a id="get-xcode"></a>**The Xcode download** that Linux and Docker need: [the versions, and how to get one](docs/xcode-versions.md).
 
-You do this once per Xcode version. The native install holds one Xcode at a time: for Xcode 26.2 run
-`xless setup --xcode ~/Downloads/Xcode_26.2_Universal.xip`, which replaces 27.0's SDK and Swift (the exported SDKs stay
-in the cache, so switching back is quick). Running it again with the same Xcode does nothing.
+<a id="next"></a>
+## Documentation
 
-## Build the sample app
-
-The install includes a small iOS app, HelloShip. Copy it and build it:
-
-```sh
-cp -r ~/.local/share/xless/samples/HelloShip ~/HelloShip
-xless run ~/HelloShip --build-number 1 --to finalize
-```
-
-If you set up Xcode 26.2 only, run this between the two commands, so that the sample uses that Xcode:
-
-```sh
-echo 'xcode: "26.2"' >> ~/HelloShip/xless.yml
-```
-
-The first build resolves the sample's Swift packages; later ones take under a minute. The build ends with `stopped
-after finalize (--to), nothing delivered`. The finished app is `~/HelloShip/.xless/build/ios/final/HelloShip.app`: an
-unsigned iOS app for arm64 devices. No Apple account is needed for this step.
-
-## Build in Docker instead
-
-The same builds can run in a Docker image instead, which carries everything xless needs. Build it once per Xcode
-version:
-
-```sh
-xless setup --docker --xcode ~/Downloads/Xcode_27.xip
-```
-
-This builds one Docker image on your machine, `xless:local-<arch>-xcode<version>`, with Apple's SDK. It first checks
-Docker and your free disk space, then prints each step with a rough time: most of it is unpacking the `.xip`.
-`--dry-run` shows the plan, and `--arch amd64` (or `arm64`, or both) builds for another architecture.
-
-A Tauri, plain Cargo, React Native or Expo app needs other toolchains too (Rust, Node, Ruby, Hermes). `xless run` adds
-them in a small image on top the first time such an app needs it, and says so; `xless setup --docker --with
-tauri,react-native` does it ahead of time ([images.md](docs/images.md)).
-
-Once the SDK is exported, the `.xip` is no longer needed: to build the image again (on a machine that lost it,
-say), run `xless setup --docker` with no `--xcode`. It reuses the SDK export in `~/.cache/xless/sdk/`, or the one you
-name with `--sdk <dir>` ([troubleshooting.md](docs/troubleshooting.md#without-the-xip)). The same works without
-`--docker` for the native install.
-
-The images never leave your machine: they contain Apple's SDK, so never push them to a registry. A project
-that pins an Xcode (`xcode: "26.2"`) runs in that one's image, another in the newest Xcode's there is an image of.
-
-Then add `--docker` to `xless run`:
-
-```sh
-xless run --docker ~/HelloShip --build-number 1 --to finalize
-```
-
-Paths in the output that start with `/work` are inside the build container, where `/work` is your project directory.
-The build runs as root inside the container, so the files it creates in `~/HelloShip` (`.xless`, `.build`, `.bsp`,
-`xtool` and `xtool.yml`) belong to root: remove that copy with `sudo rm -rf ~/HelloShip`. `xless docker …` is the
-same as `xless run --docker …`.
-
-## Next
-
-- [Set up your Apple account from the terminal](docs/account.md): API keys, certificates, profiles, the app record,
-  the listing, TestFlight and the release, with `xless provision` first; you need an Apple Developer Program
-  membership for this.
-- [Sign the app and upload it to TestFlight](docs/signing-and-testflight.md)
-- [What xless keeps and sends](docs/security.md): the encrypted secret store, the Apple ID session, and which host
-  gets what
-- [React Native and Expo apps](docs/react-native.md)
-- [Tauri v2 apps](docs/tauri.md), for iOS and macOS
-- [Plain Cargo apps](docs/cargo.md) (winit, egui…), for iOS and macOS
-- [The native install in detail](docs/native-install.md): what it installs where, and its limits
+- [Get started](docs/get-started.md): five paths, each to the end
+- [Your Apple account, by task](docs/account.md), and the [reference of every account command](docs/apple-account.md)
+- [The App Store listing as files](docs/appstore-manifest.md)
+- [Build an app](docs/build.md); [React Native and Expo](docs/react-native.md), [Tauri](docs/tauri.md), [Cargo](docs/cargo.md)
+- [Sign it and upload it](docs/signing-and-testflight.md), [testers](docs/testflight.md), [release](docs/release.md)
+- [Automate](docs/automate.md) and [CI](docs/ci.md)
+- [What xless keeps and sends](docs/security.md): the encrypted secret store, the Apple ID session, and which host gets what
 - [Troubleshooting](docs/troubleshooting.md)
-- [Uninstall xless and free its disk space](docs/uninstall.md): `xless clean`
-- [All documentation](docs/README.md), including how xless works and how to contribute
+- [All documentation](docs/README.md), including how xless works and [how to contribute](CONTRIBUTING.md)
 
 ## Apple software
 
 xless contains and distributes no Apple software: no Xcode, no SDKs, no Apple tools. You obtain Xcode from Apple
 yourself and are responsible for complying with its license terms. The SDK you export, and the images that contain it,
 stay on your machine and are not meant to be published.
+
+xless is not made or supported by Apple.
 
 ## Licence
 

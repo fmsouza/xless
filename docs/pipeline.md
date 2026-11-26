@@ -9,14 +9,13 @@ xless takes an app's source and produces what Apple's own tools would:
   not yet confirmed by a real upload: [research/mas-pkg.md](research/mas-pkg.md)).
 
 On a Mac it builds with the Xcode that is installed there ([native-install.md](native-install.md#on-a-mac)).
-Everywhere else it does this on Linux, without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
-from Apple ([apple-requirements.md](apple-requirements.md)). Twelve Xcode releases are supported: 27.2 (27B52), 27.1
-(27A9275), 27.0 (27A266a), 26.6 (17F113), 26.5 (17F42), 26.4.1 (17E202), 26.4 (17E192), 26.3 (17C529), 26.2 (17C52), 26.1.1 (17B100), 26.1 (17B55) and 26.0.1 (17A400).
+On Linux, and in Docker, it does this without Xcode on the build machine. The Darwin SDK comes from an Xcode release you download
+from Apple ([apple-requirements.md](apple-requirements.md)). The supported releases: [xcode-versions.md](xcode-versions.md).
 
 ## Where things run
 
 ```
-┌─ your Linux machine, once per Xcode release ──────────────────────────────┐
+┌─ Linux (a Mac: for --docker only), once per Xcode release ────────────────┐
 │ xless setup --xcode Xcode_27.xip                  (native, the default)    │
 │   → xtool, rcodesign and the Xcode's open-source Swift, pinned downloads   │
 │   → xtool (open source) unpacks the SDK from the .xip; installed for Swift │

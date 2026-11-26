@@ -34,7 +34,7 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
   partly. Every tool xless runs starts without a secret variable, in a POSIX session of its own (which the xless agent
   refuses) and in an empty session keyring (no held unlock, no kept Apple ID session), and unable to open the store, and
   an overlay app's build runs in a container that has no secret, or on a Mac in a sandbox. Any other
-  build still runs as you and can read your files ([below](#the-build-and-your-secrets), and
+  native build still runs as you and can read your files ([below](#the-build-and-your-secrets), and
   [what the Mac's sandbox leaves open](#an-overlays-build-on-a-mac)).
 - **Logs, terminals and bug reports.** No secret is printed, put in an error, in a `--verbose` trace or on a command
   line.
@@ -714,6 +714,12 @@ xless run ~/MyApp --from sign         # sign and upload what it built: no build 
 The second run reads the project's files as the first left them. In containers (`--docker`) the first one's build has xless.yml
 read-only, and the run says when it is another one afterwards; natively nothing keeps a build from changing it. Look at the
 project (`git diff`, `git status`) before the second, if you would not let its build code choose the team and the bundle ID.
+
+In CI, make the two runs two steps, with the secrets in the environment of the second alone ([ci.md](ci.md#build-without-the-secrets)).
+A build step still reaches the later steps of its machine. On GitHub Actions it can write `$GITHUB_ENV` and `$GITHUB_PATH`, which set
+their environment and their programs, and what it leaves running there can read the environment of a later step of the same user. A
+second job on another machine, which gets the built app as an artifact and takes xless.yml and the entitlements from the commit, is the
+stronger form ([ci.md](ci.md#in-two-jobs)). What is in the app is the build's in either.
 
 ### With an installed Xcode
 

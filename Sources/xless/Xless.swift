@@ -4,7 +4,7 @@ import XlessCore
 struct Xless: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "xless",
-        abstract: "Build, sign and ship Apple-platform apps from Linux and macOS.",
+        abstract: "Set up, manage, build and ship Apple apps from the terminal.",
         discussion: """
         Every command takes --no-input (or XLESS_NO_INPUT=1): instead of asking for a passphrase, a sign-in or a \
         confirmation it fails at once, with exit code 23. `xless auth status --json` says what is held, and until when.

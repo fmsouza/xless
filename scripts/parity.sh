@@ -7,7 +7,10 @@
 # are described in docs/research/parity-known-gaps.md.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-S="$ROOT/samples/HelloShip"; W="$ROOT/.xless/parity"; rm -rf "$W"; mkdir -p "$W"
+W="$ROOT/.xless/parity"; S="$W/HelloShip"; rm -rf "$W"; mkdir -p "$W"
+# A copy of the sample, as a macOS app too (the line is a comment in the sample).
+cp -R "$ROOT/samples/HelloShip" "$S"; rm -rf "$S/.xless" "$S/.build"
+sed 's/^  # macos: /  macos: /' "$ROOT/samples/HelloShip/xless.yml" > "$S/xless.yml"
 ALLOW="$ROOT/scripts/parity-allowlist.txt"
 (cd "$ROOT" && swift build -c release --product xless >/dev/null); X="$(cd "$ROOT" && swift build -c release --show-bin-path)/xless"
 status=0

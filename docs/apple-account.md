@@ -49,7 +49,7 @@ instead, through the web interfaces Apple's own pages use (`appstoreconnect.appl
 fails, the error says which interface it was and which page to use in a browser meanwhile.
 
 - The sign-in is Apple's own: SRP (the password itself is never sent), then the second factor: the two-factor code, or
-  a touch on a [security key](#signing-in-with-a-security-key) (Linux). Everything is typed on the terminal
+  a touch on a [security key](#signing-in-with-a-security-key) (Linux, macOS). Everything is typed on the terminal
   (`/dev/tty`); never read from a pipe, a file, an argument or the environment. Accounts with the old two-step
   verification are not supported.
 - The session's cookies stay in memory and are forgotten when the command ends, unless you keep them: after a sign-in

@@ -1,28 +1,39 @@
 # Example only: this workflow is not run by this repository (it lives in docs/examples/, not .github/workflows/).
 # It needs a Linux runner of your own with xless set up (`xless setup --sdk <dir>`; an image holds Apple's SDK, so none is pushed to
 # a registry) and your own secrets (ASC_*, XLESS_DIST_KEY). Never let pull requests of others run on such a runner.
-# Copy it to your app repository's .github/workflows/ and adapt it.
+# Copy it to your app repository's .github/workflows/ and adapt it. What the two steps protect, and what they do not: docs/ci.md.
 name: example-ios
 on: workflow_dispatch
+permissions:
+  contents: read
+env:
+  XLESS_NO_INPUT: 1
 jobs:
   ship:
     runs-on: [self-hosted, linux]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Ship HelloShip to TestFlight
+    defaults:
+      run:
         working-directory: samples/HelloShip
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # Build numbers must increase across every machine that uploads this version (ITMS-90062), so use
+      # the same monotonic scheme everywhere: minutes since 1970. (github.run_number restarts at 1.)
+      - name: The build number
+        id: number
+        run: echo "minutes=$(( $(date +%s) / 60 ))" >> "$GITHUB_OUTPUT"
+      - name: Build HelloShip (no secret)
         env:
+          XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
+        run: xless run . --to finalize
+      - name: What the build changed in the project (no secret)
+        run: git diff --exit-code
+      - name: Sign, and upload to TestFlight
+        env:
+          XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           XLESS_DIST_KEY: ${{ secrets.XLESS_DIST_KEY }}
-        run: |
-          # Build numbers must increase across every machine that uploads this version (ITMS-90062), so use
-          # the same monotonic scheme everywhere: minutes since 1970. (github.run_number restarts at 1.)
-          export XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 ))
-          xless ship --platform ios
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xless-ios
-          path: samples/HelloShip/.xless/build/ios/out/
+        run: xless run . --from sign

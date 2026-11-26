@@ -9,7 +9,7 @@ xless run --docker --config ~/ci/my-app.overlay.yml
 ## Try the sample
 
 The source repository has a small winit app, `samples/HelloCargo`, with an overlay. With the images from
-`xless setup --docker` ([README](../README.md#build-in-docker-instead)), build it up to `finalize`, unsigned and with no Apple account:
+`xless setup --docker` ([build.md](build.md#in-docker)), build it up to `finalize`, unsigned and with no Apple account:
 
 ```sh
 git clone https://github.com/fmsouza/xless.git
@@ -31,7 +31,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/` and `.x
 ## Requirements
 
 - To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate; for macOS the Developer ID certificate), plus its keys in the secret store (or, in CI, the variables under [One command: TestFlight](signing-and-testflight.md#one-command-testflight)).
-- The xless image of the Xcode (`xless setup --docker`, [README](../README.md#build-in-docker-instead)). The `tauri` kit on top of it, which has Rust's installer, is built by the first run that needs it, or by `xless setup --docker --with cargo` ([images.md](images.md#what-there-is)).
+- The xless image of the Xcode (`xless setup --docker`, [build.md](build.md#in-docker)). The `tauri` kit on top of it, which has Rust's installer, is built by the first run that needs it, or by `xless setup --docker --with cargo` ([images.md](images.md#what-there-is)).
 - The app repository is a git checkout, and `Cargo.lock` is committed and up to date (`--locked`). xless copies the **tracked** files of `source:` (and only those) into a work copy under `~/.cache/xless/work/<overlay name>`; the source is never written to. Commit the lockfile, the plist, the icon or asset catalog and every file the overlay refers to. Untracked and ignored files are not copied: a file the app's `build.rs` reads from the tree and git ignores is missing in the work copy. Data that lives outside the repository goes in as a [build input](#build-inputs).
 - `source:` may be a directory inside a git checkout (a workspace in a monorepo). The version lookup and the `GIT_SHA` placeholder read that checkout's git data.
 - A work copy belongs to one source. The first sync records the source in `.xless/source` of the work copy, and a later run of an overlay with the same file name but another source stops at `prepare`; rename one overlay file or delete the work copy.

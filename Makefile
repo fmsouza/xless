@@ -51,7 +51,7 @@ testflight:
 	@if test -n "$(CONFIG)"; then $(XLESS_RUN) --config "$(CONFIG)" $(ARGS); else $(XLESS_RUN) "$(PROJECT)" $(ARGS); fi
 
 .PHONY: simulator sim-launch
-# make simulator CONFIG=<overlay.yml> [ARGS=…]: a React Native app built for the iOS Simulator on Linux (docker), ad-hoc
+# make simulator CONFIG=<overlay.yml> [ARGS=…]: a React Native app built for the iOS Simulator in Docker, ad-hoc
 # signed, no secrets (xless run --destination simulator); it prints the sim-launch command for the app.
 simulator:
 	@test -n "$(CONFIG)" || { echo "usage: make simulator CONFIG=<overlay.yml> [ARGS=…]" >&2; exit 2; }

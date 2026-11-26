@@ -9,7 +9,7 @@ xless run --docker --config ~/ci/my-app.overlay.yml
 ## Try the sample
 
 The source repository has a small Tauri app, `samples/HelloTauri`, with an overlay. With the images from
-`xless setup --docker` ([README](../README.md#build-in-docker-instead)), build it up to `finalize`, unsigned and with no Apple account:
+`xless setup --docker` ([build.md](build.md#in-docker)), build it up to `finalize`, unsigned and with no Apple account:
 
 ```sh
 git clone https://github.com/fmsouza/xless.git
@@ -31,7 +31,7 @@ the work copy under `~/.cache/xless/work/`, in `.xless/build/ios/final/`.
 ## Requirements
 
 - To sign and upload: the one-time Apple setup from [bootstrap.md](bootstrap.md) (API key, distribution certificate), plus its keys in the secret store (or, in CI, the variables under [One command: TestFlight](signing-and-testflight.md#one-command-testflight)).
-- The xless image of the Xcode (`xless setup --docker`, [README](../README.md#build-in-docker-instead)). The `tauri` kit on top of it (Node, pnpm and Rust's installer) is built by the first run that needs it, or by `xless setup --docker --with tauri` ([images.md](images.md#what-there-is)).
+- The xless image of the Xcode (`xless setup --docker`, [build.md](build.md#in-docker)). The `tauri` kit on top of it (Node, pnpm and Rust's installer) is built by the first run that needs it, or by `xless setup --docker --with tauri` ([images.md](images.md#what-there-is)).
 - The app repository is a git checkout. xless copies the **tracked** files of `source:` (and only those) into a work copy under `~/.cache/xless/work/<overlay name>`; the source is never written to. Commit `gen/apple`, the lockfiles and the files the overlay refers to. Untracked and ignored files are not copied: a file the app's `build.rs` downloads into the tree and git ignores (a model, for example) is downloaded again in the work copy, so such a build needs network access.
 - A work copy belongs to one source. The first sync records the source in `.xless/source` of the work copy, and a later run of an overlay with the same file name but another source stops at `prepare`; rename one overlay file or delete the work copy.
 

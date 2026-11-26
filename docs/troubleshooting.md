@@ -25,7 +25,7 @@ their own tables: [tauri.md](tauri.md#troubleshooting), [react-native.md](react-
 | Windows: what you type is not shown, after xless was ended at a question for a secret (Task Manager, `taskkill /F`) | Nothing could give the console its echo back. Close it and open another. |
 | Windows: the secret store's directory is refused | The message names what it found. The store is your own, on a local drive that keeps access lists (NTFS): nothing above it but your profile should decide who may open it. xless repairs nothing: correct it, or move the store with `XDG_DATA_HOME` to a directory that only you may write ([security.md](security.md#windows)). |
 | `sha256 mismatch …; nothing was installed` | The download was damaged or changed. Run the install line again; if it keeps failing, report it. |
-| `warning: docker is not installed` / `the daemon is not reachable` | xless is installed, but builds need Docker: see the next section. |
+| `docker is not installed` | Only `--docker` needs Docker: [build.md](build.md#in-docker). |
 | `[sdk] this xless is <x.y.z>, but its share directory … is from xless <a.b.c>` (exit 11) | The `xless` binary and its support files (`share/xless`: the scripts, Dockerfiles and pinned versions it uses) come from different releases, for example because only the binary was replaced. `xless setup`, `xless run`, `xless docker`, `xless sdk meta` and `xless sdk export` refuse to run that way. Install one release of both: run the install line again (with `XLESS_VERSION=<x.y.z>` for the binary's release, and your `XLESS_PREFIX` if you installed elsewhere; the error prints the command). If the share is named `(XLESS_SHARE)`, that variable chose it: unset it, or point it at the binary's release's share directory. A source build (`0.0.0-dev`) uses its own checkout: `XLESS_SHARE=<the checkout>`. `XLESS_ALLOW_SHARE_MISMATCH=1` goes on anyway, with a warning; meant for developing xless itself. |
 | `… records no release (no VERSION file, no XLESS_VERSION in versions.env)` or `xless's share directory … does not exist` | The share directory is not a release's or a checkout's (each release's share holds a `VERSION` file). Reinstall, or point `XLESS_SHARE` at a release's share directory or a source checkout. |
 
@@ -277,7 +277,9 @@ reports its own errors as `[config]`, exit 10.
 - Single-size app icon sets with dark or tinted variants are not handled. xless falls back to AssetKit's output, and
   the resulting `CFBundleIcons` may be malformed (not verified against App Store Connect). Use a plain single 1024px
   icon.
-- Whether App Store Connect accepts the build despite these gaps has not been confirmed (needs a real upload).
+- App Store Connect took the builds of a small `xless.yml` app with the first of these gaps for TestFlight
+  ([acceptance-m7.md](acceptance-m7.md#record)). With the second it was not tried, and App Review has seen neither
+  ([#181](https://github.com/fmsouza/xless/issues/181)).
 - Apple documents a per-team limit only for Developer ID Application certificates (five), which `sign bootstrap` and
   `xless certs create` check; for other types App Store Connect refuses one too many itself
   ([bootstrap.md](bootstrap.md#how-sign-bootstrap-behaves)).

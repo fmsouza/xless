@@ -73,8 +73,24 @@ code=0; out=$(check "$t/docs/dup.md" 2>&1) || code=$?
 code=0; check >/dev/null 2>&1 || code=$?; [[ $code -eq 2 ]] || fail "no arguments exit $code, want 2"
 code=0; check "$t/nope.md" >/dev/null 2>&1 || code=$?; [[ $code -eq 2 ]] || fail "a missing input exits $code, want 2"
 
-# the repository's own documentation
+# --index: every page given is reached by links from that page, over others too; by a link to one of its headings as well
+out=$(check --index "$t/README.md" "$t/README.md" "$t/docs/guide.md" "$t/docs/research/notes.md") || fail "a page that the index reaches is refused: $out"
+printf '# Lost\n\n[back](guide.md)\n' > "$t/docs/lost.md"
+code=0; out=$(check --index "$t/README.md" "$t/README.md" "$t/docs/guide.md" "$t/docs/lost.md" 2>&1) || code=$?
+[[ $code -eq 1 && "$out" == *"docs/lost.md: "*"README.md"* ]] || fail "a page that nothing links to: exit $code: $out"
+code=0; out=$(check --index "$t/nope.md" "$t/README.md" 2>&1) || code=$?; [[ $code -eq 2 ]] || fail "an index that is not there exits $code, want 2: $out"
+code=0; out=$(check --index 2>&1) || code=$?; [[ $code -eq 2 && "$out" == *usage* ]] || fail "--index alone exits $code, want 2: $out"
+
+# the repository's own documentation: the links, and that the list of pages leads to each
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-out=$(cd "$root" && check README.md CONTRIBUTING.md docs/*.md docs/research/*.md 2>&1) || fail "broken links in the repository's docs:
+out=$(cd "$root" && check --index docs/README.md README.md CONTRIBUTING.md docs/*.md docs/research/*.md 2>&1) || fail "the repository's docs:
+$out"
+
+# the pages and headings that the code names (errors, --help, comments)
+ln -s "$root" "$t/repo"
+(cd "$root" && LC_ALL=C grep -rhoIE '(docs/([a-z0-9-]+/)*[A-Za-z0-9-]+|README)\.md(#[a-z0-9_-]+)?' \
+   --exclude-dir=.build --exclude-dir=node_modules Sources scripts docker samples Package.swift Makefile versions.env || true) | LC_ALL=C sort -u | sed -e '/^README\.md$/d' -e 's,.*,[x](repo/&),' > "$t/named.md"
+[[ $(wc -l < "$t/named.md") -gt 20 ]] || fail "the code names almost no page: $(cat "$t/named.md")"
+out=$(check "$t/named.md" 2>&1) || fail "the code names a page or a heading that is not there:
 $out"
 echo "check-doc-links.test.sh: OK"

@@ -1,11 +1,11 @@
 # xless.yml reference
 
-`xless.yml` lives in the project directory next to `Package.swift` (as a file: `xless run` in containers refuses a link). Example (the HelloShip sample):
+`xless.yml` lives in the project directory next to `Package.swift` (as a file: `xless run` in containers refuses a link). Example (the HelloShip sample, with its `macos` line, which is commented out in the sample):
 
 ```yaml
 bundleID: com.example.helloship
 teamID: ABCDE12345
-version: 1.0.0
+version: "1.0"
 build: 1
 platforms:
   ios:   { minimumOS: "17.0", product: HelloShip, entitlements: ios.entitlements }
@@ -79,7 +79,7 @@ bundle ID outside the app's, a duplicate, or `extensions` under `macos` is a `[c
 ```yaml
 testflight:
   groups: ["Internal"]
-  whatToTest: "Launch screen built on Linux"
+  whatToTest: "The new launch screen"
   testers: [ada@example.com, {email: grace@example.com, firstName: Grace, lastName: Hopper}]
   external:
     groups: ["Public Beta"]

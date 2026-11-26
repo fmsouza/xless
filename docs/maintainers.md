@@ -14,8 +14,8 @@ The scripts named here run from a source checkout. Those that run Apple's progra
   `swift:<SWIFT_VERSION>-jammy` image, pinned by digest). `swift test --package-path ThirdParty/AssetKit` runs AssetKit's.
 - `bash Tests/shell/<name>.test.sh` runs one shell test; CI runs them all, on Linux and (but those with a `SKIP` guard
   for it) on macOS, there with the system's bash 3.2, sed, stat and tar.
-- `python3 -I scripts/check-doc-links.py README.md CONTRIBUTING.md docs/*.md` checks the documentation's relative
-  links (`Tests/shell/check-doc-links.test.sh` runs it too).
+- `python3 -I scripts/check-doc-links.py --index docs/README.md README.md CONTRIBUTING.md docs/*.md docs/research/*.md` checks the
+  documentation's relative links, and that every page is reached from docs/README.md (`Tests/shell/check-doc-links.test.sh` runs it too).
 
 All the Docker commands below use the active Docker context. To use a separate engine (for example a dedicated Colima
 VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that `xless run --docker` and
@@ -121,7 +121,7 @@ xless accepts only the Xcode releases it has measured. Adding one takes, on a Ma
    and set `XCODE_SHORT_<B>` (the marketing version), `XCODE_APPLE_SWIFT_<B>` (what the Xcode's default toolchain's
    `swift --version` reports), `XCODE_BUILD_MACHINE_OS_<B>` (the `BuildMachineOSBuild` that Xcode stamps into the
    apps it builds, from a reference build) and `XCODE_XIP_SHA256_<B>` (the `shasum -a 256` of each `.xip` download of
-   that release, space separated, so that `xless setup` recognises it).
+   that release, space separated, so that `xless setup` recognises it). Add its row to [xcode-versions.md](xcode-versions.md#the-versions).
 2. **The Swift toolchain** (Ruling R10): `XCODE_SWIFT_<B>`, the open-source Swift release with the same major.minor as
    Apple's and the highest patch not above it; for a release other than `SWIFT_VERSION`, its
    `SWIFT_TOOLCHAIN_<x_y_z>_*` download pins. `scripts/xcode-swift.sh <B>` checks the entry and prints what is missing.
