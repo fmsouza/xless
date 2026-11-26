@@ -34,7 +34,7 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
   partly. Every tool xless runs starts without a secret variable, in a POSIX session of its own (which the xless agent
   refuses) and in an empty session keyring (no held unlock, no kept Apple ID session), and unable to open the store, and
   an overlay app's build runs in a container that has no secret, or on a Mac in a sandbox. Any other
-  build still runs as you and can read your files ([below](#the-build-and-your-secrets), and
+  native build still runs as you and can read your files ([below](#the-build-and-your-secrets), and
   [what the Mac's sandbox leaves open](#an-overlays-build-on-a-mac)).
 - **Logs, terminals and bug reports.** No secret is printed, put in an error, in a `--verbose` trace or on a command
   line.
