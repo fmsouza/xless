@@ -41,18 +41,6 @@ public enum NativeSetupPlan {
                                      "libsqlite3-0", "libstdc++-11-dev", "libxml2-dev", "libz3-dev", "pkg-config", "tzdata", "zlib1g-dev"]
     public static var aptLine: String { "sudo apt-get install -y " + aptPackages.joined(separator: " ") }
 
-    /// versions.env's spelling of an architecture: AARCH64 / X86_64 (and the downloads' aarch64 / x86_64).
-    static func tableArch(_ arch: String) -> String { arch == "arm64" ? "AARCH64" : "X86_64" }
-
-    /// The toolchain release Ruling R10 maps the Xcode to.
-    public static func swiftVersion(for xcode: KnownXcode, table: [String: String]) throws -> String {
-        guard let v = table["XCODE_SWIFT_\(xcode.build)"], !v.isEmpty else {
-            throw XlessError(.sdk, "versions.env maps Xcode \(xcode.shortVersion) (\(xcode.build)) to no Swift toolchain (XCODE_SWIFT_\(xcode.build))",
-                             fix: "use an Xcode this xless supports, or an xless that supports this one")
-        }
-        return v
-    }
-
     private static func pin(_ key: String, table: [String: String], arch: String) throws -> String {
         guard let v = table[key], !v.isEmpty else {
             throw XlessError(.sdk, "versions.env has no \(key), which a native setup on \(arch) downloads with",
@@ -63,7 +51,7 @@ public enum NativeSetupPlan {
 
     /// rcodesign, which signs: the release for Linux, or for a Mac (the same version, by its own pin).
     public static func rcodesign(arch: String, mac: Bool, table: [String: String], layout: NativeLayout) throws -> NativeDownload {
-        let a = tableArch(arch), version = try pin("RCODESIGN_VERSION", table: table, arch: arch)
+        let a = PackRecipe.tableArch(arch), version = try pin("RCODESIGN_VERSION", table: table, arch: arch)
         let name = "apple-codesign-\(version)-\(a.lowercased())-\(mac ? "apple-darwin" : "unknown-linux-musl").tar.gz"
         return NativeDownload(kind: .rcodesign, url: URL(string: "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F\(version)/\(name)")!,
                               sha256: try pin("RCODESIGN_SHA256_\(mac ? "DARWIN_" : "")\(a)", table: table, arch: arch), final: layout.rcodesign(version: version))
@@ -87,9 +75,8 @@ public enum NativeSetupPlan {
                             store: XcodeStore, table: [String: String], reexport: Bool, abilities: PackPlan.Abilities,
                             installed: (_ tool: String, _ version: String) -> URL? = { _, _ in nil },
                             existing: (URL) -> Bool) throws -> [SetupStep] {
-        let x = source.xcode, a = tableArch(arch), lower = a.lowercased()
+        let x = source.xcode, a = PackRecipe.tableArch(arch), lower = a.lowercased()
         func pin(_ key: String) throws -> String { try Self.pin(key, table: table, arch: arch) }
-        _ = try swiftVersion(for: x, table: table)
         let xtoolV = try pin("XTOOL_VERSION"), rcV = try pin("RCODESIGN_VERSION")
         let downloads = [
             ("xtool", xtoolV, NativeDownload(kind: .appImage, url: URL(string: "https://github.com/xtool-org/xtool/releases/download/\(xtoolV)/xtool-\(lower).AppImage")!,

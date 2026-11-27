@@ -672,13 +672,7 @@ struct SetupCommand: AsyncParsableCommand {
 
     // MARK: - Helpers
 
-    static var hostArch: String {
-        #if arch(arm64)
-        "arm64"
-        #else
-        "amd64"
-        #endif
-    }
+    static var hostArch: String { XcodeEnvironment.hostArch }
 
     /// The setup there is on this system.
     static var name: String { isLinux ? "xless setup" : "xless setup --docker" }

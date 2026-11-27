@@ -113,7 +113,7 @@ public enum PackPlan {
             estimate: "seconds", action: .packBegin(staging: staging, from: from, manifest: manifest)))
 
         if prepareSDK {
-            let a = NativeSetupPlan.tableArch(arch), key = "SWIFT_TOOLCHAIN_\(swift.replacingOccurrences(of: ".", with: "_"))"
+            let a = PackRecipe.tableArch(arch), key = "SWIFT_TOOLCHAIN_\(swift.replacingOccurrences(of: ".", with: "_"))"
             func pin(_ k: String) throws -> String {
                 guard let v = table[k], !v.isEmpty else {
                     throw XlessError(.sdk, "versions.env has no \(k), which the pack of Xcode \(version) on \(arch) is prepared with",

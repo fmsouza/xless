@@ -222,7 +222,8 @@ public struct XcodeEnvironment: Sendable {
         }
     }
 
-    static var hostArch: String {
+    /// This machine's architecture, as packs and images name it: arm64 or amd64.
+    public static var hostArch: String {
         #if arch(arm64)
         "arm64"
         #else

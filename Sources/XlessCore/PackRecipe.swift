@@ -91,6 +91,6 @@ public enum PackRecipe {
     /// The key of an Xcode's vetted .xip checksums (`XCODE_XIP_SHA256_<build>`): no input of a pack.
     static let xipChecksumPrefix = "XCODE_XIP_SHA256_"
 
-    /// versions.env's spelling of an architecture (the same as `NativeSetupPlan.tableArch`, which XlessCore cannot import).
-    static func tableArch(_ arch: String) -> String { arch == "arm64" ? "AARCH64" : "X86_64" }
+    /// versions.env's spelling of an architecture: AARCH64 / X86_64 (and the downloads' aarch64 / x86_64).
+    public static func tableArch(_ arch: String) -> String { arch == "arm64" ? "AARCH64" : "X86_64" }
 }
