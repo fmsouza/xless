@@ -60,6 +60,25 @@ and `toolchain-meta.json`, about 3 GB), which `xless setup` writes once from the
 needed any more. It holds Apple's SDK too: it is what you back up and copy to another machine of yours, never to a
 registry ([maintainers.md](maintainers.md#images-on-other-machines)).
 
+## Which Docker
+
+Every xless command that talks to Docker uses the same one: `xless setup --docker`, `xless run --docker`, `xless clean`,
+`xless sdk export`, and a native setup when it asks whether a running build uses a pack. It is the context
+`DOCKER_CONTEXT` names, else `colima-xless` when that context exists, else docker's current one. `DOCKER_CONTEXT` is read
+from the environment, or from `testflight.env` (`XLESS_TESTFLIGHT_ENV`), whose value wins, as it does for `xless run`. A
+pack volume is in the daemon that prepared it, so a run finds what setup prepared only in the same one. The repository's
+scripts choose the same way (`scripts/docker-context.sh`; [maintainers.md](maintainers.md)).
+
+A `DOCKER_CONTEXT` that docker does not have stops the command before it does anything, with exit 2 and the contexts
+there are. `xless setup --docker` prints:
+
+```
+error: [config] DOCKER_CONTEXT is colima-xless (set in the environment), but docker has no context of that name; its contexts: colima, default — set DOCKER_CONTEXT to one of them in the environment, or remove it there: xless then uses colima-xless when that context exists, else docker's current one
+```
+
+(`xless run` prints the same after `testflight: `, with `;` before what to do.) Set `DOCKER_CONTEXT` to a context that
+`docker context ls` lists, or remove it.
+
 ## Where the packs are
 
 | | Where | Chosen by |

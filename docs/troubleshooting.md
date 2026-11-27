@@ -122,6 +122,7 @@ With `--docker`:
 
 | Symptom | What to do |
 |---|---|
+| `DOCKER_CONTEXT is … (set in …), but docker has no context of that name; its contexts: …` (exit 2, before anything runs; `xless run` and the scripts too) | `DOCKER_CONTEXT`, in the environment or in the file the message names (`testflight.env`), names a context docker does not have. Set it to one that `docker context ls` lists, or remove it: xless then uses `colima-xless` when that context exists, else docker's current one ([images.md](images.md#which-docker)). |
 | `docker is not installed (or not on PATH)`, or `` `docker info` failed `` | Check that `docker info` works in your shell. If Docker is missing, install Docker Engine with the buildx plugin: <https://docs.docker.com/engine/install/>. |
 | `Docker refused the connection: permission denied on its socket` | Add yourself to the `docker` group: `sudo usermod -aG docker $USER`, then log out and in again (or run `newgrp docker`). |
 | `cannot connect to the Docker daemon` | Start Docker: `sudo systemctl start docker`. |
