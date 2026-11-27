@@ -9,7 +9,9 @@ set -eu
 die() { echo "pack-check: $*" >&2; exit 1; }
 pack=$(cd -P "$1" 2>/dev/null && pwd -P) || die "no pack at $1"
 shims=${XLESS_SHIM_DIR:-}
-[ -n "$shims" ] && [ -d "$shims" ] || die "XLESS_SHIM_DIR names no directory of shims (${shims:-unset}): the checks run Xcode's tools through them"
+if [ -z "$shims" ] || [ ! -d "$shims" ]; then
+  die "XLESS_SHIM_DIR names no directory of shims (${shims:-unset}): the checks run Xcode's tools through them"
+fi
 export XLESS_XCODE="$pack" PATH="$shims:$pack/toolchain/usr/bin:$PATH"
 bundle="$pack/config/swiftpm/swift-sdks/darwin.artifactbundle"
 tmp=$(mktemp -d)
@@ -26,8 +28,9 @@ echo 'int f(void){return 0;}' | PATH="$shims/prepare:$PATH" clang -x c - -dynami
 test -s "$tmp/stub" || die "the iOS stub dylib is empty"
 # A 64-bit Mach-O (magic feedfacf, little-endian) of file type MH_DYLIB (6), which CocoaPods' embed-frameworks script takes
 # for "dynamically linked shared library" (`file`, where it is installed, says so too).
-[ "$(od -An -tx1 -N4 "$tmp/stub" | tr -d ' \n')" = cffaedfe ] && [ "$(od -An -tu4 -j12 -N4 "$tmp/stub" | tr -d ' \n')" = 6 ] \
-  || die "the iOS stub dylib is no 64-bit Mach-O dynamic library"
+if [ "$(od -An -tx1 -N4 "$tmp/stub" | tr -d ' \n')" != cffaedfe ] || [ "$(od -An -tu4 -j12 -N4 "$tmp/stub" | tr -d ' \n')" != 6 ]; then
+  die "the iOS stub dylib is no 64-bit Mach-O dynamic library"
+fi
 if command -v file >/dev/null 2>&1; then
   file "$tmp/stub" | grep -q 'Mach-O 64-bit.*dynamically linked shared library' || die "file does not take the iOS stub dylib for a dynamic library: $(file "$tmp/stub")"
 fi

@@ -54,6 +54,11 @@ grep -q 'xcrun --find actool' "$t/out" || fail "xcrun --find message: $(cat "$t/
 check STUB_TEXT=1 && fail "a stub dylib that is no Mach-O was accepted"
 grep -q 'no 64-bit Mach-O' "$t/out" || fail "Mach-O message: $(cat "$t/out")"
 
+check XLESS_SHIM_DIR= && fail "no shims was accepted"
+grep -q 'XLESS_SHIM_DIR names no directory of shims (unset)' "$t/out" || fail "no shims message: $(cat "$t/out")"
+check XLESS_SHIM_DIR="$t/none" && fail "a shims directory that is not there was accepted"
+grep -q "XLESS_SHIM_DIR names no directory of shims ($t/none)" "$t/out" || fail "missing shims message: $(cat "$t/out")"
+
 mkpack; rm "$inc/endian.h"; touch "$inc/endian.h"
 check && fail "an endian.h that is no link was accepted"
 grep -q endian.h "$t/out" || fail "endian.h message: $(cat "$t/out")"
