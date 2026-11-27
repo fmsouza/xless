@@ -167,6 +167,11 @@ func swiftBuildHashIgnoresTheFixture(file: String) throws {
     flipped["SWIFT_VERSION"] = "6.2.3"
     #expect(try digest(.sdk, build: "27A266a", table, share) != digest(.sdk, build: "27A266a", flipped, share))
     #expect(try digest(.sdk, build: "17C52", table, share) != digest(.sdk, build: "17C52", flipped, share))
+    // A third engine release: 27A266a's Swift is no longer the engine's (own → separate), 17C52's still is not (separate both times).
+    var third = table
+    third["SWIFT_VERSION"] = "6.5.0"
+    #expect(try digest(.sdk, build: "27A266a", table, share) != digest(.sdk, build: "27A266a", third, share))
+    #expect(try digest(.sdk, build: "17C52", table, share) == digest(.sdk, build: "17C52", third, share))
 }
 
 @Test func swiftVersionComesFromTheTable() throws {
