@@ -25,6 +25,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=SCRIPTDIR/docker-context.sh
 . "$root/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
 ctx="$(docker_context test-tauri-linux)" || exit 2
+[[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 vsuf=""; plat=()   # ARCH=amd64|arm64 runs the image of that architecture (under emulation when it is not the host's)
 if [[ -n "${ARCH:-}" ]]; then

@@ -50,6 +50,8 @@ import XlessCore
     @Test func unsetItIsColimaXlessWhenDockerHasItElseDockersOwn() throws {
         #expect(try decide(["HOME": "/h"], docker: Docker("default\ncolima-xless\n")) == "colima-xless")
         #expect(try decide(["HOME": "/h"], docker: Docker("default\ncolima\n")) == nil)
+        // a DOCKER_HOST that is set is kept: docker's current one
+        #expect(try decide(["HOME": "/h", "DOCKER_HOST": "tcp://build:2376"], docker: Docker("default\ncolima-xless\n")) == nil)
         // a docker that does not answer: a set context goes to docker as it is
         #expect(try decide(["HOME": "/h", "DOCKER_CONTEXT": "x"], docker: Docker("", code: 127)) == "x")
     }

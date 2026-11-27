@@ -23,6 +23,7 @@ image="${XLESS_IMAGE:-xless:$("$ROOT/scripts/docker-images.sh" tag --arch "$arch
 # shellcheck source=SCRIPTDIR/docker-context.sh
 . "$ROOT/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
 ctx="$(docker_context parity)" || exit 2
+[[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
 args=(docker)
 [[ -z "$ctx" ]] || args+=(--context "$ctx")
 # shellcheck source=SCRIPTDIR/xcode-pack-args.sh

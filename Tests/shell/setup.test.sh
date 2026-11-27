@@ -153,7 +153,7 @@ grep -q 'next: xless run' "$t/out" && fail "--dry-run promised the next step"
 extra=(DOCKER_CONTEXT=gone STUB_CONTEXTS="colima default")
 run ok --docker --xcode "$xip" --arch arm64 --dry-run
 [[ $code == 2 ]] || fail "a missing context: exit $code: $(cat "$t/err")"
-grep -qxF "error: [config] DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: colima, default — set DOCKER_CONTEXT to one of them in the environment, or remove it there: xless then uses colima-xless when that context exists, else docker's current one" "$t/err" \
+grep -qxF "error: [config] DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: colima, default — set DOCKER_CONTEXT to one of them in the environment, or remove it there: xless then uses colima-xless when that context exists and DOCKER_HOST is not set, else docker's current one" "$t/err" \
   || fail "a missing context's message: $(cat "$t/err")"
 [[ "$(cat "$log")" == "context ls --format {{.Name}}" ]] || fail "docker asked more than its contexts: $(cat "$log")"
 printf 'DOCKER_CONTEXT=gone\n' > "$t/run.env"

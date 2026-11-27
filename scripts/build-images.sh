@@ -22,6 +22,7 @@ done
 # shellcheck source=SCRIPTDIR/docker-context.sh
 . "$repo/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
 ctx="$(docker_context build-images)" || exit 2
+[[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
 [[ -z "$ctx" ]] || export DOCKER_CONTEXT="$ctx"
 echo "==> the xless image of this checkout for ${archs[*]}; docker context: ${DOCKER_CONTEXT:-(current)}" >&2
 start=$(date +%s)

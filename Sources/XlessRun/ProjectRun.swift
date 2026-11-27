@@ -224,7 +224,11 @@ public final class ProjectRun {
         }
         let listing = ask(["docker"] + DockerContext.listing, quiet: true, without: [DockerContext.variable])
         do {
-            dockerCLI = ["docker"] + DockerContext.arguments(try DockerContext.choose(given, contexts: listing.code == 0 ? DockerContext.listed(listing.output) : nil))
+            let chosen = try DockerContext.choose(given, contexts: listing.code == 0 ? DockerContext.listed(listing.output) : nil,
+                                                  host: environment[DockerContext.hostVariable])
+            dockerCLI = ["docker"] + DockerContext.arguments(chosen)
+            // A chosen context is the docker: its calls go without a DOCKER_HOST, as a script's do (`HostDocker.environment`).
+            if chosen != nil { environment[DockerContext.hostVariable] = nil }
         } catch { throw RunStop.usage("\(error.cause); \(error.fix)") }
     }
 

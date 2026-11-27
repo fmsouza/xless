@@ -116,9 +116,10 @@ with a note that names the pack and its fix.
   installed, and a pin chooses among several. With `--docker`: the image of this xless, `xless:<version>-<arch>`, with
   that Xcode's pack read-only in every container ([images.md](images.md#what-a-run-does)). `image:`
   in xless.yml or the overlay, or `XLESS_IMAGE`, names another image for the build step
-  ([images.md](images.md#an-image-of-your-own)). The Docker context is `DOCKER_CONTEXT` when set (in the environment, or in `testflight.env`, which wins), else
-  `colima-xless` when that context exists, else the current one: the same Docker as `xless setup --docker` and `xless
-  clean` use. A `DOCKER_CONTEXT` that docker does not have stops the run before anything, exit 2:
+  ([images.md](images.md#an-image-of-your-own)). The Docker context is `DOCKER_CONTEXT` when set (in the environment, or in `testflight.env`, which wins);
+  else, when `DOCKER_HOST` is set, the current one (that address); else `colima-xless` when that context exists; else the
+  current one: the same Docker as `xless setup --docker` and `xless clean` use. A chosen context wins over a `DOCKER_HOST`
+  that is set, which the run's docker calls then go without. A `DOCKER_CONTEXT` that docker does not have stops the run before anything, exit 2:
   `testflight: DOCKER_CONTEXT is … (set in …), but docker has no context of that name; its contexts: …; set DOCKER_CONTEXT
   to one of them …` ([images.md](images.md#which-docker)).
 - **Build number.** `XLESS_BUILD_NUMBER` if set, else `$(( $(date +%s) / 60 ))`, which is monotonic across machines.

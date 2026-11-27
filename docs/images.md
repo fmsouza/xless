@@ -63,17 +63,26 @@ registry ([maintainers.md](maintainers.md#images-on-other-machines)).
 ## Which Docker
 
 Every xless command that talks to Docker uses the same one: `xless setup --docker`, `xless run --docker`, `xless clean`,
-`xless sdk export`, and a native setup when it asks whether a running build uses a pack. It is the context
-`DOCKER_CONTEXT` names, else `colima-xless` when that context exists, else docker's current one. `DOCKER_CONTEXT` is read
-from the environment, or from `testflight.env` (`XLESS_TESTFLIGHT_ENV`), whose value wins, as it does for `xless run`. A
-pack volume is in the daemon that prepared it, so a run finds what setup prepared only in the same one. The repository's
-scripts choose the same way (`scripts/docker-context.sh`; [maintainers.md](maintainers.md)).
+`xless sdk export`, and a native setup when it asks whether a running build uses a pack. It is:
+
+1. the context `DOCKER_CONTEXT` names, when it is set;
+2. else, when `DOCKER_HOST` is set, docker's current one, which is then the daemon at that address (`DOCKER_HOST` is left
+   as it is);
+3. else `colima-xless` when that context exists;
+4. else docker's current one.
+
+`DOCKER_CONTEXT` is read from the environment, or from `testflight.env` (`XLESS_TESTFLIGHT_ENV`), whose value wins, as it
+does for `xless run`. A context chosen in steps 1 or 3 is the docker even when `DOCKER_HOST` is set: xless calls docker
+with `--context`, and what it runs that calls docker itself (`scripts/docker-images.sh`) gets `DOCKER_CONTEXT` with
+`DOCKER_HOST` removed, since docker ranks `DOCKER_HOST` above `DOCKER_CONTEXT`. A pack volume is in the daemon that
+prepared it, so a run finds what setup prepared only in the same one. The repository's scripts choose the same way
+(`scripts/docker-context.sh`; [maintainers.md](maintainers.md)).
 
 A `DOCKER_CONTEXT` that docker does not have stops the command before it does anything, with exit 2 and the contexts
 there are. `xless setup --docker` prints:
 
 ```
-error: [config] DOCKER_CONTEXT is colima-xless (set in the environment), but docker has no context of that name; its contexts: colima, default — set DOCKER_CONTEXT to one of them in the environment, or remove it there: xless then uses colima-xless when that context exists, else docker's current one
+error: [config] DOCKER_CONTEXT is colima-xless (set in the environment), but docker has no context of that name; its contexts: colima, default — set DOCKER_CONTEXT to one of them in the environment, or remove it there: xless then uses colima-xless when that context exists and DOCKER_HOST is not set, else docker's current one
 ```
 
 (`xless run` prints the same after `testflight: `, with `;` before what to do.) Set `DOCKER_CONTEXT` to a context that

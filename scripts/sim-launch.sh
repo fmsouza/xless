@@ -55,6 +55,7 @@ if [[ "$app" == volume:* ]]; then
   # shellcheck source=SCRIPTDIR/docker-context.sh
   . "$(dirname "$0")/docker-context.sh"   # docker_context: the context, as xless chooses it
   ctx="$(docker_context sim-launch)" || exit 2
+  [[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
   docker=(docker); [[ -z "$ctx" ]] || docker+=(--context "$ctx")
   echo "==> copying $inner out of volume $volume" >&2
   alpine="$(sed -n 's/^ALPINE_IMAGE=//p' "$(dirname "$0")/../versions.env")"

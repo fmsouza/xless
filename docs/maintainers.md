@@ -18,14 +18,19 @@ The scripts named here run from a source checkout. Those that run Apple's progra
   documentation's relative links, and that every page is reached from docs/README.md (`Tests/shell/check-doc-links.test.sh` runs it too).
 
 All the Docker commands below use the active Docker context. To use a separate engine (for example a dedicated Colima
-VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that, when `DOCKER_CONTEXT` is not set,
-these prefer a context named `colima-xless` when one exists: every xless command that talks to Docker (`xless setup
+VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that, when neither `DOCKER_CONTEXT` nor
+`DOCKER_HOST` is set, these prefer a context named `colima-xless` when one exists (with `DOCKER_HOST` set and no
+`DOCKER_CONTEXT`, they use docker's current one, that address): every xless command that talks to Docker (`xless setup
 --docker`, `xless run --docker`, `xless clean`, `xless sdk export`: `Sources/XlessCore/DockerContext.swift` decides it
-for all of them, and they also read `DOCKER_CONTEXT` from `testflight.env`), and the scripts that source
-`scripts/docker-context.sh`: `scripts/build-images.sh` (`make images`), `scripts/sim-launch.sh`, `scripts/parity.sh`,
-the sample tests `scripts/test-cargo-linux.sh`, `scripts/test-tauri-linux.sh` and `scripts/test-rn-linux.sh`, and `make
-test-image` (`Tests/shell/image-target.sh`). A `DOCKER_CONTEXT` that docker does not have stops each of them before
-anything, exit 2, with the contexts there are ([images.md](images.md#which-docker) has the message).
+for all of them), and the scripts that source `scripts/docker-context.sh`: `scripts/build-images.sh` (`make images`),
+`scripts/sim-launch.sh`, `scripts/parity.sh`, `scripts/acceptance-m7.sh`, the sample tests `scripts/test-cargo-linux.sh`,
+`scripts/test-tauri-linux.sh` and `scripts/test-rn-linux.sh`, and `make test-image` (`Tests/shell/image-target.sh`). Both
+read `DOCKER_CONTEXT` from the environment and from `testflight.env` (`XLESS_TESTFLIGHT_ENV`, else
+`~/.config/xless/testflight.env`), whose value wins; a script reads a plain name there only (`DOCKER_CONTEXT=colima`, quoted
+or not), and stops on any other form rather than guess what xless would make of it. A chosen context is the docker even
+with `DOCKER_HOST` set: xless passes `--context`, and the scripts remove `DOCKER_HOST` before they call docker (docker ranks
+it above `DOCKER_CONTEXT`). A `DOCKER_CONTEXT` that docker does not have stops each of them before anything, exit 2, with
+the contexts there are ([images.md](images.md#which-docker) has the message).
 
 ## Windows
 
