@@ -12,6 +12,12 @@ public struct SetupStep: Equatable, Sendable {
     /// argv is the equivalent `xless sdk install`).
     /// Docker setup only: `kit`, the image of a kit on that Xcode's, built unless it is there already; `tidy`, the argv, whose
     /// failure is none of the setup's.
+    /// An Xcode pack (`PackPlan`), each in-process, the argv the equivalent command: `packBegin`, the staging directory made
+    /// afresh (a leftover removed), seeded from the pack at `from` with the parts `manifest` records (those still current),
+    /// and its `pack.json` written from `manifest` (`PackPlan.begin`); `packSDK`, `xtool sdk install` into `config` with
+    /// `toolchain` first on its PATH (`PackPlan.installSDK`); `packPart`, the part recorded in the staging `pack.json`
+    /// (`PackPlan.record`); `packCommit`, the staging directory renamed to `final`, the pack that was there removed after
+    /// (`PackPlan.commit`).
     public enum Action: Equatable, Sendable {
         case run
         case export(partial: URL, final: URL)
@@ -20,6 +26,10 @@ public struct SetupStep: Equatable, Sendable {
         case sdkInstall(xtoolSDK: URL, meta: URL, toolchain: URL)
         case kit(Kit, arch: String, xcode: String)
         case tidy
+        case packBegin(staging: URL, from: URL?, manifest: PackManifest)
+        case packSDK(xtoolSDK: URL, config: URL, toolchain: URL)
+        case packPart(PackPart, hash: String, staging: URL)
+        case packCommit(staging: URL, final: URL)
     }
 
     public let title: String

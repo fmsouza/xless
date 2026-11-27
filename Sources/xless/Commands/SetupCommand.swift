@@ -375,6 +375,16 @@ struct SetupCommand: AsyncParsableCommand {
             let xtool = layout.bin.appendingPathComponent("xtool").path
             let at = try SDKInstaller.install(xtoolsdk: xtoolSDK, meta: meta, xtool: xtool, toolchain: toolchain)
             say("    SDK at \(at.sdk.path); metadata at \(at.meta.path)")
+        case let .packBegin(staging, from, manifest):
+            try PackPlan.begin(staging: staging, from: from, manifest: manifest)
+        case let .packSDK(xtoolSDK, config, toolchain):
+            let native = (layout ?? NativeLayout()).bin.appendingPathComponent("xtool")
+            try PackPlan.installSDK(xtoolSDK: xtoolSDK, config: config, toolchain: toolchain,
+                                    xtool: fm.isExecutableFile(atPath: native.path) ? native.path : "xtool")
+        case let .packPart(part, hash, staging):
+            try PackPlan.record(part, hash: hash, staging: staging)
+        case let .packCommit(staging, final):
+            try PackPlan.commit(staging: staging, final: final)
         }
     }
 

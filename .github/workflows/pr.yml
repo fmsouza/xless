@@ -391,7 +391,7 @@ jobs:
         run: shellcheck -s sh scripts/install.sh scripts/testflight.sh scripts/credential-helpers/xless-credential-pass scripts/credential-helpers/xless-credential-secret-tool
       - name: Shipped scripts
         run: |
-          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh scripts/ci-swift.sh scripts/ci-session.sh scripts/check-package.sh scripts/check-macos-binary.sh scripts/check-link-map.sh
+          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/native-toolchain.sh scripts/pack-swift-build.sh scripts/pack-check.sh scripts/ci-swift.sh scripts/ci-session.sh scripts/check-package.sh scripts/check-macos-binary.sh scripts/check-link-map.sh
           shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/package-sums.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/xcode-swift.sh
       - name: Mac bench scripts

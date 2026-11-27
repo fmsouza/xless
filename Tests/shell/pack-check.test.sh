@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2016 # the fakes' own $ expansions, written as they are
+# scripts/pack-check.sh <pack> with fake shims: each check runs against the pack (XLESS_XCODE names it, the shims come
+# first on PATH and prepare/ first for the stub dylib's clang), a pack that passes them all is accepted, and each failing
+# check stops it with its own message.
+set -euo pipefail
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
+fail() { echo "FAIL: $*"; exit 1; }
+# The iOS SDK has Endian.h and endian.h side by side: a case-insensitive file system (macOS's default) cannot hold a pack.
+touch "$t/A"; if [[ -e "$t/a" ]]; then echo "SKIP: needs a case-sensitive file system"; exit 0; fi; rm "$t/A"
+
+shims="$t/shims"
+mkdir -p "$shims/prepare"
+# Every fake records that it ran, and the pack it ran against.
+fake() { printf '#!/bin/sh\necho "%s $XLESS_XCODE $*" >> "$FAKE_LOG"\n%s\n' "$1" "$2" > "$shims/$1"; chmod +x "$shims/$1"; }
+version='printf "<plist><dict><key>bundle-version</key><string>24127</string></dict></plist>\n"'
+fake xcrun 'case "$1" in --sdk) echo "$XLESS_XCODE/config/swiftpm/swift-sdks/darwin.artifactbundle/iPhoneOS.sdk" ;; actool) shift; exec actool "$@" ;; *) exit 1 ;; esac'
+fake actool "if [ -n \"\${ACTOOL_BROKEN:-}\" ]; then echo nothing; else $version; fi"
+fake ibtool "$version"
+fake xcodebuild 'printf "Xcode 26.2\nBuild version 17C52\n"'
+fake prepare/clang 'cat > /dev/null; while [ $# -gt 0 ]; do [ "$1" = -o ] && echo stub > "$2"; shift; done'
+
+pack="$t/xcodes/26.2-17C52-arm64.partial"
+b="$pack/config/swiftpm/swift-sdks/darwin.artifactbundle"
+inc="$b/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/usr/include"
+mkpack() {
+  rm -rf "$t/xcodes"; mkdir -p "$inc" "$pack/swift-build"
+  touch "$inc/Endian.h"; ln -s Endian.h "$inc/endian.h"
+  echo '{}' > "$b/toolset-swb.json"
+  printf '#!/bin/sh\necho "swbuild $*" >> "$FAKE_LOG"\n[ "$1" = --help ]\n' > "$pack/swift-build/swbuild"; chmod +x "$pack/swift-build/swbuild"
+}
+check() { : > "$t/log"; env XLESS_SHIM_DIR="$shims" FAKE_LOG="$t/log" "$@" sh "$repo/scripts/pack-check.sh" "$pack" > "$t/out" 2>&1; }
+
+mkpack
+check || fail "a good pack: $(cat "$t/out")"
+real="$(cd -P "$pack" && pwd -P)"
+for line in "xcrun $real --sdk iphoneos --show-sdk-path" "actool $real --version --output-format xml1" "ibtool $real --version --output-format xml1" \
+            "xcodebuild $real -version" "swbuild --help"; do
+  grep -qxF "$line" "$t/log" || fail "not run: $line ($(cat "$t/log"))"
+done
+[[ "$(grep -c "^actool $real --version" "$t/log")" == 2 ]] || fail "xcrun actool did not reach actool"
+grep -q "^prepare/clang $real -x c - -dynamiclib -o .* -install_name @rpath/S.framework/S$" "$t/log" || fail "the stub dylib: $(grep clang "$t/log")"
+
+check ACTOOL_BROKEN=1 && fail "an actool that answers no version was accepted"
+grep -q actool "$t/out" || fail "actool message: $(cat "$t/out")"
+
+mkpack; rm "$inc/endian.h"; touch "$inc/endian.h"
+check && fail "an endian.h that is no link was accepted"
+grep -q endian.h "$t/out" || fail "endian.h message: $(cat "$t/out")"
+
+mkpack; rm "$b/toolset-swb.json"
+check && fail "a pack without toolset-swb.json was accepted"
+grep -q toolset-swb.json "$t/out" || fail "toolset message: $(cat "$t/out")"
+
+mkpack; rm "$pack/swift-build/swbuild"
+check && fail "a pack without swbuild was accepted"
+grep -q swbuild "$t/out" || fail "swbuild message: $(cat "$t/out")"
+
+mkpack
+: > "$t/log"
+env -u XLESS_SHIM_DIR FAKE_LOG="$t/log" sh "$repo/scripts/pack-check.sh" "$pack" > "$t/out" 2>&1 && fail "no shims was accepted"
+grep -q XLESS_SHIM_DIR "$t/out" || fail "shims message: $(cat "$t/out")"
+echo "PASS pack-check"
