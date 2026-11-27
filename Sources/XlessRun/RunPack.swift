@@ -206,12 +206,22 @@ private struct PackChoice {
         }
     }
 
-    /// Why `pack` is not the current pack of this xless; empty: it is.
-    private func staleness(_ pack: XcodePack) -> [String] {
+    /// Why `pack` is not the current pack of this xless; empty: it is. A pack of an Xcode this xless has no recipe for (versions.env
+    /// maps it to no Swift toolchain) cannot be checked: that is said, and it is used as it is. A recipe input that cannot be read
+    /// (a share that lacks a file or a versions.env entry) stops the run: whether a pack is current cannot be told then.
+    private func staleness(_ pack: XcodePack) throws -> [String] {
         let m = pack.manifest
+        guard !(table["XCODE_SWIFT_\(m.build)"] ?? "").isEmpty else {
+            run.host.say("==> note: the pack \(pack.name) in \(place(of: pack.name)) is of Xcode \(m.xcode) (\(m.build)), which this xless has no recipe for "
+                + "(versions.env maps it to no Swift toolchain, XCODE_SWIFT_\(m.build)): it is used as it is, and whether it is current is not checked")
+            return []
+        }
         var expected: [String: String] = [:]
-        // (an Xcode this xless has no recipe for is not stale for it: the stage commands in the container say the same)
-        for part in PackPart.allCases { expected[part.rawValue] = try? PackRecipe.hash(part, build: m.build, arch: m.arch, table: table, share: share) }
+        do {
+            for part in PackPart.allCases { expected[part.rawValue] = try PackRecipe.hash(part, build: m.build, arch: m.arch, table: table, share: share) }
+        } catch let e as XlessError {
+            throw RunStop.usage("cannot tell whether the pack \(pack.name) in \(place(of: pack.name)) is current: \(e.cause); \(e.fix)")
+        }
         let check = SetupStep.PackCheck(volume: PackVolumes.name(xcode: m.xcode, build: m.build, arch: m.arch), pack: pack.name, arch: arch,
                                         image: image.name, build: m.build, expected: expected)
         let reasons = SetupPlan.staleness(m, check: check)
@@ -226,7 +236,7 @@ private struct PackChoice {
         if let chosen {
             // A volume not read (a dry run) is said to be read when the run starts.
             guard reads || store != .volumes else { return RunPack(chosen.manifest, store: store) }
-            let reasons = staleness(chosen)
+            let reasons = try staleness(chosen)
             if reasons.isEmpty { return RunPack(chosen.manifest, store: store) }
             why = "the pack \(chosen.name) in \(place(of: chosen.name)) is not current (\(reasons.joined(separator: "; ")))"
         } else {
@@ -300,7 +310,7 @@ private struct PackChoice {
         guard let pack = try packs().first(where: { $0.name == name }) else {
             throw RunStop.usage("the pack \(name) is not in \(place(of: name)) after it was prepared; xless setup --docker --sdk \(export.path) prepares it, and says why it cannot")
         }
-        let reasons = staleness(pack)
+        let reasons = try staleness(pack)
         guard reasons.isEmpty else {
             throw RunStop.usage("the pack \(name) is still not current after it was prepared (\(reasons.joined(separator: "; "))); xless setup --docker --sdk \(export.path) prepares it, and says why it cannot")
         }

@@ -247,6 +247,27 @@ import XlessImages
         #expect(host.lines.contains("==> no xcode: is pinned, so the newest Xcode there is a pack of: Xcode 27.0 (27A266a), build xless:0.15.0-arm64-tauri, signing and upload xless:0.15.0-arm64"))
     }
 
+    /// A pack of an Xcode this xless has no recipe for: said, and used as it is; nothing is prepared.
+    @Test func aPackOfAnXcodeWithoutARecipeIsSaidAndUsed() throws {
+        home.packs.add(PackManifest(format: PackRecipe.format, xcode: "99.0", build: "99Z99", arch: "arm64", swift: "6.4.0", mode: .own, parts: ["sdk": "s", "swift-build": "w"]))
+        try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"99.0\"\n")
+        let (host, code) = try run()
+        #expect(code == 0, "\(host.lines)")
+        #expect(host.lines.contains("==> note: the pack 99.0-99Z99-arm64 in the volume xless-xcode-99.0-99Z99-arm64 is of Xcode 99.0 (99Z99), which this xless has no recipe for "
+            + "(versions.env maps it to no Swift toolchain, XCODE_SWIFT_99Z99): it is used as it is, and whether it is current is not checked"), "\(host.lines)")
+        #expect(!host.allSteps.contains { $0.isPackSetup } && host.allSteps.filter(\.isContainer).allSatisfy { $0.words.contains("XLESS_XCODE=/xcodes/99.0-99Z99-arm64") })
+    }
+
+    /// A share that lacks a recipe input cannot tell whether a pack is current: the run stops with the error, before any container.
+    @Test func aShareWithoutARecipeInputStops() throws {
+        try FileManager.default.removeItem(at: home.share.appendingPathComponent("scripts/pack-swift-build.sh"))
+        let (host, code) = try run()
+        #expect(code == 2, "\(host.lines)")
+        #expect(host.lines.last == "testflight: cannot tell whether the pack 27.0-27A266a-arm64 in the volume xless-xcode-27.0-27A266a-arm64 is current: "
+            + "xless's scripts/pack-swift-build.sh is missing from \(home.share.path); install xless again, or set XLESS_SHARE to its share directory", "\(host.lines)")
+        #expect(!host.allSteps.contains { $0.isContainer || $0.isPackSetup } && !home.exists(home.secrets))
+    }
+
     @Test func dryRunWithoutAPackGoesOn() throws {
         home.packs.removeAll()
         try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")
