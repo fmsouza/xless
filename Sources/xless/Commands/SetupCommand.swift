@@ -174,7 +174,9 @@ struct SetupCommand: AsyncParsableCommand {
         let abilities = PackPlan.abilities(env: env)
         func plan() throws -> [SetupStep] {
             try NativeSetupPlan.make(source: source, arch: arch, share: share, cacheRoot: cacheRoot, layout: layout, store: store,
-                                     table: table, reexport: reexport, abilities: abilities, existing: { fm.fileExists(atPath: $0.path) })
+                                     table: table, reexport: reexport, abilities: abilities,
+                                     installed: { NativeSetupPlan.pinnedOnPath($0, version: $1, path: env["PATH"]) },
+                                     existing: { fm.fileExists(atPath: $0.path) })
         }
         var steps = try plan()
         let need = Self.nativeNeeds(steps, env: env, table: table)

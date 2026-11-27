@@ -171,6 +171,43 @@ private func tempDir() throws -> URL {
     if case .meta = again[1].action {} else { Issue.record("second step is not the metadata: \(again[1].title)") }
 }
 
+@Test func pinnedToolOnPathIsNotDownloaded() throws {
+    // Executables that print a version, as xtool (`xtool 1.21.0`) and rcodesign (`apple-codesign 0.29.0`) do; the check runs them.
+    let dir = try tempDir(), pinned = dir.appendingPathComponent("pinned"), other = dir.appendingPathComponent("other")
+    for (bin, xtool, rcodesign) in [(pinned, "1.21.0", "0.29.0"), (other, "1.20.0", "0.28.0")] {
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try ExecutableFile.write("#!/bin/sh\n[ \"$1\" = --version ] && echo 'xtool \(xtool)'\n", to: bin.appendingPathComponent("xtool"), stage: .sdk)
+        try ExecutableFile.write("#!/bin/sh\n[ \"$1\" = --version ] && echo 'apple-codesign \(rcodesign)'\n", to: bin.appendingPathComponent("rcodesign"), stage: .sdk)
+    }
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: "\(other.path):\(pinned.path)") == nil) // the first one found is another version
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: pinned.path)?.path == pinned.appendingPathComponent("xtool").path)
+    #expect(NativeSetupPlan.pinnedOnPath("rcodesign", version: "0.29.0", path: pinned.path)?.path == pinned.appendingPathComponent("rcodesign").path)
+    #expect(NativeSetupPlan.pinnedOnPath("rcodesign", version: "0.29.0", path: other.path) == nil)
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21", path: pinned.path) == nil) // a whole word, not a prefix
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: dir.path) == nil)  // not there
+    // One that does not run (exits non-zero) is not installed, whatever it prints.
+    let broken = dir.appendingPathComponent("broken")
+    try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+    try ExecutableFile.write("#!/bin/sh\necho 'xtool 1.21.0'\nexit 1\n", to: broken.appendingPathComponent("xtool"), stage: .sdk)
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: broken.path) == nil)
+
+    func make(_ path: String) throws -> [SetupStep] {
+        try NativeSetupPlan.make(source: (xcode27, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: "arm64", share: share,
+                                 cacheRoot: cache, layout: layout, store: store, table: table, reexport: false, abilities: bare,
+                                 installed: { NativeSetupPlan.pinnedOnPath($0, version: $1, path: path) }, existing: { _ in false })
+    }
+    // Both pinned on PATH (an image): neither is downloaded into the native home, and the export runs the one on PATH.
+    let steps = try make(pinned.path)
+    #expect(downloads(steps).map(\.kind) == [.swiftToolchain])
+    #expect(!steps.contains { $0.argv.joined(separator: " ").contains("/n/tools") || $0.argv.contains("/n/bin/xtool") })
+    let export = try #require(steps.first { if case .export = $0.action { true } else { false } })
+    #expect(export.argv.first == pinned.appendingPathComponent("xtool").path)
+    // Another version on PATH: downloaded, and the export runs the downloaded one.
+    let older = try make(other.path)
+    #expect(downloads(older).map(\.kind) == [.appImage, .rcodesign, .swiftToolchain])
+    #expect(older.first { if case .export = $0.action { true } else { false } }?.argv.first == "/n/bin/xtool")
+}
+
 @Test func anExportSourceIsInstalledFromWhereItIsAndNeverExported() throws {
     let export = URL(fileURLWithPath: "/exports/x27")
     let tools: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign"]

@@ -69,23 +69,45 @@ public enum NativeSetupPlan {
                               sha256: try pin("RCODESIGN_SHA256_\(mac ? "DARWIN_" : "")\(a)", table: table, arch: arch), final: layout.rcodesign(version: version))
     }
 
+    /// The executable `tool` on `path` (a PATH value), when it is the pinned `version`: it is run (`<tool> --version`), and
+    /// one word of what it prints must be `version` exactly (xtool prints `xtool 1.21.0`, rcodesign `apple-codesign
+    /// 0.29.0`). nil: not on PATH, another version, or it does not run. An image has both installed; a native setup there
+    /// downloads neither (`make`'s `installed`).
+    public static func pinnedOnPath(_ tool: String, version: String, path: String?) -> URL? {
+        guard let found = XcodeEnvironment.which(tool, path: path),
+              let out = try? Shell.run(found.path, ["--version"], stage: .sdk).stdout else { return nil }
+        return out.split(whereSeparator: \.isWhitespace).contains { $0 == version } ? found : nil
+    }
+
     /// `store`: where the pack goes (`XcodeStore`); the pack there now, if any, is read to tell which of its parts are current.
     /// `abilities`: what this machine can prepare (`PackPlan.abilities`). `existing`: whether a file is there.
+    /// `installed`: a tool (`xtool`, `rcodesign`) of the pinned version already on this machine (`pinnedOnPath`), which is
+    /// then not downloaded into `layout`, and the export runs that xtool.
     public static func make(source: XcodeSource.Identified, arch: String, share: URL, cacheRoot: URL, layout: NativeLayout,
                             store: XcodeStore, table: [String: String], reexport: Bool, abilities: PackPlan.Abilities,
+                            installed: (_ tool: String, _ version: String) -> URL? = { _, _ in nil },
                             existing: (URL) -> Bool) throws -> [SetupStep] {
         let x = source.xcode, a = tableArch(arch), lower = a.lowercased()
         func pin(_ key: String) throws -> String { try Self.pin(key, table: table, arch: arch) }
         _ = try swiftVersion(for: x, table: table)
         let xtoolV = try pin("XTOOL_VERSION"), rcV = try pin("RCODESIGN_VERSION")
         let downloads = [
-            ("xtool \(xtoolV)", NativeDownload(kind: .appImage, url: URL(string: "https://github.com/xtool-org/xtool/releases/download/\(xtoolV)/xtool-\(lower).AppImage")!,
-                                              sha256: try pin("XTOOL_SHA256_\(a)"), final: layout.xtool(version: xtoolV)), layout.bin.appendingPathComponent("xtool"), "~10 s"),
-            ("rcodesign \(rcV)", try rcodesign(arch: arch, mac: false, table: table, layout: layout), layout.bin.appendingPathComponent("rcodesign"), "seconds"),
+            ("xtool", xtoolV, NativeDownload(kind: .appImage, url: URL(string: "https://github.com/xtool-org/xtool/releases/download/\(xtoolV)/xtool-\(lower).AppImage")!,
+                                             sha256: try pin("XTOOL_SHA256_\(a)"), final: layout.xtool(version: xtoolV)), "~10 s"),
+            ("rcodesign", rcV, try rcodesign(arch: arch, mac: false, table: table, layout: layout), "seconds"),
         ]
         var steps: [SetupStep] = []
-        // Installed when its marker is there: a tool's link in bin/ (which a run stopped after the move lacks).
-        for (what, d, marker, estimate) in downloads where !existing(marker) {
+        // Installed when its marker is there: a tool's link in bin/ (which a run stopped after the move lacks); or when the
+        // pinned version is on PATH already (the image's), which is then the one that runs.
+        var xtool = layout.bin.appendingPathComponent("xtool")
+        for (tool, version, d, estimate) in downloads {
+            let marker = layout.bin.appendingPathComponent(tool)
+            if existing(marker) { continue }
+            if let found = installed(tool, version) {
+                if tool == "xtool" { xtool = found }
+                continue
+            }
+            let what = "\(tool) \(version)"
             steps.append(SetupStep(title: "install \(what) into \(d.final.path)",
                                    argv: ["curl", "-fsSL", "-o", d.partial.path + ".download", d.url.absoluteString],
                                    estimate: estimate, action: .download(d)))
@@ -99,7 +121,7 @@ public enum NativeSetupPlan {
         if exporting {
             steps.append(SetupStep(
                 title: "export the Darwin SDK for \(arch) from Xcode \(x.shortVersion) (\(x.build)) into \(final.path)",
-                argv: [layout.bin.appendingPathComponent("xtool").path, "sdk", "build", source.url.path, partial.path],
+                argv: [xtool.path, "sdk", "build", source.url.path, partial.path],
                 estimate: "~2 min" + (source.kind == .xip ? "; up to ~15 GB in the cache while the .xip is unpacked, ~3.5 GB stays" : "; ~3 GB on disk"),
                 action: .export(partial: partial, final: final)))
         }
