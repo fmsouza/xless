@@ -357,7 +357,7 @@ run
 grep -q '^no native install' "$t/out" || fail "no native install not said: $(cat "$t/out")"
 # A store of its own (XLESS_XCODES): its packs go, with Docker to say none is in use; the directory and what else is in it stay.
 store="$t/store"; mkdir -p "$store/26.2-17C52-arm64" "$store/notes"; echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; echo keep > "$store/notes/f"
-mkdir -p "$nh/bin"
+mkdir -p "$nh/bin" && ln -sf x "$nh/bin/xtool"
 extra=(XLESS_XCODES="$store")
 run --native --yes
 [[ $code == 0 && -d "$store/26.2-17C52-arm64" && ! -e "$nh" ]] || fail "--native took the packs of a store of its own: $code $(cat "$t/err")"
@@ -371,7 +371,7 @@ run --old --yes
 # store; each only its own; a directory that is no pack of its name (a copy under another name) is neither listed nor removed.
 nh="$t/home/.local/share/xless-native"; store="$t/store3"; rm -rf "$nh" "$store"
 mkpack() { mkdir -p "$1"; echo "$pack_json" > "$1/pack.json"; }   # DIR: a pack of Xcode 26.2 in it
-mkboth() { rm -rf "$nh" "$store"; mkdir -p "$nh/bin"; mkpack "$nh/xcodes/26.2-17C52-arm64"; mkpack "$store/26.2-17C52-arm64"; mkpack "$store/my-backup"; mkpack "$nh/xcodes/copy-of-it"; }
+mkboth() { rm -rf "$nh" "$store"; mkdir -p "$nh/bin" && ln -sf x "$nh/bin/xtool"; mkpack "$nh/xcodes/26.2-17C52-arm64"; mkpack "$store/26.2-17C52-arm64"; mkpack "$store/my-backup"; mkpack "$nh/xcodes/copy-of-it"; }
 mkboth; extra=(XLESS_XCODES="$store" DOCKER_DOWN=0)
 run --native --dry-run
 grep -qx "would remove the Xcode pack $rt/home/.local/share/xless-native/xcodes/26.2-17C52-arm64: Xcode 26.2 (17C52, arm64)" "$t/out" || fail "the home's pack is not listed: $(cat "$t/out")"
@@ -379,7 +379,7 @@ grep -q "$store" "$t/out" && fail "--native lists the store of its own: $(cat "$
 grep -q 'my-backup\|copy-of-it' "$t/out" && fail "a copy under another name is listed: $(cat "$t/out")"
 grep -q 'preparing a pack again takes minutes' "$t/out" || fail "--native does not say what preparing again needs: $(cat "$t/out")"
 on n --native
-grep -q 'Remove 1 Xcode pack of the native install?' "$t/out" && [[ -d "$nh/xcodes/26.2-17C52-arm64" ]] || fail "--native does not ask about the home's packs: $(cat "$t/out")"
+grep -q "Remove the native install $nh, and 1 Xcode pack of the native install?" "$t/out" && [[ -d "$nh/xcodes/26.2-17C52-arm64" ]] || fail "--native does not ask about the home's packs: $(cat "$t/out")"
 on none --native
 [[ $code == 11 && -d "$nh/xcodes" ]] || fail "--native without a terminal removed the home's packs: $code"
 run --all --dry-run
@@ -422,15 +422,86 @@ for home_ in "relative" "/" "$t/home" "$t/other"; do
   code=0; (cd "$t/rel" && : > "$log" && env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" DOCKER_LOG="$log" IMAGES="$t/images" XLESS_SHARE="$share" XLESS_NATIVE_HOME="$home_" "$x" clean --native --yes >"$t/out" 2>"$t/err") || code=$?
   [[ $code == 11 ]] || fail "--native with XLESS_NATIVE_HOME=$home_ exits $code"
   grep -q 'set XLESS_NATIVE_HOME to the native home' "$t/err" || fail "no fix for XLESS_NATIVE_HOME=$home_: $(cat "$t/err")"
-  case "$home_" in relative) want='is a relative path' ;; /) want='the native home is /' ;; "$t/home") want='is your home directory' ;; *) want='holds none of what xless puts in one' ;; esac
+  case "$home_" in relative) want='is a relative path' ;; /) want='the native home is /' ;; "$t/home") want='your home directory' ;; *) want='holds what xless did not put there (file)' ;; esac
   grep -q -- "$want" "$t/err" || fail "XLESS_NATIVE_HOME=$home_ says: $(cat "$t/err")"
   run
   grep -q '^not listing the native home' "$t/out" || [[ "$home_" == relative ]] || fail "the listing for XLESS_NATIVE_HOME=$home_: $(cat "$t/out")"
 done
 [[ -f "$t/other/file" && -d "$t/home/.cache" ]] || fail "a refused root was touched"
 extra=()
-mkdir -p "$t/ok/bin"; extra=(XLESS_NATIVE_HOME="$t/ok"); run --native --yes
+mkdir -p "$t/ok/bin"; ln -sf x "$t/ok/bin/xtool"; extra=(XLESS_NATIVE_HOME="$t/ok"); run --native --yes
 [[ $code == 0 && ! -e "$t/ok" ]] || fail "--native of a native home: $code $(cat "$t/err")"
+extra=()
+
+# --native removes a directory only when it is a native home and nothing else, and asks before it removes it. Each case with a temporary HOME.
+refused() {   # DIR WANT [ENV…]: --native --yes (and --all) refuse DIR, naming WANT, and leave it as it was
+  local dir=$1 want=$2; shift 2
+  extra=(XLESS_NATIVE_HOME="$dir" "$@")
+  run --native --yes
+  [[ $code == 11 ]] && grep -q -- "$want" "$t/err" && grep -q 'XLESS_NATIVE_HOME' "$t/err" || fail "--native of $dir: $code $(cat "$t/err")"
+  run --all --yes
+  [[ $code == 11 && -z "$(removed)" ]] || fail "--all of $dir: $code $(removed)"
+  run
+  grep -q '^not listing the native home' "$t/out" || fail "the listing of $dir: $(cat "$t/out")"
+  extra=()
+}
+# xless's own install prefix, which XLESS_PREFIX and XLESS_NATIVE_HOME can be mixed up for: bin/xless and share/
+lp="$t/home/.local"; rm -rf "$lp"; mkdir -p "$lp/bin" "$lp/share/xless/vault"; : > "$lp/bin/xless"; : > "$lp/share/xless/vault/secrets.vault"
+refused "$lp" "xless's data directory (with the secrets vault)"
+refused "$lp" 'holds what xless did not put there (share)' XDG_DATA_HOME="$t/elsewhere" XLESS_SHARE="$t/share" 
+[[ -f "$lp/bin/xless" && -f "$lp/share/xless/vault/secrets.vault" ]] || fail "~/.local lost a file"
+# a project directory with bin/ and tools/ only: neither is a mark of xless's setup
+mkdir -p "$t/proj/bin" "$t/proj/tools"; : > "$t/proj/bin/run.sh"
+refused "$t/proj" 'holds none of what xless.s setup makes'
+[[ -f "$t/proj/bin/run.sh" ]] || fail "a project directory lost a file"
+# a native home that holds the cache, the share or the configuration (a leaf it is not)
+nhx="$t/nh-holds"; rm -rf "$nhx"; mkdir -p "$nhx/bin" "$nhx/tools/cache" "$nhx/tools/share"; ln -s x "$nhx/bin/xtool"; echo 9.9.9 > "$nhx/tools/share/VERSION"
+refused "$nhx" 'the cache' XDG_CACHE_HOME="$nhx/tools/cache"
+refused "$nhx" "xless's share directory" XLESS_SHARE="$nhx/tools/share"
+mkdir -p "$nhx/xcodes/cfg/xless"
+refused "$nhx" "configuration directory" XDG_CONFIG_HOME="$nhx/xcodes/cfg"
+[[ -d "$nhx/tools/cache" && -d "$nhx/tools/share" ]] || fail "a refused native home lost something"
+# a real native home with one stranger at its top level is refused, and the stranger is named
+nhs="$t/nh-stranger"; rm -rf "$nhs"; mkdir -p "$nhs/bin" "$nhs/xcodes/26.2-17C52-arm64"; ln -s x "$nhs/bin/xtool"; echo "$pack_json" > "$nhs/xcodes/26.2-17C52-arm64/pack.json"; echo hi > "$nhs/notes.txt"
+refused "$nhs" 'holds what xless did not put there (notes.txt)'
+[[ -f "$nhs/notes.txt" && -f "$nhs/xcodes/26.2-17C52-arm64/pack.json" ]] || fail "a native home with a stranger lost a file"
+# a genuine native home (with the leftovers setup makes) is removed, after the question names its path
+nhg="$t/nh-genuine"; rm -rf "$nhg"; mkdir -p "$nhg/bin" "$nhg/tools/xtool-1.21.0" "$nhg/xcodes/26.2-17C52-arm64" "$nhg/xcodes/26.2-17C52-arm64.partial" "$nhg/toolchains"
+ln -s x "$nhg/bin/xtool"; echo "$pack_json" > "$nhg/xcodes/26.2-17C52-arm64/pack.json"; : > "$nhg/xcodes/26.2-17C52-arm64.lock"
+rg="$(cd "$nhg" && pwd -P)"; rg="${rg/#\/private/}"
+extra=(XLESS_NATIVE_HOME="$nhg")
+on n --native
+[[ $code == 0 && -d "$nhg" ]] && grep -qF "Remove the native install $nhg, and 1 Xcode pack of the native install? [y/N]" "$t/out" || fail "--native does not ask with the path: $(cat "$t/out")"
+on none --native
+[[ $code == 11 && -d "$nhg" ]] && grep -q 'needs a confirmation and there is no terminal — re-run with --yes' "$t/err" || fail "--native without a terminal and without --yes: $code $(cat "$t/err")"
+on y --native
+[[ $code == 0 && ! -e "$nhg" ]] || fail "--native, answered yes: $code $(cat "$t/err")"
+# an empty home at the default location is no problem: it goes, and --all cleans the rest
+extra=(); rm -rf "$t/home/.local" "$t/home/.cache"; mkdir -p "$t/home/.local/share/xless-native"; mkcache
+run --all --yes
+[[ $code == 0 && ! -e "$t/home/.local/share/xless-native" && ! -e "$cache" ]] || fail "--all with an empty native home: $code $(cat "$t/err")"
+grep -q 'XLESS_NATIVE_HOME' "$t/err" "$t/out" && fail "an empty default home tells to set a variable: $(cat "$t/err")"
+# a default home with a stranger does not tell to set a variable nobody set
+mkdir -p "$t/home/.local/share/xless-native/bin"; echo hi > "$t/home/.local/share/xless-native/notes.txt"
+run --native --yes
+[[ $code == 11 && -f "$t/home/.local/share/xless-native/notes.txt" ]] && ! grep -q 'XLESS_NATIVE_HOME' "$t/err" && grep -q 'move what is in' "$t/err" || fail "the default home with a stranger: $code $(cat "$t/err")"
+rm -rf "$t/home/.local"
+# --old with a root that is not sound leaves toolchains and the record, says why, and goes on with the images
+mkdir -p "$t/oldroot/toolchains/swift-6.1.0" "$t/oldroot/bin"; echo '{}' > "$t/oldroot/swift-toolchain.json"; echo hi > "$t/oldroot/notes.txt"
+mkdir -p "$t/home/.swiftpm/swift-sdks/darwin.artifactbundle"
+extra=(XLESS_NATIVE_HOME="$t/oldroot")
+run --old --yes
+[[ $code == 0 && -d "$t/oldroot/toolchains" && -f "$t/oldroot/swift-toolchain.json" && -d "$t/home/.swiftpm/swift-sdks/darwin.artifactbundle" ]] || fail "--old with an unsound root removed the older install: $code $(cat "$t/err")"
+grep -q '^leaving the older native install: the native home .* holds what xless did not put there (notes.txt)' "$t/out" || fail "--old does not say why: $(cat "$t/out")"
+grep -qx 'image rm xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0-tauri xless:9.8.0-arm64 xless:9.8.0-arm64-react-native' "$log" || grep -q '^image rm' "$log" || fail "--old did not go on with the images: $(removed)"
+extra=()
+# <home>/xcodes a link: the listing says the link goes and the packs behind it do not
+nhl="$t/nh-link"; rm -rf "$nhl" "$t/behind"; mkdir -p "$nhl/bin" "$t/behind/26.2-17C52-arm64"; ln -s x "$nhl/bin/xtool"; ln -s "$t/behind" "$nhl/xcodes"; echo "$pack_json" > "$t/behind/26.2-17C52-arm64/pack.json"
+extra=(XLESS_NATIVE_HOME="$nhl")
+run --native --dry-run
+grep -q "^would remove the link $nhl/xcodes (to $t/behind): the packs behind it are not removed" "$t/out" && ! grep -q 'would remove the Xcode pack' "$t/out" || fail "the listing of a linked xcodes: $(cat "$t/out")"
+run --native --yes
+[[ $code == 0 && ! -e "$nhl" && -f "$t/behind/26.2-17C52-arm64/pack.json" ]] || fail "--native removed the packs behind a link: $code $(cat "$t/err")"
 extra=()
 
 # `xless sdk install` (which --image used to serve) says what to run, in every form, so an old script gets the message, not "unknown command".
