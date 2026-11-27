@@ -23,10 +23,18 @@ enum StageRunner {
             try await withStage(.prepare) { _ = try BuildSDKCheck.check(pin: ctx.config.xcode, platform: ctx.platform, file: pinFile(ctx), stage: .prepare) }
         }
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.prepare(ctx: rn).path }
-        if let cargo = try ctx.cargoBuild { return try await CargoBuilder.prepare(ctx: cargo).path }
-        if let mac = try ctx.tauriMacBuild { return try await TauriBuilder.prepareMac(ctx: mac).path }
-        guard let tauri = try ctx.tauriBuild else { return "skipped (not an overlay project)" }
+        let overlay = try await overlayContexts(ctx, .prepare)
+        if let cargo = overlay.cargo { return try await CargoBuilder.prepare(ctx: cargo).path }
+        if let mac = overlay.tauriMac { return try await TauriBuilder.prepareMac(ctx: mac).path }
+        guard let tauri = overlay.tauri else { return "skipped (not an overlay project)" }
         return try await TauriBuilder.prepare(ctx: tauri).path
+    }
+
+    /// The Cargo and Tauri stages' views of `ctx`, made in `stage`: they look up the Xcode's SDK, whose problems (a pack that
+    /// cannot be used) are the stage's, `[stage] cause — fix` with the usage exit code.
+    private static func overlayContexts(_ ctx: Context, _ stage: Stage) async throws
+        -> (cargo: CargoBuildContext?, tauriMac: TauriMacBuildContext?, tauri: TauriBuildContext?) {
+        try await withStage(stage) { (try ctx.cargoBuild, try ctx.tauriMacBuild, try ctx.tauriBuild) }
     }
 
     /// `ctx` with the Mac's Xcode that an overlay is built with on a Mac, in the sandbox.
@@ -45,9 +53,10 @@ enum StageRunner {
         // build that keeps none (xtool, Cargo, Tauri) leaves none for `package` to zip.
         try? FileManager.default.removeItem(at: ctx.paths.dSYMs)
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.build(ctx: rn) }
-        if let cargo = try ctx.cargoBuild { return try await CargoBuilder.build(ctx: cargo) }
-        if let mac = try ctx.tauriMacBuild { return try await TauriBuilder.buildMac(ctx: mac) }
-        if let tauri = try ctx.tauriBuild { return try await TauriBuilder.build(ctx: tauri) }
+        let overlay = try await overlayContexts(ctx, .build)
+        if let cargo = overlay.cargo { return try await CargoBuilder.build(ctx: cargo) }
+        if let mac = overlay.tauriMac { return try await TauriBuilder.buildMac(ctx: mac) }
+        if let tauri = overlay.tauri { return try await TauriBuilder.build(ctx: tauri) }
         return try await withStage(.build) {
             if let mac = try MacNative.here(for: ctx, stage: .build) {
                 if ctx.simulator { return try await mac.buildForSimulator(ctx) }

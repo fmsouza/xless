@@ -28,7 +28,11 @@ public struct CargoBuildContext: Sendable {
         ["PATH": (sdk.isXcode ? RustApple.wrapperDirectory(workRoot: workRoot).path + ":" : "") + "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"]
     }
     /// The cargo targets of this platform: on macOS, those of `macos.architectures`.
-    public var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
+    public var rustTargets: [String] { Self.rustTargets(platform: platform, resolved: resolved) }
+    /// The same, before there is a context (it needs no Xcode).
+    public static func rustTargets(platform: Platform, resolved: ResolvedCargo) -> [String] {
+        platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget)
+    }
     var inputsRecord: URL { workRoot.appendingPathComponent(".xless/cargo-inputs.json") }
     /// The Xcode pack that cargo's outputs in the work copy were built with (`PackOutputs`).
     var packRecord: URL { PackOutputs.record(work: workRoot) }
