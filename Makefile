@@ -32,7 +32,7 @@ HOST_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 test-image:
 	for a in $(if $(filter command line environment,$(origin ARCHS)),$(ARCHS),$(HOST_ARCH)); do \
 	  target="$$(XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-target.sh --print)" || exit 1; \
-	  ( eval "$$target"; export XLESS_IMAGE DOCKER_CONTEXT; echo "test-image: $$XLESS_IMAGE, docker context $${DOCKER_CONTEXT:-default}"; \
+	  ( eval "$$target"; export XLESS_IMAGE DOCKER_CONTEXT; echo "test-image: $$XLESS_IMAGE, docker context $${DOCKER_CONTEXT:-$$(docker context show 2>/dev/null)}"; \
 	    XLESS_IMAGE_REQUIRED=1 XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-contents.test.sh && \
 	    XLESS_IMAGE_REQUIRED=1 XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-direct.test.sh ) || exit 1; \
 	done

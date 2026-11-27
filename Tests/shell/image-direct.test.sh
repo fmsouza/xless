@@ -25,9 +25,9 @@ skip() {
 command -v docker >/dev/null 2>&1 || skip "no docker"
 # shellcheck source=SCRIPTDIR/image-target.sh
 . "$root/Tests/shell/image-target.sh"
-echo "image-direct: image $image, docker context ${context:-default}"
+echo "image-direct: image $image, docker context ${shown:-default}"
 xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}"
-"${d[@]}" version >/dev/null 2>&1 || skip "no docker daemon (context ${context:-default})"
+"${d[@]}" version >/dev/null 2>&1 || skip "no docker daemon (context ${shown:-default})"
 kit="$image-tauri"
 "${d[@]}" image inspect "$image" >/dev/null 2>&1 || skip "no image $image (scripts/docker-images.sh image --arch $arch)"
 "${d[@]}" image inspect "$kit" >/dev/null 2>&1 || skip "no image $kit (xless setup --docker --with tauri)"
@@ -101,4 +101,4 @@ box "$image" bash -c 'set -eu; mkdir /work/HelloCargo; tar -x -C /work/HelloCarg
 want="needs, and this machine lacks: an Xcode pack (none here: xless setup), rustup-init or rustup — \`xless run --docker\` has them all"
 [[ "$code" == 2 ]] && grep -qF "$want" "$t/err" || fail "an overlay in $image with no pack: exit $code, $(cat "$t/err")"
 echo "ok: an overlay in $image says what it lacks: $(grep -m1 -o 'needs, and this machine lacks: [^—]*' "$t/err")"
-echo "PASS image-direct ($kit, pack $name, docker context ${context:-default})"
+echo "PASS image-direct ($kit, pack $name, docker context ${shown:-default})"

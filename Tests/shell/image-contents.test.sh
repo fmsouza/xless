@@ -20,8 +20,8 @@ version="$(. "$root/versions.env"; echo "$XLESS_VERSION")"
 command -v docker >/dev/null 2>&1 || skip "no docker"
 # shellcheck source=SCRIPTDIR/image-target.sh
 . "$root/Tests/shell/image-target.sh"
-echo "image-contents: image $image, docker context ${context:-default}"
-"${d[@]}" version >/dev/null 2>&1 || skip "no docker daemon (context ${context:-default})"
+echo "image-contents: image $image, docker context ${shown:-default}"
+"${d[@]}" version >/dev/null 2>&1 || skip "no docker daemon (context ${shown:-default})"
 "${d[@]}" image inspect "$image" >/dev/null 2>&1 || skip "no image $image (scripts/docker-images.sh image --arch $arch)"
 t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
@@ -85,7 +85,7 @@ check() {
   [[ "$("${d[@]}" image inspect --format '{{index .Config.Labels "dev.xless.version"}}' "$image")" == "$version" ]] || fail "$image's dev.xless.version is not $version"
   [[ "$(run sh -c 'echo $XLESS_XCODES')" == /xcodes ]] || fail "XLESS_XCODES in $image: $(run sh -c 'echo $XLESS_XCODES')"
   [[ "$(run stat -c %a /xcodes)" == 1777 ]] || fail "/xcodes in $image is not writable by every user (mode $(run stat -c %a /xcodes))"
-  echo "PASS image-contents ($image, $count layers, docker context ${context:-default})"
+  echo "PASS image-contents ($image, $count layers, docker context ${shown:-default})"
 }
 
 check "$image"
