@@ -1,12 +1,12 @@
 #!/bin/sh
-# Swift Build for an Xcode pack: docker/Dockerfile's `swb` stage as a script. `swbuild` is its CLI; it launches
-# `SWBBuildServiceBundle` from its own directory, and both read the resource bundles (`SwiftBuild_*`, the xcspecs) next to
-# the executable. Dependencies are sibling source checkouts (SWIFTCI_USE_LOCAL_DEPS=1), so nothing is resolved from a
-# branch at build time.
+# Swift Build for an Xcode pack, compiled by `xless setup` as the pack's swift-build part (this file is part of that
+# part's recipe hash). `swbuild` is its CLI; it launches `SWBBuildServiceBundle` from its own directory, and both read the
+# resource bundles (`SwiftBuild_*`, the xcspecs) next to the executable. Dependencies are sibling source checkouts
+# (SWIFTCI_USE_LOCAL_DEPS=1), so nothing is resolved from a branch at build time.
 #   scripts/pack-swift-build.sh <pack root> arm64|amd64 own|separate
 # The pins come from the environment: versions.env's SWB_* (the caller sources it, or passes them with env). The pack's
-# toolchain (<pack>/toolchain, the Xcode's Swift, Ruling R10) compiles it: the same Swift Build release whatever the
-# Xcode, running on that toolchain's Swift runtime. Its build service loads the toolchain's dependency scanner
+# toolchain (<pack>/toolchain, the open-source release of the Xcode's Swift) compiles it: the same Swift Build release
+# whatever the Xcode, running on that toolchain's Swift runtime. Its build service loads the toolchain's dependency scanner
 # (lib_InternalSwiftScan) in process for explicitly built modules, and that library's Swift code needs the runtime it was
 # built against: Swift 6.2.3's scanner in a Swift 6.4 process crashes (swift_release in evaluatePoundIfCondition).
 # The mode is the fit's (own: the toolchain is the image's own Swift, SWIFT_VERSION; separate: another release).
@@ -15,7 +15,7 @@
 # not by the toolchain's absolute path, which a Swift link on Linux records by default; nothing written names the pack.
 # Compiled on the machine of the arch it is for (Swift Build under emulation is not compiled here). Needs curl, tar,
 # sha256sum, strip, and what the toolchain's `swift build` of it needs (libsqlite3-dev and libncurses-dev on Ubuntu, as
-# the Dockerfile's swb stage installs).
+# docker/Dockerfile's tools stage installs).
 set -eu
 [ $# -eq 3 ] || { echo "usage: $0 <pack root> arm64|amd64 own|separate" >&2; exit 2; }
 die() { echo "pack-swift-build: $*" >&2; exit 1; }
@@ -38,6 +38,8 @@ done
 out="$pack/swift-build.partial"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp" "$out"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 rm -rf "$out"
 src="$tmp/src"
 
@@ -77,9 +79,13 @@ echo "https://github.com/swiftlang/swift-build/tree/${SWB_TAG}" > "$out/SOURCE"
 # swbuild is the executable itself, never a symbolic link to it: Swift 6.2.3's Foundation crashes looking up bundles from a
 # symlinked executable. Whoever runs it runs <pack>/swift-build/swbuild by its path.
 for p in "$pack" "$given"; do
-  if found=$(grep -rlF "$p" "$out"); then
-    die "$(echo "$found" | tr '\n' ' ')names the place the pack is prepared in ($p), and a pack must be relocatable"
-  fi
+  # grep: 0 found, 1 found nothing, 2 could not search (that is no clean answer).
+  status=0; found=$(grep -rlF "$p" "$out") || status=$?
+  case $status in
+    0) die "$(echo "$found" | tr '\n' ' ')names the place the pack is prepared in ($p), and a pack must be relocatable" ;;
+    1) ;;
+    *) die "grep could not search $out for the place the pack is prepared in ($p): it cannot be shown relocatable" ;;
+  esac
 done
 
 rm -rf "$pack/swift-build"

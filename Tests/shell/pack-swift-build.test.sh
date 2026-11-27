@@ -43,6 +43,7 @@ EOF
 cat > "$t/fakes/strip" <<'EOF'
 #!/bin/sh
 echo "strip $*" >> "$FAKE_LOG"
+if [ -n "${FAKE_SLEEP:-}" ]; then touch "$FAKE_SLEEP"; sleep 2; fi
 while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; -*) ;; *) in=$1 ;; esac; shift; done
 cp "$in" "$out"
 EOF
@@ -125,6 +126,39 @@ mkpack
 run separate FAKE_EMBED="$pack/toolchain/usr/lib/swift/linux" && fail "an absolute path of the pack was accepted"
 grep -q 'relocatable\|names' "$t/out" || fail "the message does not say why: $(cat "$t/out")"
 [[ ! -e "$pack/swift-build" ]] || fail "absolute path: swift-build was written"
+
+# grep failing (status 2: it could not read what it searched) is no clean answer: refused, nothing written.
+mkpack
+real_grep=$(command -v grep)
+mkdir -p "$t/fake-grep"
+printf '#!/bin/sh\necho "grep: cannot read" >&2\nexit 2\n' > "$t/fake-grep/grep"; chmod +x "$t/fake-grep/grep"
+: > "$t/log"
+env PATH="$t/fake-grep:$t/fakes:$PATH" FAKE_LOG="$t/log" FAKE_ARCHIVES="$t/archives" \
+  sh "$repo/scripts/pack-swift-build.sh" "$pack" "$arch" separate > "$t/out" 2>&1 && fail "a failing grep was taken for a clean search"
+"$real_grep" -q 'relocatable\|grep' "$t/out" || fail "the grep failure is not named: $(cat "$t/out")"
+[[ ! -e "$pack/swift-build" ]] || fail "failing grep: swift-build was written"
+
+# Stopped (TERM, INT) while it works: its temporary directory and <pack>/swift-build.partial are removed. Job control on,
+# so the background run is a process group of its own and does not start with INT ignored (as a non-interactive shell's
+# background jobs do); the signal goes to that group, as a terminal's ^C goes to the command and what it runs.
+set -m
+for sig in TERM INT; do
+  mkpack
+  rm -rf "$t/tmpdir" "$t/sleeping"; mkdir -p "$t/tmpdir"
+  : > "$t/log"
+  env PATH="$t/fakes:$PATH" FAKE_LOG="$t/log" FAKE_ARCHIVES="$t/archives" FAKE_SLEEP="$t/sleeping" TMPDIR="$t/tmpdir" \
+    sh "$repo/scripts/pack-swift-build.sh" "$pack" "$arch" separate > "$t/out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [[ -e "$t/sleeping" ]] && break; sleep 0.1; done
+  [[ -e "$t/sleeping" ]] || fail "$sig: the fake strip never ran: $(cat "$t/out")"
+  kill -"$sig" -- -"$pid"
+  wait "$pid" && fail "$sig: the script finished as if nothing happened"
+  sleep 3   # an orphaned strip, had the script died without cleaning up, has written by now
+  [[ ! -e "$pack/swift-build.partial" ]] || fail "$sig: swift-build.partial left: $(ls -R "$pack/swift-build.partial")"
+  [[ -z "$(ls -A "$t/tmpdir")" ]] || fail "$sig: its temporary directory left: $(ls -A "$t/tmpdir")"
+  [[ ! -e "$pack/swift-build" ]] || fail "$sig: swift-build was written"
+done
+set +m
 
 # Swift Build is compiled on the architecture it is for; the mode is own or separate.
 mkpack
