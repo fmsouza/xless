@@ -472,10 +472,8 @@ struct SetupCommand: AsyncParsableCommand {
             try Self.install(d, layout: layout ?? NativeLayout())
         case let .packBegin(staging, from, manifest):
             try PackPlan.begin(staging: staging, from: from, manifest: manifest)
-        case let .packSDK(xtoolSDK, config, toolchain):
-            let native = (layout ?? NativeLayout()).bin.appendingPathComponent("xtool")
-            try PackPlan.installSDK(xtoolSDK: xtoolSDK, config: config, toolchain: toolchain,
-                                    xtool: fm.isExecutableFile(atPath: native.path) ? native.path : "xtool")
+        case let .packSDK(xtoolSDK, config, toolchain, xtool):
+            try PackPlan.installSDK(xtoolSDK: xtoolSDK, config: config, toolchain: toolchain, xtool: xtool.path)
         case let .packPart(part, hash, staging):
             try PackPlan.record(part, hash: hash, staging: staging)
         case let .packCommit(staging, final):

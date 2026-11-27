@@ -25,7 +25,7 @@ public struct SetupStep: Equatable, Sendable {
         case kit(Kit, arch: String)
         case packRun(PackRun)
         case packBegin(staging: URL, from: URL?, manifest: PackManifest)
-        case packSDK(xtoolSDK: URL, config: URL, toolchain: URL)
+        case packSDK(xtoolSDK: URL, config: URL, toolchain: URL, xtool: URL)
         case packPart(PackPart, hash: String, staging: URL)
         case packCommit(staging: URL, final: URL)
     }

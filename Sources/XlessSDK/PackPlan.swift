@@ -75,7 +75,7 @@ public enum PackPlan {
     /// A part the machine cannot prepare (`swift-build` without `abilities.swiftBuild`) is kept when it is current, and left
     /// out when the pack is prepared again around it while it is stale.
     public static func make(xcode: KnownXcode, arch: String, export: URL, store: XcodeStore, share: URL, table: [String: String],
-                            abilities: Abilities, current: XcodePack?, existing: (URL) -> Bool) throws -> [SetupStep] {
+                            abilities: Abilities, current: XcodePack?, xtool: URL, existing: (URL) -> Bool) throws -> [SetupStep] {
         let version = XcodeVersion.canonical(xcode.shortVersion)
         let name = XcodePack.name(xcode: version, build: xcode.build, arch: arch)
         let final = store.directory(xcode: version, build: xcode.build, arch: arch), staging = staging(of: final)
@@ -131,9 +131,9 @@ public enum PackPlan {
                                    estimate: Self.toolchainEstimate, action: .download(download)))
             let xtoolSDK = export.appendingPathComponent("\(arch)/darwin.xtoolsdk")
             steps.append(SetupStep(title: "install the Darwin SDK for xtool and SwiftPM into \(pack.configHome.path)",
-                                   argv: sdkArgv(xtoolSDK: xtoolSDK, config: pack.configHome, toolchain: pack.toolchain),
+                                   argv: sdkArgv(xtoolSDK: xtoolSDK, config: pack.configHome, toolchain: pack.toolchain, xtool: xtool),
                                    estimate: Self.sdkEstimate,
-                                   action: .packSDK(xtoolSDK: xtoolSDK, config: pack.configHome, toolchain: pack.toolchain)))
+                                   action: .packSDK(xtoolSDK: xtoolSDK, config: pack.configHome, toolchain: pack.toolchain, xtool: xtool)))
             steps.append(SetupStep(title: "toolchain-meta.json of Xcode \(xcode.shortVersion) (\(xcode.build)) into the pack",
                                    argv: ["cp", export.appendingPathComponent("toolchain-meta.json").path, pack.meta.path], estimate: "seconds"))
             steps.append(SetupStep(title: "fit the Swift \(swift) toolchain to the SDK (\(mode.rawValue)) and record it in \(pack.record.path)",
@@ -183,9 +183,9 @@ public enum PackPlan {
     }
 
     /// `installSDK`, as a command.
-    static func sdkArgv(xtoolSDK: URL, config: URL, toolchain: URL) -> [String] {
-        ["sh", "-c", "PATH=\"$1/usr/bin:$PATH\" XDG_CONFIG_HOME=\"$2\" exec xtool sdk install \"$3\"", "sh",
-         toolchain.path, config.path, xtoolSDK.path]
+    static func sdkArgv(xtoolSDK: URL, config: URL, toolchain: URL, xtool: URL) -> [String] {
+        ["sh", "-c", "PATH=\"$1/usr/bin:$PATH\" XDG_CONFIG_HOME=\"$2\" exec \"$4\" sdk install \"$3\"", "sh",
+         toolchain.path, config.path, xtoolSDK.path, xtool.path]
     }
 
     /// `record`, as a command.
@@ -261,8 +261,8 @@ public enum PackPlan {
 
     /// `.packSDK`: `xtool sdk install <xtoolSDK>` with `XDG_CONFIG_HOME=<config>` and the pack's toolchain first on PATH
     /// (xtool runs `swiftc` from PATH). xtool also writes lock files under `$HOME/.cache/xtool`: `env` needs a writable
-    /// HOME. `xtool`: the xtool to run (a native setup's own, by path).
-    public static func installSDK(xtoolSDK: URL, config: URL, toolchain: URL, xtool: String = "xtool",
+    /// HOME. `xtool`: the xtool to run, by path (the one the plan's export runs: `NativeSetupPlan`).
+    public static func installSDK(xtoolSDK: URL, config: URL, toolchain: URL, xtool: String,
                                   env: [String: String] = ProcessInfo.processInfo.environment) throws {
         try Shell.run(xtool, ["sdk", "install", xtoolSDK.path],
                       env: ["XDG_CONFIG_HOME": config.path, "PATH": SDKInstaller.path(toolchain: toolchain, env: env)],

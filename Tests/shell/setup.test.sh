@@ -292,7 +292,7 @@ else
   [[ $code == 0 ]] || fail "native --dry-run exits $code: $(cat "$t/err")"
   pk="$t/native/xcodes/27.0-27A266a-$host"
   for want in "natively for $host: the pack 27.0-27A266a-$host in $t/native/xcodes; tools in $t/native" "xtool-$dl.AppImage" "apple-codesign-" \
-              "$t/native/bin/xtool sdk build" "-o $pk.partial/toolchain.partial.download" "exec xtool sdk install" \
+              "$t/native/bin/xtool sdk build" "-o $pk.partial/toolchain.partial.download" "darwin.xtoolsdk $t/native/bin/xtool" \
               "scripts/fit-toolchain.sh $pk.partial own" "put the pack in place: $pk" "under $t/native/xcodes (XLESS_SETUP_NATIVE_GB)"; do
     grep -qF -- "$want" "$t/out" || fail "the native plan lacks '$want': $(cat "$t/out")"
   done
@@ -400,7 +400,7 @@ if [[ "$(uname)" == Linux ]]; then
   run ok --dry-run
   [[ $code == 0 ]] || fail "native from the cache's export exits $code: $(cat "$t/err")"
   grep -q 'sdk build' "$t/out" && fail "the native plan exports from an export: $(cat "$t/out")"
-  grep -F "exec xtool sdk install" "$t/out" | grep -qF "$cached/$host/darwin.xtoolsdk" \
+  grep -F "sdk install" "$t/out" | grep -qF "$cached/$host/darwin.xtoolsdk $t/native/bin/xtool" \
     && grep -qF "cp $cached/toolchain-meta.json $t/native/xcodes/27.0-27A266a-$host.partial/toolchain-meta.json" "$t/out" \
     || fail "the native plan does not install the export into the pack: $(cat "$t/out")"
   grep -q 'about 0 GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "the native cache check still asks for room: $(cat "$t/out")"

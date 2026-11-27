@@ -130,6 +130,6 @@ public enum NativeSetupPlan {
         // A pack.json that cannot be read is no pack: it is prepared whole.
         let current = (try? XcodePack.open(place)) ?? nil
         return steps + (try PackPlan.make(xcode: x, arch: arch, export: sdkDir, store: store, share: share, table: table,
-                                          abilities: abilities, current: current, existing: existing))
+                                          abilities: abilities, current: current, xtool: xtool, existing: existing))
     }
 }

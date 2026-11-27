@@ -46,7 +46,7 @@ private func pack(_ x: KnownXcode = xcode26, arch: String = "arm64", parts: [Str
 private func plan(_ x: KnownXcode = xcode26, arch: String = "arm64", table t: [String: String] = table, abilities: PackPlan.Abilities = able,
                   current: XcodePack? = nil, existing: @escaping (URL) -> Bool = { _ in true }) throws -> [SetupStep] {
     try PackPlan.make(xcode: x, arch: arch, export: export26, store: store, share: share, table: t, abilities: abilities,
-                      current: current, existing: existing)
+                      current: current, xtool: URL(fileURLWithPath: "/n/bin/xtool"), existing: existing)
 }
 
 private enum Kind: Equatable { case begin, download, sdk, meta, fit, part(PackPart), swiftBuild, check, commit, other }
@@ -94,7 +94,9 @@ private let staging26 = "/n/xcodes/26.2-17C52-arm64.partial"
     #expect(d.kind == .swiftToolchain && d.url.absoluteString == "https://example.com/s623-a.tar.gz" && d.sha256 == "s623a")
     #expect(d.final.path == "\(staging26)/toolchain" && d.partial.path == "\(staging26)/toolchain.partial")
     #expect(steps[2].action == .packSDK(xtoolSDK: export26.appendingPathComponent("arm64/darwin.xtoolsdk"),
-                                        config: URL(fileURLWithPath: "\(staging26)/config"), toolchain: URL(fileURLWithPath: "\(staging26)/toolchain")))
+                                        config: URL(fileURLWithPath: "\(staging26)/config"), toolchain: URL(fileURLWithPath: "\(staging26)/toolchain"),
+                                        xtool: URL(fileURLWithPath: "/n/bin/xtool")))
+    #expect(steps[2].argv.last == "/n/bin/xtool")
     #expect(steps[3].argv == ["cp", "/cache/xless/sdk/xcode26.2-17C52/toolchain-meta.json", "\(staging26)/toolchain-meta.json"])
     #expect(steps[4].argv == [share.appendingPathComponent("scripts/fit-toolchain.sh").path, staging26, "separate",
                               share.appendingPathComponent("docker/toolchain").path])
@@ -204,7 +206,7 @@ private let staging26 = "/n/xcodes/26.2-17C52-arm64.partial"
         var paths = s.argv
         switch s.action {
         case let .download(d): paths += [d.final.path, d.partial.path]
-        case let .packSDK(_, config, toolchain): paths += [config.path, toolchain.path]
+        case let .packSDK(_, config, toolchain, _): paths += [config.path, toolchain.path]
         case let .packPart(_, _, staging): paths.append(staging.path)
         case let .packBegin(staging, _, _): paths.append(staging.path)
         default: break
@@ -229,7 +231,8 @@ private let staging26 = "/n/xcodes/26.2-17C52-arm64.partial"
     #expect(d.sha256 == "s623x" && d.final.path == "/n/xcodes/26.2-17C52-amd64.partial/toolchain")
     #expect(steps[2].action == .packSDK(xtoolSDK: export26.appendingPathComponent("amd64/darwin.xtoolsdk"),
                                         config: URL(fileURLWithPath: "/n/xcodes/26.2-17C52-amd64.partial/config"),
-                                        toolchain: URL(fileURLWithPath: "/n/xcodes/26.2-17C52-amd64.partial/toolchain")))
+                                        toolchain: URL(fileURLWithPath: "/n/xcodes/26.2-17C52-amd64.partial/toolchain"),
+                                        xtool: URL(fileURLWithPath: "/n/bin/xtool")))
 }
 
 @Test func aMissingPinIsNamed() throws {

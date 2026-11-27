@@ -85,7 +85,8 @@ private func tempDir() throws -> URL {
     // Then the pack, from that export: the SDK installed into the staging pack, fitted there (own: the image's Swift).
     let staging = "/n/xcodes/27.0-27A266a-arm64.partial"
     #expect(steps.contains { $0.action == .packSDK(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"),
-                                                    config: URL(fileURLWithPath: "\(staging)/config"), toolchain: URL(fileURLWithPath: "\(staging)/toolchain")) })
+                                                    config: URL(fileURLWithPath: "\(staging)/config"), toolchain: URL(fileURLWithPath: "\(staging)/toolchain"),
+                                                    xtool: URL(fileURLWithPath: "/n/bin/xtool")) })
     let sh = try share()
     #expect(steps.contains { $0.argv == ["\(sh.path)/scripts/fit-toolchain.sh", staging, "own", "\(sh.path)/docker/toolchain"] })
     #expect(steps.last?.action == .packCommit(staging: URL(fileURLWithPath: staging), final: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64")))
@@ -208,6 +209,10 @@ private func tempDir() throws -> URL {
     #expect(!steps.contains { $0.argv.joined(separator: " ").contains("/n/tools") || $0.argv.contains("/n/bin/xtool") })
     let export = try #require(steps.first { if case .export = $0.action { true } else { false } })
     #expect(export.argv.first == pinned.appendingPathComponent("xtool").path)
+    // and the SDK install into the pack runs that same xtool, by its path, not whichever `xtool` PATH names then
+    let install = try #require(steps.first { if case .packSDK = $0.action { true } else { false } })
+    guard case let .packSDK(_, _, _, xtool) = install.action else { return }
+    #expect(xtool == pinned.appendingPathComponent("xtool") && install.argv.contains(pinned.appendingPathComponent("xtool").path))
     // Another version on PATH: downloaded, and the export runs the downloaded one.
     let older = try make(other.path)
     #expect(downloads(older).map(\.kind) == [.appImage, .rcodesign, .swiftToolchain])
@@ -224,7 +229,8 @@ private func tempDir() throws -> URL {
                                      out: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))
     #expect(steps.contains { $0.action == .packSDK(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
                                                     config: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64.partial/config"),
-                                                    toolchain: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64.partial/toolchain")) })
+                                                    toolchain: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64.partial/toolchain"),
+                                                    xtool: URL(fileURLWithPath: "/n/bin/xtool")) })
     #expect(steps.contains { $0.argv == ["cp", "/exports/x27/toolchain-meta.json", "/n/xcodes/27.0-27A266a-arm64.partial/toolchain-meta.json"] })
     #expect(steps.allSatisfy { !$0.argv.joined(separator: " ").contains("/cache/xless") })
 }
