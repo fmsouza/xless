@@ -339,11 +339,13 @@ struct CleanCommand: AsyncParsableCommand {
             }
         }
         if doCache && cacheExists {
-            // A store kept inside the cache stays, and so do the directories that lead to it.
-            let kept = keptInCache().map(real) + leftLeftovers.map(real)
-            do { try Self.removeTree(cacheRoot, keeping: kept) } catch {
-                // Work copies built in a container as root belong to root.
-                failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
+            // A store kept inside the cache stays, and so do the directories and links that lead to it.
+            let kept = keptInCache().map(real) + leftLeftovers.map(real), through = keptInCache()
+            do { try Self.removeCache(cacheRoot, keeping: kept, through: through) } catch {
+                // Work copies built in a container as root belong to root: what is left of what was to go (never a kept store).
+                var info = stat()
+                let rest = Self.cacheRemovals(cacheRoot, keeping: kept, through: through).filter { lstat($0.path, &info) == 0 }
+                failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf \(rest.map { "'\($0.path)'" }.joined(separator: " "))")
             }
         }
         if doNative {
@@ -405,26 +407,49 @@ struct CleanCommand: AsyncParsableCommand {
         }
     }
 
-    /// `root` removed (its directories made writable first), but for the real paths `keeping` under it and the directories
-    /// that lead to them. Below `root` no symbolic link is followed: a link is removed as a link, whatever it leads to.
-    private static func removeTree(_ root: URL, keeping: [String]) throws {
-        try removeTree(root, real: root.resolvingSymlinksInPath().standardizedFileURL.path, keeping: keeping)
+    /// `root` removed (its directories made writable first), but for the real paths `keeping` under it, the directories that lead to
+    /// them, and the links that `through` (those kept paths as given) goes through. Below `root` no other symbolic link is followed:
+    /// a link is removed as a link, whatever it leads to. Everything it can is removed; then the first failure is thrown.
+    static func removeCache(_ root: URL, keeping: [String], through: [URL]) throws {
+        var first: Error?
+        for url in cacheRemovals(root, keeping: keeping, through: through) {
+            do { try PackPlan.removeTree(url) } catch { first = first ?? error }
+        }
+        if let first { throw first }
     }
 
-    /// `url`, whose real path is `here` (every directory walked into is one, not a link to one).
-    private static func removeTree(_ url: URL, real here: String, keeping: [String]) throws {
-        let fm = FileManager.default
-        if keeping.contains(here) { return }
-        guard keeping.contains(where: { $0.hasPrefix(here + "/") }) else { return try PackPlan.removeTree(url) }
-        for child in try fm.contentsOfDirectory(atPath: url.path) {
-            let entry = url.appendingPathComponent(child)
-            var info = stat()
-            if lstat(entry.path, &info) == 0, info.st_mode & S_IFMT == S_IFLNK {
-                try fm.removeItem(atPath: entry.path)
-                continue
+    /// What `removeCache` removes, each a whole tree (or a link): only `root` itself when nothing in it is kept.
+    static func cacheRemovals(_ root: URL, keeping: [String], through: [URL]) -> [URL] {
+        let real = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path }
+        // Each link on the way to a kept path, as the real path of the directory it is in and its name.
+        var links: Set<String> = []
+        for given in through {
+            var prefix = URL(fileURLWithPath: "/")
+            for component in given.standardizedFileURL.pathComponents.dropFirst() {
+                let next = prefix.appendingPathComponent(component)
+                if (try? FileManager.default.destinationOfSymbolicLink(atPath: next.path)) != nil {
+                    let parent = real(prefix)
+                    links.insert((parent == "/" ? "" : parent) + "/" + component)
+                }
+                prefix = next
             }
-            try removeTree(entry, real: here + "/" + child, keeping: keeping)
         }
+        var out: [URL] = []
+        func walk(_ url: URL, _ here: String) {
+            if keeping.contains(here) { return }
+            guard keeping.contains(where: { $0.hasPrefix(here + "/") }) else { return out.append(url) }
+            for child in ((try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? []).sorted() {
+                let entry = url.appendingPathComponent(child)
+                var info = stat()
+                if lstat(entry.path, &info) == 0, info.st_mode & S_IFMT == S_IFLNK {
+                    if !links.contains(here + "/" + child) { out.append(entry) }
+                    continue
+                }
+                walk(entry, here + "/" + child)
+            }
+        }
+        walk(root, real(root))
+        return out
     }
 
     /// Whether a running container uses a pack.

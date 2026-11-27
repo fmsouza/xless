@@ -210,7 +210,7 @@ let notOnWindows: [String: [String]] = [
     "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],
     "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
     "XlessCLITests": [
-        "BuildIsolationTests.swift", "HostDockerTests.swift", "LiveCheckTests.swift", "NativeToolsInstallTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
+        "BuildIsolationTests.swift", "CacheRemovalTests.swift", "HostDockerTests.swift", "LiveCheckTests.swift", "NativeToolsInstallTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
         "SecretsNamedByTests.swift", "NativeOverlayTests.swift", "ShimCommandsTests.swift", "XcodePinTests.swift",
     ],
 ]

@@ -422,6 +422,13 @@ run --cache --yes
 [[ $code == 0 && -f "$t/home/keep-me" && -f "$cache/packs/26.2-17C52-arm64/pack.json" && ! -L "$cache/x" && ! -e "$cache/sdk" ]] \
   || fail "--cache and a link in it to the home: $code $(ls -la "$t/home" "$cache" 2>&1) $(cat "$t/err")"
 rm -rf "$cache" "$t/home/keep-me"
+# ... and a link in the cache that XLESS_XCODES goes through stays, with the store it leads to: the path still names the store.
+mkcache; mkdir -p "$cache/real/xcodes/26.2-17C52-arm64"; echo "$pack_json" > "$cache/real/xcodes/26.2-17C52-arm64/pack.json"; ln -s "$cache/real" "$cache/via"
+extra=(XLESS_XCODES="$cache/via/xcodes")
+run --cache --yes
+[[ $code == 0 && -L "$cache/via" && -f "$cache/via/xcodes/26.2-17C52-arm64/pack.json" && ! -e "$cache/sdk" ]] \
+  || fail "--cache and a link that XLESS_XCODES goes through: $code $(ls -la "$cache" 2>&1) $(cat "$t/err")"
+rm -rf "$cache"
 # ... and with --packs, what a running setup holds there (its <name>.partial, its lock) is said to be left, and is: the
 # store and those two stay, the rest of the cache and the packs go.
 mkcache; mkdir -p "$cache/xcodes/26.2-17C52-arm64" "$cache/xcodes/27.0-27A266a-arm64.partial/toolchain"
