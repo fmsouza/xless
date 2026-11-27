@@ -47,6 +47,10 @@ mkdir -p "$t/store/26.2-17C52-arm64" "$t/store/26.2-17C60-arm64" "$t/store/26.2-
 for p in 26.2-17C52-arm64 26.2-17C60-arm64 26.2-17C60-amd64; do echo '{}' > "$t/store/$p/pack.json"; done
 out=$(run 26.2 arm64 "$t/store") || fail "store: $out"
 [[ "$out" == "--mount"$'\n'"type=bind,src=$t/store/26.2-17C60-arm64,dst=/xcodes/26.2-17C60-arm64,readonly"$'\n-e\nXLESS_XCODE=/xcodes/26.2-17C60-arm64' ]] || fail "store: $out"
+# A store whose path has a comma or a quote: the field quoted, as docker reads --mount (CSV), and as xless writes it.
+mkdir -p "$t/a,b\"c/26.2-17C52-arm64" && echo '{}' > "$t/a,b\"c/26.2-17C52-arm64/pack.json"
+out=$(run 26.2 arm64 "$t/a,b\"c") || fail "a store with a comma: $out"
+[[ "$(sed -n 2p <<<"$out")" == "type=bind,\"src=$t/a,b\"\"c/26.2-17C52-arm64\",dst=/xcodes/26.2-17C52-arm64,readonly" ]] || fail "a store with a comma: $out"
 # None there (ls finds nothing, which fails under pipefail): the message, and exit 2, not a silent stop.
 code=0; out=$(run 27.0 arm64 "$t/store" 2>&1) || code=$?
 [[ $code == 2 ]] || fail "no pack in the store: exit $code: $out"

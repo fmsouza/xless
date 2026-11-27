@@ -6,11 +6,14 @@
 # by hand has no label), or in the directory XLESS_XCODES names (that pack's directory alone). It reads $xcode,
 # $arch and $args (the docker command, with its --context); without such a pack it says what prepares one and exits 2.
 pack_args() {
-  local name dir volumes
+  local name dir volumes src
   if [[ -n "${XLESS_XCODES:-}" ]]; then
     dir="$(ls -d "$XLESS_XCODES/$xcode"-*-"$arch" 2>/dev/null | sort | tail -1 || true)"
     [[ -n "$dir" && -f "$dir/pack.json" ]] || { echo "$1: no pack of Xcode $xcode for $arch in $XLESS_XCODES; prepare it: xless setup --docker --xcode <Xcode $xcode .xip>" >&2; exit 2; }
-    name="$(basename "$dir")"; pack=(--mount "type=bind,src=$dir,dst=/xcodes/$name,readonly" -e "XLESS_XCODE=/xcodes/$name")
+    # docker reads --mount as CSV: a field with a comma, a quote or a line break is quoted, its quotes doubled (as xless does)
+    src="src=$dir"
+    [[ "$src" != *[,\"$'\n'$'\r']* ]] || src="\"${src//\"/\"\"}\""
+    name="$(basename "$dir")"; pack=(--mount "type=bind,$src,dst=/xcodes/$name,readonly" -e "XLESS_XCODE=/xcodes/$name")
   else
     volumes="$("${args[@]}" volume ls --format '{{.Name}}')" || { echo "$1: docker could not list the volumes (${args[*]} volume ls); check that it runs (docker ps)" >&2; exit 2; }
     name="$(grep -E "^xless-xcode-${xcode//./\\.}-[A-Za-z0-9]+-$arch\$" <<<"$volumes" | sort | tail -1 || true)"
