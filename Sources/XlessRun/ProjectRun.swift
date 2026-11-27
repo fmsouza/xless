@@ -326,11 +326,14 @@ public final class ProjectRun {
         try findSecrets(RunSecrets.Needs(next: false, signs: signs, uploads: span.to >= .upload), top: top)
         if setting("XLESS_BUILD_NUMBER") == nil { environment["XLESS_BUILD_NUMBER"] = "\(Int(host.now.timeIntervalSince1970) / 60)" }
         var images = RunImages.none, split = span
+        let work = ["--mount", RunText.bind(project, "/work")]
         if docker {
             try prepareDocker()
             try mountFiles(platform: .ios)
             split = try RunSpan.overlay(request)
             images = try chooseImages(top, builds: split.from <= .finalize, other: signs)
+            // (the project is the one writable mount of its containers)
+            try refuseWritableReach(of: images.pack, in: work)
             if images.areTwo { try refuseSecretsInBuild(project) }
         } else { try unlockStore(builds: RunSpan.overlay(request).from <= .finalize) }
 
@@ -342,7 +345,7 @@ public final class ProjectRun {
             if images.areTwo { buildMounts = [try files.real(project)] }
             let configuration = try keepConfiguration(of: project, images)
             try materialize()
-            let run = dockerRun + ["--mount", RunText.bind(project, "/work")] + configuration, number = ["-e", "XLESS_BUILD_NUMBER"], platform = ["--platform", "ios"]
+            let run = dockerRun + work + configuration, number = ["-e", "XLESS_BUILD_NUMBER"], platform = ["--platform", "ios"]
             let given = secrets.api + secrets.sign + storeMounts("sign") + origin(project)
             if images.areTwo {
                 func stages(_ from: RunStage, _ to: RunStage) -> [String] { ["--from", from.name, "--to", to.name] + split.extra }

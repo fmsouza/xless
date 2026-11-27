@@ -6,14 +6,19 @@ import XlessSDK
 /// The Xcode pack of a run in containers: every container of the run has it, read-only, and it is the only pack there
 /// (`PackStore.mount`), named outright by `XLESS_XCODE`, so nothing in a container chooses another. The build's container runs
 /// the app's code and that of its packages, and the steps with the secrets read the pack after it: no container of a run can
-/// write it. Only the container that prepares a pack (`PackSetup`), which has nothing of a project and no secret, writes a store.
+/// write it, through its own mount or another (`refuseWritableReach`: a writable mount that is a pack volume, or holds a directory
+/// store or is in it, stops the run). Only the container that prepares a pack (`PackSetup`), which has nothing of a project and no
+/// secret, writes a store.
 struct RunPack: Equatable {
     var manifest: PackManifest
+    /// Where it is: a volume (`PackVolumes.name`), or the directory XLESS_XCODES names.
+    var store: PackStore
     /// For every container of the run: the read-only mount and `-e XLESS_XCODE=<mount path>`.
     var arguments: [String]
 
     init(_ manifest: PackManifest, store: PackStore) {
         self.manifest = manifest
+        self.store = store
         arguments = store.mount(xcode: manifest.xcode, build: manifest.build, arch: manifest.arch, writable: false)
             + ["-e", "XLESS_XCODE=\(PackVolumes.mountPath(Self.name(manifest)))"]
     }
@@ -33,6 +38,106 @@ extension ProjectRun {
     func choosePack(image: LocalImage) throws -> RunPack {
         let packs = PackChoice(self, image: image)
         return try packs.choose()
+    }
+
+    /// No container of the run can write the pack through another of its mounts: of the mounts that `words` (docker run options
+    /// of the run's containers) make writable, none is a pack volume (whatever the store), and none holds a directory store or is
+    /// in it, compared as files (links followed, `RunFiles.directory(_:isIn:)`). The pack's own mount is read-only.
+    func refuseWritableReach(of pack: RunPack?, in words: [String]) throws {
+        guard let pack else { return }
+        for mount in RunPack.writableMounts(words) {
+            switch mount.kind {
+            case .volume:
+                guard mount.source.hasPrefix(PackVolumes.prefix) else { continue }
+                let fix = setting("XLESS_RN_WORK_VOLUME") == mount.source ? "set XLESS_RN_WORK_VOLUME to a name that does not start with \(PackVolumes.prefix)" : "name another volume"
+                throw RunStop.usage("the volume \(mount.source), which a container of this run would mount writable at \(mount.target), is a pack volume "
+                    + "(its name starts with \(PackVolumes.prefix)), and no container of a run may write a pack: the build could change what the steps after it read; \(fix)")
+            case .bind:
+                guard case let .directory(dir) = pack.store, let relation = try overlap(mount.source, store: dir.path) else { continue }
+                throw RunStop.usage("XLESS_XCODES (\(dir.path)), the store of the Xcode packs, and \(mount.source), which a container of this run would mount "
+                    + "writable at \(mount.target), overlap (\(relation)): the build could change the pack that the steps after it read. "
+                    + "Keep the store and \(mount.source) apart: set XLESS_XCODES to a directory outside it, beside it for one")
+            }
+        }
+    }
+
+    /// How `mount` and `store` overlap, as files; nil: they do not. A path that is not there yet is where its nearest parent is.
+    private func overlap(_ mount: String, store: String) throws -> String? {
+        if try files.isThere(store), try files.directory(files.nearest(mount), isIn: store) { return "\(mount) is in the store" }
+        if try files.isThere(mount), try files.directory(files.nearest(store), isIn: mount) { return "the store is in \(mount)" }
+        return nil
+    }
+}
+
+/// A mount that a container can write (`RunPack.writableMounts`).
+struct WritableMount: Equatable {
+    enum Kind: Equatable { case bind, volume }
+    var kind: Kind
+    /// The host directory, or the volume's name.
+    var source: String
+    var target: String
+}
+
+extension RunPack {
+    /// The mounts that `words` (docker run options) make writable: `--mount` (a volume unless `type=bind`) without `readonly`
+    /// or `ro` (or with them false), and `-v`/`--volume` without `ro`. An anonymous volume or a tmpfs is no store.
+    static func writableMounts(_ words: [String]) -> [WritableMount] {
+        var found: [WritableMount] = []
+        var i = words.startIndex
+        while i < words.endIndex {
+            let word = words[i]
+            var value: String?, long = false
+            if ["--mount", "-v", "--volume"].contains(word), i + 1 < words.endIndex {
+                value = words[i + 1]; long = word == "--mount"; i += 1
+            } else if word.hasPrefix("--mount=") { value = String(word.dropFirst("--mount=".count)); long = true }
+            else if word.hasPrefix("--volume=") { value = String(word.dropFirst("--volume=".count)) }
+            else if word.hasPrefix("-v=") { value = String(word.dropFirst("-v=".count)) }
+            i += 1
+            guard let value, let mount = long ? mountOption(value) : volumeOption(value) else { continue }
+            found.append(mount)
+        }
+        return found
+    }
+
+    /// `--mount`'s value, CSV as docker reads it (a field in quotes may hold a comma; "" is a quote).
+    private static func mountOption(_ value: String) -> WritableMount? {
+        var fields: [String: String] = [:], flags: Set<String> = []
+        for field in csv(value) {
+            if let eq = field.firstIndex(of: "=") { fields[field[..<eq].lowercased()] = String(field[field.index(after: eq)...]) }
+            else { flags.insert(field.lowercased()) }
+        }
+        let readOnly = !flags.isDisjoint(with: ["readonly", "ro"])
+            || ["readonly", "ro"].contains { fields[$0].map { ["1", "true"].contains($0.lowercased()) } ?? false }
+        let source = fields["source"] ?? fields["src"] ?? ""
+        let target = fields["target"] ?? fields["destination"] ?? fields["dst"] ?? ""
+        guard !readOnly, !source.isEmpty else { return nil }
+        switch fields["type"] ?? "volume" {
+        case "bind": return WritableMount(kind: .bind, source: source, target: target)
+        case "volume": return WritableMount(kind: .volume, source: source, target: target)
+        default: return nil
+        }
+    }
+
+    /// `-v`'s value: <host path or volume>:<target>[:<options>].
+    private static func volumeOption(_ value: String) -> WritableMount? {
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 2, !parts[0].isEmpty else { return nil }
+        if parts.count >= 3, parts[2].split(separator: ",").contains(where: { $0 == "ro" || $0 == "readonly" }) { return nil }
+        return WritableMount(kind: parts[0].hasPrefix("/") ? .bind : .volume, source: parts[0], target: parts[1])
+    }
+
+    private static func csv(_ text: String) -> [String] {
+        var fields: [String] = [], field = "", quoted = false
+        var chars = Array(text)[...]
+        while let c = chars.popFirst() {
+            if quoted {
+                if c == "\"" { if chars.first == "\"" { field.append("\""); chars.removeFirst() } else { quoted = false } } else { field.append(c) }
+            } else if c == "\"" { quoted = true }
+            else if c == "," { fields.append(field); field = "" }
+            else { field.append(c) }
+        }
+        fields.append(field)
+        return fields
     }
 }
 
