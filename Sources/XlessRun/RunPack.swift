@@ -236,6 +236,10 @@ private struct PackChoice {
     }
 
     func choose() throws -> RunPack {
+        if let mine = run.environment["XLESS_XCODE"], !mine.isEmpty {
+            run.host.say("==> note: XLESS_XCODE (\(mine)) names a pack of this machine, which xless run --docker does not use: its containers take "
+                + "the pack from \(place); unset XLESS_XCODE, or pin the Xcode with xcode:")
+        }
         let here = try packs()
         let chosen = try? XcodeResolver.choose(here, pin: run.xcodePin, arch: arch, order: order)
         let why: String

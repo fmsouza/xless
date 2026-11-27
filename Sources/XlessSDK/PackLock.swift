@@ -66,14 +66,18 @@ extension PackStore {
     /// Refuses `store` when its file system does not tell names apart by case (a Mac's disk): the SDK has `Endian.h` and
     /// `endian.h` side by side (scripts/fit-toolchain.sh links one to the other). The store's directory is made first.
     /// `distinguishes`: the probe (`distinguishesCase`).
-    public static func requireCaseSensitive(_ store: XcodeStore, distinguishes: (URL) throws -> Bool = distinguishesCase) throws {
+    /// `docker`: the store is the directory `XLESS_XCODES` names for `--docker` (checked on the host, before a container
+    /// would refuse it under the name /xcodes); the fix then keeps the packs in volumes.
+    public static func requireCaseSensitive(_ store: XcodeStore, docker: Bool = false, distinguishes: (URL) throws -> Bool = distinguishesCase) throws {
         do { try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true) } catch {
             throw XlessError(.sdk, "cannot make the store of Xcode packs \(store.root.path): \(error.localizedDescription)",
                              fix: "make it writable, or set XLESS_XCODES to a writable directory")
         }
         guard try distinguishes(store.root) else {
             throw XlessError(.sdk, "the store of Xcode packs \(store.root.path) is on a file system that does not tell `Endian.h` from `endian.h`, and the SDK needs both",
-                             fix: "set XLESS_XCODES to a directory on a case-sensitive file system (on a Mac: a case-sensitive APFS volume), or build in Docker: xless setup --docker")
+                             fix: docker
+                                ? "unset XLESS_XCODES, so that the packs are Docker volumes, or set it to a directory on a case-sensitive file system (on a Mac: a case-sensitive APFS volume)"
+                                : "set XLESS_XCODES to a directory on a case-sensitive file system (on a Mac: a case-sensitive APFS volume), or build in Docker: xless setup --docker")
         }
     }
 

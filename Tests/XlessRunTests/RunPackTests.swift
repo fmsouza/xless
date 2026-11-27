@@ -269,6 +269,15 @@ import XlessImages
         #expect(!host.allSteps.contains { $0.isContainer || $0.isPackSetup } && !home.exists(home.secrets))
     }
 
+    /// XLESS_XCODE names a pack of this host; the containers take theirs from the store, and the run says so.
+    @Test func aHostXlessXcodeIsSaidToBeLeftAside() throws {
+        let (host, code) = try run(nil, ["XLESS_XCODE": "/opt/packs/26.2-17C52-arm64"])
+        #expect(code == 0, "\(host.lines)")
+        #expect(host.lines.contains("==> note: XLESS_XCODE (/opt/packs/26.2-17C52-arm64) names a pack of this machine, which xless run --docker does not use: "
+            + "its containers take the pack from the pack volumes (xless-xcode-<version>-<build>-<arch>: docker volume ls --filter name=xless-xcode-); unset XLESS_XCODE, or pin the Xcode with xcode:"), "\(host.lines)")
+        #expect(host.allSteps.filter(\.isContainer).allSatisfy { has($0.words, Self.pack270) })
+    }
+
     @Test func dryRunWithoutAPackGoesOn() throws {
         home.packs.removeAll()
         try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")

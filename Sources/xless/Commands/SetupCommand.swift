@@ -282,6 +282,8 @@ struct SetupCommand: AsyncParsableCommand {
         let work = fm.temporaryDirectory.appendingPathComponent("xless-setup-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: work) }
         let store = PackStore(env: env)
+        // A directory store is checked here, where its path is: the setup container would refuse it as /xcodes.
+        if case let .directory(dir) = store, source != nil, !dryRun { try PackStore.requireCaseSensitive(XcodeStore(root: dir), docker: true) }
         let tag = try ImageName.cachedTag(ofShare: share)
         let images = archs.map { ImageName.base(version: tag, arch: $0) }
 

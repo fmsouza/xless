@@ -175,3 +175,15 @@ private final class Flag: @unchecked Sendable {
     #expect(!fm.fileExists(atPath: old.path))
     _ = mine
 }
+
+/// The --docker form: a directory store that docker mounts is checked on this host, where its path is (not in the setup
+/// container, which would name /xcodes), and the fix is to keep the packs in volumes.
+@Test func aDockerDirectoryStoreOnACaseInsensitiveFileSystemIsRefusedOnTheHost() throws {
+    let store = try tempStore()
+    defer { try? fm.removeItem(at: store.root.deletingLastPathComponent()) }
+    #expect { try PackStore.requireCaseSensitive(store, docker: true, distinguishes: { _ in false }) } throws: { error in
+        guard let e = error as? XlessError else { return false }
+        return e.cause.hasPrefix("the store of Xcode packs \(store.root.path) is on a file system")
+            && e.fix == "unset XLESS_XCODES, so that the packs are Docker volumes, or set it to a directory on a case-sensitive file system (on a Mac: a case-sensitive APFS volume)"
+    }
+}
