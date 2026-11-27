@@ -35,7 +35,8 @@ extension ProjectRun {
 
     /// Chooses them, and the pack: the project's pinned Xcode, else the newest one there is a pack of, decides the pack
     /// (`choosePack`); the images are this xless's. A person never names one, unless the app needs one of their own (`image:`,
-    /// XLESS_IMAGE), which is for the build step alone. Every container of the run gets the pack (`dockerRun`).
+    /// XLESS_IMAGE), which is for the build step alone. Every container of a run that builds gets the pack (`dockerRun`); a run
+    /// that starts after finalize reads no Xcode, and has none.
     ///
     /// - Parameters:
     ///   - kit: what the app's build needs besides xless's own image.
@@ -65,9 +66,12 @@ extension ProjectRun {
         if setting("XLESS_SIGN_IMAGE") != nil {
             host.say("==> note: XLESS_SIGN_IMAGE is set, but nothing reads it any more: the steps with the secrets run in this xless's own image")
         }
-        let pack = try choosePack(image: base)
-        images.pack = pack
-        dockerRun += pack.arguments
+        // Only the steps up to finalize read the Xcode (`builds`): a run from sign on needs no pack, and prepares none.
+        if builds {
+            let pack = try choosePack(image: base)
+            images.pack = pack
+            dockerRun += pack.arguments
+        }
         sayImages(images, own: own?.variable, builds: builds, other: other)
         if builds, own == nil, let kit, let built = try prepare(kit, on: base) { images.build = started(built) }
         return images
@@ -94,9 +98,9 @@ extension ProjectRun {
 
     private func sayImages(_ images: RunImages, own: String?, builds: Bool, other: Bool) {
         let what = builds && other && images.areTwo ? "build \(images.build.name), signing and upload \(images.secrets.name)" : builds ? images.build.name : images.secrets.name
+        guard let pack = images.pack else { return host.say("==> \(what) (no Xcode: this run starts after finalize)") }
         let why = xcodePin.map { "xcode: \"\($0)\" (pinned)" } ?? own ?? "no xcode: is pinned, so the newest Xcode there is a pack of"
-        let xcode = images.pack.map { "Xcode \($0.manifest.xcode) (\($0.manifest.build)), " } ?? ""
-        host.say("==> \(why): \(xcode)\(what)")
+        host.say("==> \(why): Xcode \(pack.manifest.xcode) (\(pack.manifest.build)), \(what)")
     }
 
     /// The kit's image as this xless builds it: from the Dockerfile shipped with it, on the image of this xless. nil: a dry run, and

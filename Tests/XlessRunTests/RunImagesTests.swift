@@ -110,12 +110,12 @@ import XlessImages
         #expect(!home.exists(home.secrets))
     }
 
-    /// A run that signs what is built already needs no kit.
+    /// A run that signs what is built already needs no kit (and no Xcode: RunPackTests.aRunFromSignTakesNoPack).
     @Test func onlyTheBuildStepNeedsTheKit() throws {
         home.images.remove("\(Self.base)-tauri")
         let (host, code) = try run(["--config", home.overlay, "--from", "sign"])
         #expect(code == 0 && builds(host).isEmpty && names(host) == [Self.base])
-        #expect(host.lines.contains("==> no xcode: is pinned, so the newest Xcode there is a pack of: Xcode 27.0 (27A266a), \(Self.base)"))
+        #expect(host.lines.contains("==> \(Self.base) (no Xcode: this run starts after finalize)"), "\(host.lines)")
     }
 
     // MARK: - A project's own image

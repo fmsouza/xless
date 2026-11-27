@@ -278,6 +278,17 @@ import XlessImages
         #expect(host.allSteps.filter(\.isContainer).allSatisfy { has($0.words, Self.pack270) })
     }
 
+    /// Only the steps up to finalize read the Xcode: a run that starts at sign neither needs a pack nor prepares one.
+    @Test func aRunFromSignTakesNoPack() throws {
+        home.packs.removeAll()
+        try home.export("27.0", "27A266a")
+        let (host, code) = try run(["--config", home.overlay, "--from", "sign"])
+        #expect(code == 0, "\(host.lines)")
+        #expect(!host.allSteps.contains { $0.isPackSetup } && home.packs.prepared.isEmpty, "\(host.lines)")
+        #expect(!host.allSteps.contains { $0.words.contains { $0.contains("xless-xcode-") || $0.hasPrefix("XLESS_XCODE=") } }, "\(host.allSteps.map(\.line))")
+        #expect(!host.lines.contains { $0.contains("pack") }, "\(host.lines)")
+    }
+
     @Test func dryRunWithoutAPackGoesOn() throws {
         home.packs.removeAll()
         try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")

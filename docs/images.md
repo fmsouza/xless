@@ -150,7 +150,8 @@ a pack setup's, by their labels `xless.run` and `xless.setup`), and goes on wher
    export of that Xcode is in the cache: the run says so, which parts and how long each takes, and runs the same setup
    container as `xless setup --docker --sdk <export>`. Without the export it stops (exit 2) with the `xless setup --docker
    --xcode …` that prepares it.
-3. **Every container of the run** gets that pack, and only that one, read-only, with `XLESS_XCODE` naming it. It is a
+3. **Every container of the run** gets that pack, and only that one, read-only, with `XLESS_XCODE` naming it (a run that
+   starts after finalize, `--from sign` or later, reads no Xcode: it neither needs a pack nor prepares one). It is a
    mount, nothing is copied: from the command to the first line of the build step, three runs took 0.82, 0.44 and 0.44 s
    with a pack, and 0.48, 0.36 and 0.40 s with an image that had the Xcode in it (arm64 Mac). A run whose containers
    would mount a pack volume writable, or a directory that holds the store or is in it (`XLESS_XCODES` inside the
