@@ -3,9 +3,10 @@
 # amd64 build container): the output must not depend on the host.
 # Usage: scripts/arch-compare.sh <app-a> <app-b>
 #   1. prints `xless tauri report` (the summary reference.json is made of) of each app and diffs the two;
-#   2. lists every file whose bytes differ outside _CodeSignature/ and the Mach-O code-signature blob (a file in only
-#      one app counts as different). A Mach-O image is compared without its LC_CODE_SIGNATURE data, that command's
-#      offset and size, and __LINKEDIT's file and VM size, which the signature's length moves.
+#   2. lists every file whose bytes differ outside the bundles' _CodeSignature/ directories and the Mach-O code-signature
+#      blob (a file in only one app counts as different). A Mach-O image is compared without its LC_CODE_SIGNATURE data,
+#      that command's offset and size, and __LINKEDIT's file and VM size, which the signature's length moves; a fat file
+#      slice by slice (scripts/code-signature-mask.py, which scripts/pack-parity.sh uses too).
 # Exit: 0 identical, 1 a summary or byte difference, 2 usage. XLESS: the xless binary (default: `xless` on PATH, else the
 # host build `swift build --product xless`).
 set -euo pipefail
@@ -32,41 +33,12 @@ else
 fi
 
 echo "==> bytes outside _CodeSignature/ and the Mach-O code-signature blob"
-if python3 -I - "$a" "$b" <<'PY'
-import os, struct, sys
+if python3 -I - "$a" "$b" "$repo/scripts/code-signature-mask.py" <<'PY'
+import importlib.util, os, sys
 
-def files(root):
-    out = {}
-    for d, _, names in os.walk(root):
-        rel = os.path.relpath(d, root)
-        if rel == "_CodeSignature" or rel.startswith("_CodeSignature" + os.sep):
-            continue
-        for n in names:
-            p = os.path.join(d, n)
-            out[os.path.relpath(p, root)] = p
-    return out
-
-def masked(path):
-    """The file's bytes; a thin 64-bit little-endian Mach-O without its code-signature data."""
-    if os.path.islink(path):
-        return b"link:" + os.readlink(path).encode()
-    data = bytearray(open(path, "rb").read())
-    if len(data) < 32 or struct.unpack_from("<I", data, 0)[0] != 0xfeedfacf:
-        return bytes(data)
-    ncmds = struct.unpack_from("<I", data, 16)[0]
-    off, sig = 32, None
-    for _ in range(ncmds):
-        cmd, size = struct.unpack_from("<II", data, off)
-        if cmd == 0x1d:                                   # LC_CODE_SIGNATURE: dataoff, datasize
-            sig = struct.unpack_from("<II", data, off + 8)
-            struct.pack_into("<II", data, off + 8, 0, 0)
-        elif cmd == 0x19 and data[off + 8:off + 24].rstrip(b"\0") == b"__LINKEDIT":
-            struct.pack_into("<Q", data, off + 32, 0)     # vmsize
-            struct.pack_into("<Q", data, off + 48, 0)     # filesize
-        off += size
-    if sig:
-        del data[sig[0]:sig[0] + sig[1]]
-    return bytes(data)
+spec = importlib.util.spec_from_file_location("code_signature_mask", sys.argv[3])
+mask = importlib.util.module_from_spec(spec); spec.loader.exec_module(mask)
+files, masked = mask.files, mask.masked
 
 fa, fb = files(sys.argv[1]), files(sys.argv[2])
 bad = []
