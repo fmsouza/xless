@@ -265,8 +265,9 @@ extension XcodeProblem: StageReportableError {
 
 extension DarwinSDK {
     /// The Xcode's Darwin SDK (`XcodeEnvironment`). On a machine with no Xcode at all (`XcodeEnvironment.lookup` finds
-    /// nothing), where a native setup puts it (`DarwinSDKLocator`), so that the error of what needs it names a path. A
-    /// pack that does not fit (none for the pin, stale, unreadable) throws its `XcodeProblem`.
+    /// nothing), where `xtool sdk install` puts one (`DarwinSDKLocator`; no setup does since the packs), so that the
+    /// error of what needs it names a path. A pack that does not fit (none for the pin, stale, unreadable) throws its
+    /// `XcodeProblem`.
     public init(env: [String: String] = ProcessInfo.processInfo.environment) throws {
         self.init(bundle: try XcodeEnvironment.lookup(env: env)?.sdkBundle ?? DarwinSDKLocator.bundle(env: env))
     }
