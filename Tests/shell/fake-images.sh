@@ -3,8 +3,10 @@
 # One image a line: NAME ID ARCH LAYER,LAYER,… [LABEL=VALUE …]. `fake-images.sh base ARCH XCODE BUILD [NAME]` prints the line of
 # an image as `xless setup --docker` builds it, `fake-images.sh kit KIT SHARE ARCH XCODE BUILD` that of a kit's image on it, and
 # `fake-images.sh tag [SHARE]` the part of the tag that names the xless of SHARE (the repository's when it is not given), as the script says it.
-# ADAPTER(packs): removed in the setup/run tasks. An image holds no Xcode any more: XCODE and BUILD only make the fake's IDs and layers
-# differ, and its name is xless:<tag>-<arch>.
+# An image holds no Xcode: XCODE and BUILD only make the fake's IDs and layers differ, and its name is xless:<tag>-<arch>.
+# `fake-images.sh pack STORE ARCH [XCODE BUILD]` makes an Xcode pack in the directory store STORE (XLESS_XCODES), as a setup
+# leaves it: its pack.json and the entries of both parts. By default of Xcode 99.0 (99Z99), which no versions.env lists: no
+# recipe of this xless makes it stale, so a run that is not a dry run takes it as it is.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 tag() { # [SHARE]: what scripts/docker-images.sh says (its `tag` mode), for the repository or for a copy of the script and versions.env in SHARE
@@ -47,6 +49,10 @@ case "$1 ${2:-}" in
     done < "$FAKE_IMAGES"
     echo "Error: No such image: $want" >&2; exit 1 ;;
   "tag "*|"tag ") shift; tag "$@" ;;
+  "pack "*)
+    shift; store="$1" arch="$2" xcode="${3:-99.0}" build="${4:-99Z99}"; p="$store/$xcode-$build-$arch"
+    mkdir -p "$p"/{toolchain,config,toolchain-meta.json,swift-toolchain.json,include,swift-build}
+    printf '{"format":1,"xcode":"%s","build":"%s","arch":"%s","swift":"6.4.0","mode":"own","parts":{"sdk":"s","swift-build":"b"}}\n' "$xcode" "$build" "$arch" > "$p/pack.json" ;;
   "base "*) shift; base "$@" ;;
   "kit "*)
     shift; kit="$1" share="$2" arch="$3" xcode="$4" build="$5"

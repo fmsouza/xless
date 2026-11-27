@@ -190,8 +190,7 @@ extension ProjectRun {
         }
         steps.signCaches += origin(overlay.path)
         // A simulator build is step 2 only.
-        steps.images = try chooseImages(top, kit: Kit(overlayType: top["type"]), builds: overlay.span.from <= .finalize, other: next || overlay.span.to >= .sign,
-                                        signImage: overlay.isReactNative && !overlay.isSimulator)
+        steps.images = try chooseImages(top, kit: Kit(overlayType: top["type"]), builds: overlay.span.from <= .finalize, other: next || overlay.span.to >= .sign)
         return steps
     }
 

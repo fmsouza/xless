@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessImages
 
 /// What `xless run` is started with, besides its arguments.
 public struct RunContext: Sendable {
@@ -14,6 +15,11 @@ public struct RunContext: Sendable {
     public var again: [String]
     /// xless's share directory.
     public var share: String
+    /// The part of the images' tags that names this xless (`xless:<version>-<arch>`): the release its share records, or the
+    /// commit of a checkout (`ImageName.tag(ofShare:)`).
+    public var version: String {
+        get throws { try ImageName.cachedTag(ofShare: URL(fileURLWithPath: share)) }
+    }
     /// `1`: in the images; `0`: natively; `auto`: in the images, unless an SDK is installed natively.
     public var useDocker: String
     /// The session this run is in (XLESS_SESSION): for the steps that read the store, and for nothing else.
@@ -45,7 +51,8 @@ public struct RunContext: Sendable {
 ///   2. xless ship --to finalize    WITHOUT any secret mount or variable: prepare, build, assets, finalize.
 ///   3. xless ship --from sign      with the secrets: sign, package, upload (no build code runs here).
 /// The secrets a step needs are required only when that step runs. A project directory is one `xless ship`, with the secrets
-/// unless it stops before sign; natively on a Mac it is steps 2 and 3. docs/signing-and-testflight.md has the rest.
+/// unless it stops before sign; natively on a Mac it is steps 2 and 3. In containers every one has the Xcode's pack, read-only
+/// (`RunPack`). docs/signing-and-testflight.md has the rest.
 public final class ProjectRun {
     let host: any RunHost
     let context: RunContext
@@ -68,6 +75,8 @@ public final class ProjectRun {
     // in containers
     var dockerCLI = ["docker"]
     var dockerRun: [String] = []
+    /// What every container of the run is labelled with: the clean-up removes them by it.
+    var runLabel = ""
     var architecture = ""
     /// The host folders that the build container (step 2) mounts: no secret may be inside one.
     var buildMounts: [String] = []
@@ -278,6 +287,8 @@ public final class ProjectRun {
         // --init: an init process forwards the stop signal docker run proxies to xless (which, as PID 1, would ignore it).
         // The label lets the clean-up find this run's containers.
         let label = "xless.run=\(host.processID).\(Int(host.now.timeIntervalSince1970))"
+        runLabel = label
+        // (`chooseImages` adds the pack's arguments: every container of the run has it, read-only)
         dockerRun = dockerCLI + ["run", "--rm", "--pull=never", "--init", "--label", label]
         if !dryRun {
             let cli = dockerCLI, environment = environment(.nothing)

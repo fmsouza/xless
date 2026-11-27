@@ -77,7 +77,8 @@ if [[ -n "${DSLEEP:-}" && "$*" == *"$DSLEEP"* ]]; then echo $$ > "$DPID"; exec s
 exit 0
 D
 chmod +x "$t/bin/xless" "$t/bin/docker"
-docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
+"$fake" pack "$t/xcodes" "$A"   # the Xcode's pack every container gets, read-only
+docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 XLESS_XCODES="$t/xcodes"
         XDG_RUNTIME_DIR="$t/run" RUN="$RUN" XLOG="$t/xlog" DLOG="$t/dlog" FAKE="$fake" FAKE_IMAGES="$t/images" DPID="$t/dpid" MPID="$t/mpid")
 reset() { : > "$t/xlog"; : > "$t/xlog.named"; : > "$t/dlog"; rm -rf "$t/run/xless" "$t/dpid" "$t/mpid"; }
 

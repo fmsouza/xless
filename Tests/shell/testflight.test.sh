@@ -17,7 +17,8 @@ images() { # XCODE BUILD ...
   done
 }
 images 27.0 27A266a > "$t/images"
-# ADAPTER(packs): removed in the setup/run tasks. An image holds no Xcode: there is one base image, named after this xless.
+# An image holds no Xcode: there is one base image, named after this xless. (No Xcode pack is on this fake machine: a dry run
+# says that a run would stop, and shows what it would run with the pack it would use.)
 I="xless:$("$fake" tag)-$A"
 # A fake docker that knows two contexts, so context selection is testable without a daemon, and whose images are $t/images.
 cat > "$t/bin/docker" <<D
@@ -372,7 +373,7 @@ done
 [[ "$s3" == *"-v $vol:/cache/work -e XLESS_WORK_ROOT=/cache/work -e XLESS_WORK_VOLUME=$vol "* && "$s3" == *"dst=/secrets/dist-key.pem,readonly"* ]] || fail "rn step 3 mounts: $s3"
 [[ "$s3" != *"cocoapods"* && "$s3" != *"corepack"* && "$s3" != *".cache/xless"* ]] || fail "rn step 3 mounts build caches: $s3"
 # image and volume overrides; XLESS_RN_CLEAN reaches the build
-out=$("${base[@]}" XLESS_IMAGE=rn:1 XLESS_SIGN_IMAGE=keys:1 XLESS_RN_WORK_VOLUME=w1 XLESS_RN_CLEAN=1 "$S" --config "$t/rn/app.yml" 2>/dev/null)
+out=$("${base[@]}" XLESS_IMAGE=rn:1 XLESS_RN_WORK_VOLUME=w1 XLESS_RN_CLEAN=1 "$S" --config "$t/rn/app.yml" 2>/dev/null)
 # (an image that is not here cannot be shown to be xless's own, which the steps with the secrets run in)
 [[ "$(line "next-build")" == *" $I xless next-build "* ]] || fail "rn step 1 image: $out"
 [[ "$(line "--to finalize")" == *"-v w1:/cache/work "*"-e XLESS_RN_CLEAN "*" rn:1 xless ship "* ]] || fail "rn step 2 overrides: $out"
@@ -583,21 +584,25 @@ out=$("${pinned[@]}" "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "pinned r
 [[ "$(line "next-build")" == *" $P xless next-build "* ]] || fail "pinned rn step 1: $out"
 [[ "$(line "--to finalize")" == *" $P-react-native xless ship "* ]] || fail "pinned rn step 2: $out"
 [[ "$(line "--from sign")" == *" $P xless ship "* ]] || fail "pinned rn step 3: $out"
-grep -qF "xcode: \"26.2\" (pinned): build $P-react-native, signing and upload $P" "$t/err" || fail "pin not reported: $(cat "$t/err")"
-# a missing image is refused (exit 2) with the command that builds it, and the pin does not change it
+grep -qF "xcode: \"26.2\" (pinned): Xcode 26.2 (17C52), build $P-react-native, signing and upload $P" "$t/err" || fail "pin not reported: $(cat "$t/err")"
+# the pin chooses the pack, which every container gets read-only, named outright; a dry run with none says a run would stop
+[[ $(grep -c " --mount type=volume,src=xless-xcode-26.2-17C52-$A,dst=/xcodes,readonly -e XLESS_XCODE=/xcodes/26.2-17C52-$A " <<<"$out") -eq 3 ]] || fail "the pinned pack: $out"
+grep -qF "note: $t/pin/rn.yml pins xcode: \"26.2\", but there is no pack of Xcode 26.2 for $A in the pack volumes" "$t/err" \
+  && grep -qF "a run would stop here (xless setup --docker --xcode <path to Xcode 26.2's .xip or Xcode.app>)" "$t/err" || fail "no pack not said: $(cat "$t/err")"
+# a missing image is refused (exit 2) with the command that builds it, pin or not
 : > "$t/images"
-code=0; "${pinned[@]}" "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
+code=0; "${pinned[@]}" XLESS_TESTFLIGHT_DRY_RUN= "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] || fail "missing pinned image exits $code, want 2"
-grep -qF "pins xcode: \"26.2\", but the image $P is missing (xless images are never pulled from a registry); build it: xless setup --docker --arch $A (it needs no Xcode to build the image)" "$t/err" \
+grep -qF "testflight: the image $P is missing (xless images are never pulled from a registry); build it: xless setup --docker --arch $A (it needs no Xcode to build the image)" "$t/err" \
   || fail "missing image message: $(cat "$t/err")"
 images 26.2 17C52 > "$t/images"
 # without a pin: the newest one there is
 out=$("${pinned[@]}" "$S" --config "$t/rn/app.yml" 2>"$t/err") || fail "unpinned: $(cat "$t/err")"
 [[ "$(line "--from sign")" == *" $P xless ship "* ]] || fail "unpinned image: $out"
-grep -qF "no xcode: is pinned, so the newest Xcode there is an image of: build $P-react-native, signing and upload $P" "$t/err" || fail "the choice is not said: $(cat "$t/err")"
+grep -qE "no xcode: is pinned, so the newest Xcode there is a pack of: Xcode [0-9.]+ \([0-9A-Za-z]+\), build $P-react-native, signing and upload $P" "$t/err" || fail "the choice is not said: $(cat "$t/err")"
 # the images of an older xless (the tag without an Xcode, or with one, and the older repositories) are not used: what to do is said
 printf '%s\n' "xless:local-$A sha256:old $A old" "xless-rn:local-$A sha256:rn $A old" "xless-base:local-$A sha256:b $A old" > "$t/images"
-code=0; "${pinned[@]}" "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
+code=0; "${pinned[@]}" XLESS_TESTFLIGHT_DRY_RUN= "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] && grep -qF "there is no xless image on this machine (xless images are never pulled from a registry), and xless:local-$A is an older xless's, which is not used; build it: xless setup --docker --arch $A (it needs no Xcode to build the image), and xless clean --old removes the older xless's images" "$t/err" || fail "the older images: exit $code $(cat "$t/err")"
 # a dry run with none shows what there would be: this xless's image
 out=$("${pinned[@]}" "$S" --config "$t/rn/app.yml" 2>"$t/err") || fail "unpinned dry run with the older images: $(cat "$t/err")"
@@ -632,12 +637,10 @@ for value in --privileged '[a]'; do
   code=0; "${pinned[@]}" "$S" --config "$t/pin/option.yml" >/dev/null 2>"$t/err" || code=$?
   [[ $code -eq 2 ]] && grep -qF "image: in $t/pin/option.yml" "$t/err" || fail "image: $value: exit $code $(cat "$t/err")"
 done
-# XLESS_SIGN_IMAGE still works for xless's own image, with a notice; one with more in it is refused
-out=$("${pinned[@]}" XLESS_SIGN_IMAGE="$P" "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
-[[ "$(line "--from sign")" == *" $P xless ship "* ]] && grep -q "note: XLESS_SIGN_IMAGE still works" "$t/err" || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
+# XLESS_SIGN_IMAGE is not read any more: the steps with the secrets are in xless's own image, whatever it names
 "$fake" base "$A" 26.2 17C52 keys:2 sha256:keys base26.2,xless26.2,keys >> "$t/images"
-code=0; "${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -q "XLESS_SIGN_IMAGE names keys:2, which has more in it than xless's own image $P, .*; unset XLESS_SIGN_IMAGE" "$t/err" || fail "XLESS_SIGN_IMAGE keys:2: $code $(cat "$t/err")"
+out=$("${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
+[[ "$(line "--from sign")" == *" $P xless ship "* ]] && ! grep -q "XLESS_SIGN_IMAGE" "$t/err" || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
 # Tauri overlays and xless.yml projects take the pin too
 printf 'type: tauri\nsource: app\nbundleID: com.example.x\nxcode: 26.2\n' > "$t/pin/tauri.yml"
 images 26.2 17C52 > "$t/images"
@@ -691,7 +694,8 @@ exit 0
 D
 chmod +x "$t/kbin/docker"
 : > "$t/klog"
-env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 \
+"$fake" pack "$t/kxcodes" "$A"   # the pack the run's containers get
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 XLESS_XCODES="$t/kxcodes" \
   "$S" "$t/proj" --build-number 1 --to finalize >/dev/null 2>"$t/err" & pid=$!
 for _ in $(seq 50); do grep -q '^run ' "$t/klog" && break; sleep 0.1; done
 grep -q '^run .*--init --label xless\.run=' "$t/klog" || fail "docker run without --init and the run label: $(cat "$t/klog")"
@@ -724,7 +728,7 @@ done
 # until it ends.
 keys=(ASC_KEY_ID=KEYID ASC_ISSUER_ID_FILE="$t/issuer" ASC_KEY_P8_FILE="$t/key.p8" XLESS_DIST_KEY_FILE="$t/dist.pem")
 : > "$t/klog"
-env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 "${keys[@]}" \
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 XLESS_XCODES="$t/kxcodes" "${keys[@]}" \
   "$S" --config "$t/ov/my.overlay.yml" --to finalize >/dev/null 2>"$t/err" & pid=$!
 for _ in $(seq 50); do grep -q '^run .*next-build' "$t/klog" && break; sleep 0.1; done
 grep -q '^run .*next-build' "$t/klog" || { kill "$pid"; fail "step 1 never started: $(cat "$t/klog" "$t/err")"; }

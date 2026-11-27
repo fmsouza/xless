@@ -68,10 +68,14 @@ private func json(_ m: PackManifest) -> String {
                 == ["--mount", "type=volume,src=xless-xcode-26.2-17C52-arm64,dst=/xcodes,readonly"])
         let dir = PackStore.directory(URL(fileURLWithPath: "/data/xcodes"))
         #expect(dir.mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: true) == ["--mount", "type=bind,src=/data/xcodes,dst=/xcodes"])
-        #expect(dir.mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: false) == ["--mount", "type=bind,src=/data/xcodes,dst=/xcodes,readonly"])
+        // read-only, of a directory that may hold several packs: that pack's directory alone, where a volume puts it
+        #expect(dir.mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: false)
+                == ["--mount", "type=bind,src=/data/xcodes/26.2-17C52-arm64,dst=/xcodes/26.2-17C52-arm64,readonly"])
         // docker reads --mount as CSV: a comma or a quote in a path is quoted.
+        #expect(PackStore.directory(URL(fileURLWithPath: "/data/a,b\"c")).mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: true)
+                == ["--mount", "type=bind,\"src=/data/a,b\"\"c\",dst=/xcodes"])
         #expect(PackStore.directory(URL(fileURLWithPath: "/data/a,b\"c")).mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: false)
-                == ["--mount", "type=bind,\"src=/data/a,b\"\"c\",dst=/xcodes,readonly"])
+                == ["--mount", "type=bind,\"src=/data/a,b\"\"c/26.2-17C52-arm64\",dst=/xcodes/26.2-17C52-arm64,readonly"])
     }
 
     @Test func manifestsSkipVolumesWithoutAPack() throws {

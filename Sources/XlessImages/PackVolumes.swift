@@ -84,14 +84,19 @@ public enum PackStore: Equatable, Sendable {
         if let dir = env["XLESS_XCODES"], !dir.isEmpty { self = .directory(URL(fileURLWithPath: dir)) } else { self = .volumes }
     }
 
-    /// docker's mount arguments that put the store of one pack at `/xcodes`: read-write for the setup container, read-only
-    /// otherwise. A volume holds that pack alone; a directory is mounted whole.
+    /// docker's mount arguments for one pack. Writable (the setup container alone): its store at `/xcodes`, where a pack is
+    /// prepared beside its place; a directory is mounted whole. Read-only (every container of a run): the pack is at
+    /// `/xcodes/<name>` and is the only one there, in both kinds of store: a volume holds that pack alone and is mounted as
+    /// the store, and of a directory, which may hold several, the pack's own directory alone is mounted there.
     public func mount(xcode: String, build: String, arch: String, writable: Bool) -> [String] {
         switch self {
         case .volumes:
             return ["--mount", Self.mountOption(["type": "volume", "src": PackVolumes.name(xcode: xcode, build: build, arch: arch), "dst": Self.root], readonly: !writable)]
+        case let .directory(dir) where writable:
+            return ["--mount", Self.mountOption(["type": "bind", "src": dir.path, "dst": Self.root], readonly: false)]
         case let .directory(dir):
-            return ["--mount", Self.mountOption(["type": "bind", "src": dir.path, "dst": Self.root], readonly: !writable)]
+            let name = XcodePack.name(xcode: xcode, build: build, arch: arch)
+            return ["--mount", Self.mountOption(["type": "bind", "src": dir.appendingPathComponent(name).path, "dst": PackVolumes.mountPath(name)], readonly: true)]
         }
     }
 

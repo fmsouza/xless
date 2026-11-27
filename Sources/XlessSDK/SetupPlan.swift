@@ -154,13 +154,7 @@ public enum SetupPlan {
         case .nothing: reasons = ["it holds no pack yet"]
         case let .read(m):
             reasons = staleness(m, check: check)
-            if reasons.isEmpty, case let .directory(dir) = store {
-                for part in PackPart.allCases {
-                    for entry in PackPlan.entries(of: part) where !existing(dir.appendingPathComponent("\(pack)/\(entry)")) {
-                        reasons.append("its \(part.rawValue) part lacks \(entry)")
-                    }
-                }
-            }
+            if reasons.isEmpty, case let .directory(dir) = store { reasons = lacking(dir.appendingPathComponent(pack), existing: existing) }
         case .unread: reasons = []
         }
         var notes: [String] = []
@@ -237,6 +231,14 @@ public enum SetupPlan {
             if have != want { reasons.append("its \(part.rawValue) part was prepared by another recipe (\(have.prefix(12)), this xless's is \(want.prefix(12)))") }
         }
         return reasons
+    }
+
+    /// What a pack of a directory store (at `root`, on this machine) lacks of its parts' entries (`PackPlan.entries`): its
+    /// `pack.json` may record a part whose files are gone. Empty: nothing.
+    public static func lacking(_ root: URL, existing: (URL) -> Bool) -> [String] {
+        PackPart.allCases.flatMap { part in
+            PackPlan.entries(of: part).filter { !existing(root.appendingPathComponent($0)) }.map { "its \(part.rawValue) part lacks \($0)" }
+        }
     }
 
     /// A kit's image on `base`. (The command is the one that runs, where `base` is built already.)
