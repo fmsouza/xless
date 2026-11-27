@@ -579,6 +579,18 @@ grep -q "^would remove the link $nhl/xcodes (to $t/behind): the packs behind it 
 run --native --yes
 [[ $code == 0 && ! -e "$nhl" && -f "$t/behind/26.2-17C52-arm64/pack.json" ]] || fail "--native removed the packs behind a link: $code $(cat "$t/err")"
 extra=()
+# a native home that is a link itself: the link goes, and the home behind it stays whole (its packs keep their pack.json)
+nht="$t/nh-target"; rm -rf "$nht" "$t/nh-linked"; mkdir -p "$nht/bin" "$nht/xcodes/26.2-17C52-arm64"; ln -s x "$nht/bin/xtool"
+echo "$pack_json" > "$nht/xcodes/26.2-17C52-arm64/pack.json"; ln -s "$nht" "$t/nh-linked"
+extra=(XLESS_NATIVE_HOME="$t/nh-linked")
+run --native --dry-run
+grep -qx "would remove the link $t/nh-linked (to $nht): the native install behind it is not removed" "$t/out" \
+  && ! grep -q "would remove the Xcode pack\|would remove the native install" "$t/out" || fail "the listing of a linked native home: $(cat "$t/out")"
+on n --native
+grep -qF "Remove the link $t/nh-linked?" "$t/out" || fail "--native of a linked home does not ask about the link: $(cat "$t/out")"
+run --native --yes
+[[ $code == 0 && ! -L "$t/nh-linked" && -f "$nht/xcodes/26.2-17C52-arm64/pack.json" && -L "$nht/bin/xtool" ]] || fail "--native through a linked home: $code $(cat "$t/err")"
+extra=()
 
 # `xless sdk install` (which --image used to serve) says what to run, in every form, so an old script gets the message, not "unknown command".
 for form in "" "--image xless:local-arm64-xcode27.0" "--xtoolsdk $t/x/arm64/darwin.xtoolsdk --meta $t/x/toolchain-meta.json"; do

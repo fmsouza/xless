@@ -142,11 +142,13 @@ struct CleanCommand: AsyncParsableCommand {
         // only when its name is its manifest's.
         let homeReal = real(layout.root), homeStore = layout.root.appendingPathComponent("xcodes")
         let givenStore = (env["XLESS_XCODES"] ?? "").isEmpty ? nil : URL(fileURLWithPath: env["XLESS_XCODES"] ?? "")
-        // If <home>/xcodes is a link, removing the home removes the link and not the packs behind it: they are not this install's to list as removed.
-        let homeLink = try? fm.destinationOfSymbolicLink(atPath: homeStore.path)
-        var nativeStores = homeLink == nil ? [homeStore] : [], ownStore: URL?
-        if let given = givenStore, homeLink != nil || real(given) != real(homeStore) {
-            if real(given) == homeReal || real(given).hasPrefix(homeReal + "/") { nativeStores.append(given) } else { ownStore = given }
+        // If the home is a link, removing it removes the link and nothing behind it; if <home>/xcodes is one, removing the home removes that link
+        // and not the packs behind it: what is behind a link is not this install's to list as removed (nor to take a pack.json from).
+        let rootLink = try? fm.destinationOfSymbolicLink(atPath: layout.root.path)
+        let homeLink = rootLink == nil ? try? fm.destinationOfSymbolicLink(atPath: homeStore.path) : nil
+        var nativeStores = rootLink == nil && homeLink == nil ? [homeStore] : [], ownStore: URL?
+        if let given = givenStore, rootLink != nil || homeLink != nil || real(given) != real(homeStore) {
+            if rootLink == nil, real(given) == homeReal || real(given).hasPrefix(homeReal + "/") { nativeStores.append(given) } else { ownStore = given }
         }
         func packsOf(_ dir: URL) -> [XcodePack] { XcodeStore(root: dir).packs().filter { $0.root.lastPathComponent == $0.name } }
         let nativePacks = (rootProblem == nil && (doNative || listOnly)) ? nativeStores.flatMap(packsOf) : []
@@ -190,7 +192,8 @@ struct CleanCommand: AsyncParsableCommand {
             asks && !imageRefs.isEmpty ? (imageRefs.count == 1 ? "this image tag" : "these \(imageRefs.count) image tags") : nil,
             asks && !imageRefs.isEmpty ? "the untagged older builds" : nil,
             !removablePackVolumes.isEmpty ? "\(removablePackVolumes.count) Xcode pack volume\(removablePackVolumes.count == 1 ? "" : "s")" : nil,
-            doNative && nativePaths.contains(layout.root) && !rootEmpty ? "the native install \(real(layout.root))" : nil,
+            doNative && nativePaths.contains(layout.root) && (rootLink != nil || !rootEmpty)
+                ? rootLink != nil ? "the link \(layout.root.path)" : "the native install \(real(layout.root))" : nil,
             doNative && !homeBlocked && !nativePacks.isEmpty ? "\(nativePacks.count) Xcode pack\(nativePacks.count == 1 ? "" : "s") of the native install" : nil,
             doPacks && !removableOwn.isEmpty ? "\(removableOwn.count) Xcode pack\(removableOwn.count == 1 ? "" : "s") of \(ownStore?.path ?? "your store")" : nil,
             doPacks && !leftovers.isEmpty ? "what \(leftovers.count == 1 ? "an interrupted setup" : "interrupted setups") left there" : nil,
@@ -236,7 +239,11 @@ struct CleanCommand: AsyncParsableCommand {
         if listOnly || doNative {
             if nativePaths.isEmpty && !homeBlocked { say("no native install") }
             if homeBlocked { say("\(leave) the native install's \(layout.root.path): a pack in it is in use") }
-            for p in nativePaths { say("\(verb) the native install's \(p.path) (\(Self.size(of: p)))") }
+            for p in nativePaths {
+                if p == layout.root, let rootLink {
+                    say("\(verb) the link \(p.path) (to \(rootLink)): the native install behind it is not removed")
+                } else { say("\(verb) the native install's \(p.path) (\(Self.size(of: p)))") }
+            }
             if let homeLink, doNative || listOnly {
                 say("\(verb) the link \(homeStore.path) (to \(homeLink)): the packs behind it are not removed")
             }
