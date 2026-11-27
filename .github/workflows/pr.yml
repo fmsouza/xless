@@ -398,6 +398,6 @@ jobs:
           shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/package-sums.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/xcode-swift.sh
       - name: Mac bench scripts
-        run: shellcheck scripts/tauri-ios-reference.sh scripts/sim-launch.sh scripts/xcode-pin.sh
+        run: shellcheck -x scripts/tauri-ios-reference.sh scripts/sim-launch.sh scripts/xcode-pin.sh
       - name: The M7 acceptance kit
         run: shellcheck scripts/acceptance-m7.sh Tests/shell/acceptance-m7.test.sh
