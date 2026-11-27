@@ -26,7 +26,8 @@
 # Every masked occurrence is listed: its offset in the baseline and in the candidate, in the bytes as compared (without the
 # code signature) and where it is (a load command, the string table, or a section).
 # Usage: scripts/pack-parity.sh <baseline dir> <candidate dir>
-# Exit: 0 the same (identical, or path only), 1 any other difference or a file in one tree only, 2 usage.
+# Exit: 0 the same (identical, or path only), 1 any other difference or a file in one tree only, 2 usage or two trees
+# with no file (nothing was compared).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 [[ $# -eq 2 ]] || { echo "usage: $0 <baseline dir> <candidate dir>" >&2; exit 2; }
@@ -261,6 +262,8 @@ def compare(pa, pb):
     return f"path only ({len(fa_)} slices: " + "; ".join(verdicts) + ")", lines
 
 fa, fb = mask.files(sys.argv[1]), mask.files(sys.argv[2])
+if not fa and not fb:
+    print(f"pack-parity: no file to compare: {sys.argv[1]} and {sys.argv[2]} hold none", file=sys.stderr); sys.exit(2)
 counts = {"identical": 0, "path only": 0, "differ": 0}
 for rel in sorted(set(fa) | set(fb)):
     if rel not in fb:

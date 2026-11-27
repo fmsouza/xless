@@ -281,6 +281,10 @@ test_usage() {
   mkfixture "$T/a13"
   [[ $(code "$T/a13") == 2 ]] || fail "one argument"
   [[ $(code "$T/a13" "$T/missing") == 2 ]] || fail "a missing directory"
+  # Two trees with no file (a build that wrote nothing, a wrong directory): nothing was compared, which is no pass.
+  mkdir -p "$T/empty-a" "$T/empty-b"
+  [[ $(code "$T/empty-a" "$T/empty-b") == 2 ]] || fail "two empty trees: $(cat "$T/out")"
+  grep -q 'no file to compare' "$T/out" || fail "two empty trees are not said to be: $(cat "$T/out")"
 }
 
 test_identical_trees_pass
