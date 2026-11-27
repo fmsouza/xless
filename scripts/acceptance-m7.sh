@@ -765,12 +765,22 @@ step7() {
   result 7 FAIL "see the findings above"; return 1
 }
 
+docker_ready() {
+  local v; v="$(state_get xless_version)"
+  if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then docker image inspect "xless:$v-$ARCH" >/dev/null 2>&1 || return 1
+  else [[ -n "$(docker image ls --quiet --filter label=org.xless.image=true --filter "label=dev.xless.arch=$ARCH" 2>/dev/null)" ]] || return 1; fi
+  docker volume ls --filter label=org.xless.pack --format '{{.Name}}' 2>/dev/null | grep -qE "^xless-xcode-.+-$ARCH\$"
+}
+
 step8() {
   local rc watch="$DIR/watch.8" containers="$DIR/containers.8" ok=1
   command -v docker >/dev/null 2>&1 || { result 8 FAIL "docker is not installed"; return 1; }
-  while [[ -z "$(docker image ls --quiet --filter "reference=xless:local-$ARCH*" 2>/dev/null)" ]]; do
-    note "There is no xless image for $ARCH."
-    pause "Build it once: xless setup --docker --xcode <Xcode.xip> (README.md#build-in-docker-instead)" || { result 8 FAIL "no xless image"; return 1; }
+  # The image of this xless (xless:<version>-<arch>; a source build's is named by its commit: any xless image of $ARCH then)
+  # and an Xcode pack volume for $ARCH, which xless setup --docker makes. (A run prepares a missing pack from the SDK export
+  # in the cache by itself; asking for it here keeps that out of the watched run.)
+  while ! docker_ready; do
+    note "There is no xless image of this xless, or no Xcode pack, for $ARCH."
+    pause "Build the image and prepare the Xcode's pack once: xless setup --docker --xcode <Xcode.xip> (or --sdk <its SDK export>; README.md#build-in-docker-instead)" || { result 8 FAIL "no xless image or Xcode pack"; return 1; }
   done
   [[ -n "$(state_get build.8)" ]] || state_set build.8 "$(next_build)"
   local build; build="$(state_get build.8)"

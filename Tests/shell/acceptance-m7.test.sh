@@ -92,13 +92,14 @@ cat > "$t/bin/docker" <<'STUB'
 S="$STUB_DIR"
 case "$1" in
   image) echo c0ffee; exit 0 ;;
+  volume) printf 'xless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C52-amd64\n'; exit 0 ;;   # the pack volumes, labelled org.xless.pack
   ps) [[ -e "$S/container" ]] && echo "c0ffee$(cat "$S/container")" ; exit 0 ;;
   inspect)
     if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi
     if [[ "$2" == *build && "${STUB_LEAK_DOCKER:-0}" == 1 ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; fi
     # as the swift base image has it: the fingerprint of the public key its tarballs are verified with
     key="${STUB_SIGNING_KEY:-52BB7E3DE28A71BE22EC05FFEF80A866B47A981F}"
-    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:local\", \"Env\": [\"PATH=/usr/bin\", \"SWIFT_SIGNING_KEY=$key\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
+    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:0.9.0-arm64\", \"Env\": [\"PATH=/usr/bin\", \"SWIFT_SIGNING_KEY=$key\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
   *) echo "stub docker: $*" >&2; exit 99 ;;
 esac
 STUB
