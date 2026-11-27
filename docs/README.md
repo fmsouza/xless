@@ -95,4 +95,5 @@ What each milestone checked, and how: [m2a](acceptance-m2a.md), [m2b](acceptance
 [m3](acceptance-m3.md), [m4](acceptance-m4.md), [m5](acceptance-m5.md) (releases, and setup from a `.xip` on a fresh Linux VM),
 [m6](acceptance-m6.md) (plain Cargo apps: a checklist for the maintainer, not yet run),
 [m7](acceptance-m7.md) (an Apple account from the terminal: a guided, recorded run of `scripts/acceptance-m7.sh`, up to
-the App Review submission).
+the App Review submission), and [Xcode packs](acceptance-xcode-packs.md) (what is built with a pack, against what the
+images with the Xcode baked in built).

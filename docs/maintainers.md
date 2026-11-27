@@ -145,6 +145,7 @@ They compare what xless builds with what Xcode builds from the same sources.
 | `make test-tauri-linux` | Docker | `samples/HelloTauri`, iOS (and `--platform macos`), against `samples/HelloTauri/reference/` ([tauri.md](tauri.md#linux-parity-test)) |
 | `ARCH=amd64 make test-rn-linux` (`test-tauri-linux`) | Docker | The same in the amd64 images |
 | `scripts/arch-compare.sh <app-a> <app-b>` | anywhere | An app built in the arm64 image against one built in the amd64 image: byte for byte outside the code signature |
+| `scripts/pack-parity.sh <baseline dir> <candidate dir>` | anywhere | Products built with an Xcode baked into the image against the same built with the Xcode's pack: byte for byte outside the code signature, but for the paths the pack moved, each listed ([acceptance-xcode-packs.md](acceptance-xcode-packs.md)) |
 | `make parity` | Mac | HelloShip built by Xcode against the xless build: Info.plist keys, `LC_BUILD_VERSION`, files, `Assets.car` ([research/parity-known-gaps.md](research/parity-known-gaps.md)) |
 | `make ib-parity` | Mac | The storyboard compiler: golden drift, and a simulator screenshot of a launch screen compiled both ways |
 | `make rn-reference`, `make tauri-reference APP=… OUT=…` | Mac | Record the references the Linux tests compare with |
