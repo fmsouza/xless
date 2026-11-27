@@ -22,6 +22,7 @@ run() {
 cat > "$t/docker" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$FAKE"
+[ "${DOCKER_DOWN:-0}" != 1 ] || { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
 case "$*" in *"volume ls"*) ;; *) exit 1 ;; esac
 case "$*" in *label=*) printf 'xless-xcode-26.2-17C52-arm64\n' ;;
   *) printf 'carryon_db\nxless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C60-arm64\nxless-xcode-26.2-17C52-amd64\nxless-xcode-27.0-27A266a-arm64\n' ;; esac
@@ -36,6 +37,10 @@ grep -q -- 'label=' "$t/docker.log" && fail "the volumes are listed by label: $(
 code=0; out=$(run 26.4 arm64 2>&1) || code=$?
 [[ $code == 2 ]] || fail "no pack volume: exit $code: $out"
 [[ "$out" == "sample: no pack volume of Xcode 26.4 for arm64; prepare it: xless setup --docker --xcode <Xcode 26.4 .xip>" ]] || fail "no pack volume: $out"
+# A docker that fails to list the volumes is said to fail (its own message too), not taken for no pack volume.
+code=0; out=$(DOCKER_DOWN=1 run 26.2 arm64 2>&1) || code=$?
+[[ $code == 2 && "$out" == *"Cannot connect to the Docker daemon"* && "$out" == *"sample: docker could not list the volumes ($t/docker --context fake volume ls); check that it runs (docker ps)"* \
+   && "$out" != *"no pack volume"* ]] || fail "docker down: exit $code: $out"
 
 # A directory store: the newest pack of 26.2 for arm64 with a pack.json, its directory alone, read-only.
 mkdir -p "$t/store/26.2-17C52-arm64" "$t/store/26.2-17C60-arm64" "$t/store/26.2-17C60-amd64"
