@@ -769,8 +769,8 @@ docker_ready() {
   local v; v="$(state_get xless_version)"
   if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then docker image inspect "xless:$v-$ARCH" >/dev/null 2>&1 || return 1
   else [[ -n "$(docker image ls --quiet --filter label=org.xless.image=true --filter "label=dev.xless.arch=$ARCH" 2>/dev/null)" ]] || return 1; fi
-  # (a pack volume by its name, as xless finds it: one made by hand has no label)
-  docker volume ls --format '{{.Name}}' 2>/dev/null | grep -qE "^xless-xcode-.+-$ARCH\$"
+  # (a pack volume by its name, as xless reads one (PackVolumes.parse): one made by hand has no label)
+  docker volume ls --format '{{.Name}}' 2>/dev/null | grep -qE "^xless-xcode-[0-9]+(\.[0-9]+)*-[A-Za-z0-9]+-$ARCH\$"
 }
 
 step8() {

@@ -93,7 +93,9 @@ S="$STUB_DIR"
 case "$1" in
   image) echo c0ffee; exit 0 ;;
   # the pack volumes, made by hand (no label: a listing filtered by xless's label finds none; xless finds them by name)
-  volume) [[ "$*" == *label=* ]] || printf 'xless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C52-amd64\n'; exit 0 ;;
+  # (STUB_ODD_VOLUME_ONCE: the first listing has only a volume that is no pack's by its name, as xless reads one)
+  volume) [[ "${STUB_ODD_VOLUME_ONCE:-0}" != 1 || -e "$S/odd-listed" ]] || { touch "$S/odd-listed"; printf 'xless-xcode-my-backup-arm64\n'; exit 0; }
+          [[ "$*" == *label=* ]] || printf 'xless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C52-amd64\n'; exit 0 ;;
   ps) [[ -e "$S/container" ]] && echo "c0ffee$(cat "$S/container")" ; exit 0 ;;
   inspect)
     if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi
@@ -130,7 +132,7 @@ kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub acc
     XLESS_M7_CONTACT_FIRST=Rita XLESS_M7_CONTACT_LAST=Reviewer XLESS_M7_CONTACT_PHONE="+55 11 5555 0100" \
     XLESS_M7_CONTACT_EMAIL=rev@example.com \
     STUB_LOGIN_FAIL="${STUB_LOGIN_FAIL:-0}" STUB_SAVED_SESSION="${STUB_SAVED_SESSION:-0}" STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
-    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" \
+    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" STUB_ODD_VOLUME_ONCE="${STUB_ODD_VOLUME_ONCE:-0}" \
     ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} \
     bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
 }
@@ -233,8 +235,10 @@ builds=(); while IFS= read -r line; do builds+=("$line"); done < <(grep '^run-bu
 [[ ${#builds[@]} == 4 && "${builds[0]}" == "${builds[1]}" && "${builds[2]}" == "${builds[3]}" && "${builds[1]}" != "${builds[2]}" ]] ||
   fail "step 8 did not run again with a new build number: ${builds[*]}"
 mkdir -p "$t/dockkey/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dockkey/stub/review"
-STUB_SIGNING_KEY=not-a-fingerprint kit dockkey
+STUB_SIGNING_KEY=not-a-fingerprint STUB_ODD_VOLUME_ONCE=1 kit dockkey
 [[ $code == 1 ]] || fail "SWIFT_SIGNING_KEY holding something else: exit $code"
+# (and a volume whose name is no pack's, as xless reads one, is not taken for the pack step 8 needs)
+grep -q 'There is no xless image of this xless, or no Xcode pack' "$t/dockkey/record.md" "$t/dockkey/out" "$t/dockkey/err" || fail "xless-xcode-my-backup-arm64 was taken for a pack"
 grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dockkey/record.md" || fail "SWIFT_SIGNING_KEY holding something else passed step 8"
 
 # 6. --contract alone: a FAIL from live-check stops with 1, recorded; without `secrets redact` the fallback redacts.
