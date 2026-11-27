@@ -59,7 +59,7 @@ extension TauriWorkContext {
     var tauriDir: URL { workRoot.appendingPathComponent(tauriDirPath, isDirectory: true) }
     /// The Tauri app root (the parent of the Tauri directory), where tauri-cli runs the frontend and cargo.
     var appRoot: URL { tauriDir.deletingLastPathComponent() }
-    var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
+    var cargoHome: String { KitTools.cargoHome(env: env) }
     /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it), no corepack prompt. With an
     /// installed Xcode, before them xless's `swift`.
     var tools: [String: String?] {

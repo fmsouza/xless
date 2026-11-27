@@ -1,7 +1,6 @@
 import ArgumentParser
 import Foundation
 import XlessCore
-import XlessImages
 import XlessRun
 
 /// `xless run`: a project's build, sign and upload, natively (what `xless setup` installed) or, with `--docker`, in the local
@@ -21,9 +20,9 @@ struct RunCommand: ParsableCommand {
         setup installed; on a Mac with the Xcode that is installed there (DEVELOPER_DIR, xcode-select or /Applications; \
         XLESS_TOOLS=xless or actool=xless,ibtool=xless: xless's own tools in place of Xcode's). Tauri, plain Cargo and React \
         Native overlays (--config) build natively on Linux where what they need is installed, as in a container of a kit's \
-        image: Swift Build (a part of the Xcode's pack), the Xcode tool shims (XLESS_SHIM_DIR) and the kit's Node and Rust, or \
-        Node, Ruby, Bundler and hermesc. Elsewhere xless says what is missing: add --docker. On a Mac they build with the \
-        Rust, Node and Ruby that are installed there too, in a sandbox. \
+        image: an Xcode pack, and rustup (Cargo), Node and rustup (Tauri), or Swift Build (a part of the pack), the Xcode tool \
+        shims (XLESS_SHIM_DIR), Node, Ruby, Bundler and hermesc (React Native). Elsewhere a run that builds says what is \
+        missing: add --docker. On a Mac they build with the Rust, Node and Ruby that are installed there too, in a sandbox. \
         Secrets not set in the environment come from the secret store (`xless secrets`); with --docker they are written to a \
         tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
@@ -96,8 +95,12 @@ enum ProjectRunner {
         if code != 0 { throw ExitCode(code) }
     }
 
-    /// What this machine lacks for an overlay's build: what is installed on the PATH of the run, not where it runs.
-    @Sendable static func overlayLacks(_ kind: Kit, _ environment: [String: String]) -> [String] {
-        ProjectRun.missingForOverlay(kind: kind, env: environment) { XcodeEnvironment.which($0, path: environment["PATH"])?.path }
+    /// What this machine lacks for an overlay's build: what is installed (on the PATH of the run, or where the build takes it), not
+    /// where it runs.
+    @Sendable static func overlayLacks(_ kind: OverlayKind, _ environment: [String: String]) -> [String] {
+        ProjectRun.missingForOverlay(kind: kind, env: environment) { program in
+            program.hasPrefix("/") ? FileManager.default.isExecutableFile(atPath: program) ? program : nil
+                : XcodeEnvironment.which(program, path: environment["PATH"])?.path
+        }
     }
 }

@@ -21,7 +21,7 @@ public struct CargoBuildContext: Sendable {
         self.workRoot = workRoot; self.paths = paths; self.sdk = sdk; self.env = env
     }
 
-    var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
+    var cargoHome: String { KitTools.cargoHome(env: env) }
     /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it); with an installed Xcode, before
     /// it xless's `swift`.
     var tools: [String: String] {

@@ -94,9 +94,9 @@ box "$image" xless apps --help
 box "$image" bash -c 'mkdir /work/HelloShip && tar -x -C /work/HelloShip && cd /work/HelloShip && xless build --platform ios </dev/null' <"$t/HelloShip.tar"
 [[ "$code" == 2 ]] && grep -q 'xless setup' "$t/err" || fail "xless build with no pack: exit $code, $(cat "$t/err")"
 echo "ok: with no pack, xless apps --help exits 0 and xless build exits 2: $(grep -m1 'xless setup' "$t/err")"
-# An overlay in the xless image, which has the shims but no Node and no Rust, and no pack here: what is missing is said.
+# An overlay (a Cargo app) in the xless image, which has no Rust, and no pack here: what is missing is said.
 box "$image" bash -c 'mkdir /work/HelloCargo && tar -x -C /work/HelloCargo && cd /work/HelloCargo && XLESS_BUILD_NUMBER=1.0.0.2026010101 xless run --config xless.overlay.example.yml --to finalize </dev/null' <"$t/HelloCargo.tar"
-want="needs, and this machine lacks: Swift Build (no pack with it: xless setup), node, rustup-init or rustup — \`xless run --docker\` has them all"
+want="needs, and this machine lacks: an Xcode pack (none here: xless setup), rustup-init or rustup — \`xless run --docker\` has them all"
 [[ "$code" == 2 ]] && grep -qF "$want" "$t/err" || fail "an overlay in $image with no pack: exit $code, $(cat "$t/err")"
 echo "ok: an overlay in $image says what it lacks: $(grep -m1 -o 'needs, and this machine lacks: [^—]*' "$t/err")"
 echo "PASS image-direct ($kit, pack $name)"

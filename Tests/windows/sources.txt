@@ -21,6 +21,7 @@
 + Sources/XlessCore/InputGate.swift
 - Sources/XlessCore/InstalledXcode.swift
 + Sources/XlessCore/KernelKeyring.swift
++ Sources/XlessCore/KitTools.swift
 + Sources/XlessCore/KnownXcodes.swift
 + Sources/XlessCore/MacArchitecture.swift
 - Sources/XlessCore/MemoryFileSystem.swift

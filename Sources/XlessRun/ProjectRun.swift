@@ -31,11 +31,11 @@ public struct RunContext: Sendable {
     public var prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)?
     /// What an overlay of `kind` needs to build natively, off a Mac, that the machine of `environment` lacks
     /// (`ProjectRun.missingForOverlay`); nil: nothing is looked for.
-    public var overlayLacks: (@Sendable (_ kind: Kit, _ environment: [String: String]) -> [String])?
+    public var overlayLacks: (@Sendable (_ kind: OverlayKind, _ environment: [String: String]) -> [String])?
 
     public init(environment: [String: String], xless: String, again: [String], share: String, useDocker: String, session: String?, unlocked: Bool,
                 prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil,
-                overlayLacks: (@Sendable (_ kind: Kit, _ environment: [String: String]) -> [String])? = nil) {
+                overlayLacks: (@Sendable (_ kind: OverlayKind, _ environment: [String: String]) -> [String])? = nil) {
         self.environment = environment
         self.xless = xless
         self.again = again

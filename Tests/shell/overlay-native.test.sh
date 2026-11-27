@@ -3,8 +3,8 @@
 # stand-in is the app's build code, which looks for everything that it should not have and writes down what it got. Nothing is
 # downloaded, no Apple account, no keychain, and the home directory is the test's own; the user's is only asked whether it can be
 # listed (it cannot).
-# Elsewhere (Linux), an overlay builds natively where what it needs is installed: a bare machine is told what it lacks, and
-# `xless run --docker`, before anything runs; one that has it all goes on (a dry run: the tools here are stand-ins).
+# Elsewhere (Linux), an overlay builds natively where what its kind needs is installed: a bare machine is told what it lacks, and
+# `xless run --docker`, before anything runs; one that has it goes on (a dry run: the tools here are stand-ins).
 #   Tests/shell/overlay-native.test.sh            (builds xless with `swift build`; XLESS_BIN=<path> uses that binary)
 #   XLESS_TEST_XCODE=1: it may not be skipped. Without it the test ends early where there is no Xcode.
 set -euo pipefail
@@ -17,33 +17,38 @@ if [[ "$(uname -s)" != Darwin ]]; then
     (cd "$repo" && swift build --product xless -q)
     x="$(cd "$repo" && swift build --show-bin-path)/xless"
   fi
-  mkdir -p "$t/home" "$t/tools" "$t/app" "$t/ov" "$t/shims" "$t/xcodes"
-  printf '%s\n' 'type: cargo' 'source: ../app' 'bundleID: com.example.demo' 'teamID: ABCDE12345' 'version: "1.0"' 'build: "7"' >"$t/ov/demo.yml"
-  printf '%s\n' 'type: react-native' 'source: ../app' 'teamID: ABCDE12345' 'version: "1.0"' 'build: "7"' >"$t/ov/rn.yml"
+  mkdir -p "$t/home" "$t/tools" "$t/app" "$t/ov" "$t/xcodes"
+  for kind in cargo tauri react-native; do
+    printf '%s\n' "type: $kind" 'source: ../app' 'bundleID: com.example.demo' 'teamID: ABCDE12345' 'version: "1.0"' 'build: "7"' >"$t/ov/$kind.yml"
+  done
   lx() {
     code=0
-    env -i HOME="$t/home" PATH="$t/tools" XLESS_SHARE="$repo" XLESS_XCODES="$t/xcodes" ${more[@]+"${more[@]}"} "$x" run "$@" --to finalize --dry-run \
-      >"$t/out" 2>"$t/err" </dev/null || code=$?
+    env -i HOME="$t/home" PATH="$t/tools" XLESS_SHARE="$repo" XLESS_XCODES="$t/xcodes" "$x" run "$@" --to finalize --dry-run >"$t/out" 2>"$t/err" </dev/null || code=$?
   }
-  more=()
-  lx --config "$t/ov/demo.yml"
-  want="needs, and this machine lacks: Swift Build (no pack with it: xless setup), the Xcode tool shims (XLESS_SHIM_DIR), node, rustup-init or rustup"
-  [[ "$code" == 2 ]] && grep -qF "$want" "$t/err" && grep -qF '`xless run --docker` has them all' "$t/err" \
-    || { echo "FAIL: a bare Linux machine: $code $(cat "$t/err")"; exit 1; }
-  [[ ! -s "$t/out" ]] || { echo "FAIL: something ran on a bare Linux machine: $(cat "$t/out")"; exit 1; }
-  lx --config "$t/ov/rn.yml"
-  [[ "$code" == 2 ]] && grep -qF "(XLESS_SHIM_DIR), node, ruby, bundle, hermesc — " "$t/err" \
-    || { echo "FAIL: a bare Linux machine, React Native: $code $(cat "$t/err")"; exit 1; }
-  # all that it needs: a pack with Swift Build, the shims, the kit's tools (stand-ins)
+  # refused: exit 2, exactly what it lacks, then `xless run --docker`, and nothing run
+  refused() {
+    lx --config "$t/ov/$1.yml"
+    [[ "$code" == 2 ]] && grep -qF "needs, and this machine lacks: $2 — \`xless run --docker\` has them all" "$t/err" && [[ ! -s "$t/out" ]] \
+      || { echo "FAIL: $1 on $3: $code $(cat "$t/err") $(cat "$t/out")"; exit 1; }
+  }
+  refused cargo "an Xcode pack (none here: xless setup), rustup-init or rustup" "a bare Linux machine"
+  refused tauri "an Xcode pack (none here: xless setup), node, rustup-init or rustup" "a bare Linux machine"
+  refused react-native "Swift Build (no pack with it: xless setup), the Xcode tool shims (XLESS_SHIM_DIR), node, ruby, bundle, hermesc (/usr/local/bin/hermesc)" \
+    "a bare Linux machine"
+  # A pack as a native setup prepares it (no Swift Build) and Rust's installer (a stand-in), no Node: a Cargo app goes on (a dry
+  # run), a Tauri app lacks Node, and a run of it that builds nothing (from finalize) is not refused.
   pack="$t/xcodes/26.2-17C52-$(case "$(uname -m)" in aarch64|arm64) echo arm64 ;; *) echo amd64 ;; esac)"
-  mkdir -p "$pack/swift-build"
-  printf '#!/bin/sh\n' >"$pack/swift-build/swbuild"
-  for tool in "$pack/swift-build/swbuild" "$t/tools/node" "$t/tools/rustup-init"; do printf '#!/bin/sh\n' >"$tool"; chmod +x "$tool"; done
-  printf '{"format":1,"xcode":"26.2","build":"17C52","arch":"%s","swift":"6.2.3","mode":"separate","parts":{"sdk":"h","swift-build":"h"}}\n' "${pack##*-}" >"$pack/pack.json"
-  more=(XLESS_SHIM_DIR="$t/shims")
-  lx --config "$t/ov/demo.yml"
+  mkdir -p "$pack"
+  printf '#!/bin/sh\n' >"$t/tools/rustup-init"
+  chmod +x "$t/tools/rustup-init"
+  printf '{"format":1,"xcode":"26.2","build":"17C52","arch":"%s","swift":"6.2.3","mode":"separate","parts":{"sdk":"h"}}\n' "${pack##*-}" >"$pack/pack.json"
+  lx --config "$t/ov/cargo.yml"
   [[ "$code" == 0 ]] && ! grep -q 'lacks' "$t/err" && grep -q 'ship .*--to finalize' "$t/out" \
-    || { echo "FAIL: a Linux machine with all that an overlay needs: $code $(cat "$t/err") $(cat "$t/out")"; exit 1; }
+    || { echo "FAIL: a Cargo app on a Linux machine with Rust: $code $(cat "$t/err") $(cat "$t/out")"; exit 1; }
+  refused tauri "node" "a Linux machine with Rust and no Node"
+  lx --config "$t/ov/tauri.yml" --from finalize
+  [[ "$code" == 0 ]] && ! grep -q 'lacks' "$t/err" && grep -q 'ship .*--from finalize --to finalize' "$t/out" \
+    || { echo "FAIL: a Tauri app from finalize: $code $(cat "$t/err") $(cat "$t/out")"; exit 1; }
   echo "ok: overlay-native (Linux: what is missing is said)"
   exit 0
 fi

@@ -1,7 +1,6 @@
 import Foundation
 import Testing
 import XlessCore
-import XlessImages
 @testable import XlessRun
 
 /// What an overlay's build needs natively off a Mac, told by what is installed (`ProjectRun.missingForOverlay`), and the refusal of a
@@ -48,35 +47,73 @@ import XlessImages
         return shims.path
     }
 
+    /// A program by name on PATH, never by an absolute path (as where `hermesc` is installed elsewhere).
+    private static func onPath(_ names: Set<String>) -> (String) -> String? { { names.contains($0) ? "/bin/\($0)" : nil } }
+
     @Test func bareLinuxHostListsWhatIsMissing() throws {
         let env = try bare()
-        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env) { _ in nil }
-            == ["Swift Build (no pack with it: xless setup)", "the Xcode tool shims (XLESS_SHIM_DIR)", "node", "rustup-init or rustup"])
+        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env) { _ in nil } == ["an Xcode pack (none here: xless setup)", "node", "rustup-init or rustup"])
+        #expect(ProjectRun.missingForOverlay(kind: .cargo, env: env) { _ in nil } == ["an Xcode pack (none here: xless setup)", "rustup-init or rustup"])
         #expect(ProjectRun.missingForOverlay(kind: .reactNative, env: env) { _ in nil }
-            == ["Swift Build (no pack with it: xless setup)", "the Xcode tool shims (XLESS_SHIM_DIR)", "node", "ruby", "bundle", "hermesc"])
-        // a pack without Swift Build (as a native setup on a bare host prepares one), and a shim directory that is not one
+            == ["Swift Build (no pack with it: xless setup)", "the Xcode tool shims (XLESS_SHIM_DIR)", "node", "ruby", "bundle", "hermesc (/usr/local/bin/hermesc)"])
+        // a pack without Swift Build (as a native setup on a bare host prepares one), and a shim directory that is not one: what
+        // Tauri and Cargo apps need is there, what React Native needs is not; a hermesc on PATH is not the one its build takes
         try pack(["sdk": "h"])
         var some = env
         some["XLESS_SHIM_DIR"] = root.appendingPathComponent("no-such-dir").path
-        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: some) { $0 == "node" || $0 == "rustup" ? "/bin/\($0)" : nil }
-            == ["Swift Build (no pack with it: xless setup)", "the Xcode tool shims (XLESS_SHIM_DIR)"])
-        #expect(ProjectRun.missingForOverlay(kind: .reactNative, env: some) { $0 == "hermesc" ? nil : "/bin/\($0)" }
-            == ["Swift Build (no pack with it: xless setup)", "the Xcode tool shims (XLESS_SHIM_DIR)", "hermesc"])
+        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: some, which: Self.onPath(["node", "rustup"])).isEmpty)
+        #expect(ProjectRun.missingForOverlay(kind: .cargo, env: some, which: Self.onPath(["rustup-init"])).isEmpty)
+        #expect(ProjectRun.missingForOverlay(kind: .reactNative, env: some, which: Self.onPath(["node", "ruby", "bundle", "hermesc"]))
+            == ["Swift Build (no pack with it: xless setup)", "the Xcode tool shims (XLESS_SHIM_DIR)", "hermesc (/usr/local/bin/hermesc)"])
+    }
+
+    /// Cargo needs no Node; Tauri does.
+    @Test func aHostWithRustAndNoNodeBuildsACargoAppAndNotATauriOne() throws {
+        var env = try bare()
+        try pack(["sdk": "h"])
+        #expect(ProjectRun.missingForOverlay(kind: .cargo, env: env, which: Self.onPath(["rustup"])).isEmpty)
+        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env, which: Self.onPath(["rustup"])) == ["node"])
+        // rustup where rustup-init put it (CARGO_HOME, else ~/.cargo), which the build puts first on its PATH, counts
+        let home = env["HOME"]!
+        #expect(ProjectRun.missingForOverlay(kind: .cargo, env: env) { $0 == "\(home)/.cargo/bin/rustup" ? $0 : nil }.isEmpty)
+        env["CARGO_HOME"] = "/opt/cargo"
+        #expect(ProjectRun.missingForOverlay(kind: .cargo, env: env) { $0 == "\(home)/.cargo/bin/rustup" ? $0 : nil } == ["rustup-init or rustup"])
+        #expect(ProjectRun.missingForOverlay(kind: .cargo, env: env) { $0 == "/opt/cargo/bin/rustup" ? $0 : nil }.isEmpty)
+
+        // the run: a Cargo overlay builds, a Tauri one is refused for its Node
+        let run = try RunHome()
+        let cargo = try run.write("ov/cargo.yml", "type: cargo\nsource: ../src\nteamID: ABCDE12345\n")
+        let lacks: @Sendable (OverlayKind, [String: String]) -> [String] = { [env] kind, _ in
+            ProjectRun.missingForOverlay(kind: kind, env: env, which: Self.onPath(["rustup"]))
+        }
+        let built = FakeRunHost(answer: run.answer())
+        #expect(try run.run(["--config", cargo, "--to", "finalize", "--build-number", "1"], docker: false, host: built, overlayLacks: lacks) == 0)
+        #expect(built.allSteps.contains { $0.line.contains("ship") && $0.line.contains("--to finalize") })
+        let refused = FakeRunHost(answer: run.answer())
+        do {
+            _ = try run.run(["--config", run.overlay, "--to", "finalize", "--build-number", "1"], docker: false, host: refused, overlayLacks: lacks)
+            Issue.record("a Tauri overlay was not refused without Node")
+        } catch let error as XlessError {
+            #expect(error.cause == "the overlay \(run.overlay) needs, and this machine lacks: node")
+        }
+        #expect(refused.allSteps.isEmpty)
     }
 
     @Test func everythingInstalledIsEmpty() throws {
         var env = try bare()
         try pack(["sdk": "h", "swift-build": "h"])
         env["XLESS_SHIM_DIR"] = try shims()
-        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env) { "/bin/\($0)" }.isEmpty)
+        let all: (String) -> String? = { "/bin/\($0)" }
+        for kind in OverlayKind.allCases { #expect(ProjectRun.missingForOverlay(kind: kind, env: env, which: all).isEmpty, "\(kind)") }
         #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env) { $0 == "rustup-init" ? nil : "/bin/\($0)" }.isEmpty) // rustup alone does
-        #expect(ProjectRun.missingForOverlay(kind: .reactNative, env: env) { "/bin/\($0)" }.isEmpty)
+        // React Native's hermesc: where its build takes it
+        #expect(ProjectRun.missingForOverlay(kind: .reactNative, env: env) { $0 == KitTools.hermesc || !$0.hasPrefix("/") ? $0 : nil }.isEmpty)
         // the pack named by XLESS_XCODE, wherever it is mounted, as in a container of a kit's image
         let moved = root.appendingPathComponent("elsewhere")
         try FileManager.default.moveItem(at: root.appendingPathComponent("xcodes"), to: moved)
         env["XLESS_XCODES"] = moved.path
         env["XLESS_XCODE"] = moved.appendingPathComponent(XcodePack.name(xcode: "26.2", build: "17C52", arch: Self.arch)).path
-        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env) { "/bin/\($0)" }.isEmpty)
+        for kind in OverlayKind.allCases { #expect(ProjectRun.missingForOverlay(kind: kind, env: env, which: all).isEmpty, "\(kind)") }
         // one that has Swift Build but was prepared by another recipe lacks nothing: the build says that, and what prepares it again
         let share = root.appendingPathComponent("share")
         try FileManager.default.createDirectory(at: share.appendingPathComponent("scripts"), withIntermediateDirectories: true)
@@ -85,14 +122,36 @@ import XlessImages
                   "SWIFT_TOOLCHAIN_6_2_3_SHA256_X86_64=b", "SWIFT_IMAGE=swift:6.4.0-jammy@sha256:0123", ""].joined(separator: "\n").utf8)
             .write(to: share.appendingPathComponent("versions.env"))
         #expect((try? XcodeEnvironment.current(env: env, needs: [.swiftBuild])) == nil)
-        #expect(ProjectRun.missingForOverlay(kind: .tauri, env: env) { "/bin/\($0)" }.isEmpty)
+        #expect(ProjectRun.missingForOverlay(kind: .reactNative, env: env, which: all).isEmpty)
+    }
+
+    /// Only a run whose span has the app's build (prepare, build) is looked at: from assets on it builds nothing.
+    @Test func aRunThatBuildsNothingIsNotRefused() throws {
+        let home = try RunHome()
+        let asked = Notes()
+        let lacks: @Sendable (OverlayKind, [String: String]) -> [String] = { kind, _ in asked.add(kind.rawValue); return ["node"] }
+        for from in ["assets", "finalize"] {
+            let host = FakeRunHost(answer: home.answer())
+            #expect(try home.run(["--config", home.overlay, "--from", from, "--to", "finalize", "--build-number", "1"], docker: false, host: host, overlayLacks: lacks) == 0)
+            #expect(host.allSteps.contains { $0.line.contains("--from \(from) --to finalize") })
+        }
+        let signer = FakeRunHost(answer: home.answer())
+        #expect(try home.run(["--config", home.overlay, "--from", "sign"], docker: false, host: signer, environment: home.files(), session: "/agent", overlayLacks: lacks) == 0)
+        #expect(signer.allSteps.contains { $0.line.contains("--from sign --to upload") })
+        #expect(asked.lines.isEmpty)
+        for from in [["--from", "prepare"], ["--from", "build"], []] {
+            let host = FakeRunHost(answer: home.answer())
+            #expect(throws: XlessError.self) { try home.run(["--config", home.overlay, "--to", "finalize", "--build-number", "1"] + from, docker: false, host: host, overlayLacks: lacks) }
+            #expect(host.allSteps.isEmpty)
+        }
+        #expect(asked.lines == ["tauri", "tauri", "tauri"])
     }
 
     /// The run itself: refused natively off a Mac with what is missing and `xless run --docker`; nothing else is run. On a Mac, and in
     /// containers, nothing is looked for.
     @Test func macIsUnchanged() throws {
         let home = try RunHome()
-        let lacks: @Sendable (Kit, [String: String]) -> [String] = { kind, _ in kind == .tauri ? ["node", "rustup-init or rustup"] : ["hermesc"] }
+        let lacks: @Sendable (OverlayKind, [String: String]) -> [String] = { kind, _ in kind == .tauri ? ["node", "rustup-init or rustup"] : ["hermesc"] }
         let linux = FakeRunHost(answer: home.answer())
         #expect(throws: XlessError.self) { try home.run(["--config", home.overlay, "--to", "finalize"], docker: false, host: linux, overlayLacks: lacks) }
         do { _ = try home.run(["--config", home.overlay, "--to", "finalize"], docker: false, host: linux, overlayLacks: lacks) } catch let error as XlessError {
