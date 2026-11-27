@@ -1,14 +1,15 @@
 #!/bin/sh
-# Ruling R10, relocatable: fits the open-source Swift toolchain of an Xcode pack to the pack's installed Darwin SDK, as
-# docker/Dockerfile fits the image's, with the same helpers (docker/toolchain: clang-driver, target-os-check, the
-# target-os fixtures, record-flags.py), and leaves no absolute path in the pack, so the pack can be mounted anywhere.
+# Fits the open-source Swift toolchain of an Xcode pack (the release versions.env maps the Xcode to: XCODE_SWIFT_<build>)
+# to the pack's installed Darwin SDK, with the helpers of docker/toolchain (clang-driver, target-os-check, the target-os
+# fixtures, record-flags.py), and leaves no absolute path in the pack, so the pack can be mounted anywhere. `xless setup`
+# runs it while it prepares a pack's sdk part; this file is part of that part's recipe hash.
 #   scripts/fit-toolchain.sh <pack root> own|separate <docker/toolchain>
 # The pack: toolchain/ (usr/bin/swiftc …), config/swiftpm/swift-sdks/darwin.artifactbundle (the SDK, as `xtool sdk install`
 # leaves it: relative links only), toolchain-meta.json (xcodeBuild); it gets include/ and, last, swift-toolchain.json
 # ({"version", "root": "toolchain", "clangFlags"}; root is relative to the record's directory).
 # own: the toolchain is the release the image runs as its own Swift (SWIFT_VERSION): the SDK keeps the Xcode's clang
-#   resource directory. separate: another release (docker/Dockerfile's APP_SWIFT_VERSION case): the SDK's resource directory
-#   becomes the toolchain's own, with the Xcode's Darwin runtimes beside its headers, and its ld64.lld runs the SDK's.
+#   resource directory. separate: any other release: the SDK's resource directory becomes the toolchain's own, with the
+#   Xcode's Darwin runtimes beside its headers, and its ld64.lld runs the SDK's.
 # Then, in both, the clang driver is wrapped when it lacks the Apple clang defaults the Xcode's fixture records, and the
 # flags it adds go to the record and to the SDK's toolsets. Every link made has a relative target, and the wrappers find
 # their targets from their own place. Safe to re-run (after the SDK was installed again, or the pack moved): the
@@ -67,7 +68,9 @@ if [ "$mode" = separate ]; then
     ln -s "$(relpath "$(canon "$x/$s")" "$own")" "$x/$s/clang"
     [ "$(canon "$x/$s/clang")" = "$own" ] || die "$x/$s/clang does not reach $own"
   done
-  test -f "$x/swift/clang/lib/darwin/libclang_rt.ios.a" && test -f "$x/swift/clang/include/arm_neon.h"
+  for f in lib/darwin/libclang_rt.ios.a include/arm_neon.h; do
+    [ -f "$x/swift/clang/$f" ] || die "the SDK's clang resource directory ($x/swift/clang) has no $f: the Xcode's runtimes or the toolchain's headers are missing"
+  done
   rm "$bin/ld64.lld"
   # A trampoline that finds the SDK's linker from its own place (usr/bin of the toolchain, in the pack), with shell builtins
   # only: Swift Build runs the linker with a PATH of the toolchain's and the platform's directories (no dirname). Its own

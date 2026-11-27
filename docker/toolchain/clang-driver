@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installed by docker/Dockerfile (Ruling R10) as the `clang` and `clang++` of an open-source Swift toolchain whose
+# Installed by scripts/fit-toolchain.sh as the `clang` and `clang++` of an Xcode pack's open-source Swift toolchain whose
 # clang driver lacks defaults of the Apple clang its Xcode ships (measured: Xcode 26.2's clang 17 against Swift 6.2.3's;
 # LLVM 21's driver has both):
 # - it drops -fno-cxx-modules yet passes -fmodule-map-file on, so the compiler refuses a C++ #include of a header that a
@@ -7,8 +7,8 @@
 #   disabled"): the flag is passed on when the command line or a response file names it;
 # - it predefines no TARGET_OS_* macros for Darwin targets (code testing TARGET_OS_MACCATALYST without including
 #   TargetConditionals.h fails under -Werror=undef-prefix=TARGET_OS_), and with -fdefine-target-os-macros still lacks
-#   some Apple clang has: compiles get the image's clang flags (recorded in /opt/xless/swift-toolchain.json as
-#   clangFlags; docker/toolchain/target-os-macros).
+#   some Apple clang has: compiles get the pack's clang flags (recorded in the pack's swift-toolchain.json as
+#   clangFlags; docker/toolchain/target-os-check finds them against the Xcode's target-os fixture).
 # Both are Apple clang's defaults for Apple targets only, so they are added only when the invocation targets Darwin: its
 # last -target/--target value (on the command line or in a response file) names an Apple triple. Any other invocation
 # (cargo build scripts, the cc crate's host builds, script phases compiling for Linux) runs the open-source driver

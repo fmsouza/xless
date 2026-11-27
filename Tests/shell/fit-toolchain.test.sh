@@ -8,6 +8,26 @@
 # with a PATH of the toolchain's and the platform's directories only (no /usr/bin), before and after the move.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# docker/toolchain/record-flags.py alone (python3 only, any OS): a flag a toolset already passes, wherever it is among its
+# options, is not passed twice; the record file is named (there is no default place).
+r=$(mktemp -d)
+mkdir -p "$r/bundle"
+echo '{"swiftCompiler":{"extraCLIOptions":["-Xfrontend","-x","-Xcc","-DB=0","-Xcc","-DA=1"]}}' > "$r/bundle/toolset.json"
+echo '{"schemaVersion":"1.0"}' > "$r/bundle/toolset-swb.json"
+python3 "$repo/docker/toolchain/record-flags.py" --record "$r/record.json" --root toolchain 6.4.0 "$r/bundle" -DA=1 -DB=0 >/dev/null \
+  || { echo "FAIL: record-flags.py"; exit 1; }
+python3 - "$r" <<'P' || { echo "FAIL: record-flags.py's toolsets or record: $(cat "$r"/bundle/toolset*.json "$r/record.json")"; exit 1; }
+import json, sys
+r = sys.argv[1]
+assert json.load(open(f"{r}/record.json")) == {"version": "6.4.0", "root": "toolchain", "clangFlags": ["-DA=1", "-DB=0"]}
+assert json.load(open(f"{r}/bundle/toolset.json"))["swiftCompiler"]["extraCLIOptions"] == ["-Xcc", "-DA=1", "-Xcc", "-DB=0", "-Xfrontend", "-x"]
+assert json.load(open(f"{r}/bundle/toolset-swb.json"))["swiftCompiler"]["extraCLIOptions"] == ["-Xcc", "-DA=1", "-Xcc", "-DB=0"]
+P
+(cd "$r" && env -u XLESS_SWIFT_TOOLCHAIN_RECORD python3 "$repo/docker/toolchain/record-flags.py" --root toolchain 6.4.0 "$r/bundle" -DA=1 >/dev/null 2>&1) \
+  && { echo "FAIL: record-flags.py wrote a record nobody named"; exit 1; }
+rm -rf "$r"
+
 if [[ "$(uname)" != Linux ]] || ! real=$(command -v clang); then echo "SKIP: needs Linux with an open-source clang"; exit 0; fi
 real="$(readlink -f "$real")"
 t=$(mktemp -d)
@@ -124,6 +144,13 @@ fit separate; check "$other"
 
 # Refusals: an unknown mode, and an Xcode without a fixture; the record is left as it was.
 before=$(cat "$pack/swift-toolchain.json")
+# separate, with an SDK whose resource directory lacks the iOS runtime: refused, and named; nothing recorded.
+pack="$t/no-runtime/pack"; b="$pack/config/swiftpm/swift-sdks/darwin.artifactbundle"
+toolchain; sdk; rm "$b/xcode-rd/lib/darwin/libclang_rt.ios.a"
+sh "$repo/scripts/fit-toolchain.sh" "$pack" separate "$repo/docker/toolchain" >"$t/out" 2>&1 && fail "a resource directory without libclang_rt.ios.a was fitted: $(cat "$t/out")"
+grep -q 'libclang_rt.ios.a' "$t/out" || fail "missing runtime refusal: $(cat "$t/out")"
+[[ ! -e "$pack/swift-toolchain.json" ]] || fail "a refused fit recorded the toolchain"
+pack="$other"; b="$pack/config/swiftpm/swift-sdks/darwin.artifactbundle"
 sh "$repo/scripts/fit-toolchain.sh" "$pack" both "$repo/docker/toolchain" 2>/dev/null && fail "mode both accepted"
 echo '{"xcodeBuild":"99Z999"}' > "$pack/toolchain-meta.json"
 sh "$repo/scripts/fit-toolchain.sh" "$pack" own "$repo/docker/toolchain" 2>"$t/err" && fail "unknown Xcode accepted"
