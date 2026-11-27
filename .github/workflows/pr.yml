@@ -400,4 +400,4 @@ jobs:
       - name: Mac bench scripts
         run: shellcheck -x scripts/tauri-ios-reference.sh scripts/sim-launch.sh scripts/xcode-pin.sh
       - name: The M7 acceptance kit
-        run: shellcheck scripts/acceptance-m7.sh Tests/shell/acceptance-m7.test.sh
+        run: shellcheck -x scripts/acceptance-m7.sh Tests/shell/acceptance-m7.test.sh
