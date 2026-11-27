@@ -831,7 +831,8 @@ Xcode, so what could write it could put code into the next build of another app,
   from other files or pins than this xless's (a stale one). Whoever can write the volume or the store (anyone who can use your
   Docker, or root) can write one that passes, as with an image's labels ([above](#the-build-and-your-secrets)).
 - **The image holds nothing of Apple's**, no SDK and no file of an Xcode, and no label or build argument that names one:
-  `make test-image` checks every layer of it. So it may be pushed to a registry. The SDK export and the packs hold Apple's
+  `make test-image` checks every layer of it. So Apple's terms no longer keep it off a registry; the other software in it
+  comes under its own licences, which are not yet reviewed for publishing it ([images.md](images.md#what-there-is)). The SDK export and the packs hold Apple's
   SDK: they stay on your machines ([maintainers.md](maintainers.md#images-on-other-machines)).
 
 ### The image used directly

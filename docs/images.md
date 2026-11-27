@@ -14,8 +14,10 @@ image.)
 checkout, `xless:<commit>-<arch>`, with `-dirty` after the commit when the checkout has changes). It holds what xless does,
 for any app and any Xcode: Swift, `xless`, xtool, rcodesign, stand-ins for Xcode's command-line tools (`docker/shims`),
 LLVM's binutils, the DMG tools, and what prepares an Xcode pack. It holds **no Apple file**: no SDK, no Xcode metadata, no
-label or build argument that names an Xcode (`make test-image` checks every layer, label and build argument of it). So it
-may be pushed to a registry, a public one too. For arm64 it takes about 6.5 GB, and building it takes a few minutes.
+label or build argument that names an Xcode (`make test-image` checks every layer, label and build argument of it). So Apple's
+terms no longer keep it off a registry. It does hold other projects' software under their own licences (among them Swift,
+LLVM, xtool, rcodesign, libdmg-hfsplus under the GPL 3 and hfsprogs under the APSL, as programs), and those have not been
+reviewed for publishing the image: keep it on your machines and registries of your own until they are. For arm64 it takes about 6.5 GB, and building it takes a few minutes.
 
 **A kit for the apps that need other toolchains**, a small image on top of that one, Xcode-independent too:
 

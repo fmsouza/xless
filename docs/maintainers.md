@@ -181,7 +181,7 @@ What may travel, and what never does:
 
 | | Holds Apple's | May go to another machine | May go to a registry, a CI cache or an artifact |
 |---|---|---|---|
-| The xless image and its kits | nothing | yes | yes (xless has no command, make target or workflow that pushes one) |
+| The xless image and its kits | nothing | yes | Apple's terms do not prevent it; the licences of the other software in it (the GPL 3 of libdmg-hfsplus, the APSL of hfsprogs, Swift's, LLVM's, xtool's, rcodesign's) are not yet reviewed for publishing, so a registry of your own only (xless has no command, make target or workflow that pushes one) |
 | The SDK export (`~/.cache/xless/sdk/xcode<V>-<B>`) | the SDK | yes, to a machine of yours, as you may copy the Xcode it comes from | never |
 | An Xcode pack (a `xless-xcode-…` volume, a store's directory) | the SDK | no: prepare it there | never |
 
