@@ -161,6 +161,6 @@ launch screen compiled both ways).
 | Variable | Effect |
 |---|---|
 | `XLESS_BUILD_NUMBER` | Overrides `build`. `--build-number` takes precedence. |
-| `XLESS_TOOLCHAIN_META` | Path of `toolchain-meta.json`. Default: `/opt/xless/toolchain-meta.json` if present, else `$XDG_CONFIG_HOME/xless/toolchain-meta.json` (`~/.config/xless/toolchain-meta.json` when `XDG_CONFIG_HOME` is unset). |
+| `XLESS_TOOLCHAIN_META` | Path of a `toolchain-meta.json` to use in place of the Xcode pack's. Default: the `toolchain-meta.json` of the pack the build resolves (the one `XLESS_XCODE` names, else the pinned or newest pack of the store). |
 
 Secrets (`ASC_*`, `XLESS_DIST_KEY`, `XLESS_DEVID_KEY`) are never part of `xless.yml`; see [signing-and-testflight.md](signing-and-testflight.md#secrets).
