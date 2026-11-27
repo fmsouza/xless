@@ -421,3 +421,38 @@ private func sh(_ argv: [String]) throws -> Int32 {
     #expect(!FileManager.default.fileExists(atPath: staging.appendingPathComponent("swift-build").path))
     #endif
 }
+
+/// removeTree makes the directories of the tree writable to empty them, and nothing else: not what a symbolic link in the
+/// tree points at, nor the target of a link given as the tree itself.
+@Test func removeTreeChangesNothingOutsideTheTree() throws {
+    let fm = FileManager.default
+    let base = fm.temporaryDirectory.appendingPathComponent("remove-tree-\(UUID().uuidString)")
+    let tree = base.appendingPathComponent("tree"), outside = base.appendingPathComponent("outside")
+    try fm.createDirectory(at: tree.appendingPathComponent("locked"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: tree.appendingPathComponent("locked/file"))
+    try Data("x".utf8).write(to: outside.appendingPathComponent("kept"))
+    try fm.createSymbolicLink(at: tree.appendingPathComponent("link"), withDestinationURL: outside)
+    try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: tree.appendingPathComponent("locked").path)
+    try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: outside.path)
+    defer { try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: outside.path); try? fm.removeItem(at: base) }
+    try PackPlan.removeTree(tree)
+    #expect(!fm.fileExists(atPath: tree.path))
+    #expect(fm.fileExists(atPath: outside.appendingPathComponent("kept").path))
+    #expect((try fm.attributesOfItem(atPath: outside.path)[.posixPermissions] as? NSNumber)?.intValue == 0o500)
+    // The tree given as a link to a directory that cannot be emptied at once: the link goes, its target's mode stays.
+    let link = base.appendingPathComponent("as-link")
+    try fm.createSymbolicLink(at: link, withDestinationURL: outside)
+    try PackPlan.removeTree(link)
+    #expect((try? fm.destinationOfSymbolicLink(atPath: link.path)) == nil && fm.fileExists(atPath: outside.appendingPathComponent("kept").path))
+    #expect((try fm.attributesOfItem(atPath: outside.path)[.posixPermissions] as? NSNumber)?.intValue == 0o500)
+    // A link that cannot be removed (its directory is not writable): removeTree fails, and leaves its target's mode alone.
+    let held = base.appendingPathComponent("held")
+    try fm.createDirectory(at: held, withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: held.appendingPathComponent("link"), withDestinationURL: outside)
+    try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: held.path)
+    defer { try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: held.path) }
+    guard (try? Data("x".utf8).write(to: held.appendingPathComponent("probe"))) == nil else { return } // root writes anyway
+    #expect(throws: (any Error).self) { try PackPlan.removeTree(held.appendingPathComponent("link")) }
+    #expect((try fm.attributesOfItem(atPath: outside.path)[.posixPermissions] as? NSNumber)?.intValue == 0o500)
+}

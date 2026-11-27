@@ -308,17 +308,17 @@ public enum PackPlan {
     }
 
     /// Removes `url`, its directories made writable first (a directory without write permission keeps its entries). Files
-    /// are left as they are: they may be hard links of the pack in use.
-    static func removeTree(_ url: URL) throws {
+    /// are left as they are: they may be hard links of the pack in use. Only directories are made writable, each looked at
+    /// (without following a link) right before: a symbolic link, the tree itself or in it, never has its target changed.
+    public static func removeTree(_ url: URL) throws {
         let fm = FileManager.default
+        func isDirectory(_ path: String) -> Bool { (try? fm.attributesOfItem(atPath: path)[.type] as? FileAttributeType) == .typeDirectory }
         do { try fm.removeItem(at: url) } catch {
             var directories = [url.path]
-            if let e = fm.enumerator(atPath: url.path) {
-                for case let p as String in e where (try? fm.attributesOfItem(atPath: url.path + "/" + p)[.type] as? FileAttributeType) == .typeDirectory {
-                    directories.append(url.path + "/" + p)
-                }
+            if isDirectory(url.path), let e = fm.enumerator(atPath: url.path) {
+                for case let p as String in e where isDirectory(url.path + "/" + p) { directories.append(url.path + "/" + p) }
             }
-            for d in directories {
+            for d in directories where isDirectory(d) {
                 let mode = (try? fm.attributesOfItem(atPath: d)[.posixPermissions] as? NSNumber)?.intValue ?? 0o755
                 try? fm.setAttributes([.posixPermissions: mode | 0o700], ofItemAtPath: d)
             }
