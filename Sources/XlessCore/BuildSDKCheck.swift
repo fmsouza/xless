@@ -20,19 +20,28 @@ public enum BuildSDKCheck {
                              metaURL: URL? = nil, loadToolchain: (() throws -> SwiftToolchain?)? = nil,
                              env: [String: String] = ProcessInfo.processInfo.environment) throws -> Result {
         var metaURL = metaURL, loadToolchain = loadToolchain
+        var found: XcodePack?
         if metaURL == nil || loadToolchain == nil {
             let xcode: XcodeEnvironment?
             do { xcode = pin == nil ? try XcodeEnvironment.lookup(env: env) : try XcodeEnvironment.current(env: env) } catch let problem as XcodeProblem {
                 guard let pin else { throw problem.stageError(stage) }
                 throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(problem.cause)", fix: problem.fix, code: 2)
             }
+            if metaURL == nil { found = xcode?.pack }
             metaURL = metaURL ?? xcode?.meta
             loadToolchain = loadToolchain ?? { try xcode?.loadToolchain(stage: stage) }
         }
         var meta: ToolchainMeta?
         do { meta = try metaURL.map { try ToolchainMeta.load(from: $0) } } catch let e as XlessError {
             if let pin {
-                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)", fix: "prepare Xcode \(pin)'s pack again: `xless setup --xcode <path to Xcode \(pin)'s .xip>` (`xless setup --docker --xcode …` for xless run --docker)")
+                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)",
+                                 fix: found.map { XcodeResolver.prepareAgain($0, env: env) }
+                                    ?? "prepare Xcode \(pin)'s pack again: `xless setup --xcode <path to Xcode \(pin)'s .xip>` (`xless setup --docker --xcode …` for xless run --docker)")
+            }
+            // Unpinned, any Xcode will do, but the pack found is the one the build uses: without its metadata it cannot.
+            if let found {
+                throw XlessError(stage, "the Xcode pack \(found.name)'s toolchain metadata (toolchain-meta.json) cannot be used: \(e.cause)",
+                                 fix: XcodeResolver.prepareAgain(found, env: env), code: 2)
             }
         }
         if let meta { try XcodePin.check(pin: pin, meta: meta, platform: platform, file: file, stage: stage) }

@@ -142,7 +142,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let env = try isolated()
     let e = problem { try XcodeEnvironment.current(env: env) }
     #expect(e?.cause.contains("there is no pack for any Xcode") == true)
-    #expect(e?.fix.hasPrefix("xless setup --xcode") == true)
+    #expect(e?.fix.contains("else xless setup --xcode") == true)
     let pinned = problem { try XcodeEnvironment.current(env: env.merging([XcodeEnvironment.pinVariable: "26.2"]) { $1 }) }
     #expect(pinned?.cause.contains("Xcode 26.2") == true && pinned?.fix.contains("Xcode 26.2's") == true)
     // In a stage: the cause and the setup, with the usage exit code.
@@ -224,7 +224,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(try XcodeEnvironment.lookup(env: env) == nil)
     #expect(try XcodeEnvironment.toolchain(env: env) == nil)
     let e = problem { try XcodeEnvironment.current(env: env) }
-    #expect(e?.cause.contains("there is no pack for any Xcode") == true && e?.fix.hasPrefix("xless setup --xcode") == true)
+    #expect(e?.cause.contains("there is no pack for any Xcode") == true && e?.fix.contains("else xless setup --xcode") == true)
     // With a pack, the pack's parts.
     let store = URL(fileURLWithPath: env["XLESS_XCODES"]!)
     let root = try makePack(in: store)
@@ -244,7 +244,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     try fm.moveItem(at: root, to: aside)
     let env = try isolated(store: store)
     let e = problem { try XcodeEnvironment.current(env: env) }
-    #expect(e?.cause.contains("there is no pack for any Xcode") == true && e?.fix.hasPrefix("xless setup --xcode") == true)
+    #expect(e?.cause.contains("there is no pack for any Xcode") == true && e?.fix.contains("else xless setup --xcode") == true)
     #expect(try XcodeEnvironment.lookup(env: env) == nil)
     // Nothing was renamed: setup puts it back.
     #expect(fm.fileExists(atPath: aside.appendingPathComponent("pack.json").path) && !fm.fileExists(atPath: root.path))
@@ -262,6 +262,23 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let hash = try PackRecipe.hash(.sdk, build: "17C52", arch: hostArch, table: table, share: share)
     try makePack(in: store, parts: ["sdk": hash])
     #expect(try XcodeEnvironment.current(env: env).pack?.manifest.parts["sdk"] == hash)
+}
+
+/// As a run's pack choice: a share that lacks a recipe input cannot tell whether the pack is current, which stops the
+/// lookup; a pack of an Xcode this xless has no recipe for is used as it is.
+@Test func aShareThatCannotTellStopsAndAnUnknownXcodeIsUsedAsItIs() throws {
+    let checkout = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let versions = try String(contentsOf: checkout.appendingPathComponent("versions.env"), encoding: .utf8)
+    let share = try tempDir("xcode-env-share")
+    try write(versions, to: share.appendingPathComponent("versions.env"))   // and none of the scripts the recipe reads
+    let store = try tempDir()
+    try makePack(in: store, parts: ["sdk": "h"])
+    let env = try isolated(store: store, ["XLESS_SHARE": share.path])
+    let e = problem { try XcodeEnvironment.current(env: env) }
+    #expect(e?.cause.hasPrefix("cannot tell whether the pack 26.2-17C52-\(hostArch) is current: ") == true, "\(String(describing: e))")
+    let unknown = try tempDir()
+    try makePack(in: unknown, xcode: "26.9", build: "99Z99", parts: ["sdk": "h"])
+    #expect(try XcodeEnvironment.current(env: try isolated(store: unknown, ["XLESS_SHARE": share.path])).pack?.manifest.build == "99Z99")
 }
 
 @Test func toolEnvironmentPointsXtoolAtThePack() throws {
@@ -334,7 +351,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(missing?.stage == .assets)
     #expect(missing?.cause.contains("toolchain metadata not found") == true)
     let nothing = #expect(throws: XlessError.self) { try XcodeToolsProfile.forImage(env: try isolated(), stage: .ib) }
-    #expect(nothing?.stage == .ib && nothing?.fix.hasPrefix("xless setup --xcode") == true)
+    #expect(nothing?.stage == .ib && nothing?.fix.contains("else xless setup --xcode") == true)
 }
 
 @Test func xtoolsConfigurationIsRepairedAndSharedByBuildsAtOnce() throws {

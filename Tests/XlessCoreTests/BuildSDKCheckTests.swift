@@ -154,7 +154,23 @@ private func noToolchain() throws -> SwiftToolchain? { nil }
         try BuildSDKCheck.check(pin: "26.2", platform: .ios, file: "xless.yml", stage: .prepare, env: none.merging([XcodeEnvironment.pinVariable: "26.2"]) { $1 })
     }
     #expect(e?.stage == .prepare && e?.exitCode == 2 && e?.cause.hasPrefix("xcode: \"26.2\" is pinned, but there is no pack for Xcode 26.2") == true)
-    #expect(e?.fix.hasPrefix("xless setup --xcode") == true)
+    #expect(e?.fix.contains("else xless setup --xcode") == true)
     // Unpinned there: nothing to check.
     #expect(try BuildSDKCheck.check(pin: nil, platform: .ios, file: "xless.yml", stage: .prepare, env: none).meta == nil)
+}
+
+/// A pack was found, but its toolchain metadata cannot be read: refused for an unpinned project too (no pin means any
+/// Xcode, not a pack without its metadata).
+@Test func aFoundPackWithoutMetadataIsRefusedUnpinnedToo() throws {
+    let dir = try tempDir("sdkcheck-pack"), home = try tempDir("sdkcheck-home"), share = try tempDir("sdkcheck-share")
+    let pack = XcodePack(root: dir, manifest: PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: XcodeEnvironment.hostArch,
+                                                           swift: "6.2.3", mode: .separate, parts: ["sdk": "h"]))
+    try FileManager.default.createDirectory(at: pack.sdkBundle, withIntermediateDirectories: true)
+    try pack.manifest.write(to: pack.manifestFile)
+    let env = ["XLESS_XCODE": dir.path, "HOME": home.path, "XLESS_SHARE": share.path, "PATH": "/usr/bin:/bin"]
+    let e = #expect(throws: XlessError.self) {
+        try BuildSDKCheck.check(pin: nil, platform: .ios, file: "xless.yml", stage: .build, env: env)
+    }
+    #expect(e?.stage == .build && e?.cause.contains(pack.name) == true && e?.cause.contains("toolchain-meta.json") == true, "\(String(describing: e))")
+    #expect(e?.fix.contains("xless setup --sdk") == true)
 }

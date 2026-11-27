@@ -132,7 +132,7 @@ public struct XcodeEnvironment: Sendable {
                                needs: Set<XcodeResolver.Need> = [.sdk]) throws -> XcodeEnvironment {
         if let found = try lookup(env: env, needs: needs) { return found }
         _ = try resolve(env, needs: needs) // the store is empty: the problem names it and the setup
-        throw XcodeProblem("there is no Xcode pack", fix: "xless setup --xcode <path to Xcode's .app or .xip>")
+        throw XcodeProblem("there is no Xcode pack", fix: XcodeResolver.setUp(nil))
     }
 
     /// `current`, or nil when this machine has no Xcode at all: no pack in the store, no `XLESS_XCODE` and no override.
@@ -188,8 +188,11 @@ public struct XcodeEnvironment: Sendable {
                                          expected: recipe.expected)
     }
 
-    /// What this xless's share says of the packs: the order of the Xcode table, and the recipe hash of a pack's part. A
-    /// stage command in a container has no share: then nothing is stale (`XcodeResolver.resolve`).
+    /// What this xless's share says of the packs: the order of the Xcode table, and the recipe hash of a pack's part. The
+    /// image sets `XLESS_SHARE`, so a stage command in a container checks its pack as one on a host does; with no share at
+    /// all (an xless installed without one) nothing is stale (`XcodeResolver.resolve`). As a run's pack choice
+    /// (`RunPack`): a pack of an Xcode this xless has no recipe for (versions.env maps it to no Swift toolchain) is used as it
+    /// is, with a note; a recipe input the share lacks stops it, since whether the pack is current cannot be told then.
     private struct Recipe {
         var order: [String] = []
         var table: [String: String] = [:]
@@ -204,9 +207,17 @@ public struct XcodeEnvironment: Sendable {
             order = (table["XCODE_RELEASES"] ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
         }
 
-        func expected(_ pack: XcodePack, _ part: PackPart) -> String? {
+        func expected(_ pack: XcodePack, _ part: PackPart) throws -> String? {
             guard let share else { return nil }
-            return try? PackRecipe.hash(part, build: pack.manifest.build, arch: pack.manifest.arch, table: table, share: share)
+            let m = pack.manifest
+            guard !(table["XCODE_SWIFT_\(m.build)"] ?? "").isEmpty else {
+                XcodeEnvironment.note("note: the pack \(pack.name) is of Xcode \(m.xcode) (\(m.build)), which this xless has no recipe for (versions.env maps it "
+                     + "to no Swift toolchain, XCODE_SWIFT_\(m.build)): it is used as it is, and whether it is current is not checked")
+                return nil
+            }
+            do { return try PackRecipe.hash(part, build: m.build, arch: m.arch, table: table, share: share) } catch let e as XlessError {
+                throw XcodeProblem("cannot tell whether the pack \(pack.name) is current: \(e.cause)", fix: e.fix)
+            }
         }
     }
 
@@ -218,6 +229,15 @@ public struct XcodeEnvironment: Sendable {
         #endif
     }
 
+    /// A note on standard error, once per process and text (a command may look the Xcode up more than once).
+    private static func note(_ text: String) {
+        noted.withLock { seen in
+            guard seen.insert(text).inserted else { return }
+            FileHandle.standardError.write(Data("\(text)\n".utf8))
+        }
+    }
+    private static let noted = NoteMemory()
+
     private static func value(_ env: [String: String], _ name: String) -> String? { env[name].flatMap { $0.isEmpty ? nil : $0 } }
 
     /// The first executable `name` in `path`'s directories.
@@ -228,6 +248,13 @@ public struct XcodeEnvironment: Sendable {
         }
         return nil
     }
+}
+
+/// The notes already written (`XcodeEnvironment.note`).
+private final class NoteMemory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: Set<String> = []
+    func withLock(_ body: (inout Set<String>) -> Void) { lock.lock(); defer { lock.unlock() }; body(&seen) }
 }
 
 extension XcodeProblem: StageReportableError {

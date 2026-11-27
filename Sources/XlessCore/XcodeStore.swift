@@ -72,15 +72,28 @@ public struct XcodeStore: Sendable {
 public enum XcodeResolver {
     public enum Need { case sdk, swiftBuild }
 
-    private static func setUp(_ pin: String?) -> String {
-        "xless setup --xcode <path to Xcode \(pin.map(XcodeVersion.canonical) ?? "<version>")'s .app or .xip>"
+    /// The setup that prepares a pack of `pin` (any Xcode without one).
+    static func setUp(_ pin: String?) -> String {
+        "xless setup (it prepares the pack from the SDK export in the cache when there is one), else xless setup --xcode <path to Xcode \(pin.map(XcodeVersion.canonical) ?? "<version>")'s .app or .xip>"
+    }
+
+    /// The setup that prepares `pack` again, part by part, from its Xcode's SDK export in the cache (`$XDG_CACHE_HOME/xless/sdk`,
+    /// else `~/.cache/xless/sdk`), and what to do in a container, where the pack is mounted read-only.
+    static func prepareAgain(_ pack: XcodePack, env: [String: String]) -> String {
+        let m = pack.manifest
+        let cache = env["XDG_CACHE_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? ((env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()) + "/.cache")
+        let export = "\(cache)/xless/sdk/xcode\(m.xcode)-\(m.build)"
+        return "xless setup --sdk \(export) prepares it (without that SDK export: xless setup --xcode <path to Xcode \(m.xcode)'s .app or .xip>); "
+            + "in a container, whose pack is read-only, run xless setup --docker --sdk <that export> on the host instead, then start the container again"
     }
 
     /// The pack to use: `XLESS_XCODE`'s, else the store's (`XLESS_XCODES`) chosen by `pin` or the newest.
-    /// `expected`: the recipe hash this xless computes for a pack's part (`PackRecipe.hash`); nil when it cannot (no share): then nothing is stale.
+    /// `expected`: the recipe hash this xless computes for a pack's part (`PackRecipe.hash`); nil when there is none to compare
+    /// with (no share, or an Xcode this xless has no recipe for): then nothing is stale. It throws (an `XcodeProblem`) when
+    /// the share cannot tell: whether the pack is current is not known then.
     /// `order`: the builds of versions.env's Xcode table, in its order.
     public static func resolve(env: [String: String], pin: String?, arch: String, order: [String], needs: Set<Need> = [.sdk],
-                               expected: (XcodePack, PackPart) -> String?) throws -> XcodePack {
+                               expected: (XcodePack, PackPart) throws -> String?) throws -> XcodePack {
         let pack: XcodePack
         if let explicit = env["XLESS_XCODE"], !explicit.isEmpty {
             let url = URL(fileURLWithPath: explicit)
@@ -92,15 +105,22 @@ public enum XcodeResolver {
                 pack = opened
             } catch let problem as XcodeProblem {
                 throw problem
+            } catch let e as XlessError {
+                throw XcodeProblem("XLESS_XCODE names \(explicit), which cannot be used as an Xcode pack: \(e.cause)",
+                                   fix: "make its pack.json readable, or remove the pack and run `xless setup` again, or unset XLESS_XCODE to use the store")
             } catch {
-                throw XcodeProblem("XLESS_XCODE names \(explicit), which is no Xcode pack (its pack.json cannot be read: \(error))",
-                                   fix: "remove it and run `xless setup` again, or unset XLESS_XCODE to use the store")
+                throw XcodeProblem("XLESS_XCODE names \(explicit), which cannot be used as an Xcode pack: \(error)",
+                                   fix: "remove the pack and run `xless setup` again, or unset XLESS_XCODE to use the store")
+            }
+            guard pack.manifest.arch == arch else {
+                throw XcodeProblem("XLESS_XCODE names \(explicit), a pack for \(pack.manifest.arch), which this \(arch) machine cannot use",
+                                   fix: "point it at a pack for \(arch), or unset it to use the store")
             }
         } else {
             let store = XcodeStore(env: env)
             pack = try choose(store.packs(), pin: pin, arch: arch, order: order, store: store)
         }
-        return try checked(pack, needs: needs, expected: expected)
+        return try checked(pack, needs: needs, env: env, expected: expected)
     }
 
     /// The pack of `pin` (else the newest) among `packs`, before any staleness check: what the run's Docker side uses too.
@@ -130,21 +150,25 @@ public enum XcodeResolver {
         let elsewhere = Set(packs.filter { fits($0.manifest.xcode) && $0.manifest.arch != arch }.map(\.manifest.arch)).sorted()
         if !elsewhere.isEmpty {
             throw XcodeProblem("there is no pack for \(what) for \(arch) (the store has one for \(elsewhere.joined(separator: ", ")), which this machine cannot use)",
-                               fix: "\(setUp(pin)) --arch \(arch)")
+                               fix: "\(setUp(pin)), on this \(arch) machine")
         }
         let where_ = store.map { " in \($0.root.path)" } ?? ""
         throw XcodeProblem("there is no pack for \(what) (\(arch))\(where_)", fix: setUp(pin))
     }
 
-    private static func checked(_ pack: XcodePack, needs: Set<Need>, expected: (XcodePack, PackPart) -> String?) throws -> XcodePack {
+    private static func checked(_ pack: XcodePack, needs: Set<Need>, env: [String: String], expected: (XcodePack, PackPart) throws -> String?) throws -> XcodePack {
+        guard pack.manifest.format == PackRecipe.format else {
+            throw XcodeProblem("the pack \(pack.name) is of pack format \(pack.manifest.format), and this xless uses format \(PackRecipe.format)",
+                               fix: prepareAgain(pack, env: env))
+        }
         let parts: [(Need, PackPart, String)] = [(.sdk, .sdk, "Darwin SDK"), (.swiftBuild, .swiftBuild, "Swift Build")]
         for (need, part, label) in parts where needs.contains(need) {
             guard let have = pack.manifest.parts[part.rawValue] else {
-                throw XcodeProblem("the pack \(pack.name) has no \(label)", fix: "xless setup prepares the \(label) part of it")
+                throw XcodeProblem("the pack \(pack.name) has no \(label)", fix: prepareAgain(pack, env: env))
             }
-            if let want = expected(pack, part), want != have {
+            if let want = try expected(pack, part), want != have {
                 throw XcodeProblem("the \(label) of the pack \(pack.name) was prepared by another recipe than this xless uses",
-                                   fix: "xless setup prepares it again from the SDK export in the cache")
+                                   fix: prepareAgain(pack, env: env))
             }
         }
         return pack

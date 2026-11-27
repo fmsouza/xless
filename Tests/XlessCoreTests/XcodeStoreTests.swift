@@ -105,7 +105,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let e = problem { try resolve(store, pin: "26.2", arch: "arm64") }
     #expect(e?.cause.contains("amd64") == true)
     #expect(e?.cause.contains("arm64") == true)
-    #expect(e?.fix.contains("--arch arm64") == true)
+    #expect(e?.fix.contains("on this arm64 machine") == true && e?.fix.contains("--arch") == false)
 }
 
 @Test func emptyStoreIsNoPack() throws {
@@ -118,7 +118,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     try makePack(in: store, xcode: "26.2", build: "17C52")
     let e = problem { try resolve(store, expected: { _, _ in "other" }) }
     #expect(e?.cause.contains("another recipe") == true)
-    #expect(e?.fix.contains("SDK export in the cache") == true)
+    #expect(e?.fix.contains("xless setup --sdk ") == true)
 }
 
 @Test func missingNeededPartIsRefused() throws {
@@ -154,4 +154,53 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     }
     #expect(XcodeStore(root: store).packs().map(\.root.lastPathComponent) == ["26.2-17C52-arm64"])
     #expect(try resolve(store).manifest.xcode == "26.2")
+}
+
+// The fixes are commands to run: the setup that prepares from the cached export, else from the .xip; for a missing or stale
+// part, the export of that pack's Xcode by its path, and what to do where the pack is read-only (a container).
+@Test func theFixesAreCommands() throws {
+    let store = try tempDir()
+    let none = problem { try resolve(store, pin: "26.2") }
+    #expect(none?.fix == "xless setup (it prepares the pack from the SDK export in the cache when there is one), else xless setup --xcode <path to Xcode 26.2's .app or .xip>")
+    try makePack(in: store, xcode: "26.2", build: "17C52")
+    let env = ["HOME": "/home/me"]
+    let missing = problem { try resolve(store, needs: [.swiftBuild], extra: env) }
+    let stale = problem { try resolve(store, extra: env, expected: { _, _ in "other" }) }
+    let fix = "xless setup --sdk /home/me/.cache/xless/sdk/xcode26.2-17C52 prepares it (without that SDK export: xless setup --xcode <path to Xcode 26.2's .app or .xip>); "
+        + "in a container, whose pack is read-only, run xless setup --docker --sdk <that export> on the host instead, then start the container again"
+    #expect(missing?.fix == fix)
+    #expect(stale?.fix == fix)
+    let cached = problem { try resolve(store, needs: [.swiftBuild], extra: ["HOME": "/home/me", "XDG_CACHE_HOME": "/c"]) }
+    #expect(cached?.fix.hasPrefix("xless setup --sdk /c/xless/sdk/xcode26.2-17C52 prepares it") == true)
+}
+
+// XLESS_XCODE's pack is checked as a store's is: of this machine's architecture, and of this xless's pack format.
+@Test func anExplicitPackOfAnotherArchitectureOrFormatIsRefused() throws {
+    let store = try tempDir(), other = try tempDir()
+    let amd = try makePack(in: other, xcode: "26.2", build: "17C52", arch: "amd64")
+    let e = problem { try resolve(store, arch: "arm64", extra: ["XLESS_XCODE": amd.path]) }
+    #expect(e?.cause == "XLESS_XCODE names \(amd.path), a pack for amd64, which this arm64 machine cannot use")
+    let old = other.appendingPathComponent("26.2-17C52-arm64")
+    try PackManifest(format: PackRecipe.format + 1, xcode: "26.2", build: "17C52", arch: "arm64", swift: "6.2.3", mode: .own, parts: ["sdk": "h"])
+        .write(to: old.appendingPathComponent("pack.json"))
+    let f = problem { try resolve(store, extra: ["XLESS_XCODE": old.path]) }
+    #expect(f?.cause == "the pack 26.2-17C52-arm64 is of pack format \(PackRecipe.format + 1), and this xless uses format \(PackRecipe.format)")
+    // In the store too.
+    let g = problem { try resolve(other, pin: "26.2") }
+    #expect(g?.cause.contains("pack format") == true)
+}
+
+// A pack.json that is there but cannot be read is said to be unreadable, not missing.
+@Test func anUnreadableManifestIsSaidToBeUnreadable() throws {
+    let other = try tempDir()
+    let root = try makePack(in: other, xcode: "26.2", build: "17C52")
+    let file = root.appendingPathComponent("pack.json")
+    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+    guard (try? Data(contentsOf: file)) == nil else { return } // root reads it anyway
+    let e = problem { try resolve(try tempDir(), extra: ["XLESS_XCODE": root.path]) }
+    #expect(e?.cause.contains("cannot be read") == true && e?.cause.contains("not found") == false, "\(String(describing: e))")
+    do { _ = try PackManifest.load(from: file); Issue.record("expected a throw") } catch let x as XlessError {
+        #expect(x.cause.contains("cannot be read") && !x.cause.contains("not found"), "\(x.cause)")
+    }
 }
