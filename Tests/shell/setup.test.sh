@@ -32,6 +32,9 @@ fi
 if [[ "$1 $2" == "context show" ]]; then echo here; fi
 # the contexts of $STUB_CONTEXTS; none listed (nothing is checked) when it is not set
 if [[ "$1 $2" == "context ls" ]]; then printf '%s\n' ${STUB_CONTEXTS:-}; fi
+# a pack volume $STUB_IN_USE, which a running container uses
+if [[ "$1 $2" == "volume ls" && -n "${STUB_IN_USE:-}" ]]; then echo "$STUB_IN_USE"; fi
+if [[ "$1 $2" == "ps --filter" && -n "${STUB_IN_USE:-}" && "$3" == "volume=$STUB_IN_USE" ]]; then printf 'builder\txless:9.9.9-arm64\t77.1\n'; fi
 if [[ -n "${FAKE_IMAGES:-}" ]]; then
   if [[ "$1" == image && "$2" != rm ]]; then exec "$FAKE" "$@"; fi
   if [[ "$1 $2" == "buildx build" ]]; then "$FAKE" base arm64 27.0 27A266a >> "$FAKE_IMAGES"; fi
@@ -356,6 +359,15 @@ grep -qF -- "dst=/xcode/" "$t/out" && fail "an export mounts an Xcode: $(cat "$t
 grep -q 'about 0 GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "the cache check still asks for room: $(cat "$t/out")"
 grep -q 'xless sdk meta' "$t/out" && fail "the plan rewrites the export's toolchain-meta.json: $(cat "$t/out")"
 grep -q '^run' "$log" && fail "--dry-run ran docker: $(cat "$log")"
+# For real, while a running build uses the pack's volume: refused before the volume is written, naming the container.
+"$repo/Tests/shell/fake-images.sh" base arm64 27.0 27A266a > "$t/images"
+extra=(FAKE_IMAGES="$t/images" STUB_IN_USE=xless-xcode-27.0-27A266a-arm64)
+share="$repo" run ok --docker --arch arm64
+[[ $code != 0 ]] && grep -q "builder (xless:9.9.9-arm64)" "$t/err" || fail "a pack in use is replaced: $code $(cat "$t/out" "$t/err")"
+# (the volume is read, read-only, to tell whether its pack is current; nothing mounts it at /xcodes, where it is written)
+grep -q '^ps --filter volume=xless-xcode-27.0-27A266a-arm64 ' "$log" && ! grep -q '^volume create\|dst=/xcodes' "$log" \
+  || fail "the volume was written while in use, or the setup did not ask: $(cat "$log")"
+extra=()
 # An architecture the export lacks: refused, naming it and --xcode.
 run ok --docker --arch arm64 --arch amd64 --dry-run
 [[ $code == 11 ]] && grep -q "holds arm64 and amd64 (xcode27.0-27A266a holds arm64)" "$t/err" || fail "missing-arch refusal: $code $(cat "$t/err")"
