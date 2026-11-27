@@ -119,7 +119,8 @@ too; below 6.4 it keeps `--swift-sdk` and `--arch` (6.2.3's `--triple` builds bo
   baseline's (`/usr/lib/swift`, `@loader_path`, `@executable_path/../Frameworks`). That load command is 40 bytes longer
   (`sizeofcmds` 3736 → 3776 in the arm64 slice, 3880 → 3920 in the x86_64 one) and the sections of `__TEXT` start later:
   `__text` and `__stubs` by 0x28 and the others by 0x30 in the arm64 slice (`__text` at 0xf00 against 0xed8), all by 0x20
-  in the x86_64 one. The segments, and every section of `__DATA_CONST` and `__DATA`, are where they were. The tool
+  in the x86_64 one. The segments, and every section of `__DATA_CONST` and `__DATA`, are where they were (their load
+  commands are among those compared below, address by address). The tool
   calls the file different, and says its printable strings differ once the path is replaced. The differing runs it
   places in the load commands are bytes of `LC_UUID` that happen to be printable (`LLDuUU1D` against `UU1D` and `!:\)` in
   the arm64 slice); the arm64 slice also lists two runs on each side that it places in "__LINKEDIT or padding", whose
