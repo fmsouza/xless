@@ -163,12 +163,18 @@ for sig in INT TERM HUP QUIT USR1 USR2 ALRM VTALRM PROF XCPU XFSZ SYS ABRT TRAP 
       image) extra=(DSLEEP="--to finalize"); pidf="$t/dpid"; args=("$t/image") ;;
     esac
     dfl "${docker[@]}" "${extra[@]}" "$S" "${args[@]}" >/dev/null 2>&1 & pid=$!; bg+=("$pid")
-    for _ in $(seq 100); do [[ -s "$pidf" ]] && break; sleep 0.1; done
+    # (getting there is not what is checked: a minute, for a machine under load)
+    for _ in $(seq 600); do [[ -s "$pidf" && -d "$RUN" ]] && break; sleep 0.1; done
     [[ -s "$pidf" && -d "$RUN" ]] || fail "$sig/$where: never reached the point to stop: $(cat "$t/dlog" "$t/xlog")"
-    start=$SECONDS; kill -"$sig" "$pid"; code=0; wait "$pid" || code=$?
-    [[ $code -eq $want && $((SECONDS - start)) -lt 10 ]] || fail "$sig/$where: exit $code after $((SECONDS - start)) s, want $want at once"
+    kill -"$sig" "$pid"
+    # What must go at once (the run directory, the step) goes within 10 s of the signal. The exit itself is waited for
+    # without a bound: macOS holds a process that a core-dumping signal ends until its crash report is written, which
+    # took a minute under load (BUS, seen twice).
+    for _ in $(seq 100); do [[ ! -e "$RUN" ]] && ! kill -0 "$(cat "$pidf")" 2>/dev/null && break; sleep 0.1; done
     [[ ! -e "$RUN" ]] || fail "$sig/$where: the run directory outlived the stopped run: $(ls -R "$RUN")"
     kill "$(cat "$pidf")" 2>/dev/null && fail "$sig/$where: the step outlived the stopped run"
+    code=0; wait "$pid" || code=$?
+    [[ $code -eq $want ]] || fail "$sig/$where: exit $code, want $want"
     [[ -z "$(ls -A "$t/home/.cache/xless/locks")" ]] || fail "$sig/$where: the lock outlived the stopped run"
     [[ $where != image || -z "$(ls -A "$t/home/.cache/xless/run")" ]] || fail "$sig/$where: the run's xless.yml outlived it: $(ls -R "$t/home/.cache/xless/run")"
     [[ $where != image ]] || ! grep -q "/secrets\|ASC_\|--from sign" "$t/dlog" || fail "$sig/$where: a secret in the build, or a step after it: $(cat "$t/dlog")"
