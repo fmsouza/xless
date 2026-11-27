@@ -284,7 +284,7 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work
   xless:1.4.0-amd64 xless ship --platform ios
 ```
 
-Use the names that `docker image ls xless` and `docker volume ls --filter label=org.xless.pack` show: the image's
+Use the names that `docker image ls xless` and `docker volume ls --filter name=xless-xcode-` show: the image's
 architecture is the machine's (`arm64` or `amd64`), and the volume is that of the Xcode you set up. Output ends up in
 `.xless/build/ios/out/`, owned by you. That is one container in which the build's code runs beside the secrets: to keep
 them apart, build in one container and sign in another ([ci.md](ci.md#in-the-image), [security.md](security.md#the-image-used-directly)).

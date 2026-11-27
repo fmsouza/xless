@@ -219,8 +219,9 @@ BIN=$(mktemp -d) && cp ~/.local/bin/xless "$BIN/xless"    # on a Linux host; els
 
 The script checks that the binary is a Linux one of that architecture.
 
-**2. The volume**, labelled as a pack volume, and writable for you (a new volume takes the image's `/xcodes`, which anyone
-may write; the second command changes nothing then):
+**2. The volume**, of the name xless gives a pack volume (xless finds its pack volumes by that name; the label is the one
+it gives the volumes it creates), and writable for you (a new volume takes the image's `/xcodes`, which anyone may write;
+the second command changes nothing then):
 
 ```sh
 docker volume create --label org.xless.pack=true $VOLUME

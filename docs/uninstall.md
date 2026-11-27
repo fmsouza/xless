@@ -74,7 +74,7 @@ Images built by a release older than the one that added `xless clean` do not car
 remove its pack and its SDK export:
 
 ```sh
-docker volume rm xless-xcode-26.2-17C52-arm64            # with --docker; docker volume ls --filter label=org.xless.pack lists them
+docker volume rm xless-xcode-26.2-17C52-arm64            # with --docker; docker volume ls --filter name=xless-xcode- lists them
 rm -rf ~/.local/share/xless-native/xcodes/26.2-17C52-arm64   # natively, or in your XLESS_XCODES
 rm -rf ~/.cache/xless/sdk/xcode26.2-17C52
 ```

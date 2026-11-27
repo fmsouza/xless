@@ -298,7 +298,7 @@ xcode: "26.2"      # the Xcode of the app's release pipeline
 - **`xless run --docker`** reads the `xcode:` line and gives every step's container that Xcode's pack, read-only. A missing pack, or a part of it that this xless prepares in another way, is prepared first from the SDK export in the cache, and the run says so; without the export it stops (exit 2) with the command that prepares it:
 
   ```
-  testflight: …/my-app.yml pins xcode: "26.2", but there is no pack of Xcode 26.2 for arm64 in the pack volumes (docker volume ls --filter label=org.xless.pack), and there is no SDK export of Xcode 26.2 for arm64 in …/.cache/xless/sdk to prepare it from; xless setup --docker --xcode <path to Xcode 26.2's .xip or Xcode.app>
+  testflight: …/my-app.yml pins xcode: "26.2", but there is no pack of Xcode 26.2 for arm64 in the pack volumes (xless-xcode-<version>-<build>-<arch>: docker volume ls --filter name=xless-xcode-), and there is no SDK export of Xcode 26.2 for arm64 in …/.cache/xless/sdk to prepare it from; xless setup --docker --xcode <path to Xcode 26.2's .xip or Xcode.app>
   ```
 
   The pin is compared as a version: `xcode: "26"` is 26.0, `"26.2.0"` is 26.2. An image named with `XLESS_IMAGE` or `image:` holds no Xcode: it gets the pinned pack as every container of the run does.

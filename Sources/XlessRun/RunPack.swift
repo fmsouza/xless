@@ -169,7 +169,7 @@ private struct PackChoice {
 
     private var place: String {
         switch store {
-        case .volumes: "the pack volumes (docker volume ls --filter label=\(PackVolumes.label))"
+        case .volumes: "the pack volumes (\(PackVolumes.prefix)<version>-<build>-<arch>: docker volume ls --filter name=\(PackVolumes.prefix))"
         case let .directory(dir): "\(dir.path) (XLESS_XCODES)"
         }
     }
@@ -197,9 +197,8 @@ private struct PackChoice {
                     return try volumes.manifests(arch: arch, image: image.id).map { XcodePack(root: URL(fileURLWithPath: PackVolumes.mountPath(RunPack.name($0))), manifest: $0) }
                 }
                 return try volumes.names(arch: arch).compactMap { volume in
-                    let p = volume.dropFirst(PackVolumes.prefix.count).split(separator: "-").map(String.init)
-                    guard p.count == 3 else { return nil }
-                    let m = PackManifest(format: PackRecipe.format, xcode: p[0], build: p[1], arch: p[2], swift: "", mode: .own, parts: [:])
+                    guard let p = PackVolumes.parse(volume) else { return nil }
+                    let m = PackManifest(format: PackRecipe.format, xcode: p.xcode, build: p.build, arch: p.arch, swift: "", mode: .own, parts: [:])
                     return XcodePack(root: URL(fileURLWithPath: PackVolumes.mountPath(RunPack.name(m))), manifest: m)
                 }
             } catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }

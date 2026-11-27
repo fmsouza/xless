@@ -6,6 +6,8 @@ import XlessCore
 /// A docker whose pack volumes are a list, and whose one reading container prints what `packs` holds for each mounted volume.
 private final class FakeVolumes: @unchecked Sendable {
     var volumes: [String] = []
+    /// Volumes without xless's label (made by hand: `docker volume create <name>`); a listing filtered by the label leaves them out.
+    var unlabelled: Set<String> = []
     /// The pack.json a volume holds (by volume name); a volume missing here has none, so its `cat` fails.
     var packs: [String: String] = [:]
     var runFails = false
@@ -13,7 +15,10 @@ private final class FakeVolumes: @unchecked Sendable {
 
     func answer(_ words: [String]) -> (code: Int32, output: String) {
         asked.append(words)
-        if words.starts(with: ["volume", "ls"]) { return (0, volumes.map { $0 + "\n" }.joined()) }
+        if words.starts(with: ["volume", "ls"]) {
+            let byLabel = words.contains("label=\(PackVolumes.label)")
+            return (0, volumes.filter { !byLabel || !unlabelled.contains($0) }.map { $0 + "\n" }.joined())
+        }
         guard words.first == "run", !runFails else { return (1, "") }
         // The volumes the container mounts, in order: /v/<i>.
         var mounted: [Int: String] = [:]
@@ -112,13 +117,27 @@ private func json(_ m: PackManifest) -> String {
         #expect(try fake.local.manifests(arch: "arm64", image: "i") == [manifest("26.2", "17C52", "arm64")])
         let run = try #require(fake.asked.first { $0.first == "run" })
         #expect(!run.joined(separator: " ").contains("amd64"))
-        // The listing asks for xless's pack volumes by their label.
-        #expect(fake.asked.first == ["volume", "ls", "--filter", "label=org.xless.pack", "--format", "{{.Name}}"])
+        // The listing asks for every volume, and takes those whose name has a pack's shape.
+        #expect(fake.asked.first == ["volume", "ls", "--format", "{{.Name}}"])
         // None of this architecture: no container is started.
         let none = FakeVolumes()
         none.volumes = ["xless-xcode-26.2-17C52-amd64"]
         #expect(try none.local.manifests(arch: "arm64", image: "i").isEmpty)
         #expect(!none.asked.contains { $0.first == "run" })
+    }
+
+    /// A volume made by hand (`docker volume create xless-xcode-26.2-17C52-arm64`, then a setup into it) has no label: it is a
+    /// pack volume by its name, as `xless clean --packs` takes it. A name that only starts like one is not.
+    @Test func aVolumeMadeByHandIsAPackVolumeByItsName() throws {
+        let fake = FakeVolumes()
+        fake.volumes = ["xless-xcode-26.2-17C52-arm64", "xless-xcode-26.2-17C52-arm64-old", "xless-xcode-backup", "xless-xcode-26.2-17C52-x86"]
+        fake.unlabelled = ["xless-xcode-26.2-17C52-arm64"]
+        fake.packs = ["xless-xcode-26.2-17C52-arm64": json(manifest("26.2", "17C52", "arm64"))]
+        #expect(try fake.local.names(arch: "arm64") == ["xless-xcode-26.2-17C52-arm64"])
+        #expect(try fake.local.manifests(arch: "arm64", image: "i") == [manifest("26.2", "17C52", "arm64")])
+        #expect(PackVolumes.parse("xless-xcode-26.2-17C52-arm64").map { [$0.xcode, $0.build, $0.arch] } == ["26.2", "17C52", "arm64"])
+        #expect(PackVolumes.parse("xless-xcode-26.2-17C52-arm64-old") == nil)
+        #expect(PackVolumes.parse("xless-xcode-backup") == nil)
     }
 
     @Test func aContainerThatCannotReadIsAProblem() {

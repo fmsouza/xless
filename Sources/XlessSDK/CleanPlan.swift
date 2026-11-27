@@ -93,7 +93,7 @@ public enum CleanPlan {
         return refs
     }
 
-    /// An Xcode pack's volume: `PackVolumes.prefix`, then `<version>-<build>-<arch>` in the shape xless creates.
+    /// An Xcode pack's volume: `PackVolumes.prefix`, then `<version>-<build>-<arch>` in the shape xless creates (`PackVolumes.parse`).
     public struct PackVolume: Equatable, Sendable {
         public let name: String
         public let xcode: String, build: String, arch: String
@@ -108,10 +108,8 @@ public enum CleanPlan {
         var found: [PackVolume] = []
         for line in listing.split(whereSeparator: \.isNewline) {
             let name = line.trimmingCharacters(in: .whitespaces)
-            guard name.hasPrefix(PackVolumes.prefix),
-                  let m = String(name.dropFirst(PackVolumes.prefix.count)).wholeMatch(of: /([0-9]+(?:\.[0-9]+)*)-([A-Za-z0-9]+)-(arm64|amd64)/),
-                  !found.contains(where: { $0.name == name }) else { continue }
-            found.append(PackVolume(name: name, xcode: String(m.1), build: String(m.2), arch: String(m.3)))
+            guard let p = PackVolumes.parse(name), !found.contains(where: { $0.name == name }) else { continue }
+            found.append(PackVolume(name: name, xcode: p.xcode, build: p.build, arch: p.arch))
         }
         return found
     }

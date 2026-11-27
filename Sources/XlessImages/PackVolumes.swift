@@ -1,13 +1,14 @@
 import Foundation
 import XlessCore
 
-/// The Docker volumes that hold Xcode packs (`XcodePack`): one per pack, `xless-xcode-<version>-<build>-<arch>`, labelled
-/// `org.xless.pack=true`. A volume is a store of one pack: mounted at `/xcodes` (the image's `XLESS_XCODES`), it holds the
+/// The Docker volumes that hold Xcode packs (`XcodePack`): one per pack, `xless-xcode-<version>-<build>-<arch>`. xless labels
+/// the volumes it creates `org.xless.pack=true`, but a volume is a pack volume by its name alone (one made by hand,
+/// `docker volume create <name>`, has no label), everywhere: setup, run and clean. A volume is a store of one pack: mounted at `/xcodes` (the image's `XLESS_XCODES`), it holds the
 /// pack's directory, `/xcodes/<version>-<build>-<arch>`, and while a setup prepares it, that directory's `.partial`, `.old`
 /// and `.lock` siblings (a pack is prepared beside its place and renamed into it, which cannot happen at a volume's root).
 public struct PackVolumes {
     public static let prefix = "xless-xcode-"
-    /// The label every pack volume has: the listing asks for it.
+    /// The label of the pack volumes xless creates (a volume made by hand has none: the listing goes by name).
     public static let label = "org.xless.pack"
     /// The line the reading container prints before each pack.json.
     static let marker = "--- xless pack"
@@ -25,13 +26,20 @@ public struct PackVolumes {
     /// The command that creates the volume `name`, labelled as a pack volume.
     public static func create(_ name: String) -> [String] { ["docker", "volume", "create", "--label", "\(label)=true", name] }
 
-    /// The pack volumes of `arch`, by name.
+    /// The Xcode version, build and architecture of the pack volume `name`: `prefix`, then `<version>-<build>-<arch>` in the
+    /// shape xless creates; nil for any other name (`xless-xcode-backup`, `xless-xcode-26.2-17C52-arm64-old`).
+    public static func parse(_ name: String) -> (xcode: String, build: String, arch: String)? {
+        guard name.hasPrefix(prefix),
+              let m = String(name.dropFirst(prefix.count)).wholeMatch(of: /([0-9]+(?:\.[0-9]+)*)-([A-Za-z0-9]+)-(arm64|amd64)/) else { return nil }
+        return (String(m.1), String(m.2), String(m.3))
+    }
+
+    /// The pack volumes of `arch` (`parse`), by name, labelled or not.
     public func names(arch: String) throws -> [String] {
-        let answer = docker(["volume", "ls", "--filter", "label=\(Self.label)", "--format", "{{.Name}}"])
+        let answer = docker(["volume", "ls", "--format", "{{.Name}}"])
         guard answer.code == 0 else { throw ImageProblem("docker does not list its volumes (docker volume ls failed)", fix: "is it running?") }
-        return answer.output.split(whereSeparator: \.isNewline).map(String.init)
-            .filter { $0.hasPrefix(Self.prefix) && $0.hasSuffix("-\(arch)") && $0.dropFirst(Self.prefix.count).split(separator: "-").count == 3 }
-            .sorted()
+        return Set(answer.output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { Self.parse($0)?.arch == arch }).sorted()
     }
 
     /// The manifests of the pack volumes of `arch`, read with one container of `image` (`cat /v/<i>/<pack name>/pack.json` per

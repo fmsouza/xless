@@ -274,7 +274,7 @@ import XlessImages
         try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")
         let (host, code) = try run(["--config", home.overlay, "--dry-run"])
         #expect(code == 0, "\(host.lines)")
-        #expect(host.lines.contains("==> note: \(home.overlay) pins xcode: \"26.2\", but there is no pack of Xcode 26.2 for arm64 in the pack volumes (docker volume ls --filter label=org.xless.pack), and there is no SDK export of Xcode 26.2 for arm64 in \(home.exports) to prepare it from: a run would stop here (xless setup --docker --xcode <path to Xcode 26.2's .xip or Xcode.app>)"), "\(host.lines)")
+        #expect(host.lines.contains("==> note: \(home.overlay) pins xcode: \"26.2\", but there is no pack of Xcode 26.2 for arm64 in the pack volumes (xless-xcode-<version>-<build>-<arch>: docker volume ls --filter name=xless-xcode-), and there is no SDK export of Xcode 26.2 for arm64 in \(home.exports) to prepare it from: a run would stop here (xless setup --docker --xcode <path to Xcode 26.2's .xip or Xcode.app>)"), "\(host.lines)")
         #expect(host.allSteps.allSatisfy { !$0.isDockerRun }, "a dry run starts no container")
         #expect(host.output.contains { $0.contains(" xless ship ") && $0.contains("XLESS_XCODE=/xcodes/26.2-17C52-arm64") })
         // with the export, it shows the preparation

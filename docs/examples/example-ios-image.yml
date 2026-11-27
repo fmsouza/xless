@@ -14,7 +14,7 @@ permissions:
 env:
   XLESS_NO_INPUT: 1
   IMAGE: xless:1.4.0-amd64                  # the image of the xless on the runner: docker image ls xless
-  PACK: xless-xcode-26.2-17C52-amd64        # the pack of the Xcode the project pins: docker volume ls --filter label=org.xless.pack
+  PACK: xless-xcode-26.2-17C52-amd64        # the pack of the Xcode the project pins: docker volume ls --filter name=xless-xcode-
   APP: samples/HelloShip                    # the app's directory in the repository (. for its top)
 jobs:
   ship:

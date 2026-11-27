@@ -31,7 +31,7 @@ xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}
 kit="$image-tauri"
 "${d[@]}" image inspect "$image" >/dev/null 2>&1 || skip "no image $image (scripts/docker-images.sh image --arch $arch)"
 "${d[@]}" image inspect "$kit" >/dev/null 2>&1 || skip "no image $kit (xless setup --docker --with tauri)"
-volume="$("${d[@]}" volume ls --filter label=org.xless.pack --format '{{.Name}}' | grep -E "^xless-xcode-${xcode//./\\.}-[^-]+-$arch\$" | sort | tail -1 || true)"
+volume="$("${d[@]}" volume ls --format '{{.Name}}' | grep -E "^xless-xcode-${xcode//./\\.}-[A-Za-z0-9]+-$arch\$" | sort | tail -1 || true)"
 [[ -n "$volume" ]] || skip "no pack volume of Xcode $xcode for $arch (xless setup --docker --xcode <Xcode $xcode .xip>)"
 name="${volume#xless-xcode-}"
 
