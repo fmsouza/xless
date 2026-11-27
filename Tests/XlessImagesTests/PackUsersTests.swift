@@ -48,6 +48,29 @@ import Testing
         #expect(fake.asked.count == 2 && fake.asked[1].prefix(2) == ["inspect", "--format"] && fake.asked[1].suffix(5) == ["a1", "b2", "c3", "d4", "e5"])
     }
 
+    /// Compared as files: a store named through a link is the directory a container mounts by its real path, and the other
+    /// way round.
+    @Test func aDirectoryStoreIsComparedByRealPaths() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("pack-users-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: base) }
+        let real = base.appendingPathComponent("data/xcodes"), link = base.appendingPathComponent("link")
+        try fm.createDirectory(at: real.appendingPathComponent("26.2-17C52-arm64/toolchain"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: link, withDestinationURL: base.appendingPathComponent("data"))
+        let realPath = try #require(realpath(real.path, nil).map { p in defer { free(p) }; return String(cString: p) })
+        let fake = Fake()
+        fake.ids = "a1\nb2\n"
+        func mounts(_ sources: String...) -> String { "[" + sources.map { "{\"Type\":\"bind\",\"Source\":\"\($0)\"}" }.joined(separator: ",") + "]" }
+        fake.inspect = [
+            "/byreal\timg\t<no value>\t\(mounts(realPath + "/26.2-17C52-arm64"))",
+            "/bylink\timg\t<no value>\t\(mounts(link.path + "/xcodes/26.2-17C52-arm64/toolchain"))",
+        ].joined(separator: "\n") + "\n"
+        // the store named through the link: both count
+        #expect(try fake.users.of(.directory(link.appendingPathComponent("xcodes")), xcode: "26.2", build: "17C52", arch: "arm64") == ["byreal (img)", "bylink (img)"])
+        // the store by its real path: both count
+        #expect(try fake.users.of(.directory(real), xcode: "26.2", build: "17C52", arch: "arm64") == ["byreal (img)", "bylink (img)"])
+    }
+
     @Test func aDockerThatCannotSayIsAProblem() {
         let fake = Fake()
         fake.code = 1

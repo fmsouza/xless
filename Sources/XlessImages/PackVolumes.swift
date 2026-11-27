@@ -198,17 +198,32 @@ public struct PackUsers {
             let format = "{{.Name}}\t{{.Config.Image}}\t{{index .Config.Labels \"\(Self.runLabel)\"}}\t{{json .Mounts}}"
             let inspected = docker(["inspect", "--format", format] + running)
             guard inspected.code == 0 else { throw problem("docker inspect") }
-            let root = dir.standardizedFileURL.path
-            let pack = dir.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch)).standardizedFileURL.path
+            // (as files: a link in either path, /var on a Mac for one, does not hide that they are the same)
+            let root = Self.real(dir.path)
+            let pack = Self.real(dir.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch)).path)
             return rows(inspected.output, excludingRun: excludingRun) { fields in
                 guard fields.count > 3, let data = fields[3].data(using: .utf8),
                       let mounts = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
                 return mounts.contains { mount in
-                    guard let source = (mount["Source"] as? String).map({ URL(fileURLWithPath: $0).standardizedFileURL.path }) else { return false }
+                    guard let source = (mount["Source"] as? String).map(Self.real) else { return false }
                     // the pack, in it, the store, or what holds the store
                     return source == pack || source.hasPrefix(pack + "/") || source == root || root.hasPrefix(source == "/" ? "/" : source + "/")
                 }
             }
+        }
+    }
+
+    /// `path` with every link resolved (realpath(3)); one that is not there, its nearest parent that is, and the rest as written.
+    static func real(_ path: String) -> String {
+        var head = URL(fileURLWithPath: path).standardizedFileURL, tail: [String] = []
+        while true {
+            if let resolved = realpath(head.path, nil) {
+                defer { free(resolved) }
+                return ([String(cString: resolved)] + tail.reversed()).joined(separator: "/").replacingOccurrences(of: "//", with: "/")
+            }
+            guard head.path != "/" else { return URL(fileURLWithPath: path).standardizedFileURL.path }
+            tail.append(head.lastPathComponent)
+            head = head.deletingLastPathComponent()
         }
     }
 
