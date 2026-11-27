@@ -136,8 +136,9 @@ prepared again by itself. With neither `--xcode` nor `--sdk` and no export in th
 says that no pack was prepared. `--dry-run` prints each step and its command.
 
 Measured on an arm64 Mac: preparing a whole pack from the export took 6 min 24 s (Xcode 26.2) and 6 min 55 s (27.0), of
-which compiling Swift Build took 4 min 7 s and 4 min 16 s; preparing the `sdk` part of the 26.2 pack again alone took
-1 min 33 s, and 2 min 43 s in an earlier run, most of it downloading and unpacking the Swift toolchain. Exporting the
+which compiling Swift Build took 4 min 7 s and 4 min 16 s; preparing the `sdk` part again alone (Swift Build kept) took
+2 min 34 s (26.2) and 2 min 50 s (27.0) after a change to `scripts/fit-toolchain.sh`, and 1 min 33 s (26.2) in an earlier
+run, most of it downloading and unpacking the Swift toolchain (2 min 8 s and 2 min 24 s of those two). Exporting the
 SDK from the `.xip` first took 3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up
 to about 15 GB in the cache while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
 

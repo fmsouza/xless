@@ -132,8 +132,8 @@ stale: a run prepares the part again from the SDK export, or stops (exit 2) and 
 
 - **A change to `scripts/fit-toolchain.sh`, `scripts/pack-swift-build.sh`, anything under `docker/toolchain/`, or a pin
   among those inputs makes the packs stale, by design**: every machine prepares that part again once (on an arm64 Mac
-  the `sdk` part of the 26.2 pack took 1 min 33 s, and 2 min 43 s in an earlier run; compiling Swift Build took 4 min 7 s
-  for 26.2 and 4 min 16 s for 27.0). Change them when the packs must change, and say so in the commit.
+  the `sdk` part took 2 min 34 s for 26.2 and 2 min 50 s for 27.0 after the last change to `scripts/fit-toolchain.sh`, and
+  1 min 33 s for 26.2 in an earlier run; compiling Swift Build took 4 min 7 s for 26.2 and 4 min 16 s for 27.0). Change them when the packs must change, and say so in the commit.
   A comment counts: it changes the file's bytes.
 - **Raise `PackRecipe.format`** when the Swift code that prepares a pack (`PackPlan`, `PackStore`, the setup) changes what
   it produces, the layout or a file's content, without a change to any of those files. Then every pack is prepared
