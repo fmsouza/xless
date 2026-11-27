@@ -81,6 +81,10 @@ private func json(_ m: PackManifest) -> String {
                 == ["--mount", "type=bind,\"src=/data/a,b\"\"c\",dst=/xcodes"])
         #expect(PackStore.directory(URL(fileURLWithPath: "/data/a,b\"c")).mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: false)
                 == ["--mount", "type=bind,\"src=/data/a,b\"\"c/26.2-17C52-arm64\",dst=/xcodes/26.2-17C52-arm64,readonly"])
+        // and a line break: docker reads the first CSV record alone, which would end the field there
+        #expect(PackStore.directory(URL(fileURLWithPath: "/data/a\nb")).mount(xcode: "26.2", build: "17C52", arch: "arm64", writable: true)
+                == ["--mount", "type=bind,\"src=/data/a\nb\",dst=/xcodes"])
+        #expect(PackStore.mountOption(["type": "bind", "src": "/a\rb", "dst": "/x"], readonly: false) == "type=bind,\"src=/a\rb\",dst=/x")
     }
 
     @Test func manifestsSkipVolumesWithoutAPack() throws {

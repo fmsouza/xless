@@ -50,7 +50,7 @@ public struct PackVolumes {
         guard !volumes.isEmpty else { return [] }
         let packs = volumes.map { String($0.dropFirst(Self.prefix.count)) }
         var argv = ["run", "--rm", "--pull=never", "--platform", "linux/\(arch)", "--network", "none"]
-        for (i, volume) in volumes.enumerated() { argv += ["--mount", "type=volume,src=\(volume),dst=/v/\(i),readonly"] }
+        for (i, volume) in volumes.enumerated() { argv += ["--mount", PackStore.mountOption(["type": "volume", "src": volume, "dst": "/v/\(i)"], readonly: true)] }
         argv += [image, "sh", "-c", "for p in \"$@\"; do printf '\\n%s %s\\n' '\(Self.marker)' \"$p\"; cat \"$p\" 2>/dev/null; done; exit 0", "sh"]
         argv += packs.enumerated().map { "/v/\($0.offset)/\($0.element)/pack.json" }
         let answer = docker(argv)
@@ -109,12 +109,13 @@ public enum PackStore: Equatable, Sendable {
     }
 
     /// docker's `--mount` value: `type`, `src`, `dst` in that order, then `readonly`. docker reads it as CSV, so a field with a
-    /// comma or a quote is quoted (its quotes doubled).
+    /// comma, a quote or a line break is quoted (its quotes doubled): docker reads the first record alone.
     public static func mountOption(_ fields: [String: String], readonly: Bool) -> String {
         var out = ["type", "src", "dst"].compactMap { key in
             fields[key].map { value -> String in
                 let field = "\(key)=\(value)"
-                return field.contains(",") || field.contains("\"") ? "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : field
+                let quoted = field.unicodeScalars.contains { $0 == "," || $0 == "\"" || $0 == "\n" || $0 == "\r" }
+                return quoted ? "\"" + field.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : field
             }
         }
         if readonly { out.append("readonly") }
