@@ -42,6 +42,11 @@ public struct PackVolumes {
             .filter { Self.parse($0)?.arch == arch }).sorted()
     }
 
+    /// The manifest of the pack `pack` (`XcodePack.name`) among `manifests`; nil when its volume holds none.
+    public func manifest(of pack: String, arch: String, image: String) throws -> PackManifest? {
+        try manifests(arch: arch, image: image).first { XcodePack.name(xcode: $0.xcode, build: $0.build, arch: $0.arch) == pack }
+    }
+
     /// The manifests of the pack volumes of `arch`, read with one container of `image` (`cat /v/<i>/<pack name>/pack.json` per
     /// volume, each mounted read-only, no network). A volume without a pack.json, or whose pack.json is not that volume's pack,
     /// is absent from the result. No volume of `arch`: no container.

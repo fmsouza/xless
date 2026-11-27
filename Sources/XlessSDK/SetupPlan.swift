@@ -187,7 +187,7 @@ public enum SetupPlan {
             if !here.contains(volume) { found = .nothing }
             else if !imageHere { found = .unread("read once the image \(image) is built") }
             else if !readVolumes { found = .unread("read when the setup runs") }
-            else { found = .read(try volumes.manifests(arch: a, image: image).first { XcodePack.name(xcode: $0.xcode, build: $0.build, arch: $0.arch) == pack }) }
+            else { found = .read(try volumes.manifest(of: pack, arch: a, image: image)) }
         case let .directory(dir):
             place = dir.path
             let root = dir.appendingPathComponent(pack)

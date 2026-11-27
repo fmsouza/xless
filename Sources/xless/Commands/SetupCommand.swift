@@ -389,8 +389,7 @@ struct SetupCommand: AsyncParsableCommand {
                 if let check = job.unlessCurrent {
                     // The pack the plan could not read: read now, once, with the image this setup has built.
                     let reasons = try read[check.pack] ?? {
-                        let found = try PackVolumes(LocalImages.hereDocker).manifests(arch: check.arch, image: check.image)
-                            .first { XcodePack.name(xcode: $0.xcode, build: $0.build, arch: $0.arch) == check.pack }
+                        let found = try PackVolumes(LocalImages.hereDocker).manifest(of: check.pack, arch: check.arch, image: check.image)
                         let reasons = SetupPlan.staleness(found, check: check)
                         say(reasons.isEmpty ? "    the pack \(check.pack) in the volume \(check.volume) is current for this xless: nothing to prepare"
                                             : "    the pack \(check.pack) in the volume \(check.volume) is not current (\(reasons.joined(separator: "; ")))")
