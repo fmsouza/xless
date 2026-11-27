@@ -742,8 +742,9 @@ Xcode, so what could write it could put code into the next build of another app,
   before it starts, run one container of the xless image with the Xcode or its SDK export read-only, the export's
   directory in the cache, and the store read-write. It has no project, no secret, and nothing else of the machine. It
   runs as you (`--user`; with rootless Docker as the container's root, which is you), prepares the pack beside its place
-  and renames it there whole. (Before it, for a new volume, a short container of the image runs as root without a
-  network, with that volume alone, and gives its top directory to you when it is not yours or writable already.)
+  and renames it there whole. (Before it, whenever the pack in a volume is to be prepared and Docker is not rootless,
+  a short container of the image runs as root without a network, with that volume alone, and gives its top directory
+  to you when it is not yours or writable already.)
 - **Every container of a run gets the pack read-only**, and that pack alone: a volume mounted read-only at `/xcodes`, or,
   from a directory store, the pack's own directory. The build runs the app's code, and the next build and the signing
   use the same pack. A run whose containers would get a pack writable (a pack volume mounted writable, or a writable

@@ -6,7 +6,7 @@ This is the same on Linux and macOS (on Windows: [native-install.md](native-inst
 |---|---|---|
 | The program and its support files | `~/.local/bin/xless`, `~/.local/share/xless` (the install's `--prefix` / `XLESS_PREFIX`) | about 100 MB |
 | On a Mac, natively: rcodesign only (the builds use your Xcode) | `~/.local/share/xless-native` | under 50 MB |
-| The native install: xtool, rcodesign, and the Xcode packs of its store (each the SDK, a Swift toolchain and Swift Build) | `~/.local/share/xless-native`, the packs in its `xcodes/` (or `$XLESS_XCODES`) | 6.3 to 7 GB per Xcode and architecture |
+| The native install: xtool, rcodesign, and the Xcode packs of its store (each the SDK and the Swift toolchain fitted to it; Swift Build only where the Xcode tool shims are, `XLESS_SHIM_DIR`, so not on a bare host) | `~/.local/share/xless-native`, the packs in its `xcodes/` (or `$XLESS_XCODES`) | about 6 to 7 GB per Xcode and architecture |
 | The exported SDKs, Tauri work copies and downloads | `~/.cache/xless` (`$XDG_CACHE_HOME/xless` when that is set) | about 3.5 GB per Xcode and architecture, plus the work copies |
 | With `--docker`: the image `xless:<version>-<arch>`, the kits on it, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 6.5 GB for the image and 0.3 GB for the `tauri` kit, per architecture, and Docker's build cache |
 | With `--docker`: the Xcode packs, one volume each (`xless-xcode-<version>-<build>-<arch>`), or the directory `XLESS_XCODES` names | Docker's data root, or that directory | 6.3 to 7 GB per Xcode and architecture |

@@ -4,6 +4,9 @@
 # "Swift Build on Linux — spike G2"). Not part of xless's pipeline (Task 8 wires the build stage); kept as executable
 # documentation and for re-running the check.
 #
+# A record: it ran in the per-Xcode images of older releases (xless:local-<arch>-xcode<version>), whose SDK was at
+# /opt/xless (B below). Today's xless image has no SDK, and an Xcode's pack lays it out otherwise, so it does not run as
+# it is; nothing (no Makefile target, no test) runs it. As it was run then:
 #   docker --context colima-xless run --rm -v "$PWD":/repo:ro -v xless-m3-t5:/scratch -w /repo xless:local-arm64-xcode27.0 \
 #     scripts/xcode-pif-linux.sh samples/HelloPIF/HelloPIF.xcodeproj HelloPIF /scratch/dd-hellopif
 #   … then: xless tauri compare samples/HelloPIF/reference/reference.json /scratch/dd-hellopif/Products/Release-iphoneos/HelloPIF.app \

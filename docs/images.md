@@ -33,8 +33,8 @@ xless setup --docker --with tauri,react-native                       # on the im
 xless setup --docker --xcode ~/Downloads/Xcode_27.xip --with tauri    # with the image and that Xcode's pack
 ```
 
-`cargo` and `expo` are other names of the two. The `tauri` kit takes about 0.3 GB on top of the image; building it takes
-about a minute, and the `react-native` one about three.
+`cargo` and `expo` are other names of the two. The `tauri` kit takes about 0.3 GB on top of the image; building it took 21
+to 33 seconds on an arm64 Mac. How long the `react-native` one takes has not been measured.
 
 **One Xcode pack per Xcode build and architecture.** Everything that depends on an Xcode:
 
@@ -102,7 +102,7 @@ says that no pack was prepared. `--dry-run` prints each step and its command.
 
 Measured on an arm64 Mac: preparing a pack from the export takes about five and a half minutes, about four of them
 compiling Swift Build; preparing the `sdk` part again alone takes about a minute and a half. Exporting the SDK from the
-`.xip` first takes about two minutes more, and up to about 15 GB in the cache while the `.xip` is unpacked (about 3.5 GB
+`.xip` first took 3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up to about 15 GB in the cache while the `.xip` is unpacked (about 3.5 GB
 stays). Setup prints its estimate with each step.
 
 A pack that running containers use is not replaced under them: setup refuses, names the containers, and says to wait for

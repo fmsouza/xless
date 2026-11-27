@@ -54,7 +54,7 @@ read all that is in them: name nothing with a secret in it. What each kind of ap
   ([the whole list](native-install.md#what-it-needs)). It never runs `sudo` itself.
 - Free disk space, per Xcode version: about 17 GB in your home directory's cache (`~/.cache`) while the SDK is taken
   out of the `.xip` (about 3.5 GB of it stays), and about 10 GB for each Xcode's pack (in `~/.local/share/xless-native`;
-  a pack keeps about 7 GB), plus a few GB for each app's build caches. `xless setup` checks both before it starts.
+  a pack keeps about 6 to 7 GB), plus a few GB for each app's build caches. `xless setup` checks both before it starts.
 - An Xcode download from Apple, the `.xip` file: [which versions, and how to get it](xcode-versions.md). You do not need a
   Mac, and you do not unpack it.
 
@@ -72,7 +72,7 @@ you already have alone, and does not touch your shell's startup files: xless fin
 commands it needs and your free disk space, then prints each step. When it finishes it prints the next command to run.
 To see the plan and the disk space it asks for without running anything, add `--dry-run`.
 
-Each Xcode gets a pack of its own (its SDK, the Swift that matches it, about 7 GB), side by side: for Xcode 26.2 as well,
+Each Xcode gets a pack of its own (its SDK, the Swift that matches it, about 6 to 7 GB), side by side: for Xcode 26.2 as well,
 run `xless setup --xcode ~/Downloads/Xcode_26.2_Universal.xip`. A project that pins `xcode: "26.2"` builds with that one,
 any other with the newest. Running it again with the same Xcode does nothing. What it puts where:
 [native-install.md](native-install.md).
