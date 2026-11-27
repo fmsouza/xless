@@ -122,8 +122,8 @@ Both start with `PackRecipe.format`, the pack format number. A pack whose hash i
 stale: a run prepares the part again from the SDK export, or stops (exit 2) and names `xless setup`. So:
 
 - **A change to `scripts/fit-toolchain.sh`, `scripts/pack-swift-build.sh`, anything under `docker/toolchain/`, or a pin
-  among those inputs makes the packs stale, by design**: every machine prepares that part again once, about a minute and
-  a half for `sdk` and four minutes for `swift-build`. Change them when the packs must change, and say so in the commit.
+  among those inputs makes the packs stale, by design**: every machine prepares that part again once (on an arm64 Mac
+  the `sdk` part took 1 min 33 s and 2 min 43 s, compiling Swift Build 4 min 7 s and 4 min 16 s). Change them when the packs must change, and say so in the commit.
   A comment counts: it changes the file's bytes.
 - **Raise `PackRecipe.format`** when the Swift code that prepares a pack (`PackPlan`, `PackStore`, the setup) changes what
   it produces, the layout or a file's content, without a change to any of those files. Then every pack is prepared

@@ -9,7 +9,7 @@ This is the same on Linux and macOS (on Windows: [native-install.md](native-inst
 | The native install: xtool, rcodesign, and the Xcode packs of its store (each the SDK and the Swift toolchain fitted to it; Swift Build only where the Xcode tool shims are, `XLESS_SHIM_DIR`, so not on a bare host) | `~/.local/share/xless-native`, the packs in its `xcodes/` (or `$XLESS_XCODES`) | about 6 to 7 GB per Xcode and architecture |
 | The exported SDKs, Tauri work copies and downloads | `~/.cache/xless` (`$XDG_CACHE_HOME/xless` when that is set) | about 3.5 GB per Xcode and architecture, plus the work copies |
 | With `--docker`: the image `xless:<version>-<arch>`, the kits on it, and the build cache that made them | Docker's data root (`/var/lib/docker` by default) | about 6.5 GB for the image and 0.3 GB for the `tauri` kit, per architecture, and Docker's build cache |
-| With `--docker`: the Xcode packs, one volume each (`xless-xcode-<version>-<build>-<arch>`), or the directory `XLESS_XCODES` names | Docker's data root, or that directory | 6.3 to 7 GB per Xcode and architecture |
+| With `--docker`: the Xcode packs, one volume each (`xless-xcode-<version>-<build>-<arch>`), or the directory `XLESS_XCODES` names | Docker's data root, or that directory | 6.7 to 7.3 GB (decimal) per Xcode and architecture |
 | With `--docker`: Docker volumes of `xless run --docker` (Rust toolchains, React Native work copies and caches) | Docker's data root | a few GB per app |
 | The secret store, if you made one (your keys); with a credential helper, only its writers' `lock` file | `~/.local/share/xless/vault` (`$XDG_DATA_HOME/xless/vault`) | a few KB |
 

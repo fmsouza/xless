@@ -35,8 +35,9 @@ xless setup --docker --with tauri,react-native                       # on the im
 xless setup --docker --xcode ~/Downloads/Xcode_27.xip --with tauri    # with the image and that Xcode's pack
 ```
 
-`cargo` and `expo` are other names of the two. The `tauri` kit takes about 0.3 GB on top of the image; building it took 21
-to 33 seconds on an arm64 Mac. How long the `react-native` one takes has not been measured.
+`cargo` and `expo` are other names of the two. The `tauri` kit takes about 0.3 GB on top of the image; building it took 18
+to 33 seconds on an arm64 Mac. The `react-native` kit takes about 0.8 GB; building it took 2 min 30 s there, in the one
+build measured (it compiles Ruby and `hermesc`).
 
 **One Xcode pack per Xcode build and architecture.** Everything that depends on an Xcode:
 
@@ -51,7 +52,8 @@ A pack has two parts, `sdk` (the SDK, its metadata and the fitted toolchain) and
 in `pack.json`: a digest of what that part is made from (the Xcode build, the pinned toolchain, xtool's version, Swift
 Build's pinned sources, and the scripts and files of xless that prepare it), and of nothing else, not xless's version. So
 a pack is prepared once per machine and kept across xless releases: a new xless prepares nothing unless what a part is made
-from has changed, and then only that part. A pack takes 6.3 to 7 GB. It holds Apple's SDK: **never push or publish a pack.**
+from has changed, and then only that part. A pack takes 6.7 to 7.3 GB (decimal; Xcode 26.2 and 27.0 on arm64). It holds
+Apple's SDK: **never push or publish a pack.**
 
 **The SDK export** is what a pack is prepared from: `~/.cache/xless/sdk/xcode<version>-<build>/` (`<arch>/darwin.xtoolsdk`
 and `toolchain-meta.json`, about 3 GB), which `xless setup` writes once from the `.xip`. Once it is there the `.xip` is not
@@ -102,10 +104,11 @@ ever writes a pack. A pack that is current for this xless is left as it is (`not
 prepared again by itself. With neither `--xcode` nor `--sdk` and no export in the cache, setup builds the image alone and
 says that no pack was prepared. `--dry-run` prints each step and its command.
 
-Measured on an arm64 Mac: preparing a pack from the export takes about five and a half minutes, about four of them
-compiling Swift Build; preparing the `sdk` part again alone takes about a minute and a half. Exporting the SDK from the
-`.xip` first took 3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up to about
-15 GB in the cache while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
+Measured on an arm64 Mac: preparing a whole pack from the export took 6 min 24 s (Xcode 26.2) and 6 min 55 s (27.0), of
+which compiling Swift Build took 4 min 7 s and 4 min 16 s; preparing the `sdk` part again alone took 1 min 33 s and
+2 min 43 s, most of it downloading and unpacking the Swift toolchain. Exporting the SDK from the `.xip` first took
+3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up to about 15 GB in the cache
+while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
 
 A pack that running containers use is not replaced under them: setup refuses, names the containers, and says to wait for
 those runs or stop them. A native `xless setup` of a directory store that `--docker` runs mount (`XLESS_XCODES`) asks docker
@@ -123,10 +126,12 @@ the same, right before it replaces the pack.
    export of that Xcode is in the cache: the run says so, which parts and how long each takes, and runs the same setup
    container as `xless setup --docker --sdk <export>`. Without the export it stops (exit 2) with the `xless setup --docker
    --xcode …` that prepares it.
-3. **Every container of the run** gets that pack, and only that one, read-only, with `XLESS_XCODE` naming it. Attaching it
-   costs about half a second: it is a mount, nothing is copied. A run whose containers would mount a pack volume writable,
-   or a directory that holds the store or is in it (`XLESS_XCODES` inside the project, for instance), is refused (exit 2)
-   before anything runs: the build would be able to change what the steps after it read.
+3. **Every container of the run** gets that pack, and only that one, read-only, with `XLESS_XCODE` naming it. It is a
+   mount, nothing is copied: from the command to the first line of the build step, three runs took 0.82, 0.44 and 0.44 s
+   with a pack, and 0.48, 0.36 and 0.40 s with an image that had the Xcode in it (arm64 Mac). A run whose containers
+   would mount a pack volume writable, or a directory that holds the store or is in it (`XLESS_XCODES` inside the
+   project, for instance), is refused (exit 2) before anything runs: the build would be able to change what the steps
+   after it read.
 
 **Which step runs where:** an overlay app's build (and nothing else) runs in the kit's image, without any secret. The
 steps that hold a secret (the next build number, signing, the upload) run in the xless image, where no toolchain of
