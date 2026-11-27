@@ -45,11 +45,12 @@ public struct PackManifest: Codable, Equatable, Sendable {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tmp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
         try enc.encode(self).write(to: tmp)
-        do {
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
-        } catch {
+        // rename(2) replaces an existing file atomically and also works when there is none; Foundation's
+        // `replaceItemAt` fails on Linux (NSCocoaErrorDomain 260) when the destination does not exist yet.
+        guard rename(tmp.path, url.path) == 0 else {
+            let error = errno
             try? FileManager.default.removeItem(at: tmp)
-            throw error
+            throw XlessError(.sdk, "cannot write \(url.path): \(String(cString: strerror(error)))", fix: "check that its directory is writable")
         }
     }
 }

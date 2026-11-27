@@ -23,6 +23,25 @@ private func manifest(parts: [String: String] = ["sdk": "h"]) -> PackManifest {
     #expect(positions == positions.sorted())
 }
 
+private func leftovers(beside url: URL) throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path).filter { $0 != url.lastPathComponent }
+}
+
+@Test func writeCreatesManifestWhereNoneExistsAndLeavesNoTemporaryFile() throws {
+    let url = try tempDir().appendingPathComponent("pack.json")
+    try manifest().write(to: url)
+    #expect(try PackManifest.load(from: url) == manifest())
+    #expect(try leftovers(beside: url).isEmpty)
+}
+
+@Test func writeReplacesAnExistingManifestAndLeavesNoTemporaryFile() throws {
+    let url = try tempDir().appendingPathComponent("pack.json")
+    try manifest(parts: ["sdk": "old"]).write(to: url)
+    try manifest(parts: ["sdk": "new", "swift-build": "b"]).write(to: url)
+    #expect(try PackManifest.load(from: url) == manifest(parts: ["sdk": "new", "swift-build": "b"]))
+    #expect(try leftovers(beside: url).isEmpty)
+}
+
 @Test func openWithoutManifestIsNil() throws {
     let root = try tempDir()
     try FileManager.default.createDirectory(at: root.appendingPathComponent("config"), withIntermediateDirectories: true)
