@@ -50,6 +50,13 @@ public struct PackManifest: Codable, Equatable, Sendable {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let tmp = dir.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
         try enc.encode(self).write(to: tmp)
+        #if os(Windows)
+        // Windows' rename does not replace an existing file: MoveFileExW with MOVEFILE_REPLACE_EXISTING does.
+        do { try OutputFile.move(tmp.path, to: url.path, replacing: true) } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            throw XlessError(.sdk, (error as? PrivateFile.Refusal)?.cause ?? "cannot write \(url.path): \(error)", fix: "check that its directory is writable")
+        }
+        #else
         // rename(2) replaces an existing file atomically and also works when there is none; Foundation's
         // `replaceItemAt` fails on Linux (NSCocoaErrorDomain 260) when the destination does not exist yet.
         guard rename(tmp.path, url.path) == 0 else {
@@ -57,6 +64,7 @@ public struct PackManifest: Codable, Equatable, Sendable {
             try? FileManager.default.removeItem(at: tmp)
             throw XlessError(.sdk, "cannot write \(url.path): \(String(cString: strerror(error)))", fix: "check that its directory is writable")
         }
+        #endif
     }
 }
 
