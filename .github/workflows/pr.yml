@@ -98,6 +98,7 @@ jobs:
         run: scripts/ci-session.sh sh scripts/ci-swift.sh test --package-path ThirdParty/AssetKit
       # As in the Linux job. Skipped here, with the guard's reason:
       #   pack-check: a pack's SDK holds Endian.h and endian.h side by side, which a Mac's case-insensitive disk cannot
+      #   fit-toolchain: after its record-flags checks, which run here, it fits a fixture with an open-source clang on Linux
       # xcode-native builds an app with this runner's Xcode and signs it with a throw-away certificate; nothing of it is uploaded.
       # overlay-native builds a stand-in overlay app in the sandbox; the runner needs no rustup for it.
       - name: Shell tests
@@ -393,7 +394,7 @@ jobs:
         run: shellcheck -s sh scripts/install.sh scripts/testflight.sh scripts/credential-helpers/xless-credential-pass scripts/credential-helpers/xless-credential-secret-tool
       - name: Shipped scripts
         run: |
-          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/pack-swift-build.sh scripts/pack-check.sh scripts/ci-swift.sh scripts/ci-session.sh scripts/check-package.sh scripts/check-macos-binary.sh scripts/check-link-map.sh
+          shellcheck scripts/docker-images.sh scripts/package-release.sh scripts/stamp-version.sh scripts/third-party-licenses.sh scripts/fit-toolchain.sh scripts/pack-swift-build.sh scripts/pack-check.sh scripts/ci-swift.sh scripts/ci-session.sh scripts/check-package.sh scripts/check-macos-binary.sh scripts/check-link-map.sh
           shellcheck -x scripts/check-commit-title.sh scripts/next-version.sh scripts/release-notes.sh scripts/release-assets.sh scripts/package-sums.sh scripts/verify-release.sh scripts/nightly-state.sh scripts/release-tag-check.sh
           shellcheck --severity=error scripts/xcode-swift.sh
       - name: Mac bench scripts
