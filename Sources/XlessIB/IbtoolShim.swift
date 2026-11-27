@@ -7,7 +7,7 @@ import XlessCore
 /// fails the build with the compiler's refusal. Linking copies the compiled `.storyboardc` (byte-identical for a
 /// single storyboard, ib-invocation.md). Any flag or value outside that subset is refused with exit 70 and the argv.
 ///
-/// The shim answers as the image's Xcode's ibtool (`XcodeToolsProfile`, from `/opt/xless/toolchain-meta.json`, read once
+/// The shim answers as the image's Xcode's ibtool (`XcodeToolsProfile`, from its toolchain metadata, `XcodeEnvironment.meta`, read once
 /// per call): its `--version` and its nib encoding. An image whose Xcode has no profile is refused with exit 70.
 public enum IbtoolShim {
     public struct Unsupported: Error, CustomStringConvertible, Equatable {

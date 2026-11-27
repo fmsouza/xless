@@ -5,7 +5,8 @@ import Foundation
 public struct DarwinSDK: Sendable {
     public let bundle: URL
     public let isXcode: Bool
-    public init(bundle: URL = DarwinSDKLocator.bundle()) { self.init(bundle: bundle, isXcode: false) }
+    /// `DarwinSDK()`: the Xcode's (`XcodeEnvironment`).
+    public init(bundle: URL) { self.init(bundle: bundle, isXcode: false) }
     init(bundle: URL, isXcode: Bool) { self.bundle = bundle; self.isXcode = isXcode }
 
     static let platformDir = ["iphoneos": "iPhoneOS", "iphonesimulator": "iPhoneSimulator", "macosx": "MacOSX"]

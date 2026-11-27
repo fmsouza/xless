@@ -63,6 +63,7 @@
 + Sources/XlessCore/WindowsProcess.swift
 + Sources/XlessCore/XcodePin.swift
 + Sources/XlessCore/XcodePack.swift
+- Sources/XlessCore/XcodeEnvironment.swift
 + Sources/XlessCore/XcodeStore.swift
 + Sources/XlessCore/XcodeToolsProfile.swift
 - Sources/XlessCore/XcrunShim.swift
@@ -345,6 +346,7 @@
 - Tests/XlessCoreTests/WindowsFilterTests.swift
 + Tests/XlessCoreTests/WindowsSourcesTests.swift
 + Tests/XlessCoreTests/XcodePackTests.swift
+- Tests/XlessCoreTests/XcodeEnvironmentTests.swift
 + Tests/XlessCoreTests/XcodeStoreTests.swift
 + Tests/XlessCoreTests/XcodeToolsProfileTests.swift
 - Tests/XlessCoreTests/XcrunShimTests.swift
@@ -485,6 +487,7 @@
 + Tests/XlessCLITests/SecretStoreSupport.swift
 - Tests/XlessCLITests/SecretsImportEnvTests.swift
 - Tests/XlessCLITests/SecretsNamedByTests.swift
+- Tests/XlessCLITests/ShimCommandsTests.swift
 + Tests/XlessCLITests/StoreCommandTests.swift
 + Tests/XlessCLITests/StoreProjectTests.swift
 + Tests/XlessCLITests/TestFlightCommandTests.swift

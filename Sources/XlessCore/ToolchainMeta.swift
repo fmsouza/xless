@@ -57,11 +57,10 @@ public struct ToolchainMeta: Codable, Sendable, Equatable {
         try enc.encode(self).write(to: url)
     }
 
-    /// XLESS_TOOLCHAIN_META, else /opt/xless/toolchain-meta.json if present, else $XDG_CONFIG_HOME|~/.config /xless/toolchain-meta.json.
+    /// Where a native setup of before the Xcode packs writes it (`xless sdk install`): XLESS_TOOLCHAIN_META, else
+    /// $XDG_CONFIG_HOME|~/.config /xless/toolchain-meta.json. A command reads the Xcode's metadata at `XcodeEnvironment.meta`.
     public static func defaultLocation(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         if let p = env["XLESS_TOOLCHAIN_META"], !p.isEmpty { return URL(fileURLWithPath: p) }
-        let image = "/opt/xless/toolchain-meta.json"
-        if FileManager.default.fileExists(atPath: image) { return URL(fileURLWithPath: image) }
         let base = env["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? "\(env["HOME"] ?? "~")/.config"
         return URL(fileURLWithPath: "\(base)/xless/toolchain-meta.json")
     }

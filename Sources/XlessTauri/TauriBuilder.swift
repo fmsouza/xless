@@ -196,7 +196,7 @@ public enum TauriBuilder {
             let metadata = try Shell.run("cargo", ["metadata", "--format-version", "1", "--filter-platform", target, "--manifest-path", manifest.path],
                                          cwd: ctx.appRoot, env: ctx.tools, baseEnvironment: ctx.env, stage: .build).stdout
             let crate = try rootCrate(metadata: Data(metadata.utf8), manifest: manifest)
-            let swift = try SwiftToolchain.load(env: ctx.env)
+            let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)   // on a Mac: the Xcode's own, no pack
             try TauriEnvironment.writeLinkerWrapper(minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
             var cargoEnv = ctx.tools
             for (k, v) in try TauriEnvironment.cargo(resolved: r, overlay: ctx.overlay, sdk: ctx.sdk, workRoot: work, swift: swift) { cargoEnv[k] = v }
@@ -371,7 +371,7 @@ public enum TauriBuilder {
 
             var thins: [(triple: String, url: URL)] = [], snapshots: [(triple: String, dir: URL)] = [], targets: [String]? = nil
             var dSYMs: [DSYM.Source] = []
-            let swift = try SwiftToolchain.load(env: ctx.env)
+            let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)   // on a Mac: the Xcode's own, no pack
             for triple in TauriMacEnvironment.targets {
                 // The wrapper's debug link gives the executable its dSYM when the release profile has debug info.
                 let release = main.targetDir.appendingPathComponent("\(triple)/release", isDirectory: true)

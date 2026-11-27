@@ -181,8 +181,11 @@ public final class ProjectRun {
         case "1": docker = true
         case "0": docker = false
         case "auto":
-            let meta = setting("XLESS_TOOLCHAIN_META") ?? "\(setting("XDG_CONFIG_HOME") ?? "\(files.home)/.config")/xless/toolchain-meta.json"
-            docker = !FileManager.default.fileExists(atPath: meta) || !has(xself)
+            // Natively when this machine has the Xcode (`XcodeEnvironment`: a pack, or a native install of before them).
+            var env = environment
+            if let pin = xcodePin { env[XcodeEnvironment.pinVariable] = pin }
+            let meta = (try? XcodeEnvironment.current(env: env))?.meta
+            docker = !(meta.map { FileManager.default.fileExists(atPath: $0.path) } ?? false) || !has(xself)
         default: throw RunStop.usage("XLESS_USE_DOCKER must be 0, 1 or unset")
         }
     }
@@ -209,6 +212,8 @@ public final class ProjectRun {
 
     func environment(_ sees: Sees, told: Bool = false) -> [String: String] {
         var out = environment
+        // Natively, the stage commands read the Xcode of the project's pin (`XcodeEnvironment`).
+        if !docker, let pin = xcodePin { out[XcodeEnvironment.pinVariable] = pin }
         if sees != .everything {
             for name in secretVariables where sees != .identifiers || !["ASC_KEY_ID", "ASC_ISSUER_ID"].contains(name) { out[name] = nil }
         }

@@ -1,9 +1,9 @@
 import Foundation
 
-/// Ruling R10: the Swift toolchain that compiles an app's code is the one its pinned Xcode ships. Each xless image
-/// is made from one Xcode (Ruling R8) and carries the open-source Swift release matching that Xcode's Swift
-/// (`XCODE_SWIFT_<build>` in versions.env, installed by docker/Dockerfile under `/opt/xless/toolchains/swift-<ver>`;
-/// the image's own Swift when they are the same). The image records it in `/opt/xless/swift-toolchain.json`.
+/// Ruling R10: the Swift toolchain that compiles an app's code is the one its pinned Xcode ships. Each Xcode pack holds
+/// the open-source Swift release matching that Xcode's Swift (`XCODE_SWIFT_<build>` in versions.env), fitted by
+/// scripts/fit-toolchain.sh into `<pack>/toolchain` (or the image's own Swift when they are the same), and records it in
+/// `<pack>/swift-toolchain.json` (`XcodeEnvironment.toolchain`).
 ///
 /// Every compile of app code uses it: Swift Build's toolset and `PATH` (React Native and the `xcodebuild` shim), and for
 /// the other project kinds the build stage puts its `usr/bin` before the image's own Swift on `PATH` (`activate`), so
@@ -27,8 +27,6 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
         self.version = version; self.root = root; self.clangFlags = clangFlags
     }
 
-    /// The image's record (docker/Dockerfile).
-    public static let imageFile = "/opt/xless/swift-toolchain.json"
     /// Where the image's own Swift lives: the swift:<SWIFT_VERSION>-jammy base, which built `swbuild`.
     public static let engineBin = "/usr/bin"
 
@@ -44,20 +42,25 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     /// True when it is the image's own Swift (nothing to put on PATH).
     public var isEngine: Bool { bin.standardizedFileURL.path == Self.engineBin }
 
-    /// `XLESS_SWIFT_TOOLCHAIN` (a record file), else the image's record, else the native install's (`NativeLayout`);
-    /// nil when there is none (a host without an xless toolchain: the `swift` on PATH compiles, as before Ruling R10).
-    public static func load(env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage = .build) throws -> SwiftToolchain? {
-        let path = env["XLESS_SWIFT_TOOLCHAIN"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? (FileManager.default.fileExists(atPath: imageFile) ? imageFile : NativeLayout(env: env).record.path)
-        guard let data = FileManager.default.contents(atPath: path) else {
-            if env["XLESS_SWIFT_TOOLCHAIN"].map({ !$0.isEmpty }) ?? false {
-                throw XlessError(stage, "XLESS_SWIFT_TOOLCHAIN names \(path), which does not exist", fix: "unset it, or point it at a toolchain record")
+    /// The record at `record`: a `root` relative to the record's directory (a pack's, which can be moved) is made
+    /// absolute; an absolute one (an older record, `XLESS_SWIFT_TOOLCHAIN`'s) stays as it is.
+    public static func load(record: URL, stage: Stage = .build) throws -> SwiftToolchain {
+        guard let data = FileManager.default.contents(atPath: record.path) else {
+            throw XlessError(stage, "the Swift toolchain record \(record.path) does not exist", fix: "run xless setup --xcode <Xcode.xip> again")
+        }
+        var toolchain: SwiftToolchain
+        do { toolchain = try JSONDecoder().decode(SwiftToolchain.self, from: data) } catch {
+            throw XlessError(stage, "the Swift toolchain record \(record.path) is invalid: \(error)", fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
+        }
+        if !toolchain.root.hasPrefix("/") {
+            // `.` and `..` removed by hand: Foundation's standardizing would also rewrite the directory (/private/var → /var).
+            var parts: [Substring] = []
+            for part in (record.deletingLastPathComponent().path + "/" + toolchain.root).split(separator: "/") where part != "." {
+                if part == ".." { _ = parts.popLast() } else { parts.append(part) }
             }
-            return nil
+            toolchain.root = "/" + parts.joined(separator: "/")
         }
-        do { return try JSONDecoder().decode(SwiftToolchain.self, from: data) } catch {
-            throw XlessError(stage, "the Swift toolchain record \(path) is invalid: \(error)", fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
-        }
+        return toolchain
     }
 
     /// `path` with `bin` inserted right before the image's own Swift (`/usr/bin`), so it wins over that Swift and
@@ -101,12 +104,12 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     }
 
     /// The build stage's check (Ruling R10): the toolchain must be the one the image's Xcode ships (`meta.swiftVersion`,
-    /// measured from that Xcode by `xless sdk export`). nil when the image has no toolchain record: refused for a pinned
+    /// measured from that Xcode by `xless sdk export`). nil when the Xcode has no toolchain record: refused for a pinned
     /// project, otherwise the `swift` on PATH compiles. Metadata from before Ruling R10 (no `swiftVersion`) is not checked.
     public static func check(_ toolchain: SwiftToolchain?, meta: ToolchainMeta?, pin: String?, stage: Stage = .build) throws -> BuildSwiftRecord? {
         guard let toolchain else {
             guard let pin else { return nil }
-            throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but this image records no Swift toolchain (\(imageFile)): it predates Ruling R10",
+            throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but its Xcode records no Swift toolchain (no swift-toolchain.json): it was set up before Ruling R10",
                              fix: "set up Xcode \(pin) again (xless setup --xcode <path to Xcode \(pin)'s .xip>, with --docker for its images)")
         }
         let compiler = try toolchain.verifiedCompiler(stage: stage)
@@ -139,7 +142,7 @@ public struct BuildSwiftRecord: Codable, Sendable, Equatable {
         self.version = version; self.root = root; self.compiler = compiler; self.xcodeSwiftVersion = xcodeSwiftVersion
     }
 
-    /// `Swift 6.2.3 (swift-6.2.3-RELEASE) from /opt/xless/toolchains/swift-6.2.3, Xcode's Swift 6.2.3`.
+    /// `Swift 6.2.3 (swift-6.2.3-RELEASE) from /xcodes/26.2-17C52-arm64/toolchain, Xcode's Swift 6.2.3`.
     public var summary: String {
         let release = compiler.firstMatch(of: /\((swift-[^)]*)\)/).map { " (\($0.1))" } ?? ""
         return "Swift \(version)\(release) from \(root == "/" ? "/usr" : root)" + (xcodeSwiftVersion.map { ", Xcode's Swift \($0)" } ?? "")

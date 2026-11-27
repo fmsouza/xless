@@ -256,19 +256,7 @@ private func meta(_ build: String) -> ToolchainMeta {
     #expect(try XcodeToolsProfile.forImage(meta: meta("17C52"), stage: .ib) == XcodeToolsProfile.all["17C52"])
 }
 
-@Test func testImageMetadataIsReadFromTheToolchainFile() throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xtp-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let url = dir.appendingPathComponent("toolchain-meta.json")
-    try meta("17C52").write(to: url)
-    #expect(try XcodeToolsProfile.forImage(env: ["XLESS_TOOLCHAIN_META": url.path], stage: .ib).xcodeBuild == "17C52")
-    // No metadata: refused in the asking stage, never a default profile.
-    let missing = #expect(throws: XlessError.self) {
-        try XcodeToolsProfile.forImage(env: ["XLESS_TOOLCHAIN_META": dir.appendingPathComponent("none.json").path], stage: .assets)
-    }
-    #expect(missing?.stage == .assets)
-    #expect(missing?.cause.contains("toolchain metadata not found") == true)
-}
+// Reading the Xcode's metadata (`forImage(env:stage:)`): XcodeEnvironmentTests (not built on Windows).
 
 /// Task 4's `scripts/xcode-tools.sh` learns the profiled builds by grepping this file for `xcodeBuild: "<B>"`.
 @Test func testEachProfileHasOneGreppableBuildLiteral() throws {

@@ -1,0 +1,265 @@
+import Foundation
+import Testing
+@testable import XlessCore
+
+private var fm: FileManager { FileManager.default }
+
+/// Without symbolic links (macOS: /var is /private/var), as the store lists its packs.
+private func tempDir(_ name: String = "xcode-env") throws -> URL {
+    let dir = fm.temporaryDirectory.appendingPathComponent("\(name)-\(UUID().uuidString)")
+    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    guard let real = realpath(dir.path, nil) else { return dir }
+    defer { free(real) }
+    return URL(fileURLWithPath: String(cString: real))
+}
+
+private var hostArch: String {
+    #if arch(arm64)
+    "arm64"
+    #else
+    "amd64"
+    #endif
+}
+
+private func write(_ text: String, to url: URL) throws {
+    try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data(text.utf8).write(to: url)
+}
+
+/// A pack on disk as `xless setup` lays it out: the SDK bundle, the metadata, the toolchain with its record (root
+/// relative), the include directory and, with the part, Swift Build.
+@discardableResult
+private func makePack(in store: URL, xcode: String = "26.2", build: String = "17C52", arch: String = hostArch,
+                      parts: [String: String] = ["sdk": "h", "swift-build": "h"]) throws -> URL {
+    let dir = store.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch))
+    let pack = XcodePack(root: dir, manifest: PackManifest(format: 1, xcode: xcode, build: build, arch: arch, swift: "6.2.3", mode: .separate, parts: parts))
+    try fm.createDirectory(at: pack.sdkBundle, withIntermediateDirectories: true)
+    try write(#"{"xcodeBuild":"\#(build)"}"#, to: pack.meta)
+    try fm.createDirectory(at: pack.toolchain.appendingPathComponent("usr/bin"), withIntermediateDirectories: true)
+    try write(#"{"version":"6.2.3","root":"toolchain","clangFlags":["-fdefine-target-os-macros"]}"#, to: pack.record)
+    try fm.createDirectory(at: pack.include.appendingPathComponent("swift"), withIntermediateDirectories: true)
+    if parts["swift-build"] != nil {
+        try fm.createDirectory(at: pack.swiftBuild, withIntermediateDirectories: true)
+        try ExecutableFile.write("#!/bin/sh\n", to: pack.swiftBuild.appendingPathComponent("swbuild"), stage: .build)
+    }
+    try pack.manifest.write(to: pack.manifestFile)
+    return dir
+}
+
+/// An environment that sees nothing of this machine: its own home, store and (empty) share.
+private func isolated(store: URL? = nil, _ extra: [String: String] = [:]) throws -> [String: String] {
+    let home = try tempDir("xcode-env-home"), share = try tempDir("xcode-env-share")
+    return ["HOME": home.path, "PATH": "/usr/bin:/bin", "XLESS_XCODES": (store ?? home.appendingPathComponent("xcodes")).path,
+            "XLESS_SHARE": share.path].merging(extra) { $1 }
+}
+
+private func problem(_ body: () throws -> Any) -> XcodeProblem? {
+    do { _ = try body(); return nil } catch { return error as? XcodeProblem }
+}
+
+@Test func packSuppliesEveryPart() throws {
+    let store = try tempDir()
+    let root = try makePack(in: store)
+    let x = try XcodeEnvironment.current(env: try isolated(store: store))
+    let pack = try #require(x.pack)
+    #expect(pack.root.path == root.path)
+    #expect(x.sdkBundle.path == pack.sdkBundle.path)
+    #expect(x.meta.path == pack.meta.path)
+    let toolchain = try #require(x.toolchain)
+    #expect(toolchain.root == root.appendingPathComponent("toolchain").path && toolchain.root.hasPrefix("/"))
+    #expect(toolchain.version == "6.2.3" && toolchain.clangFlags == ["-fdefine-target-os-macros"])
+    #expect(x.include?.path == pack.include.path)
+    #expect(x.swbuild?.path == root.appendingPathComponent("swift-build/swbuild").path)
+    // SwiftPM finds the SDK through --swift-sdks-path; XDG_CONFIG_HOME stays the user's (and writable).
+    #expect(x.swiftSDKsArguments == ["--swift-sdks-path", root.appendingPathComponent("config/swiftpm/swift-sdks").path])
+}
+
+@Test func overridesWinPartByPart() throws {
+    let store = try tempDir(), records = try tempDir()
+    let root = try makePack(in: store)
+    let record = records.appendingPathComponent("swift-toolchain.json")
+    try write(#"{"version":"6.2.3","root":"/opt/elsewhere/swift-6.2.3"}"#, to: record)
+    let x = try XcodeEnvironment.current(env: try isolated(store: store, ["XLESS_TOOLCHAIN_META": "/m.json"]))
+    #expect(x.meta.path == "/m.json")
+    #expect(x.sdkBundle.path == root.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle").path)
+    #expect(x.toolchain?.root == root.appendingPathComponent("toolchain").path)
+    // An absolute root (an old record, XLESS_SWIFT_TOOLCHAIN's) stays as it is.
+    let y = try XcodeEnvironment.current(env: try isolated(store: store, ["XLESS_SWIFT_TOOLCHAIN": record.path]))
+    #expect(y.toolchain?.root == "/opt/elsewhere/swift-6.2.3")
+    #expect(y.meta.path == root.appendingPathComponent("toolchain-meta.json").path && y.pack != nil)
+}
+
+@Test func xdgConfigHomeIsTheSDKOverrideOnlyWhenItHoldsAnSDK() throws {
+    let store = try tempDir(), xdg = try tempDir("xcode-env-xdg")
+    let root = try makePack(in: store)
+    // Set for other reasons (very common on a host): the pack's SDK.
+    let x = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path]))
+    #expect(x.sdkBundle.path == root.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle").path)
+    // Holding an installed SDK: that one.
+    let bundle = xdg.appendingPathComponent("swiftpm/swift-sdks/darwin.artifactbundle")
+    try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+    let y = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path]))
+    #expect(y.sdkBundle.path == bundle.path && y.pack?.root.path == root.path)
+    #expect(y.meta.path == root.appendingPathComponent("toolchain-meta.json").path)
+}
+
+@Test func overridesAloneNeedNoPack() throws {
+    let xdg = try tempDir("xcode-env-xdg"), files = try tempDir()
+    try fm.createDirectory(at: xdg.appendingPathComponent("swiftpm/swift-sdks/darwin.artifactbundle"), withIntermediateDirectories: true)
+    let record = files.appendingPathComponent("swift-toolchain.json")
+    try write(#"{"version":"6.2.3","root":"/opt/xless/toolchains/swift-6.2.3"}"#, to: record)
+    let env = try isolated(["XDG_CONFIG_HOME": xdg.path, "XLESS_TOOLCHAIN_META": files.appendingPathComponent("meta.json").path,
+                            "XLESS_SWIFT_TOOLCHAIN": record.path, "XLESS_TOOLCHAIN_INCLUDE": "/opt/xless/toolchain/usr/include"])
+    let x = try XcodeEnvironment.current(env: env, needs: [.sdk, .swiftBuild])
+    #expect(x.pack == nil)
+    #expect(x.sdkBundle.path == xdg.appendingPathComponent("swiftpm/swift-sdks/darwin.artifactbundle").path)
+    #expect(x.meta.path == files.appendingPathComponent("meta.json").path)
+    #expect(x.toolchain?.root == "/opt/xless/toolchains/swift-6.2.3")
+    #expect(x.include?.path == "/opt/xless/toolchain/usr/include")
+    // A store whose pack does not fit changes nothing then: every part is overridden.
+    let store = try tempDir()
+    try makePack(in: store, parts: ["sdk": "h"])
+    let y = try XcodeEnvironment.current(env: env.merging(["XLESS_XCODES": store.path]) { $1 }, needs: [.sdk, .swiftBuild])
+    #expect(y.pack == nil && y.meta.path == x.meta.path)
+}
+
+@Test func noPackNamesTheSetup() throws {
+    let env = try isolated()
+    let e = problem { try XcodeEnvironment.current(env: env) }
+    #expect(e?.cause.contains("there is no pack for any Xcode") == true)
+    #expect(e?.fix.hasPrefix("xless setup --xcode") == true)
+    let pinned = problem { try XcodeEnvironment.current(env: env.merging([XcodeEnvironment.pinVariable: "26.2"]) { $1 }) }
+    #expect(pinned?.cause.contains("Xcode 26.2") == true && pinned?.fix.contains("Xcode 26.2's") == true)
+    // In a stage: the cause and the setup, with the usage exit code.
+    let staged = try #require(e).stageError(.build)
+    #expect(staged.stage == .build && staged.exitCode == 2 && staged.fix == e?.fix)
+    // Asked whether there is one at all: no. The toolchain alone is then none (the `swift` on PATH compiles).
+    #expect(try XcodeEnvironment.lookup(env: env) == nil)
+    #expect(try XcodeEnvironment.toolchain(env: env) == nil)
+}
+
+@Test func relativeRecordRootResolves() throws {
+    let dir = try tempDir()
+    let record = dir.appendingPathComponent("swift-toolchain.json")
+    try write(#"{"version":"6.2.3","root":"toolchain"}"#, to: record)
+    #expect(try SwiftToolchain.load(record: record).root == dir.appendingPathComponent("toolchain").path)
+    try write(#"{"version":"6.2.3","root":"../tc"}"#, to: record)
+    #expect(try SwiftToolchain.load(record: record).root == dir.deletingLastPathComponent().appendingPathComponent("tc").path)
+    try write(#"{"version":"6.4","root":"/"}"#, to: record)
+    let engine = try SwiftToolchain.load(record: record)
+    #expect(engine.root == "/" && engine.isEngine)
+    try write("{", to: record)
+    #expect(throws: XlessError.self) { try SwiftToolchain.load(record: record) }
+    #expect(throws: XlessError.self) { try SwiftToolchain.load(record: dir.appendingPathComponent("none.json")) }
+}
+
+@Test func movedPackStillResolves() throws {
+    let store = try tempDir(), elsewhere = try tempDir()
+    let root = try makePack(in: store)
+    let moved = elsewhere.appendingPathComponent("moved")
+    try fm.moveItem(at: root, to: moved)
+    let x = try XcodeEnvironment.current(env: try isolated(store: store, ["XLESS_XCODE": moved.path]))
+    #expect(x.pack?.root.path == moved.path)
+    #expect(x.toolchain?.root == moved.appendingPathComponent("toolchain").path)
+    #expect(x.sdkBundle.path == moved.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle").path)
+    #expect(x.swbuild?.path == moved.appendingPathComponent("swift-build/swbuild").path)
+}
+
+@Test func thePinComesFromTheEnvironment() throws {
+    let store = try tempDir()
+    try makePack(in: store, xcode: "26.2", build: "17C52")
+    try makePack(in: store, xcode: "27.0", build: "27A266a")
+    #expect(try XcodeEnvironment.current(env: try isolated(store: store)).pack?.manifest.xcode == "27.0")
+    let pinned = try XcodeEnvironment.current(env: try isolated(store: store, [XcodeEnvironment.pinVariable: "26.2"]))
+    #expect(pinned.pack?.manifest.build == "17C52" && pinned.meta.path.contains("26.2-17C52-"))
+}
+
+@Test func swiftBuildIsOnPathWhenThePackHasNone() throws {
+    let store = try tempDir(), bin = try tempDir("xcode-env-bin")
+    try makePack(in: store, parts: ["sdk": "h"])
+    #expect(try XcodeEnvironment.current(env: try isolated(store: store)).swbuild == nil)
+    try ExecutableFile.write("#!/bin/sh\n", to: bin.appendingPathComponent("swbuild"), stage: .build)
+    let x = try XcodeEnvironment.current(env: try isolated(store: store, ["PATH": "\(bin.path):/usr/bin:/bin"]))
+    #expect(x.swbuild?.path == bin.appendingPathComponent("swbuild").path)
+    // A command that needs Swift Build: the pack must have it.
+    let e = problem { try XcodeEnvironment.current(env: try isolated(store: store), needs: [.sdk, .swiftBuild]) }
+    #expect(e?.cause.contains("has no Swift Build") == true)
+}
+
+@Test func theLegacyInstallIsUsedOnlyWithoutAPack() throws {
+    // A native install of before the packs: the SDK under ~/.swiftpm, the metadata under ~/.config/xless, the record in NativeLayout.
+    let env = try isolated()
+    let home = URL(fileURLWithPath: env["HOME"]!)
+    let bundle = home.appendingPathComponent(".swiftpm/swift-sdks/darwin.artifactbundle")
+    try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+    try write("{}", to: home.appendingPathComponent(".config/xless/toolchain-meta.json"))
+    try write(#"{"version":"6.4.0","root":"/n/toolchains/swift-6.4.0"}"#, to: NativeLayout(env: env).record)
+    let x = try XcodeEnvironment.current(env: env)
+    #expect(x.pack == nil && x.sdkBundle.path == bundle.path)
+    #expect(x.meta.path == home.appendingPathComponent(".config/xless/toolchain-meta.json").path)
+    #expect(x.toolchain == SwiftToolchain(version: "6.4.0", root: "/n/toolchains/swift-6.4.0"))
+    #expect(x.toolEnvironment(env) == env.merging(["PATH": "/n/toolchains/swift-6.4.0/usr/bin:/usr/bin:/bin"]) { $1 })
+    // With a pack, nothing of it is read.
+    let store = URL(fileURLWithPath: env["XLESS_XCODES"]!)
+    let root = try makePack(in: store)
+    let y = try XcodeEnvironment.current(env: env)
+    #expect(y.pack?.root.path == root.path && y.sdkBundle.path.hasPrefix(root.path) && y.meta.path.hasPrefix(root.path))
+    #expect(y.toolchain?.root.hasPrefix(root.path) == true)
+    // A store whose packs do not fit is the answer, not the legacy install.
+    let e = problem { try XcodeEnvironment.current(env: env.merging([XcodeEnvironment.pinVariable: "27.0"]) { $1 }) }
+    #expect(e?.cause.contains("no pack for Xcode 27.0") == true)
+}
+
+@Test func aStalePackIsRefused() throws {
+    // The share of this checkout: the recipe hashes of this xless.
+    let share = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let table = KnownXcodes.parseEnv(try String(contentsOf: share.appendingPathComponent("versions.env"), encoding: .utf8))
+    let store = try tempDir()
+    try makePack(in: store, parts: ["sdk": "stale"])
+    let env = try isolated(store: store, ["XLESS_SHARE": share.path])
+    #expect(problem { try XcodeEnvironment.current(env: env) }?.cause.contains("was prepared by another recipe") == true)
+    try fm.removeItem(at: store.appendingPathComponent(XcodePack.name(xcode: "26.2", build: "17C52", arch: hostArch)))
+    let hash = try PackRecipe.hash(.sdk, build: "17C52", arch: hostArch, table: table, share: share)
+    try makePack(in: store, parts: ["sdk": hash])
+    #expect(try XcodeEnvironment.current(env: env).pack?.manifest.parts["sdk"] == hash)
+}
+
+@Test func toolEnvironmentPointsXtoolAtThePack() throws {
+    let store = try tempDir()
+    let root = try makePack(in: store)
+    let env = try isolated(store: store, ["XDG_CONFIG_HOME": "/home/u/.config"])
+    let x = try XcodeEnvironment.current(env: env)
+    let tools = x.toolEnvironment(env)
+    // xtool finds the SDK only under XDG_CONFIG_HOME.
+    #expect(tools["XDG_CONFIG_HOME"] == root.appendingPathComponent("config").path)
+    #expect(tools["PATH"] == root.appendingPathComponent("toolchain/usr/bin").path + ":/usr/bin:/bin")
+    #expect(tools["HOME"] == env["HOME"])
+}
+
+@Test func aMissingToolchainOverrideIsAnErrorOfItsOwn() throws {
+    let store = try tempDir()
+    try makePack(in: store)
+    let x = try XcodeEnvironment.current(env: try isolated(store: store, ["XLESS_SWIFT_TOOLCHAIN": "/missing.json"]))
+    #expect(x.toolchain == nil)
+    let e = #expect(throws: XlessError.self) { try x.loadToolchain(stage: .prepare) }
+    #expect(e?.stage == .prepare && e?.cause == "XLESS_SWIFT_TOOLCHAIN names /missing.json, which does not exist")
+    // Without one, no record is no toolchain (the `swift` on PATH compiles).
+    let none = try XcodeEnvironment.current(env: try isolated(["XLESS_TOOLCHAIN_META": "/m.json"]))
+    #expect(try none.loadToolchain() == nil)
+}
+
+@Test func theToolsProfileIsTheXcodesMetadatas() throws {
+    let dir = try tempDir()
+    let url = dir.appendingPathComponent("toolchain-meta.json")
+    try ToolchainMeta(xcodeVersion: "2620", xcodeBuild: "17C52", buildMachineOSBuild: "25B78", compiler: ToolchainMeta.clangCompiler, platforms: [:])
+        .write(to: url)
+    #expect(try XcodeToolsProfile.forImage(env: try isolated(["XLESS_TOOLCHAIN_META": url.path]), stage: .ib).xcodeBuild == "17C52")
+    // No metadata: refused in the asking stage, never a default profile.
+    let missing = #expect(throws: XlessError.self) {
+        try XcodeToolsProfile.forImage(env: try isolated(["XLESS_TOOLCHAIN_META": dir.appendingPathComponent("none.json").path]), stage: .assets)
+    }
+    #expect(missing?.stage == .assets)
+    #expect(missing?.cause.contains("toolchain metadata not found") == true)
+    let nothing = #expect(throws: XlessError.self) { try XcodeToolsProfile.forImage(env: try isolated(), stage: .ib) }
+    #expect(nothing?.stage == .ib && nothing?.fix.hasPrefix("xless setup --xcode") == true)
+}

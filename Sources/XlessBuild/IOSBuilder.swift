@@ -4,18 +4,21 @@ import XlessMachO
 
 public enum IOSBuilder {
     /// Runs `xtool dev build --configuration release` (unsigned), copies the .app into paths.app and keeps its dSYM in
-    /// paths.dSYMs (`dSYM(of:project:dsymutil:)`).
+    /// paths.dSYMs (`dSYM(of:project:dsymutil:)`). xtool finds the SDK only under `XDG_CONFIG_HOME`, and passes SwiftPM
+    /// no `--swift-sdks-path`: it runs in `XcodeEnvironment.toolEnvironment`.
     public static func build(project: URL, config: ProjectConfig, paths: StagePaths,
                              env: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
         let ios = try config.platform(.ios)
+        let xcode = try XcodeEnvironment.current(env: env)
         try XtoolManifest.write(config: config, project: project)
-        try Shell.run("xtool", ["dev", "build", "--configuration", "release"], cwd: project, stage: .build, passthrough: true)
+        try Shell.run("xtool", ["dev", "build", "--configuration", "release"], cwd: project, baseEnvironment: xcode.toolEnvironment(env),
+                      stage: .build, passthrough: true)
         let produced = project.appendingPathComponent("xtool/\(ios.product).app")
         guard FileManager.default.fileExists(atPath: produced.path) else {
             throw XlessError(.build, "xtool finished but \(produced.path) is missing", fix: "check that platforms.ios.product matches a library product in Package.swift")
         }
         let app = try Files.atomicOutput(paths.app) { try Files.copyBundle(produced, intoFreshDir: $0) }
-        let tool = DarwinSDK(bundle: DarwinSDKLocator.bundle(env: env)).dsymutil
+        let tool = DarwinSDK(bundle: xcode.sdkBundle).dsymutil
         let source = dSYM(of: app, project: project) { exe, out in
             guard FileManager.default.isExecutableFile(atPath: tool.path) else {
                 throw XlessError(.build, "the SDK's toolset has no dsymutil (\(tool.path))", fix: "reinstall the SDK")

@@ -30,18 +30,18 @@ import Testing
     #expect(t.path(once) == once)
 }
 
-@Test func loadFallsBackToTheNativeRecord() throws {
+@Test func withoutAPackTheToolchainIsTheNativeRecord() throws {
     // Only meaningful outside an image (the image's record would win).
-    guard !FileManager.default.fileExists(atPath: SwiftToolchain.imageFile) else { return }
+    guard !FileManager.default.fileExists(atPath: "/opt/xless/swift-toolchain.json") else { return }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let env = ["XLESS_NATIVE_HOME": root.path, "HOME": "/nonexistent"]
-    #expect(try SwiftToolchain.load(env: env) == nil)
+    #expect(try XcodeEnvironment.toolchain(env: env) == nil)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try #"{"version":"6.4.0","root":"/n/toolchains/swift-6.4.0","clangFlags":["-fdefine-target-os-macros"]}"#
         .write(to: NativeLayout(env: env).record, atomically: true, encoding: .utf8)
-    #expect(try SwiftToolchain.load(env: env)
+    #expect(try XcodeEnvironment.toolchain(env: env)
         == SwiftToolchain(version: "6.4.0", root: "/n/toolchains/swift-6.4.0", clangFlags: ["-fdefine-target-os-macros"]))
     // XLESS_SWIFT_TOOLCHAIN still wins.
-    #expect(throws: XlessError.self) { try SwiftToolchain.load(env: env.merging(["XLESS_SWIFT_TOOLCHAIN": "/missing.json"]) { $1 }) }
+    #expect(throws: XlessError.self) { try XcodeEnvironment.toolchain(env: env.merging(["XLESS_SWIFT_TOOLCHAIN": "/missing.json"]) { $1 }) }
 }

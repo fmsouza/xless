@@ -284,8 +284,10 @@ public enum SwiftPackages {
         if own != nil, let previous = prelinkedAggregate(under: buildDir) {
             try FileManager.default.removeItem(at: previous.deletingLastPathComponent())
         }
+        // The pack is read-only: SwiftPM finds its SDK by --swift-sdks-path, and keeps its own state in XDG_CONFIG_HOME.
         var args = ["build", "-c", "release", "--package-path", aggregateDir.path, "--build-system", "swiftbuild",
-                    "--triple", "arm64-apple-ios\(minimumIOS)", "--toolset", toolset.path, "--force-resolved-versions"]
+                    "--triple", "arm64-apple-ios\(minimumIOS)", "--toolset", toolset.path, "--force-resolved-versions",
+                    "--swift-sdks-path", sdk.bundle.deletingLastPathComponent().path]
         if let own { args += ["--scratch-path", buildDir.path, linksLibraryProductWithLibtool(own) ? "--target" : "--product", aggregateName] }
         try run(swift?.tool("swift") ?? "swift", args, [
             "SDKROOT": nil,

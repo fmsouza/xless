@@ -41,7 +41,7 @@ struct XcodebuildShimCommand: ParsableCommand {
         do { command = try XcodebuildShim.parse(args) } catch { refuse(error) }
         switch command {
         case .version:
-            do { print(XcodebuildShim.versionText(try ToolchainMeta.load(from: ToolchainMeta.defaultLocation())), terminator: "") }
+            do { print(XcodebuildShim.versionText(try ToolchainMeta.load(from: XcodeEnvironment.current().meta)), terminator: "") }
             catch { FileHandle.standardError.write(Data("\(error)\n".utf8)); Foundation.exit(1) }
         case .buildPackage(let build):
             let summary: SwiftBuildOutput.Summary
@@ -70,9 +70,12 @@ struct PrepareClangShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "prepare-clang")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
     func run() throws {
-        let mapped: [String]
-        do { mapped = try PrepareClangShim.arguments(args, sdk: DarwinSDK()) } catch { refuse(error) }
-        try execTool(PrepareClangShim.executable(args, swift: try? SwiftToolchain.load()), mapped)
+        let mapped: [String], xcode: XcodeEnvironment
+        do {
+            xcode = try XcodeEnvironment.current()
+            mapped = try PrepareClangShim.arguments(args, sdk: DarwinSDK(bundle: xcode.sdkBundle))
+        } catch { refuse(error) }
+        try execTool(PrepareClangShim.executable(args, swift: xcode.toolchain), mapped)
     }
 }
 
@@ -82,10 +85,17 @@ struct StripShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "strip")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
     func run() throws {
-        let llvmStrip = ProcessInfo.processInfo.environment["XLESS_LLVM_STRIP"] ?? "/opt/xless/llvm/bin/llvm-strip"
+        let llvmStrip = ProcessInfo.processInfo.environment["XLESS_LLVM_STRIP"] ?? Self.llvmStrip(shims: ProcessInfo.processInfo.environment["XLESS_SHIM_DIR"])
         let status: Int32
         do { status = try StripShim.run(args, llvmStrip: llvmStrip) } catch let e as ToolShimUnsupported { refuse(e) }
         Foundation.exit(status)
+    }
+
+    /// The image installs LLVM's tools beside its shims: `<XLESS_SHIM_DIR>/../llvm/bin/llvm-strip`; without shims, the
+    /// `llvm-strip` on PATH.
+    static func llvmStrip(shims: String?) -> String {
+        guard let shims, !shims.isEmpty else { return "llvm-strip" }
+        return URL(fileURLWithPath: shims).deletingLastPathComponent().appendingPathComponent("llvm/bin/llvm-strip").path
     }
 }
 
@@ -106,7 +116,7 @@ struct LinkerShimCommand: ParsableCommand {
             return out
         }, fileExists: { FileManager.default.fileExists(atPath: $0) },
            readFile: { try? Data(contentsOf: URL(fileURLWithPath: $0), options: .alwaysMapped) })
-        try execTool(DarwinSDK().ld64.path, mapped)
+        try execTool(DarwinSDK(bundle: try XcodeEnvironment.current().sdkBundle).ld64.path, mapped)
     }
 }
 

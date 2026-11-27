@@ -72,7 +72,7 @@ platforms:
     }
     try ExecutableFile.write("""
         #!/bin/sh
-        while [ $# -gt 0 ]; do case "$1" in --package-path) w="$2" ;; --scratch-path) s="$2" ;; --triple) a="${2%%-*}" ;; esac; shift; done
+        while [ $# -gt 0 ]; do case "$1" in --package-path) w="$2" ;; --scratch-path) s="$2" ;; --triple) a="${2%%-*}" ;; --swift-sdks-path) echo "$2" > '\(root.path)/sdks' ;; esac; shift; done
         mkdir -p "$s/out/Products/Release/Now_Now.bundle"
         cp '\(root.path)'/"$a" "$s/out/Products/Release/DemoMac"
         [ -f '\(root.path)/used-'"$a" ] || cp "$w/Package.resolved" '\(root.path)/used-'"$a" 2>/dev/null || true
@@ -94,6 +94,8 @@ platforms:
     #expect(try String(contentsOf: root.appendingPathComponent("used-arm64"), encoding: .utf8) == text)
     #expect(try String(contentsOf: root.appendingPathComponent("used-x86_64"), encoding: .utf8).contains("9.0.0"), "the other architecture: the versions of the first")
     #expect(try String(contentsOf: own, encoding: .utf8) == text)
+    // SwiftPM is told where the SDK is (a pack's is read-only: not through XDG_CONFIG_HOME).
+    #expect(try String(contentsOf: root.appendingPathComponent("sdks"), encoding: .utf8) == sdk.deletingLastPathComponent().path + "\n")
 
     // one that a project no longer has is not built with
     try fm.removeItem(at: own)

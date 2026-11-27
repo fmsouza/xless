@@ -261,15 +261,7 @@ public struct XcodeToolsProfile: Sendable, Equatable {
         return p
     }
 
-    /// `forImage` with the image's toolchain metadata (`ToolchainMeta.defaultLocation`: `/opt/xless/toolchain-meta.json` in
-    /// an image), read once per call. Missing or invalid metadata is refused in `stage`.
-    public static func forImage(env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage) throws -> XcodeToolsProfile {
-        let meta: ToolchainMeta
-        do { meta = try ToolchainMeta.load(from: ToolchainMeta.defaultLocation(env: env)) } catch let e as XlessError {
-            throw XlessError(stage, e.cause, fix: e.fix)
-        }
-        return try forImage(meta: meta, stage: stage)
-    }
+    // `forImage(env:stage:)`, with the Xcode's metadata: XcodeEnvironment.swift (not built on Windows).
 
     /// A measured build by name (`xless storyboard compile --xcode-build`).
     public static func named(_ build: String, stage: Stage) throws -> XcodeToolsProfile {

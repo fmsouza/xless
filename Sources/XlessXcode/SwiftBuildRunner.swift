@@ -27,18 +27,22 @@ public enum SwiftBuildRunner {
         var extra: [String: String?] = environment.processEnvironment(path: baseEnvironment["PATH"]).mapValues { $0 }
         for (k, v) in extraEnvironment { extra[k] = v }
         let env = ChildProcess.environment(baseEnvironment, extra: extra)
+        guard let swbuild = environment.swbuild ?? XcodeEnvironment.which("swbuild", path: env["PATH"]) else {
+            throw XlessError(stage, "Swift Build is not here: the Xcode pack has no swbuild, and none is on PATH",
+                             fix: "xless setup --xcode <path to Xcode's .app or .xip> prepares the Swift Build part of its pack")
+        }
         let status: Int32
         do {
             try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
             _ = FileManager.default.createFile(atPath: log.path, contents: nil)
             let out = try FileHandle(forWritingTo: log)
             defer { try? out.close() }
-            status = try ChildProcess.start("/usr/bin/env", ["swbuild", "build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path],
+            status = try ChildProcess.start(swbuild.path, ["build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path],
                                             environment: env, stdout: out.fileDescriptor, stage: stage).wait()
         } catch let e as XlessError {
             throw e
         } catch {
-            throw XlessError(stage, "cannot run swbuild: \(error)", fix: "run in an image that xless setup --docker builds: it has Swift Build's swbuild on PATH")
+            throw XlessError(stage, "cannot run \(swbuild.path): \(error)", fix: "xless setup --xcode <path to Xcode's .app or .xip> prepares the Swift Build part of its pack again")
         }
         let data = (try? Data(contentsOf: log)) ?? Data()
         var summary = SwiftBuildOutput.summarize(data)

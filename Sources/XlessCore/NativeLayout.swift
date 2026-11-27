@@ -4,7 +4,8 @@ import Foundation
 /// rcodesign, the open-source Swift toolchain of the SDK's Xcode (Ruling R10) and that toolchain's record. Its root is
 /// `$XLESS_NATIVE_HOME`, else `$XDG_DATA_HOME/xless-native`, else `~/.local/share/xless-native` (not
 /// `~/.local/share/xless`, which install.sh replaces on every upgrade). The SDK and its metadata stay where
-/// `xless sdk install` puts them (`DarwinSDKLocator`, `ToolchainMeta.defaultLocation`).
+/// `xless sdk install` puts them (`DarwinSDKLocator`, `ToolchainMeta.defaultLocation`). Its `xcodes` directory is the
+/// default store of Xcode packs (`XcodeStore`), which `XcodeEnvironment` reads before any of this.
 ///
 ///     toolchains/swift-<version>/usr/bin/…   tools/xtool-<version>/AppRun   tools/rcodesign-<version>/rcodesign
 ///     bin/xtool, bin/rcodesign (links)       swift-toolchain.json (written last: a `SwiftToolchain` record)
@@ -38,15 +39,12 @@ public struct NativeLayout: Sendable, Equatable {
         return (first + rest).joined(separator: ":")
     }
 
-    /// A native xless (outside an image, which records its toolchain at `SwiftToolchain.imageFile`) with a native
-    /// install puts its tools first on this process's PATH, so every tool and child process uses them. A host without
-    /// a native record (an image, an older native install), or with `XLESS_SWIFT_TOOLCHAIN` set, is left as it is.
+    /// A native xless puts the Xcode's Swift toolchain (`XcodeEnvironment.toolchain`: its pack's, else a native install's of
+    /// before the packs) and then `bin` first on this process's PATH, so every tool and child process uses them. Left as it
+    /// is with `XLESS_SWIFT_TOOLCHAIN` set (an image's), and without a toolchain.
     public static func activate(env: [String: String] = ProcessInfo.processInfo.environment) {
-        guard !FileManager.default.fileExists(atPath: SwiftToolchain.imageFile), (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty else { return }
-        let layout = NativeLayout(env: env)
-        guard let data = FileManager.default.contents(atPath: layout.record.path),
-              let toolchain = try? JSONDecoder().decode(SwiftToolchain.self, from: data) else { return }
-        let new = path(env["PATH"], toolchain: toolchain, bin: layout.bin)
+        guard (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty, let toolchain = (try? XcodeEnvironment.lookup(env: env))??.toolchain else { return }
+        let new = path(env["PATH"], toolchain: toolchain, bin: NativeLayout(env: env).bin)
         if new != env["PATH"] { setenv("PATH", new, 1) }
     }
 }

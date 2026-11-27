@@ -5,7 +5,7 @@ import XlessCore
 /// (`SWBApplePlatform/AssetCatalogCompiler.swift`; argv and outputs recorded in docs/research/react-native-ios-contract.md,
 /// "Tool shims"). The compile goes through `AssetsStage.compileIOSCatalog`, the same AssetKit path as the `assets`
 /// stage. Any flag or value outside that subset is refused with exit 70 and the argv (`Unsupported`), as `XcrunShim`.
-/// The shim answers as the image's Xcode's actool (`XcodeToolsProfile`, from `/opt/xless/toolchain-meta.json`, read once
+/// The shim answers as the image's Xcode's actool (`XcodeToolsProfile`, from its toolchain metadata, `XcodeEnvironment.meta`, read once
 /// per call): its `--version`, the dependency info and the car's version fields. An image whose Xcode has no profile is
 /// refused with exit 70.
 public enum ActoolShim {

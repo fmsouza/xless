@@ -62,11 +62,13 @@ public enum MacBuilder {
     ///   `--triple` its Swift Build builds every standard macOS architecture (arm64 and x86_64) and joins them with
     ///   `lipo`, which the image does not have; `--arch` is refused next to `--triple`. The deployment target is then the
     ///   wrapper package's `platforms` (`minimumOS`), which the triple's version otherwise sets.
+    /// `swiftSDKs`: where SwiftPM finds the Darwin SDK (`XcodeEnvironment.swiftSDKsArguments`: the pack is read-only, so
+    /// not through `XDG_CONFIG_HOME`).
     static func swiftBuildArguments(wrapper: URL, scratch: URL, arch: String, minimumOS: String, toolset: URL,
-                                    product: String, own: SwiftToolchain?) -> [String] {
+                                    product: String, own: SwiftToolchain?, swiftSDKs: [String] = []) -> [String] {
         let target = own == nil ? ["--triple", "\(arch)-apple-macosx\(minimumOS)"] : ["--swift-sdk", "\(arch)-apple-macosx", "--arch", arch]
         var args = ["build", "--package-path", wrapper.path, "--scratch-path", scratch.path,
-                    "-c", "release", "--build-system", "swiftbuild"] + target + ["--toolset", toolset.path]
+                    "-c", "release", "--build-system", "swiftbuild"] + target + ["--toolset", toolset.path] + swiftSDKs
         if own != nil { args += ["--product", "\(product)Mac"] }
         return args
     }
@@ -76,7 +78,8 @@ public enum MacBuilder {
     public static func build(project: URL, config: ProjectConfig, paths: StagePaths, env: [String: String] = ProcessInfo.processInfo.environment,
                              note: (String) -> Void = Self.note) throws -> URL {
         let mac = try config.platform(.macos)
-        let sdk = DarwinSDKLocator.bundle(env: env)
+        let xcode = try XcodeEnvironment.current(env: env)
+        let sdk = xcode.sdkBundle
         let toolset = sdk.appendingPathComponent("toolset-swb.json")
         guard FileManager.default.fileExists(atPath: toolset.path) else {
             throw XlessError(.build, "Darwin SDK not installed at \(sdk.path)", fix: "use the xless SDK image or run `xless sdk install`")
@@ -101,7 +104,7 @@ public enum MacBuilder {
         var resourceBundles: [URL] = []
         // Ruling R10: another Swift than the image's own (the build stage put it on PATH) builds in its own scratch
         // directory, never reusing a previous toolchain's products; its SwiftPM may lay them out elsewhere than `out/`.
-        let own = (try? SwiftToolchain.load(env: env)).flatMap { $0.isEngine ? nil : $0 }
+        let own = xcode.toolchain.flatMap { $0.isEngine ? nil : $0 }
         for arch in archs {
             let scratch = project.appendingPathComponent(".xless/macos-build-\(arch)" + (own.map { "-swift-\($0.version)" } ?? ""), isDirectory: true)
             func executable() -> URL? {
@@ -115,7 +118,7 @@ public enum MacBuilder {
             }
             try ResourceBundles.fresh(scratch: scratch, products: products, note: note) {
                 try Shell.run("swift", swiftBuildArguments(wrapper: wrapper, scratch: scratch, arch: arch, minimumOS: mac.minimumOS,
-                                                           toolset: toolset, product: mac.product, own: own),
+                                                           toolset: toolset, product: mac.product, own: own, swiftSDKs: xcode.swiftSDKsArguments),
                               cwd: project, env: buildEnv, stage: .build, passthrough: true)
             }
             guard let exe = executable() else {

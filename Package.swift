@@ -184,7 +184,7 @@ let notOnWindows: [String: [String]] = [
         "BuildSDKCheck.swift", "BuildPlaces.swift", "BuildSandbox.swift", "BuiltTree.swift", "ChildProcess.swift", "DittoShim.swift", "ExecutableFile.swift",
         "MemoryFileSystem.swift", "NativeLayout.swift", "PlistBuddyShim.swift", "Shell.swift", "SwiftToolchain.swift", "XcrunShim.swift",
         "XlessShare.swift", "AppleSignature.swift", "InstalledXcode.swift", "NativeTools.swift", "TrustedPath.swift",
-        "PackageResolved.swift",
+        "PackageResolved.swift", "XcodeEnvironment.swift",
     ],
     "XlessSign": ["PrivateFiles.swift", "RCodesign.swift", "SignStage.swift"],
     "XlessVault": ["CredentialHelper.swift", "VaultMaterialize.swift"],
@@ -204,14 +204,14 @@ let notOnWindows: [String: [String]] = [
         "BuildSDKCheckTests.swift", "BuildPlacesTests.swift", "BuildSandboxTests.swift", "BuiltTreeTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlainFileTests.swift", "PlistBuddyShimTests.swift",
         "SecretScrubTests.swift", "ShellTests.swift", "SwiftToolchainTests.swift", "XcrunShimTests.swift", "XlessShareTests.swift",
         "AppleSignatureTests.swift", "InstalledXcodeTests.swift", "NativeToolsTests.swift", "TrustedPathTests.swift",
-        "PackageResolvedTests.swift", "WindowsFilterTests.swift",
+        "PackageResolvedTests.swift", "WindowsFilterTests.swift", "XcodeEnvironmentTests.swift",
     ],
     "XlessASCTests": ["PathOwnersTests.swift"],
     "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],
     "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
     "XlessCLITests": [
         "BuildIsolationTests.swift", "LiveCheckTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
-        "SecretsNamedByTests.swift", "NativeOverlayTests.swift",
+        "SecretsNamedByTests.swift", "NativeOverlayTests.swift", "ShimCommandsTests.swift",
     ],
 ]
 package.products = []

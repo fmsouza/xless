@@ -100,7 +100,7 @@ private func noToolchain() throws -> SwiftToolchain? { nil }
     // A toolchain record that cannot be read is the stage's error too.
     let e3 = #expect(throws: XlessError.self) {
         try BuildSDKCheck.check(pin: nil, platform: .ios, file: "the overlay", stage: .prepare, metaURL: url,
-                                loadToolchain: { try SwiftToolchain.load(env: ["XLESS_SWIFT_TOOLCHAIN": "/nope.json"]) })
+                                loadToolchain: { try XcodeEnvironment.toolchain(env: ["XLESS_SWIFT_TOOLCHAIN": "/nope.json"]) })
     }
     #expect(e3?.stage == .prepare)
 }
@@ -130,4 +130,31 @@ private func noToolchain() throws -> SwiftToolchain? { nil }
     try r.write(in: dir)
     #expect(BuildSDKRecord.load(in: dir) == r)
     #expect(r.summary(platform: .ios) == "Xcode 26.2 (17C52), iphoneos26.2 SDK (23C50), pinned by xcode: \"26.2\"")
+}
+
+/// Without `metaURL` and `loadToolchain`: the Xcode's (`XcodeEnvironment`), the pack of the pin it is given.
+@Test func theCheckReadsThePacksMetadata() throws {
+    let store = try tempDir("sdkcheck-store"), home = try tempDir("sdkcheck-home"), share = try tempDir("sdkcheck-share")
+    #if arch(arm64)
+    let arch = "arm64"
+    #else
+    let arch = "amd64"
+    #endif
+    let pack = XcodePack(root: store.appendingPathComponent(XcodePack.name(xcode: "26.2", build: "17C52", arch: arch)),
+                         manifest: PackManifest(format: 1, xcode: "26.2", build: "17C52", arch: arch, swift: "6.2.3", mode: .separate, parts: ["sdk": "h"]))
+    try meta("2620", "17C52", sdk: "26.2").write(to: pack.meta)
+    try pack.manifest.write(to: pack.manifestFile)
+    let env = ["HOME": home.path, "XLESS_XCODES": store.path, "XLESS_SHARE": share.path, XcodeEnvironment.pinVariable: "26.2"]
+    let tc = try fakeToolchain(version: "6.2.3", line: "Swift version 6.2.3 (swift-6.2.3-RELEASE)")
+    let result = try BuildSDKCheck.check(pin: "26.2", platform: .ios, file: "xless.yml", stage: .prepare, loadToolchain: { tc }, env: env)
+    #expect(result.meta?.xcodeBuild == "17C52")
+    // A pinned project on a machine with no Xcode: the setup, with the usage exit code.
+    let none = ["HOME": home.path, "XLESS_XCODES": home.appendingPathComponent("none").path, "XLESS_SHARE": share.path]
+    let e = #expect(throws: XlessError.self) {
+        try BuildSDKCheck.check(pin: "26.2", platform: .ios, file: "xless.yml", stage: .prepare, env: none.merging([XcodeEnvironment.pinVariable: "26.2"]) { $1 })
+    }
+    #expect(e?.stage == .prepare && e?.exitCode == 2 && e?.cause.hasPrefix("xcode: \"26.2\" is pinned, but there is no pack for Xcode 26.2") == true)
+    #expect(e?.fix.hasPrefix("xless setup --xcode") == true)
+    // Unpinned there: nothing to check.
+    #expect(try BuildSDKCheck.check(pin: nil, platform: .ios, file: "xless.yml", stage: .prepare, env: none).meta == nil)
 }

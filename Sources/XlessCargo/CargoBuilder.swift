@@ -81,7 +81,8 @@ public enum CargoBuilder {
             let record = try readRecord(ctx)
             if ctx.sdk.isXcode { try RustApple.writeSwiftWrapper(sdk: ctx.sdk, workRoot: work) }
             let inputURLs = record.paths.mapValues { URL(fileURLWithPath: $0, isDirectory: true) }
-            let swift = try SwiftToolchain.load(env: ctx.env)
+            // On a Mac it is the Xcode's own (`DarwinSDK.compiler`), and there is no pack.
+            let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)
             let toolchain = ctx.overlay.toolchain
 
             func environment(platform: [String: String]) -> [String: String] {

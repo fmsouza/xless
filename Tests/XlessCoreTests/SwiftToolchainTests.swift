@@ -46,10 +46,10 @@ private func meta(swift: String?) -> ToolchainMeta {
 @Test func loadsTheRecordNamedByTheEnvironment() throws {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent("swift-toolchain-\(UUID().uuidString).json")
     try Data(#"{"version":"6.2.3","root":"/opt/xless/toolchains/swift-6.2.3"}"#.utf8).write(to: file)
-    let t = try SwiftToolchain.load(env: ["XLESS_SWIFT_TOOLCHAIN": file.path])
+    let t = try XcodeEnvironment.toolchain(env: ["XLESS_SWIFT_TOOLCHAIN": file.path])
     #expect(t == SwiftToolchain(version: "6.2.3", root: "/opt/xless/toolchains/swift-6.2.3"))
     #expect(t?.include.path == "/opt/xless/toolchains/swift-6.2.3/usr/include")
-    #expect(throws: XlessError.self) { try SwiftToolchain.load(env: ["XLESS_SWIFT_TOOLCHAIN": "/nope.json"]) }
+    #expect(throws: XlessError.self) { try XcodeEnvironment.toolchain(env: ["XLESS_SWIFT_TOOLCHAIN": "/nope.json"]) }
 }
 
 @Test func theBuildChecksTheCompilerAgainstTheXcode() throws {

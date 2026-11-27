@@ -129,7 +129,7 @@ public enum SwiftPackageCheckouts {
     public static func resolve(_ workspace: Workspace, in directory: URL, env: [String: String]) throws -> (packages: [ResolvedPackage], records: [Record]) {
         var packages: [ResolvedPackage] = [], records: [Record] = []
         // The build engine's SwiftPM: its PIF is read by the image's swbuild (Ruling R10 keeps both on the image's Swift).
-        let swift = SwiftToolchain.engineSwift(try SwiftToolchain.load(env: env))
+        let swift = SwiftToolchain.engineSwift(try XcodeEnvironment.toolchain(env: env))
         for ref in try references(workspace) {
             let checkout = try ref.revision.map { try clone(ref, revision: $0, in: directory, env: env) } ?? URL(fileURLWithPath: ref.location)
             let root = try writeRoot(ref.identity, checkout: checkout, workspace: workspace, in: directory)

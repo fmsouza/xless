@@ -276,7 +276,7 @@ private func fixtureMetadata() throws -> (data: Data, work: URL, registry: URL) 
         #expect(calls[0].0 == "swift")
         #expect(calls[0].1 == ["build", "-c", "release", "--package-path", agg.path, "--build-system", "swiftbuild",
                                "--triple", "arm64-apple-ios16.0", "--toolset", bundle.appendingPathComponent("toolset-swb.json").path,
-                               "--force-resolved-versions"])
+                               "--force-resolved-versions", "--swift-sdks-path", bundle.deletingLastPathComponent().path])
         #expect(calls[0].2["SDKROOT"] == .some(nil))
         #expect(calls[0].2["XCODE_EXTRA_PLATFORM_FOLDERS"] == bundle.appendingPathComponent("Developer/Platforms").path)
         #expect(calls[0].2["PATH"] == "\(bundle.appendingPathComponent("toolset/bin").path):/usr/bin")

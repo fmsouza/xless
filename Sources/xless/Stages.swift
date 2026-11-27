@@ -61,9 +61,9 @@ enum StageRunner {
         }
     }
 
-    /// Ruling R8: the image's SDK (its toolchain metadata) against the project's `xcode:` pin, then recorded next to the
-    /// build's output (`BuildSDKRecord`) and printed; finalize stamps from the same SDK. Without metadata (a host with no
-    /// SDK installed) and without a pin there is nothing to check or record.
+    /// Ruling R8: the Xcode's SDK (its toolchain metadata, `XcodeEnvironment`) against the project's `xcode:` pin, then
+    /// recorded next to the build's output (`BuildSDKRecord`) and printed; finalize stamps from the same SDK. Without an
+    /// Xcode (a host with nothing set up) and without a pin there is nothing to check or record.
     /// Ruling R10: the image's Swift toolchain must be the one that Xcode ships (`SwiftToolchain.check`); it is recorded
     /// and printed with the SDK, and put on this process's PATH before the image's own Swift (`activate`), so every
     /// compile the build runs uses it (Swift Build also gets it through its toolset: `SwiftBuildEnvironment`).
@@ -114,7 +114,7 @@ enum StageRunner {
             try ctx.requireDevice(.finalize)
             _ = try NativeOverlay.mac(for: ctx, stage: .finalize)
             let input = try ctx.paths.bundle(in: ctx.paths.assets, stage: .finalize)
-            let meta = try MacNative.here(for: ctx, stage: .finalize)?.meta ?? ToolchainMeta.load(from: ToolchainMeta.defaultLocation())
+            let meta = try MacNative.here(for: ctx, stage: .finalize)?.meta ?? ToolchainMeta.load(from: XcodeEnvironment.current().meta)
             let kind: ProjectKind = ctx.isReactNative ? .reactNative : ctx.isCargo ? .cargo : ctx.isTauri ? .tauri : .xlessYML
             let built = BuildSDKRecord.load(in: ctx.paths.root)
             // Ruling R10: the compiler the build recorded (DTCompiler stays Xcode's compiler identifier for every Swift).
