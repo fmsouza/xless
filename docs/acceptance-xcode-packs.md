@@ -8,7 +8,8 @@ when it is the image's own, at `/usr`, Swift Build at `/opt/swift-build`). The b
 49ad396, the last with an Xcode in the image; the packs and the generic image from fc15c64, and the 27.0 HelloShip and
 HelloTauri pairs and the 26.2 HelloShip pair again with the generic image of 7febafe, whose xless builds with a pack's copy
 of the image's own Swift as with that Swift itself (below). The goal: the products are
-byte for byte the same, or differ only where they record one of the moved paths, each listed. Also measured: sizes,
+byte for byte the same (outside the code signatures, and of a universal file its slices: see
+[How the comparison masks](#how-the-comparison-masks)), or differ only where they record one of the moved paths, each listed. Also measured: sizes,
 the image and pack build times, a run's start-up, and what happens to a work copy when its pack is prepared again.
 Nothing was pushed or delivered.
 
@@ -119,8 +120,10 @@ too; below 6.4 it keeps `--swift-sdk` and `--arch` (6.2.3's `--triple` builds bo
   (`sizeofcmds` 3736 → 3776 in the arm64 slice, 3880 → 3920 in the x86_64 one) and the sections of `__TEXT` start later:
   `__text` and `__stubs` by 0x28 and the others by 0x30 in the arm64 slice (`__text` at 0xf00 against 0xed8), all by 0x20
   in the x86_64 one. The segments, and every section of `__DATA_CONST` and `__DATA`, are where they were. The tool
-  calls the file different, and says its printable strings differ once the path is replaced: the runs that differ are
-  the bytes of `LC_UUID`, some of which are printable (`LLDuUU1D` against `UU1D` and `!:\)` in the arm64 slice).
+  calls the file different, and says its printable strings differ once the path is replaced. The differing runs it
+  places in the load commands are bytes of `LC_UUID` that happen to be printable (`LLDuUU1D` against `UU1D` and `!:\)` in
+  the arm64 slice); the arm64 slice also lists two runs on each side that it places in "__LINKEDIT or padding", whose
+  bytes the record does not show and which were not identified (the code signature is the likely place, not checked).
   Compared with each address mapped through that move, on one more pair built for the purpose (the same verdict):
   - the load commands: besides the rpath and the sections' addresses and offsets, only `LC_UUID` and `LC_MAIN`'s
     `entryoff` differ, and `entryoff` by its section's shift (0x2100 → 0x2128, 0x2170 → 0x2190);
@@ -149,7 +152,8 @@ With Xcode 26.2 both sides build with another Swift than the image's own (6.2.3)
 
 `scripts/pack-parity.sh` compares every file of the two trees. Left out, as `scripts/arch-compare.sh` does (the code
 is shared, `scripts/code-signature-mask.py`): the bundles' `_CodeSignature/` directories, and in a Mach-O image its
-code-signature blob, `LC_CODE_SIGNATURE`'s offset and size and `__LINKEDIT`'s sizes; a universal file slice by slice.
+code-signature blob, `LC_CODE_SIGNATURE`'s offset and size and `__LINKEDIT`'s sizes; a universal file slice by slice,
+so the padding between its slices is not compared. Only the files' bytes are compared, not their modes.
 A file that still differs is "path only" only when its differences are the moved paths:
 
 - the paths: the SDK (`/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle` → `/xcodes/<pack>/config/swiftpm/swift-sdks/darwin.artifactbundle`),
