@@ -43,7 +43,7 @@ public struct ToolchainMeta: Codable, Sendable, Equatable {
 
     public static func load(from url: URL) throws -> ToolchainMeta {
         guard let data = try? Data(contentsOf: url) else {
-            throw XlessError(.sdk, "toolchain metadata not found at \(url.path)", fix: "use the xless SDK image, or run `xless setup`")
+            throw XlessError(.sdk, "toolchain metadata not found at \(url.path)", fix: "prepare the Xcode's pack: `xless setup --xcode <Xcode.xip>` (`--docker` for xless run --docker)")
         }
         do { return try JSONDecoder().decode(ToolchainMeta.self, from: data) } catch {
             throw XlessError(.sdk, "toolchain metadata at \(url.path) is invalid: \(error)", fix: "re-run `xless sdk export` on the Mac")

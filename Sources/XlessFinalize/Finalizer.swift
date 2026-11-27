@@ -27,13 +27,14 @@ public enum Finalizer {
         }
     }
 
-    /// The image's SDK (`meta`) must be the one the app was built with: finalize stamps the app's DT* keys and every
-    /// Mach-O's SDK version from it. Refused: an image change since the build, or an image other than the pin's.
+    /// The Xcode's SDK (`meta`: its pack's, on a Mac the selected Xcode's) must be the one the app was built with: finalize
+    /// stamps the app's DT* keys and every Mach-O's SDK version from it. Refused: another Xcode since the build, or one other
+    /// than the pin's.
     static func checkSameSDK(built: BuildSDKRecord?, meta: ToolchainMeta, pin: String?, platform: Platform, kind: ProjectKind) throws {
         try XcodePin.check(pin: pin, meta: meta, platform: platform, file: kind.pinFile, stage: .finalize)
         guard let built, built.toolchain != meta else { return }
-        throw XlessError(.finalize, "the app was built with \(built.summary(platform: platform)), but this image has \(BuildSDKRecord(pin: nil, toolchain: meta).summary(platform: platform)); its metadata would not describe the SDK the app was built with",
-                         fix: "finalize in the image that built the app, or build again in this one (`xless ship --from build`)")
+        throw XlessError(.finalize, "the app was built with \(built.summary(platform: platform)), but the Xcode here now is \(BuildSDKRecord(pin: nil, toolchain: meta).summary(platform: platform)); its metadata would not describe the SDK the app was built with",
+                         fix: "finalize with the Xcode that built the app (its pack: the pin, or XLESS_XCODE), or build again with this one (`xless ship --from build`)")
     }
 
     static func finalize(_ app: URL, pc: PlatformConfig, sdk: PlatformSDKInfo, platform: Platform, config: ProjectConfig, meta: ToolchainMeta,

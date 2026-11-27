@@ -393,8 +393,8 @@ Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12
 | 10 | `[config] overlay …: entitlements.replace is now identifiers.replace` | Move the map to a top-level `identifiers: { replace: {…} }`. |
 | 2 | `testflight: … pins xcode: "…", but there is no pack of Xcode … for … in …, and there is no SDK export …` | Prepare it: `xless setup --docker --xcode <that Xcode's .xip or .app> --arch <arch>` ([Pinning the Xcode](#pinning-the-xcode-sdk)). |
 | 2 | `[prepare] xcode: "…" is pinned, but there is no pack for Xcode …`, `… was prepared by another recipe than this xless uses` (`[build] …` for xless.yml, which has no prepare stage) | Natively: `xless setup --xcode <that Xcode's .xip or .app>` (or `--sdk <its export>`). `xless run --docker` prepares it from the export by itself. |
-| 19, 12 | `[prepare] the overlay pins xcode: "…", but this image has the … SDK from Xcode …` | `XLESS_XCODE` (or `XLESS_TOOLCHAIN_META`) names the pack of another Xcode: unset it, or change the pin. |
-| 14 | `[finalize] the app was built with Xcode …, but this image has Xcode …` | Another Xcode's pack is used than the one that built the app: finalize with that one, or build again (`--from build`). |
+| 19, 12 | `[prepare] the overlay pins xcode: "…", but the Xcode pack it would build with has the … SDK from Xcode …` | `XLESS_XCODE` (or `XLESS_TOOLCHAIN_META`) names the pack of another Xcode: unset it, or change the pin. |
+| 14 | `[finalize] the app was built with Xcode …, but the Xcode here now is Xcode …` | Another Xcode's pack is used than the one that built the app: finalize with that one, or build again (`--from build`). |
 | 19 | `outside the contract xless supports` | React Native, Expo, CocoaPods or Bundler differs from the contract. Use the contract versions, or re-measure. |
 | 19 | `Gemfile.lock is BUNDLED WITH …` | Run `bundle _2.7.2_ lock` in the app and commit the lockfile. |
 | 19 | `no package.json with a lockfile`, `the expo CLI is not installed` | Commit the lockfile; add `expo` to the app's dependencies. |
@@ -402,7 +402,7 @@ Errors read `[stage] cause — fix`. Exit codes: config 10, prepare 19, build 12
 | 19 | a failing `prepare.run` command, `expo prebuild` or `pod install` | Their output is printed. Run `xless prepare` with `XLESS_RN_CLEAN=1` once after changing images, packs or caches. |
 | 12 | `[build] the app embeds …, which has no entry in bundleIDs`, `bundleIDs.… names a target the app … does not embed` | Make `bundleIDs` exactly the app target plus the extensions it embeds; the fix lists them. |
 | 12 | `[build] a build phase ran a missing command (…)` | The image lacks a tool a phase runs. Report it; if the app is right without it, add the name to `allowMissingCommands`. |
-| 12, 13 | `this image's Xcode build … has no measured asset/storyboard tools profile` | The pack is of an Xcode xless has not measured. Prepare one from a profiled Xcode ([xcode-versions.md](xcode-versions.md#the-versions)) with `xless setup --docker --xcode …`, and pin it. |
+| 12, 13 | `the Xcode build … that this build uses has no measured asset/storyboard tools profile` | The pack is of an Xcode xless has not measured. Prepare one from a profiled Xcode ([xcode-versions.md](xcode-versions.md#the-versions)) with `xless setup --docker --xcode …`, and pin it. |
 | 12, 13 | `This document requires at least Xcode X.` | The launch storyboard uses a feature of a newer Xcode than the pinned one, which that Xcode's ibtool refuses too. Re-save it without that feature, or pin a newer Xcode. |
 | 12 | `[build] … shim: unsupported call (…): …` | A phase or Swift Build called an Xcode tool (`actool`, `copypng`, `strip`, `PlistBuddy`, `xcrun`, …) in a way the shim has not measured against Xcode's. The failed task's last output lines are printed above. Report the call. |
 | 12 | `[build] Swift package … is pinned to '…', which is not a full commit hash` | Pin the package to a 40-character revision in the Xcode project. |

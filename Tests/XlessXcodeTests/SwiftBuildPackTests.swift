@@ -67,7 +67,7 @@ private func environment(store: URL, _ extra: [String: String] = [:]) throws -> 
     env["XLESS_SHIM_DIR"] = nil
     let noShims = #expect(throws: XlessError.self) { try SwiftBuildEnvironment.fromProcess(env, stage: .build) }
     #expect(noShims?.cause == "the Xcode tool shims are not installed on this machine (XLESS_SHIM_DIR)")
-    #expect(noShims?.fix == "build in an xless image, which has them: xless setup --docker --xcode <path to Xcode's .xip>")
+    #expect(noShims?.fix == "build in Docker, where the xless image has them: xless setup --docker --xcode <path to Xcode's .xip>, then xless run --docker")
     // A pack without Swift Build: refused with the setup that prepares it, as a usage error.
     let noSwiftBuild = #expect(throws: XlessError.self) { try SwiftBuildEnvironment.fromProcess(try environment(store: store), stage: .build) }
     #expect(noSwiftBuild?.cause.contains("has no Swift Build") == true && noSwiftBuild?.stage == .build && noSwiftBuild?.exitCode == 2)

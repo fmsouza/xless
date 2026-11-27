@@ -15,7 +15,7 @@ import XlessSDK
 struct SetupCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup",
-        abstract: "Install xless's toolchain and Apple's SDK natively from an Xcode .xip (on a Mac: check the installed Xcode), or build the xless image with --docker.",
+        abstract: "Prepare an Xcode's pack (its SDK, with the Swift toolchain fitted to it) natively from its .xip (on a Mac: check the installed Xcode), or with --docker the xless image and the pack in a Docker volume.",
         discussion: """
         On a Mac, without --docker, it checks the Xcode that native builds use (DEVELOPER_DIR, xcode-select or /Applications; \
         --xcode <Xcode.app> checks that one) and says which tools they run. It downloads and changes nothing. The rest is for \
@@ -99,7 +99,7 @@ struct SetupCommand: AsyncParsableCommand {
             }
             guard arch.allSatisfy({ $0 == Self.hostArch }) else {
                 throw XlessError(.sdk, "--arch \(arch.joined(separator: " ")) needs --docker: a native setup installs for this machine (\(Self.hostArch)) only",
-                                 fix: "drop --arch, or add --docker to build the images for those architectures")
+                                 fix: "drop --arch, or add --docker to set up the xless image and the Xcode packs for those architectures")
             }
             guard Self.isLinux else { return try macSetup() }
         }
@@ -206,7 +206,7 @@ struct SetupCommand: AsyncParsableCommand {
         }
         guard missing.isEmpty else {
             throw XlessError(.sdk, "a native setup needs \(missing.joined(separator: ", ")), which \(missing.count == 1 ? "is" : "are") not on PATH",
-                             fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build the images instead: xless setup --docker\(sourceArgs)")
+                             fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build in Docker instead: xless setup --docker\(sourceArgs)")
         }
         // Before anything is written into the store: the SDK has headers whose names differ only in case.
         try PackStore.requireCaseSensitive(store)

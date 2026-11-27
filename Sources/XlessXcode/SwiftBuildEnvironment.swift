@@ -30,7 +30,7 @@ public struct SwiftBuildEnvironment: Sendable {
     public static func fromProcess(_ env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage) throws -> SwiftBuildEnvironment {
         guard let shims = env["XLESS_SHIM_DIR"], !shims.isEmpty else {
             throw XlessError(stage, "the Xcode tool shims are not installed on this machine (XLESS_SHIM_DIR)",
-                             fix: "build in an xless image, which has them: xless setup --docker --xcode <path to Xcode's .xip>")
+                             fix: "build in Docker, where the xless image has them: xless setup --docker --xcode <path to Xcode's .xip>, then xless run --docker")
         }
         let xcode: XcodeEnvironment
         do { xcode = try XcodeEnvironment.current(env: env, needs: [.sdk, .swiftBuild]) } catch let problem as XcodeProblem {

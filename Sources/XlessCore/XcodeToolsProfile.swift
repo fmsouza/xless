@@ -255,8 +255,8 @@ public struct XcodeToolsProfile: Sendable, Equatable {
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {
         guard let p = all[meta.xcodeBuild] else {
-            throw XlessError(stage, "this image's Xcode build \(meta.xcodeBuild) has no measured asset/storyboard tools profile",
-                             fix: "rebuild the images with xless setup --xcode <Xcode.xip> from an Xcode xless has measured (\(all.keys.sorted().joined(separator: ", ")))")
+            throw XlessError(stage, "the Xcode build \(meta.xcodeBuild) that this build uses has no measured asset/storyboard tools profile",
+                             fix: "build with an Xcode xless has measured (\(all.keys.sorted().joined(separator: ", "))): prepare its pack with xless setup --xcode <Xcode.xip> (--docker for xless run --docker) and pin it with xcode:")
         }
         return p
     }

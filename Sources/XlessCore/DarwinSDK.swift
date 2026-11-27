@@ -17,7 +17,7 @@ public struct DarwinSDK: Sendable {
         let items = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         // Prefer the versioned directory (iPhoneOS27.0.sdk); the unversioned one may be a symlink.
         guard let pick = items.filter({ $0.hasPrefix(p) && $0.hasSuffix(".sdk") }).sorted(by: { $0.count > $1.count }).first else {
-            throw XlessError(.sdk, "no \(p) SDK in \(dir.path)", fix: "install the Darwin SDK (`xless setup` / use the xless image)")
+            throw XlessError(.sdk, "no \(p) SDK in \(dir.path)", fix: "prepare the Xcode's pack: `xless setup --xcode <Xcode.xip>` (`--docker` for xless run --docker)")
         }
         return dir.appendingPathComponent(pick)
     }

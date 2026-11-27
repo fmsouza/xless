@@ -56,7 +56,7 @@ public enum NativeSetupPlan {
     private static func pin(_ key: String, table: [String: String], arch: String) throws -> String {
         guard let v = table[key], !v.isEmpty else {
             throw XlessError(.sdk, "versions.env has no \(key), which a native setup on \(arch) downloads with",
-                             fix: "reinstall xless (its versions.env is incomplete), or build the images instead: xless setup --docker …")
+                             fix: "reinstall xless (its versions.env is incomplete), or build in Docker instead: xless setup --docker …")
         }
         return v
     }

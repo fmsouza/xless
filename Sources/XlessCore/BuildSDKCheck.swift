@@ -1,8 +1,8 @@
 import Foundation
 
-/// Rulings R8 and R10 at the start of a build: the image's SDK (toolchain metadata) against the project's `xcode:` pin,
+/// Rulings R8 and R10 at the start of a build: the Xcode pack's SDK (toolchain metadata) against the project's `xcode:` pin,
 /// and its Swift toolchain against the SDK's Xcode. `prepare` runs the same checks first (nothing recorded), so a wrong
-/// image is refused before the JS install, prebuild and CocoaPods run; `build` checks again and records the result
+/// Xcode is refused before the JS install, prebuild and CocoaPods run; `build` checks again and records the result
 /// (`BuildSDKRecord`, `<stage dir>/sdk.json`).
 public enum BuildSDKCheck {
     public struct Result {
@@ -32,7 +32,7 @@ public enum BuildSDKCheck {
         var meta: ToolchainMeta?
         do { meta = try metaURL.map { try ToolchainMeta.load(from: $0) } } catch let e as XlessError {
             if let pin {
-                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)", fix: "install Xcode \(pin) (`xless setup --xcode <path to Xcode \(pin)'s .xip>`), or build in an xless image made from it (`xless setup --docker --xcode …`, tags *-xcode\(pin))")
+                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)", fix: "prepare Xcode \(pin)'s pack again: `xless setup --xcode <path to Xcode \(pin)'s .xip>` (`xless setup --docker --xcode …` for xless run --docker)")
             }
         }
         if let meta { try XcodePin.check(pin: pin, meta: meta, platform: platform, file: file, stage: stage) }

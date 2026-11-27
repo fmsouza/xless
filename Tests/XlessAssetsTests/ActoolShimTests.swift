@@ -78,7 +78,7 @@ func versionProbeAnswersAsTheImagesActool(_ build: String, _ bundle: String, _ s
         let r = await runShim(args, build: "99A9999")
         #expect(r.exitCode == 70)
         #expect(r.stdout.isEmpty)
-        #expect(r.stderr.contains("this image's Xcode build 99A9999 has no measured asset/storyboard tools profile"), "\(r.stderr)")
+        #expect(r.stderr.contains("the Xcode build 99A9999 that this build uses has no measured asset/storyboard tools profile"), "\(r.stderr)")
         #expect(r.stderr.contains("xless setup --xcode"), "\(r.stderr)")
     }
     #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)

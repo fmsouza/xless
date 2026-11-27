@@ -104,7 +104,7 @@ public enum ReactNativeInspectReport {
             "number: \(r.config.buildScheme == .dated ? "(chosen when a build starts)" : r.config.build)",
             "next: \(nextBuild ?? "(needs App Store Connect credentials)")",
             "signing: none at build (CODE_SIGNING_ALLOWED=NO); entitlements recorded in .xless/build/ios/entitlements.json",
-            "xcode: \(o.xcode.map { "\"\($0)\" (prepare refuses an image whose SDK comes from another Xcode)" } ?? "not pinned (the image's SDK)")",
+            "xcode: \(o.xcode.map { "\"\($0)\" (prepare and build use that Xcode's pack, and stop without one)" } ?? "not pinned (the newest Xcode there is a pack of)")",
             "identifiers.replace: \(o.identifiers.isEmpty ? "none" : "\(o.identifiers.map.count) identifier(s), in entitlements (sign) and Info.plist string values (finalize)")",
         ])
         out.removeLast()

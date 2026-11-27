@@ -42,7 +42,7 @@ private func noToolchain() throws -> SwiftToolchain? { nil }
         try BuildSDKCheck.checkAndRecord(stageRoot: stage, pin: "26.2", platform: .ios, file: "the overlay", metaURL: url, loadToolchain: noToolchain)
     }
     #expect(e?.stage == .build && e?.stage.exitCode == 12)
-    #expect(e?.cause == "the overlay pins xcode: \"26.2\", but this image has the iphoneos27.0 SDK from Xcode 27.0 (27A266a)")
+    #expect(e?.cause == "the overlay pins xcode: \"26.2\", but the Xcode pack it would build with has the iphoneos27.0 SDK from Xcode 27.0 (27A266a)")
     #expect(BuildSDKRecord.load(in: stage) == nil)
     #expect(!FileManager.default.fileExists(atPath: BuildSDKRecord.url(in: stage).path))
 }

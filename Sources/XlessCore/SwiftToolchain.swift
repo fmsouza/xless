@@ -50,7 +50,7 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
         }
         var toolchain: SwiftToolchain
         do { toolchain = try JSONDecoder().decode(SwiftToolchain.self, from: data) } catch {
-            throw XlessError(stage, "the Swift toolchain record \(record.path) is invalid: \(error)", fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
+            throw XlessError(stage, "the Swift toolchain record \(record.path) is invalid: \(error)", fix: "prepare the Xcode's pack again: xless setup --xcode <Xcode.xip> (xless setup --docker --xcode … for xless run --docker)")
         }
         if !toolchain.root.hasPrefix("/") {
             // `.` and `..` removed by hand: Foundation's standardizing would also rewrite the directory (/private/var → /var).
@@ -93,29 +93,29 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     public func verifiedCompiler(stage: Stage = .build) throws -> String {
         let out: String
         do { out = try Shell.run(tool("swiftc"), ["--version"], stage: stage).stdout } catch {
-            throw XlessError(stage, "the Swift toolchain \(root) cannot run swiftc: \(error)", fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
+            throw XlessError(stage, "the Swift toolchain \(root) cannot run swiftc: \(error)", fix: "prepare the Xcode's pack again: xless setup --xcode <Xcode.xip> (xless setup --docker --xcode … for xless run --docker)")
         }
         let line = out.split(separator: "\n").first.map(String.init) ?? ""
         guard let have = Self.parseVersion(out), DottedVersion(have) == DottedVersion(version) else {
-            throw XlessError(stage, "\(tool("swiftc")) says \"\(line)\", but the image records Swift \(version)",
-                             fix: "run xless setup --xcode <Xcode.xip> again (with --docker for the images)")
+            throw XlessError(stage, "\(tool("swiftc")) says \"\(line)\", but the toolchain's record (swift-toolchain.json) says Swift \(version)",
+                             fix: "prepare the Xcode's pack again: xless setup --xcode <Xcode.xip> (xless setup --docker --xcode … for xless run --docker)")
         }
         return line
     }
 
-    /// The build stage's check (Ruling R10): the toolchain must be the one the image's Xcode ships (`meta.swiftVersion`,
+    /// The build stage's check (Ruling R10): the toolchain must be the one the pack's Xcode ships (`meta.swiftVersion`,
     /// measured from that Xcode by `xless sdk export`). nil when the Xcode has no toolchain record: refused for a pinned
     /// project, otherwise the `swift` on PATH compiles. Metadata from before Ruling R10 (no `swiftVersion`) is not checked.
     public static func check(_ toolchain: SwiftToolchain?, meta: ToolchainMeta?, pin: String?, stage: Stage = .build) throws -> BuildSwiftRecord? {
         guard let toolchain else {
             guard let pin else { return nil }
             throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but its Xcode records no Swift toolchain (no swift-toolchain.json): it was set up before Ruling R10",
-                             fix: "set up Xcode \(pin) again (xless setup --xcode <path to Xcode \(pin)'s .xip>, with --docker for its images)")
+                             fix: "set up Xcode \(pin) again (xless setup --xcode <path to Xcode \(pin)'s .xip>, with --docker for xless run --docker)")
         }
         let compiler = try toolchain.verifiedCompiler(stage: stage)
         if let meta, let apple = meta.swiftVersion, !matches(openSource: toolchain.version, apple: apple) {
-            throw XlessError(stage, "this image compiles with Swift \(toolchain.version), but its SDK's Xcode \(XcodePin.xcodeVersion(meta)) (\(meta.xcodeBuild)) ships Swift \(apple)",
-                             fix: "set up that Xcode again with xless setup --xcode <Xcode.xip> (with --docker for its images), which installs the toolchain versions.env maps it to (XCODE_SWIFT_\(meta.xcodeBuild))")
+            throw XlessError(stage, "the Xcode's pack compiles with Swift \(toolchain.version), but its SDK's Xcode \(XcodePin.xcodeVersion(meta)) (\(meta.xcodeBuild)) ships Swift \(apple)",
+                             fix: "prepare that Xcode's pack again with xless setup --xcode <Xcode.xip> (with --docker for xless run --docker), which installs the toolchain versions.env maps it to (XCODE_SWIFT_\(meta.xcodeBuild))")
         }
         return BuildSwiftRecord(version: toolchain.version, root: toolchain.root, compiler: compiler, xcodeSwiftVersion: meta?.swiftVersion)
     }

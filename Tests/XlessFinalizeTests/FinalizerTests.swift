@@ -334,7 +334,7 @@ let meta262 = ToolchainMeta(
         try Finalizer.run(input: iosApp(), outputDir: out, platform: .ios, config: config(privacyLine), meta: meta,
                           built: BuildSDKRecord(pin: nil, toolchain: meta262), log: { _ in })
     }
-    #expect(e?.stage == .finalize && e?.cause.contains("built with Xcode 26.2 (17C52)") == true && e?.cause.contains("this image has Xcode 27.0 (27A266a)") == true)
+    #expect(e?.stage == .finalize && e?.cause.contains("built with Xcode 26.2 (17C52)") == true && e?.cause.contains("but the Xcode here now is Xcode 27.0 (27A266a)") == true)
     #expect(!FileManager.default.fileExists(atPath: out.path))
     // The same SDK, or no record (a build before records existed): stamped.
     _ = try Finalizer.run(input: iosApp(), outputDir: out, platform: .ios, config: config(privacyLine), meta: meta,
@@ -346,7 +346,7 @@ let meta262 = ToolchainMeta(
     let e = #expect(throws: XlessError.self) {
         try Finalizer.run(input: iosApp(), outputDir: out, platform: .ios, config: config(privacyLine + "\nxcode: \"26.2\""), meta: meta, log: { _ in })
     }
-    #expect(e?.stage == .finalize && e?.cause.hasPrefix("xless.yml pins xcode: \"26.2\", but this image has the iphoneos27.0 SDK from Xcode 27.0") == true)
+    #expect(e?.stage == .finalize && e?.cause.hasPrefix("xless.yml pins xcode: \"26.2\", but the Xcode pack it would build with has the iphoneos27.0 SDK from Xcode 27.0") == true)
 }
 
 @Test func identifiersAreReplacedInEveryBundlesInfoPlistBeforeSigning() throws {

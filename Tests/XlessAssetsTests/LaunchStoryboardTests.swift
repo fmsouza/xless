@@ -145,6 +145,6 @@ func launchStoryboardCompiledIntoBundleRoot(family: [Int], minimumOS: String, fl
                                           profile: testProfile("99A9999"))
     }
     #expect(e.stage == .assets)
-    #expect(e.cause == "this image's Xcode build 99A9999 has no measured asset/storyboard tools profile")
+    #expect(e.cause == "the Xcode build 99A9999 that this build uses has no measured asset/storyboard tools profile")
     #expect(e.fix.contains("xless setup --xcode"))
 }
