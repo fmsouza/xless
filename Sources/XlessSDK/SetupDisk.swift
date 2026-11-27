@@ -1,9 +1,11 @@
 import Foundation
 
 /// The free space `xless setup` asks for before it runs anything, in two places: the cache (the SDK export, which xtool
-/// expands the .xip into) and Docker's data root (the four images and their build cache). Each figure is per
-/// architecture, from versions.env (`XLESS_SETUP_CACHE_GB`, `XLESS_SETUP_DOCKER_GB`); an environment variable of the same
-/// name wins. The cache figure counts only the architectures whose SDK is exported in this run.
+/// expands the .xip into; with --docker the image's setup exports into the host's cache too) and Docker's data root (the
+/// image, its kits, their build cache, and the pack volumes). Each figure is per architecture, from versions.env
+/// (`XLESS_SETUP_CACHE_GB`, `XLESS_SETUP_DOCKER_GB`); an environment variable of the same name wins. The cache figure counts
+/// only the architectures whose SDK is exported in this run. The setup in the image checks the store it prepares the pack
+/// in against `XLESS_SETUP_NATIVE_GB` (the host's value, when it sets one, goes into its container).
 public enum SetupDisk {
     public static let cacheKey = "XLESS_SETUP_CACHE_GB"
     public static let dockerKey = "XLESS_SETUP_DOCKER_GB"

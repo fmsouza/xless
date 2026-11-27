@@ -48,7 +48,7 @@ public enum NativeSetupPlan {
     public static func swiftVersion(for xcode: KnownXcode, table: [String: String]) throws -> String {
         guard let v = table["XCODE_SWIFT_\(xcode.build)"], !v.isEmpty else {
             throw XlessError(.sdk, "versions.env maps Xcode \(xcode.shortVersion) (\(xcode.build)) to no Swift toolchain (XCODE_SWIFT_\(xcode.build))",
-                             fix: "use a supported Xcode, or build the images instead: xless setup --docker …")
+                             fix: "use an Xcode this xless supports, or an xless that supports this one")
         }
         return v
     }
