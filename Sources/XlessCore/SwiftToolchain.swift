@@ -59,12 +59,16 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     /// of the same release, as an Xcode pack whose Swift is the image's own holds (fitted to its SDK, so its tools stay on
     /// PATH: `isEngine` is false). It then builds as the engine's SwiftPM does, with the same arguments and in the same
     /// scratch directory, so its products are those of an image with that Xcode built in. Only another release builds its
-    /// own way (Ruling R10).
+    /// own way (Ruling R10). The engine's way (the triple, no product named) is SwiftPM 6.4's, so a copy below 6.4 never
+    /// takes it, even where the engine is that release too (a Linux host's own Swift).
     public func isEngineRelease(_ engine: String? = SwiftToolchain.engineRelease) -> Bool {
         if isEngine { return true }
         guard let engine = engine.flatMap(DottedVersion.init), let mine = DottedVersion(version) else { return false }
-        return engine == mine
+        return engine == mine && mine >= Self.engineWayFrom
     }
+
+    /// The first SwiftPM release that builds as the images' engine does (`isEngineRelease`): 6.4, measured.
+    static let engineWayFrom = DottedVersion("6.4")!
 
     /// The record at `record`: a `root` relative to the record's directory (a pack's, which can be moved) is made
     /// absolute; an absolute one (an older record, `XLESS_SWIFT_TOOLCHAIN`'s) stays as it is.

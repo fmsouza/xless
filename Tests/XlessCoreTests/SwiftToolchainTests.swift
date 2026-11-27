@@ -51,6 +51,11 @@ private func meta(swift: String?) -> ToolchainMeta {
     #expect(copy.isEngineRelease("6.4.0") && copy.isEngineRelease("6.4"))
     #expect(!copy.isEngineRelease("6.4.1") && !copy.isEngineRelease("6.2.3") && !copy.isEngineRelease(nil) && !copy.isEngineRelease("main"))
     #expect(!SwiftToolchain(version: "6.2.3", root: "/xcodes/26.2-17C52-arm64/toolchain").isEngineRelease("6.4.0"))
+    // The engine's way of building (the triple, no product named) is SwiftPM 6.4's: an older copy never takes it, even
+    // where the engine is that release too (a Linux host's own Swift).
+    #expect(!SwiftToolchain(version: "6.2.3", root: "/xcodes/26.2-17C52-arm64/toolchain").isEngineRelease("6.2.3"))
+    #expect(!SwiftToolchain(version: "6.3.0", root: "/xcodes/26.4-17E1-arm64/toolchain").isEngineRelease("6.3"))
+    #expect(SwiftToolchain(version: "6.5", root: "/xcodes/28.0-28A1-arm64/toolchain").isEngineRelease("6.5.0"))
     // The engine itself, whatever its release is measured to be.
     #expect(SwiftToolchain(version: "6.4", root: "/").isEngineRelease(nil) && SwiftToolchain(version: "6.4", root: "/").isEngineRelease("6.2.3"))
 }
