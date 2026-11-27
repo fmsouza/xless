@@ -49,9 +49,12 @@ public struct XcodeStore: Sendable {
         root.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch))
     }
 
+    /// The pack directories: not a pack being prepared (`<name>.partial`, which has a `pack.json` before it is complete) or
+    /// being replaced (`<name>.old`).
     func subdirectories() -> [URL] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
-        return urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        return urls.filter { !$0.lastPathComponent.hasSuffix(".partial") && !$0.lastPathComponent.hasSuffix(".old") }
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 

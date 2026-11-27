@@ -144,3 +144,14 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(XcodeVersion.canonical("26") == "26.0")
     #expect(XcodeVersion.canonical("26.2.1") == "26.2.1")
 }
+
+@Test func aPackBeingPreparedOrSwappedIsNoPackOfTheStore() throws {
+    let store = try tempDir()
+    try makePack(in: store, xcode: "26.2", build: "17C52")
+    for leftover in ["26.2-17C52-arm64.partial", "27.0-27A266a-arm64.partial", "26.2-17C52-arm64.old"] {
+        try PackManifest(format: 1, xcode: "27.0", build: "27A266a", arch: "arm64", swift: "6.4.0", mode: .own, parts: ["sdk": "h"])
+            .write(to: store.appendingPathComponent(leftover).appendingPathComponent("pack.json"))
+    }
+    #expect(XcodeStore(root: store).packs().map(\.root.lastPathComponent) == ["26.2-17C52-arm64"])
+    #expect(try resolve(store).manifest.xcode == "26.2")
+}
