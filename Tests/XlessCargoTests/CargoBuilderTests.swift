@@ -260,12 +260,32 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
     /// is removed from `deps/` so that cargo links it again through the wrapper.
     @Test func buildRemovesALinkedExecutableTheDebugDirectoryHasNoRecordOf() async throws {
         let f = try fixture(.ios)
+        try write("(no pack)\n", f.ctx.packRecord)   // built before with this pack: only the debug link is new
         let deps = f.ctx.workRoot.deletingLastPathComponent().appendingPathComponent("target/aarch64-apple-ios/release/deps")
         try write("old", deps.appendingPathComponent("hello_mobile-0a1b2c"))
         try write("", deps.appendingPathComponent("hello_mobile-0a1b2c.d"))
         _ = try await CargoBuilder.build(ctx: f.ctx)
         #expect(!fm.fileExists(atPath: deps.appendingPathComponent("hello_mobile-0a1b2c").path))
         #expect(fm.fileExists(atPath: deps.appendingPathComponent("hello_mobile-0a1b2c.d").path))
+    }
+
+    /// Cargo's outputs for the app's targets follow the Xcode pack (`PackOutputs`): built with another pack, or before the
+    /// record, they are removed and cargo builds them again; with the same pack, kept.
+    @Test func buildStartsAfreshWithAnotherPack() async throws {
+        let f = try fixture(.macos)
+        let target = f.ctx.workRoot.deletingLastPathComponent().appendingPathComponent("target")
+        let stale = target.appendingPathComponent("aarch64-apple-darwin/release/deps/stale.o"), host = target.appendingPathComponent("release/host")
+        try write("old", stale)
+        try write("host", host)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: stale.path) && fm.fileExists(atPath: host.path))
+        #expect(try String(contentsOf: f.ctx.packRecord, encoding: .utf8) == "(no pack)\n")
+        try write("new", stale)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(fm.fileExists(atPath: stale.path))
+        try write("other sdk=a swift-build=b\n", f.ctx.packRecord)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: stale.path))
     }
 
     @Test func prepareSyncsInstallsTheToolchainAndRecordsTheInputs() async throws {

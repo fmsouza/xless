@@ -86,6 +86,11 @@ public struct XcodePack: Equatable, Sendable {
     }
 
     public var name: String { Self.name(xcode: manifest.xcode, build: manifest.build, arch: manifest.arch) }
+    /// What build outputs made with this pack record of it: its name and the recipe hash of each part ("none" for a part
+    /// it lacks). A pack prepared again by another recipe is another pack; one mounted elsewhere is the same.
+    public var identity: String {
+        ([name] + PackPart.allCases.map { "\($0.rawValue)=\(manifest.parts[$0.rawValue] ?? "none")" }).joined(separator: " ")
+    }
     public var manifestFile: URL { root.appendingPathComponent("pack.json") }
     /// The SwiftPM config home that holds the installed SDK.
     public var configHome: URL { root.appendingPathComponent("config") }

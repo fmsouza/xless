@@ -266,3 +266,41 @@ private func realGit() throws -> String {
     _ = try WorkCopy.sync(source: src, to: work, origin: "/host/a")
     #expect(throws: XlessError.self) { try WorkCopy.sync(source: src, to: work, origin: "/host/b") }
 }
+
+/// Build outputs kept in a work copy follow the Xcode pack: when the pack recorded beside them is not the one in use (no
+/// record counts as another), they are removed before the build, and the pack in use is recorded.
+@Test func packOutputsFollowThePack() throws {
+    let work = tmp()
+    let record = work.appendingPathComponent(".xless/pack")
+    let target = work.appendingPathComponent("target/aarch64-apple-ios"), other = work.appendingPathComponent("target/release")
+    try write(target, "release/app", "old")
+    try write(other, "build/script", "host")
+    // A work copy of before the record: its outputs go.
+    #expect(try PackOutputs.reset([target, work.appendingPathComponent(".xless/none")], record: record, identity: "p sdk=a swift-build=b") == [target])
+    #expect(!fm.fileExists(atPath: target.path) && fm.fileExists(atPath: other.path))
+    #expect(try String(contentsOf: record, encoding: .utf8) == "p sdk=a swift-build=b\n")
+    // The same pack: kept.
+    try write(target, "release/app", "new")
+    #expect(try PackOutputs.reset([target], record: record, identity: "p sdk=a swift-build=b").isEmpty)
+    #expect(fm.fileExists(atPath: target.appendingPathComponent("release/app").path))
+    // The pack prepared again by another recipe: removed, and the new one recorded.
+    #expect(try PackOutputs.reset([target], record: record, identity: "p sdk=c swift-build=b") == [target])
+    #expect(!fm.fileExists(atPath: target.path))
+    #expect(try String(contentsOf: record, encoding: .utf8) == "p sdk=c swift-build=b\n")
+}
+
+/// The outputs are those of every Apple target and platform (an iOS and a macOS build share a work copy and its record),
+/// never the host's.
+@Test func packOutputsAreTheAppleTargetsOfEveryPlatform() {
+    let work = URL(fileURLWithPath: "/w"), target = URL(fileURLWithPath: "/w/target")
+    #expect(PackOutputs.outputs(work: work, targetDir: target).map(\.path) == [
+        "/w/target/aarch64-apple-ios", "/w/target/aarch64-apple-darwin", "/w/target/x86_64-apple-darwin",
+        "/w/.xless/swift", "/w/.xless/dsym", "/w/.xless/mac", "/w/.xless/cargo-mac",
+    ])
+    #expect(PackOutputs.record(work: work).path == "/w/.xless/pack")
+}
+
+/// Without a pack (no store, no XLESS_XCODE), the identity says so.
+@Test func noPackIsAnIdentityToo() {
+    #expect(PackOutputs.identity(env: ["HOME": tmp().path, "PATH": "/usr/bin:/bin"]) == "(no pack)")
+}

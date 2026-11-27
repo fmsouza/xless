@@ -79,3 +79,14 @@ private func leftovers(beside url: URL) throws -> [String] {
     #expect(p.has(.sdk))
     #expect(!p.has(.swiftBuild))
 }
+
+/// What outputs made with a pack record of it: its name and the recipe hash of each part (a part it lacks is "none"), so
+/// a pack prepared again by another recipe is another pack, wherever it is mounted.
+@Test func aPacksIdentityNamesItAndItsRecipes() throws {
+    let root = URL(fileURLWithPath: "/xcodes/26.2-17C52-arm64")
+    let pack = XcodePack(root: root, manifest: manifest(parts: ["sdk": "a", "swift-build": "b"]))
+    #expect(pack.identity == "26.2-17C52-arm64 sdk=a swift-build=b")
+    #expect(XcodePack(root: URL(fileURLWithPath: "/elsewhere/p"), manifest: pack.manifest).identity == pack.identity)
+    #expect(XcodePack(root: root, manifest: manifest(parts: ["sdk": "c", "swift-build": "b"])).identity != pack.identity)
+    #expect(XcodePack(root: root, manifest: manifest(parts: ["sdk": "a"])).identity == "26.2-17C52-arm64 sdk=a swift-build=none")
+}
