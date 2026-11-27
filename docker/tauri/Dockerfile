@@ -4,8 +4,8 @@
 #
 # `xless run --docker` builds it when it is needed, and `xless setup --docker --with tauri` ahead of that. It is an ordinary
 # Dockerfile, and a start for one of your own (docs/images.md):
-#   docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t my-image <this folder>
-# Everything downloaded is pinned by its SHA-256. The image holds Apple's SDK, as the one it is built on: never push it.
+#   docker build --pull=false --build-arg XLESS_IMAGE=xless:<version>-arm64 -t my-image <this folder>
+# Everything downloaded is pinned by its SHA-256. Nothing in it is an Xcode's: a build mounts the Xcode pack read-only.
 ARG XLESS_IMAGE
 FROM ${XLESS_IMAGE}
 ARG TARGETARCH

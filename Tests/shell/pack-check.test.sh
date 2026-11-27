@@ -16,11 +16,13 @@ mkdir -p "$shims/prepare"
 # Every fake records that it ran, and the pack it ran against.
 fake() { printf '#!/bin/sh\necho "%s $XLESS_XCODE $*" >> "$FAKE_LOG"\n%s\n' "$1" "$2" > "$shims/$1"; chmod +x "$shims/$1"; }
 version='printf "<plist><dict><key>bundle-version</key><string>24127</string></dict></plist>\n"'
-fake xcrun 'case "$1" in --sdk) echo "$XLESS_XCODE/config/swiftpm/swift-sdks/darwin.artifactbundle/iPhoneOS.sdk" ;; actool) shift; exec actool "$@" ;; *) exit 1 ;; esac'
+fake xcrun 'case "$1" in --sdk) echo "$XLESS_XCODE/config/swiftpm/swift-sdks/darwin.artifactbundle/iPhoneOS.sdk" ;; --find) echo "${XCRUN_FIND:-$(dirname "$0")/$2}" ;; actool) shift; exec actool "$@" ;; *) exit 1 ;; esac'
 fake actool "if [ -n \"\${ACTOOL_BROKEN:-}\" ]; then echo nothing; else $version; fi"
 fake ibtool "$version"
 fake xcodebuild 'printf "Xcode 26.2\nBuild version 17C52\n"'
-fake prepare/clang 'cat > /dev/null; while [ $# -gt 0 ]; do [ "$1" = -o ] && echo stub > "$2"; shift; done'
+# The header of a 64-bit arm64 Mach-O dynamic library (MH_MAGIC_64, CPU_TYPE_ARM64, MH_DYLIB, no load commands), or text.
+fake prepare/clang 'cat > /dev/null; while [ $# -gt 0 ]; do if [ "$1" = -o ]; then
+  if [ -n "${STUB_TEXT:-}" ]; then echo stub > "$2"; else printf "\317\372\355\376\014\000\000\001\000\000\000\000\006\000\000\000%024d" 0 | tr 0 "\000" > "$2"; fi; fi; shift; done'
 
 pack="$t/xcodes/26.2-17C52-arm64.partial"
 b="$pack/config/swiftpm/swift-sdks/darwin.artifactbundle"
@@ -45,6 +47,12 @@ grep -q "^prepare/clang $real -x c - -dynamiclib -o .* -install_name @rpath/S.fr
 
 check ACTOOL_BROKEN=1 && fail "an actool that answers no version was accepted"
 grep -q actool "$t/out" || fail "actool message: $(cat "$t/out")"
+
+check XCRUN_FIND=/usr/bin/actool && fail "an xcrun that finds another actool was accepted"
+grep -q 'xcrun --find actool' "$t/out" || fail "xcrun --find message: $(cat "$t/out")"
+
+check STUB_TEXT=1 && fail "a stub dylib that is no Mach-O was accepted"
+grep -q 'no 64-bit Mach-O' "$t/out" || fail "Mach-O message: $(cat "$t/out")"
 
 mkpack; rm "$inc/endian.h"; touch "$inc/endian.h"
 check && fail "an endian.h that is no link was accepted"

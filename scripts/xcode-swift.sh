@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Ruling R10: the Swift toolchain an Xcode's image compiles app code with. Reads Apple's Swift for the Xcode build
+# Ruling R10: the Swift toolchain an Xcode's pack compiles app code with (a check of versions.env's entry for an Xcode). Reads Apple's Swift for the Xcode build
 # from versions.env's table (XCODE_APPLE_SWIFT_<build>, measured once on the maintainer's Mac; nothing is executed),
 # looks the build up in the map (XCODE_SWIFT_<build>), checks the entry against the map's rule (same major.minor as
-# Apple's Swift, patch not above it), and prints the make variables for docker/Dockerfile, one per line:
-#   APP_SWIFT_VERSION=<x.y.z>            (empty when it is versions.env's SWIFT_VERSION: the image's own Swift)
+# Apple's Swift, patch not above it), and prints the toolchain's variables, one per line:
+#   APP_SWIFT_VERSION=<x.y.z>            (empty when it is versions.env's SWIFT_VERSION: the image's own Swift, fit mode own)
 #   APP_SWIFT_URL_AARCH64=… APP_SWIFT_SHA256_AARCH64=… APP_SWIFT_URL_X86_64=… APP_SWIFT_SHA256_X86_64=…
 # Refuses (exit 2) an Xcode without an entry, an entry that breaks the rule, and a release without pinned downloads.
-# Usage: scripts/xcode-swift.sh <Xcode build>       (scripts/build-images.sh runs it)
+# Usage: scripts/xcode-swift.sh <Xcode build>       (docs/maintainers.md: adding an Xcode)
 #   VERSIONS_ENV: the versions file (default: the repository's versions.env).
 set -euo pipefail
 

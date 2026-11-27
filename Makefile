@@ -11,17 +11,21 @@ test-linux:
 	  bash -c 'apt-get update -qq && apt-get install -y -qq zip unzip rsync git >/dev/null && swift test --scratch-path /scratch'
 
 XCODE ?= /Applications/Xcode.app
-# The image targets build these architectures. The SDK is exported to, and read from, $(SDK_DIR).
+# The image targets build these architectures. `make sdk-export` exports the SDK to $(SDK_DIR).
 ARCHS ?= arm64 amd64
 SDK_DIR ?= dist/sdk
 
 .PHONY: images
-# make images [XCODE=<Xcode.app | Xcode_*.xip>] [ARCHS="arm64"]: the image xless:local-<arch>-xcode<version> from one Xcode's SDK
-# and the Swift toolchain that Xcode ships (Ruling R10), with the xless of this checkout. A project pins it with
-# `xcode: "<version>"`; xless run selects the image from the pin. Mac only (scripts/build-images.sh; a .xip is expanded with
-# `xip --expand` first). Nothing here pushes an image: they hold Apple's SDK.
+# make images [ARCHS="arm64"]: the xless image of this checkout, xless:<short commit>[-dirty]-<arch> (scripts/build-images.sh).
+# It holds no Xcode: an Xcode is an Xcode pack, which `xless setup` prepares. Nothing here pushes an image.
 images:
-	scripts/build-images.sh "$(XCODE)" $(ARCHS)
+	scripts/build-images.sh $(ARCHS)
+
+.PHONY: test-image
+# make test-image [ARCHS="arm64"]: what the xless image of this checkout holds (Tests/shell/image-contents.test.sh), for each
+# architecture whose image is here.
+test-image:
+	for a in $(ARCHS); do XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-contents.test.sh || exit 1; done
 
 .PHONY: sdk-export
 sdk-export:

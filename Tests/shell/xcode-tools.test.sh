@@ -22,14 +22,6 @@ test_partial_match_refused() {   # a prefix or substring of a profiled build is 
     if "$S" "$b" >/dev/null 2>&1; then fail "'$b' accepted"; fi
   done
 }
-test_build_images_calls_it() {
-  grep -q 'xcode-tools.sh' "$repo/scripts/build-images.sh" || fail "build-images.sh does not call xcode-tools.sh"
-  # before anything is built: ahead of the first image build
-  local gate make
-  gate=$(grep -n 'xcode-tools.sh' "$repo/scripts/build-images.sh" | head -1 | cut -d: -f1)
-  make=$(grep -n 'docker-images.sh" '  "$repo/scripts/build-images.sh" | head -1 | cut -d: -f1)
-  [[ "$gate" -lt "$make" ]] || fail "the gate runs after a build"
-}
 test_rn_reference_refuses_unprofiled() {
   grep -q 'xcode-tools.sh' "$repo/scripts/rn-reference.sh" || fail "rn-reference.sh does not call xcode-tools.sh"
 }
@@ -37,6 +29,5 @@ test_rn_reference_refuses_unprofiled() {
 test_known_builds_pass
 test_unknown_build_refused
 test_partial_match_refused
-test_build_images_calls_it
 test_rn_reference_refuses_unprofiled
 echo PASS

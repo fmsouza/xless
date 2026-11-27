@@ -3,7 +3,7 @@
 # output formats xless has measured (an entry in Sources/XlessCore/XcodeToolsProfile.swift). The image's
 # actool/ibtool shims refuse a build without an entry (exit 70) and never write another Xcode's formats, so an image made
 # from an unprofiled Xcode could not compile an asset catalog or a storyboard: refuse it here, before anything is built.
-# Usage: scripts/xcode-tools.sh <Xcode build>        (scripts/build-images.sh and scripts/rn-reference.sh run it)
+# Usage: scripts/xcode-tools.sh <Xcode build>        (scripts/rn-reference.sh runs it)
 #   0  the build has a profile
 #   2  it has none: the commands that measure it are printed
 #   XCODE_TOOLS_PROFILE: the Swift file to read (default: the repository's XcodeToolsProfile.swift).

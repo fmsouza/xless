@@ -9,3 +9,7 @@ ThirdParty/**/.build
 ThirdParty/**/.swiftpm
 !docker/shims
 !docker/toolchain
+!versions.env
+!scripts/fit-toolchain.sh
+!scripts/pack-swift-build.sh
+!scripts/pack-check.sh

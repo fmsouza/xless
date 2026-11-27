@@ -53,6 +53,7 @@ jobs:
       # Every Tests/shell/*.test.sh runs. A test that genuinely needs docker or macOS starts with a guard that exits 0 with
       # "SKIP: <reason>"; each such test is listed here, one line per test, with its reason:
       #   xcode-native, overlay-native: they build with an installed Xcode, which is on a Mac only
+      #   image-contents: it reads a built xless image (make test-image), which no job builds
       - name: Shell tests
         run: |
           failed=""

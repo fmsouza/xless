@@ -1,10 +1,10 @@
 #!/bin/sh
 # Expo's ExpoModulesJSI build phase runs xcodebuild under `env -i` (PATH and HOME kept): restore the image settings the
-# shim needs (the SDK bundle's location, the shims, the toolchain headers, the SDK metadata), and the image's
+# shim needs (the shims, and the store of Xcode packs, where the one pack a container mounts is found), and the image's
 # SWIFT_DETERMINISTIC_HASHING (docker/Dockerfile), which the nested Swift Build run needs for the key order of the
-# binary property lists it writes (the framework's Info.plist) not to change from run to run.
-: "${XDG_CONFIG_HOME:=/opt/xless/config}" "${XLESS_SHIM_DIR:=/opt/xless/shims}" \
-  "${XLESS_TOOLCHAIN_INCLUDE:=/opt/xless/toolchain/usr/include}" "${XLESS_TOOLCHAIN_META:=/opt/xless/toolchain-meta.json}"
+# binary property lists it writes (the framework's Info.plist) not to change from run to run. Nothing else is set: a
+# variable set here would override the pack's parts.
+: "${XLESS_SHIM_DIR:=/opt/xless/shims}" "${XLESS_XCODES:=/xcodes}"
 SWIFT_DETERMINISTIC_HASHING=1
-export XDG_CONFIG_HOME XLESS_SHIM_DIR XLESS_TOOLCHAIN_INCLUDE XLESS_TOOLCHAIN_META SWIFT_DETERMINISTIC_HASHING
+export XLESS_SHIM_DIR XLESS_XCODES SWIFT_DETERMINISTIC_HASHING
 exec xless shim xcodebuild "$@"

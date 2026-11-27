@@ -17,12 +17,20 @@ trap 'rm -rf "$tmp"' EXIT
 
 xcrun --sdk iphoneos --show-sdk-path >/dev/null || die "xcrun --sdk iphoneos --show-sdk-path finds no iOS SDK in the pack"
 actool --version --output-format xml1 | grep -qE '<string>[0-9]+</string>' || die "actool answers no version (an Xcode without a profile?)"
+[ "$(xcrun --find actool)" = "$shims/actool" ] || die "xcrun --find actool does not find the actool shim ($shims/actool)"
 xcrun actool --version --output-format xml1 | grep -qE '<string>[0-9]+</string>' || die "xcrun actool answers no version"
 ibtool --version --output-format xml1 | grep -qE '<string>[0-9]+</string>' || die "ibtool answers no version (an Xcode without a profile?)"
 xcodebuild -version | grep -qx 'Build version [0-9A-Za-z]*' || die "xcodebuild -version prints no build version"
 echo 'int f(void){return 0;}' | PATH="$shims/prepare:$PATH" clang -x c - -dynamiclib -o "$tmp/stub" -install_name @rpath/S.framework/S \
   || die "the iOS stub dylib (Expo's ExpoModulesJSI) does not link"
 test -s "$tmp/stub" || die "the iOS stub dylib is empty"
+# A 64-bit Mach-O (magic feedfacf, little-endian) of file type MH_DYLIB (6), which CocoaPods' embed-frameworks script takes
+# for "dynamically linked shared library" (`file`, where it is installed, says so too).
+[ "$(od -An -tx1 -N4 "$tmp/stub" | tr -d ' \n')" = cffaedfe ] && [ "$(od -An -tu4 -j12 -N4 "$tmp/stub" | tr -d ' \n')" = 6 ] \
+  || die "the iOS stub dylib is no 64-bit Mach-O dynamic library"
+if command -v file >/dev/null 2>&1; then
+  file "$tmp/stub" | grep -q 'Mach-O 64-bit.*dynamically linked shared library' || die "file does not take the iOS stub dylib for a dynamic library: $(file "$tmp/stub")"
+fi
 "$pack/swift-build/swbuild" --help >/dev/null || die "$pack/swift-build/swbuild --help fails"
 test -f "$bundle/toolset-swb.json" || die "no $bundle/toolset-swb.json (Swift Build's toolset of the SDK)"
 set -- "$bundle"/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS[0-9]*.sdk

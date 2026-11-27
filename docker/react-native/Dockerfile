@@ -4,8 +4,8 @@
 #
 # `xless run --docker` builds it when it is needed, and `xless setup --docker --with react-native` ahead of that. It is an
 # ordinary Dockerfile, and a start for one of your own (docs/images.md):
-#   docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t my-image <this folder>
-# Everything downloaded is pinned by its SHA-256. The image holds Apple's SDK, as the one it is built on: never push it.
+#   docker build --pull=false --build-arg XLESS_IMAGE=xless:<version>-arm64 -t my-image <this folder>
+# Everything downloaded is pinned by its SHA-256. Nothing in it is an Xcode's: a build mounts the Xcode pack read-only.
 ARG XLESS_IMAGE
 # Where Ruby and hermesc are compiled: the system the xless image is built on (versions.env's SWIFT_IMAGE), not that image, so a
 # new xless image compiles neither again.
@@ -99,9 +99,7 @@ COPY --from=hermes /out/LICENSE /out/SOURCE /usr/local/share/doc/hermes/
 RUN ruby -v | grep -qF "ruby ${RN_RUBY_VERSION}" && bundle -v && hermesc -version | grep -qF "Hermes release version: ${HERMES_TAG#hermes-v}" \
  && (cd /tmp && ruby -rmkmf -e 'exit(try_link("int main(void) { return 0; }"))' && rm -f mkmf.log) \
  && echo 'print("ok")' > /tmp/smoke.js && hermesc -emit-binary -out /tmp/smoke.hbc /tmp/smoke.js && test -s /tmp/smoke.hbc \
- && rm /tmp/smoke.js /tmp/smoke.hbc \
- && echo 'int f(void){return 0;}' | PATH=/opt/xless/shims/prepare:$PATH clang -x c - -dynamiclib -o /tmp/stub -install_name @rpath/S.framework/S \
- && file /tmp/stub | grep -q 'Mach-O 64-bit.*dynamically linked shared library' && rm /tmp/stub
+ && rm /tmp/smoke.js /tmp/smoke.hbc
 # `xless prepare` folds the image's identity into its fingerprint: these tools are part of it. (A Dockerfile of your own that
 # changes what prepare runs does the same.)
 ENV XLESS_IMAGE_ID=${XLESS_IMAGE_ID}-node${NODE_VERSION}-ruby${RN_RUBY_VERSION}-bundler${RN_BUNDLER_VERSION}-${HERMES_TAG}
