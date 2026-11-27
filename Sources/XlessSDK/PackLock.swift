@@ -78,21 +78,25 @@ extension PackStore {
     }
 
     /// Puts back every pack a setup left at `<name>.old` with no `<name>` (it stopped between the two renames of
-    /// `PackPlan.commit`), each under its lock; a pack another setup is preparing is left to it. `holding`: the pack whose
-    /// lock the caller holds already (a second lock of it, even in this process, would wait for that one). Returns the
-    /// names put back. For setup alone: a build never renames anything in the store.
+    /// `PackPlan.commit`), and removes a `<name>.old` beside a pack in place (it stopped before removing the one it
+    /// replaced), each under its lock; a pack another setup is preparing is left to it. `holding`: the pack whose lock the
+    /// caller holds already (a second lock of it, even in this process, would wait for that one). Returns the names put
+    /// back. For setup alone: a build never renames anything in the store.
     public static func recoverAll(_ store: XcodeStore, holding: String? = nil) throws -> [String] {
         let fm = FileManager.default
         let names = ((try? fm.contentsOfDirectory(atPath: store.root.path)) ?? [])
             .filter { $0.hasSuffix(".old") }.map { String($0.dropLast(4)) }.sorted()
         var back: [String] = []
-        for name in names where !fm.fileExists(atPath: store.root.appendingPathComponent(name).path) {
-            if name == holding {
-                if try PackPlan.recover(store.root.appendingPathComponent(name)) { back.append(name) }
-                continue
+        for name in names {
+            let final = store.root.appendingPathComponent(name)
+            func tidy() throws {
+                if fm.fileExists(atPath: final.path) {
+                    try PackPlan.removeTree(store.root.appendingPathComponent("\(name).old"))
+                } else if try PackPlan.recover(final) { back.append(name) }
             }
+            if name == holding { try tidy(); continue }
             guard let lock = try? PackLock(store: store, name: name, wait: false) else { continue }
-            if try withExtendedLifetime(lock, { try PackPlan.recover(store.root.appendingPathComponent(name)) }) { back.append(name) }
+            try withExtendedLifetime(lock) { try tidy() }
         }
         return back
     }

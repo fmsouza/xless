@@ -346,7 +346,9 @@ grep -q "^would remove the native install's $t/home/.swiftpm/swift-sdks/darwin.a
 [[ -d "$nh" ]] || fail "dry run removed the native install"
 on none --native
 [[ $code == 11 && -d "$nh/xcodes" ]] || fail "--native without a terminal removed the store: $code"
+mkdir -p "$nh/xcodes/26.2-17C52-arm64/toolchain/locked"; echo x > "$nh/xcodes/26.2-17C52-arm64/toolchain/locked/f"; chmod 500 "$nh/xcodes/26.2-17C52-arm64/toolchain/locked"
 run --native --yes
+[[ ! -e "$nh" ]] || chmod -R u+w "$nh"
 [[ $code == 0 ]] || fail "--native exits $code: $(cat "$t/err")"
 for p in .local/share/xless-native .swiftpm/swift-sdks/darwin.artifactbundle .config/xless/toolchain-meta.json; do
   [[ ! -e "$t/home/$p" ]] || fail "--native left $p"
@@ -363,6 +365,28 @@ run --native --yes
 [[ $code == 0 && -d "$store/26.2-17C52-arm64" && ! -e "$nh" ]] || fail "--native took the packs of a store of its own: $code $(cat "$t/err")"
 run --packs --yes
 [[ $code == 0 && ! -e "$store/26.2-17C52-arm64" && -f "$store/notes/f" ]] || fail "--packs with XLESS_XCODES: $code $(cat "$t/err")"
+# A pack with a directory that is not writable (as a toolchain unpacks) goes whole, its pack.json first; and what interrupted
+# setups left beside the packs (<name>.partial, <name>.old, <name>.lock) goes with them.
+mkdir -p "$store/26.2-17C52-arm64/toolchain/locked" "$store/27.0-27A266a-arm64.partial/toolchain" "$store/26.2-17C52-arm64.old/locked"
+echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; echo x > "$store/26.2-17C52-arm64/toolchain/locked/f"; echo x > "$store/26.2-17C52-arm64.old/locked/f"
+: > "$store/26.2-17C52-arm64.lock"; : > "$store/27.0-27A266a-arm64.lock"
+chmod 500 "$store/26.2-17C52-arm64/toolchain/locked" "$store/26.2-17C52-arm64.old/locked"
+run --packs --dry-run
+grep -qx "would remove the leftover $rt/store/26.2-17C52-arm64.old of an interrupted xless setup" "$t/out" \
+  && grep -qx "would remove the leftover $rt/store/27.0-27A266a-arm64.partial of an interrupted xless setup" "$t/out" || fail "--packs does not list the leftovers: $(cat "$t/out")"
+run --packs --yes
+left=$(cd "$store" && ls -A); chmod -R u+w "$store"
+[[ $code == 0 && "$left" == notes ]] || fail "--packs left part of a pack or a leftover: $code $left $(cat "$t/err")"
+# A store inside the cache (XLESS_XCODES under it): --cache leaves it, since its packs go with --packs only (asked about, and
+# not while in use); --cache --packs removes both.
+mkcache; mkdir -p "$cache/xcodes/26.2-17C52-arm64"; echo "$pack_json" > "$cache/xcodes/26.2-17C52-arm64/pack.json"
+extra=(XLESS_XCODES="$cache/xcodes")
+run --cache --yes
+[[ $code == 0 && -f "$cache/xcodes/26.2-17C52-arm64/pack.json" && ! -e "$cache/sdk" && ! -e "$cache/work" ]] || fail "--cache and a store in the cache: $code $(ls -R "$cache" 2>&1) $(cat "$t/err")"
+grep -qx "leaving the store of Xcode packs $t/home/.cache/xless/xcodes, inside the cache: --packs removes its packs" "$t/out" || fail "--cache does not say it leaves the store: $(cat "$t/out")"
+run --cache --packs --yes
+[[ $code == 0 && ! -e "$cache/xcodes/26.2-17C52-arm64" ]] || fail "--cache --packs and a store in the cache: $code $(cat "$t/err")"
+extra=(XLESS_XCODES="$store")
 # ... and --old leaves it whole.
 mkdir -p "$store/26.2-17C52-arm64"; echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; extra=(XLESS_XCODES="$store")
 run --old --yes

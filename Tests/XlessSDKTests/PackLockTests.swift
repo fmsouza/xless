@@ -147,3 +147,31 @@ private final class Flag: @unchecked Sendable {
     #expect(try PackPlan.recover(final) == false)
     #expect(!fm.fileExists(atPath: final.path))
 }
+
+/// A pack set aside (`<name>.old`) beside the pack in place is what a setup that stopped before removing it left: the next
+/// setup removes it, under that pack's lock (left while another setup holds it).
+@Test func recoverAllRemovesAStaleOldBesideAPackInPlace() throws {
+    let store = try tempStore()
+    defer { try? fm.removeItem(at: store.root.deletingLastPathComponent()) }
+    let final = store.directory(xcode: "26.2", build: "17C52", arch: "arm64")
+    let old = store.root.appendingPathComponent("\(name).old")
+    try manifest(parts: ["sdk": "new"]).write(to: final.appendingPathComponent("pack.json"))
+    try manifest(parts: ["sdk": "old"]).write(to: old.appendingPathComponent("pack.json"))
+    try fm.createDirectory(at: old.appendingPathComponent("locked"), withIntermediateDirectories: true)
+    try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: old.appendingPathComponent("locked").path)
+    do {
+        let other = try PackLock(store: store, name: name, wait: false)
+        #expect(try PackStore.recoverAll(store).isEmpty)
+        #expect(fm.fileExists(atPath: old.path))
+        _ = other
+    }
+    #expect(try PackStore.recoverAll(store).isEmpty)
+    #expect(!fm.fileExists(atPath: old.path))
+    #expect(try PackManifest.load(from: final.appendingPathComponent("pack.json")).parts == ["sdk": "new"])
+    // The caller's own pack, its lock held.
+    try manifest(parts: ["sdk": "old"]).write(to: old.appendingPathComponent("pack.json"))
+    let mine = try PackLock(store: store, name: name, wait: false)
+    #expect(try PackStore.recoverAll(store, holding: name).isEmpty)
+    #expect(!fm.fileExists(atPath: old.path))
+    _ = mine
+}

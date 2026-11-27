@@ -160,6 +160,13 @@ struct CleanCommand: AsyncParsableCommand {
             let u = useOf(pack: p)
             if case .free = u { removableOwn.append(p) } else { left.append((p.root.path, u)) }
         }
+        // What interrupted setups left in that store beside the packs: <name>.partial, <name>.old, <name>.lock, of a pack's name.
+        let leftovers = (doPacks || listOnly) ? ownStore.map(Self.leftovers(in:)) ?? [] : []
+        // A store inside the cache goes with the cache only when its packs are removed too (--packs: asked about, and not in use).
+        let storesInCache = [givenStore].compactMap { $0 }.filter { real($0).hasPrefix(real(cacheRoot) + "/") }
+        func keptInCache() -> [URL] {
+            storesInCache.filter { store in !(doPacks && !left.contains { real(URL(fileURLWithPath: $0.pack)).hasPrefix(real(store) + "/") }) }
+        }
         var blockers: [(pack: String, use: Use)] = []
         for p in nativePacks {
             let u = useOf(pack: p)
@@ -184,6 +191,7 @@ struct CleanCommand: AsyncParsableCommand {
             doNative && nativePaths.contains(layout.root) && !rootEmpty ? "the native install \(real(layout.root))" : nil,
             doNative && !homeBlocked && !nativePacks.isEmpty ? "\(nativePacks.count) Xcode pack\(nativePacks.count == 1 ? "" : "s") of the native install" : nil,
             doPacks && !removableOwn.isEmpty ? "\(removableOwn.count) Xcode pack\(removableOwn.count == 1 ? "" : "s") of \(ownStore?.path ?? "your store")" : nil,
+            doPacks && !leftovers.isEmpty ? "what \(leftovers.count == 1 ? "an interrupted setup" : "interrupted setups") left there" : nil,
             !oldNative.isEmpty ? "what an older xless installed natively" : nil,
         ].compactMap { $0 }
         let mustAsk = removing && !questions.isEmpty && !yes
@@ -216,6 +224,7 @@ struct CleanCommand: AsyncParsableCommand {
         for (pack, use) in left { say("\(leave) the pack \(pack): \(Self.reason(use).listing)") }
         if listOnly || doCache {
             say(cacheExists ? "\(verb) the cache \(cacheRoot.path) (\(Self.size(of: cacheRoot)))" : "no cache at \(cacheRoot.path)")
+            for store in keptInCache() where cacheExists { say("\(leave) the store of Xcode packs \(real(store)), inside the cache: --packs removes its packs") }
             if cacheExists && !exports.isEmpty {
                 say("  it holds \(exports.count) SDK export\(exports.count == 1 ? "" : "s") (\(exports.sorted().joined(separator: ", "))): packs are prepared from them, and without the .xip they are your only copy; only --cache and --all remove them")
             }
@@ -238,6 +247,7 @@ struct CleanCommand: AsyncParsableCommand {
         }
         if listOnly || doPacks {
             for p in removableOwn { say("\(verb) the Xcode pack \(p.root.path): Xcode \(p.manifest.xcode) (\(p.manifest.build), \(p.manifest.arch))") }
+            for l in leftovers { say("\(verb) the leftover \(l.url.path) of an interrupted xless setup") }
             if !removableOwn.isEmpty { say(again) }
         }
         if listOnly {
@@ -281,18 +291,34 @@ struct CleanCommand: AsyncParsableCommand {
                 failures.append("the untagged older builds were not pruned")
             }
         }
-        if doCache && cacheExists {
-            do { try fm.removeItem(at: cacheRoot) } catch {
-                // Work copies built in a container as root belong to root.
-                failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
-            }
-        }
         // The packs of a store of its own: each is looked at again right before it goes (a run may have started since the question).
         if doPacks {
             for p in removableOwn {
                 let now = useOf(pack: p)
                 guard case .free = now else { left.append((p.root.path, now)); continue }
-                do { try fm.removeItem(at: p.root) } catch { failures.append("\(p.root.path) was not fully removed (\(Self.firstLine(error)))") }
+                do { try Self.removePack(p.root) } catch { failures.append("\(p.root.path) was not fully removed (\(Self.firstLine(error)))") }
+            }
+            // Under that pack's lock: a setup that runs now (it holds the lock) is preparing it, and keeps what it has. The lock
+            // file goes last, while it is held.
+            for name in Set(leftovers.map(\.name)).sorted() {
+                let mine = leftovers.filter { $0.name == name }.map(\.url)
+                guard let dir = mine.first?.deletingLastPathComponent(),
+                      let lock = try? PackLock(store: XcodeStore(root: dir), name: name, wait: false) else {
+                    say("leaving \(mine.map(\.path).joined(separator: ", ")): an xless setup of \(name) is running"); continue
+                }
+                withExtendedLifetime(lock) {
+                    for url in mine.filter({ !$0.path.hasSuffix(".lock") }) + [lock.file] {
+                        do { try PackPlan.removeTree(url) } catch { failures.append("\(url.path) was not fully removed (\(Self.firstLine(error)))") }
+                    }
+                }
+            }
+        }
+        if doCache && cacheExists {
+            // A store kept inside the cache stays, and so do the directories that lead to it.
+            let kept = keptInCache().map(real)
+            do { try Self.removeTree(cacheRoot, keeping: kept) } catch {
+                // Work copies built in a container as root belong to root.
+                failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
             }
         }
         if doNative {
@@ -305,7 +331,9 @@ struct CleanCommand: AsyncParsableCommand {
             }
             for p in nativePaths {
                 guard !(homeKept && p == layout.root), fm.fileExists(atPath: p.path) else { continue }
-                do { try fm.removeItem(at: p) } catch { failures.append("\(p.path) was not fully removed (\(Self.firstLine(error)))") }
+                // Its packs lose their pack.json first: a home not fully removed holds no half pack that would pass for one.
+                if p == layout.root { for pack in nativePacks { try? fm.removeItem(at: pack.manifestFile) } }
+                do { try PackPlan.removeTree(p) } catch { failures.append("\(p.path) was not fully removed (\(Self.firstLine(error)))") }
             }
         }
         for p in oldNative where fm.fileExists(atPath: p.path) {
@@ -316,6 +344,42 @@ struct CleanCommand: AsyncParsableCommand {
             throw XlessError(.sdk, failures.joined(separator: "; "), fix: "see above, then run xless clean again")
         }
         say("done. Docker's build cache is shared with other projects and was left alone; docker builder prune frees it")
+    }
+
+    /// Removes a pack: its `pack.json` first, so a pack not fully removed (a file that cannot go) is no pack any more, then
+    /// the rest, its directories made writable (a toolchain unpacks some read-only).
+    private static func removePack(_ root: URL) throws {
+        let manifest = root.appendingPathComponent("pack.json")
+        if FileManager.default.fileExists(atPath: manifest.path) { try FileManager.default.removeItem(at: manifest) }
+        try PackPlan.removeTree(root)
+    }
+
+    /// The leftovers of interrupted setups in `store`: `<name>.partial`, `<name>.old` and `<name>.lock` of a pack's name
+    /// (`<version>-<build>-<arch>`).
+    static func leftovers(in given: URL) -> [(name: String, url: URL)] {
+        // Its real path (macOS: /private/var, not /var), as the listing names the store's packs.
+        let store = realpath(given.path, nil).map { p in defer { free(p) }; return URL(fileURLWithPath: String(cString: p)) } ?? given
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: store.path)) ?? []
+        return names.sorted().compactMap { entry in
+            for suffix in [".partial", ".old", ".lock"] where entry.hasSuffix(suffix) {
+                let name = String(entry.dropLast(suffix.count))
+                guard PackVolumes.parse(PackVolumes.prefix + name) != nil else { return nil }
+                return (name, store.appendingPathComponent(entry))
+            }
+            return nil
+        }
+    }
+
+    /// `root` removed (its directories made writable first), but for the real paths `keeping` under it and the directories
+    /// that lead to them.
+    private static func removeTree(_ root: URL, keeping: [String]) throws {
+        let fm = FileManager.default
+        let here = root.resolvingSymlinksInPath().standardizedFileURL.path
+        if keeping.contains(here) { return }
+        guard keeping.contains(where: { $0.hasPrefix(here + "/") }) else { return try PackPlan.removeTree(root) }
+        for child in try fm.contentsOfDirectory(atPath: root.path) {
+            try removeTree(root.appendingPathComponent(child), keeping: keeping)
+        }
     }
 
     /// Whether a running container uses a pack.
