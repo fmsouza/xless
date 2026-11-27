@@ -128,7 +128,7 @@ public enum SwiftPackageCheckouts {
     /// what `packages.json` records. `env` is the environment of `git` and `swift`.
     public static func resolve(_ workspace: Workspace, in directory: URL, env: [String: String]) throws -> (packages: [ResolvedPackage], records: [Record]) {
         var packages: [ResolvedPackage] = [], records: [Record] = []
-        // The build engine's SwiftPM: its PIF is read by the image's swbuild (Ruling R10 keeps both on the image's Swift).
+        // The build engine's SwiftPM (the image's Swift): the pack's swbuild reads the PIF it dumps.
         let swift = SwiftToolchain.engineSwift(try XcodeEnvironment.toolchain(env: env))
         for ref in try references(workspace) {
             let checkout = try ref.revision.map { try clone(ref, revision: $0, in: directory, env: env) } ?? URL(fileURLWithPath: ref.location)

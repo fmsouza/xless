@@ -87,7 +87,6 @@ public final class ProjectRun {
     var buildMounts: [String] = []
 
     var xcodePin: String?
-    var xcodeTag: String?
     var pinFile = ""
     /// What `pinFile` held when the run began.
     private var pinned = Data()
@@ -183,8 +182,7 @@ public final class ProjectRun {
         }
         xcodePin = top["xcode"]
         if let pin = xcodePin {
-            xcodeTag = RunText.xcodeTag(pin)
-            if xcodeTag == nil { throw RunStop.usage("xcode: '\(pin)' in \(pinFile) is not an Xcode version (e.g. xcode: \"26.2\")") }
+            if RunText.xcodeTag(pin) == nil { throw RunStop.usage("xcode: '\(pin)' in \(pinFile) is not an Xcode version (e.g. xcode: \"26.2\")") }
         }
         return top
     }

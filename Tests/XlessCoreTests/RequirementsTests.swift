@@ -27,9 +27,10 @@ func sdkInfo(_ v: String) -> PlatformSDKInfo {
     #expect(throws: XlessError.self) { try meta.sdk(for: .macos) }
 }
 
-@Test func defaultLocationPrefersEnv() {
-    #expect(ToolchainMeta.defaultLocation(env: ["XLESS_TOOLCHAIN_META": "/x/m.json"]).path == "/x/m.json")
-    #expect(ToolchainMeta.defaultLocation(env: ["HOME": "/home/u"]).path.hasSuffix("xless/toolchain-meta.json"))
+@Test func olderLocationIgnoresTheOverride() {
+    // XLESS_TOOLCHAIN_META names a file in use, never an older install's.
+    #expect(ToolchainMeta.olderLocation(env: ["XLESS_TOOLCHAIN_META": "/x/m.json", "HOME": "/home/u"]).path == "/home/u/.config/xless/toolchain-meta.json")
+    #expect(ToolchainMeta.olderLocation(env: ["XDG_CONFIG_HOME": "/c", "HOME": "/home/u"]).path == "/c/xless/toolchain-meta.json")
 }
 
 @Test func sdkLocatorHonoursXDG() {

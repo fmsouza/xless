@@ -120,7 +120,7 @@ public enum PackPlan {
                 throw XlessError(.sdk, "versions.env's \(key)_URL_\(a) (\(urlString)) is not a URL", fix: "reinstall xless (its versions.env is damaged)")
             }
             let download = NativeDownload(kind: .swiftToolchain, url: url, sha256: try pin("\(key)_SHA256_\(a)"), final: pack.toolchain)
-            steps.append(SetupStep(title: "download the Swift \(swift) toolchain (Xcode \(xcode.shortVersion)'s Swift, Ruling R10) into \(pack.toolchain.path)",
+            steps.append(SetupStep(title: "download the Swift \(swift) toolchain (the open-source release of Xcode \(xcode.shortVersion)'s Swift) into \(pack.toolchain.path)",
                                    argv: ["curl", "-fsSL", "-o", download.partial.path + ".download", url.absoluteString],
                                    estimate: Self.toolchainEstimate, action: .download(download)))
             let xtoolSDK = export.appendingPathComponent("\(arch)/darwin.xtoolsdk")

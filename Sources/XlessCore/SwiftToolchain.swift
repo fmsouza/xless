@@ -8,17 +8,18 @@ import Foundation
 /// Every compile of app code uses it: Swift Build's toolset and `PATH` (React Native and the `xcodebuild` shim), and for
 /// the other project kinds the build stage puts its `usr/bin` before the image's own Swift on `PATH` (`activate`), so
 /// `swift build` (SwiftPM apps, Tauri's Swift packages), `clang`/`clang++` (Tauri's native code, cargo's C builds) and
-/// `xcrun swiftc`/`xcrun clang` in build phases resolve to it. The build engine stays the image's own Swift
-/// (`engineBin`): Swift Build's `swbuild` and SwiftPM's `dump-pif`, whose PIF that `swbuild` reads, are built with it.
+/// `xcrun swiftc`/`xcrun clang` in build phases resolve to it. SwiftPM's `dump-pif`, which writes the PIF Swift Build reads,
+/// stays the image's own Swift (`engineBin`); Swift Build itself (`<pack>/swift-build/swbuild`) is compiled with the pack's
+/// toolchain and runs on its Swift runtime (scripts/pack-swift-build.sh).
 public struct SwiftToolchain: Codable, Sendable, Equatable {
     /// The release `swiftc --version` names, e.g. "6.2.3" (`Swift version 6.2.3 (swift-6.2.3-RELEASE)`).
     public var version: String
     /// The toolchain's root: its tools are in `<root>/usr/bin` ("/" for the image's own Swift).
     public var root: String
     /// Flags Apple's clang of the same Xcode applies by default for Darwin targets and this toolchain's clang does not
-    /// (docker/Dockerfile measures them against the Xcode's own clang: for Swift 6.2.3, `-fdefine-target-os-macros`
-    /// and `-D` definitions of the four `TARGET_OS_*` macros it still lacks, docker/toolchain/target-os). The image's
-    /// `clang`/`clang++` add them to every compile they run for a Darwin target, never for Linux; Swift Build also gets
+    /// (scripts/fit-toolchain.sh measures them against the Xcode's own clang's fixture: for Swift 6.2.3,
+    /// `-fdefine-target-os-macros` and `-D` definitions of the four `TARGET_OS_*` macros it still lacks,
+    /// docker/toolchain/target-os). The pack's `clang`/`clang++` add them to every compile they run for a Darwin target, never for Linux; Swift Build also gets
     /// them as build settings, for its in-process dependency scanner (libclang) and Swift's Clang importer
     /// (`SwiftBuildEnvironment.overrides`).
     public var clangFlags: [String]?
@@ -27,11 +28,11 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
         self.version = version; self.root = root; self.clangFlags = clangFlags
     }
 
-    /// Where the image's own Swift lives: the swift:<SWIFT_VERSION>-jammy base, which built `swbuild`.
+    /// Where the image's own Swift lives: the swift:<SWIFT_VERSION>-jammy base.
     public static let engineBin = "/usr/bin"
 
-    /// The build engine's `swift` (SwiftPM's `dump-pif`, whose PIF the image's `swbuild` reads): the image's own when
-    /// it records a toolchain, else the `swift` on PATH.
+    /// The build engine's `swift` (SwiftPM's `dump-pif`, whose PIF the pack's `swbuild` reads): the image's own when
+    /// a toolchain is recorded, else the `swift` on PATH.
     public static func engineSwift(_ toolchain: SwiftToolchain?) -> String {
         toolchain == nil ? "swift" : engineBin + "/swift"
     }
@@ -137,7 +138,7 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     public static func check(_ toolchain: SwiftToolchain?, meta: ToolchainMeta?, pin: String?, stage: Stage = .build) throws -> BuildSwiftRecord? {
         guard let toolchain else {
             guard let pin else { return nil }
-            throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but its Xcode records no Swift toolchain (no swift-toolchain.json): it was set up before Ruling R10",
+            throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but its Xcode records no Swift toolchain (no swift-toolchain.json): it was set up by an xless that did not record the Swift that compiles",
                              fix: "set up Xcode \(pin) again (xless setup --xcode <path to Xcode \(pin)'s .xip>, with --docker for xless run --docker)")
         }
         let compiler = try toolchain.verifiedCompiler(stage: stage)

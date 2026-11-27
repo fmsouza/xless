@@ -8,7 +8,7 @@ import Foundation
 ///     tools/xtool-<version>/AppRun   tools/rcodesign-<version>/rcodesign   bin/xtool, bin/rcodesign (links)   xcodes/
 ///
 /// An xless of before the packs also put here `toolchains/swift-<version>/` and `swift-toolchain.json`, with the SDK and
-/// its metadata where `xless sdk install` put them (`DarwinSDKLocator`, `ToolchainMeta.defaultLocation`): nothing reads
+/// its metadata where `xless sdk install` put them (`DarwinSDKLocator`, `ToolchainMeta.olderLocation`): nothing reads
 /// them any more; `toolchains`, `toolchain(version:)` and `record` name them for setup's note and for `xless clean`.
 public struct NativeLayout: Sendable, Equatable {
     public let root: URL
