@@ -165,7 +165,7 @@ public enum SetupPlan {
         }
         var notes: [String] = []
         if case let .unread(when) = found {
-            notes.append("\(place) holds a pack, which is \(when): the steps of the pack are skipped then if it is current")
+            notes.append("\(place) is there: what it holds is \(when), and the pack's steps are skipped then if it holds a current pack")
         } else if reasons.isEmpty {
             notes.append("the pack \(pack) in \(place) is current for this xless" + (reexport ? "; its SDK is exported again (--reexport)" : ": nothing to prepare"))
             if !reexport { return ([], notes) }
