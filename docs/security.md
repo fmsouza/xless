@@ -722,9 +722,15 @@ project (`git diff`, `git status`) before the second, if you would not let its b
 
 In CI, make the two runs two steps, with the secrets in the environment of the second alone ([ci.md](ci.md#build-without-the-secrets)).
 A build step still reaches the later steps of its machine. On GitHub Actions it can write `$GITHUB_ENV` and `$GITHUB_PATH`, which set
-their environment and their programs, and what it leaves running there can read the environment of a later step of the same user. A
-second job on another machine, which gets the built app as an artifact and takes xless.yml and the entitlements from the commit, is the
-stronger form ([ci.md](ci.md#in-two-jobs)). What is in the app is the build's in either.
+their environment and their programs, and what it leaves running there can read the environment of a later step of the same user.
+It can also write the checkout, `.git` included, and a later step that runs or reads it runs what the build left: a script of the
+repository, a local action, and `git` itself (a program that `.git/config` names, such as `core.fsmonitor` or `diff.external`, runs
+in the `git diff` that looks for the build's changes, and a change staged in the index is not shown). So natively the two steps
+keep a mistake of the build away from the secrets, not code that means harm. A build in a container of the image, with `.git`
+read-only and nothing on the runner running the checkout after it but that `git diff` at the repository's top, does not reach the
+later steps ([ci.md](ci.md#in-the-image)). A second job on another machine, which gets the built app as an artifact and takes
+xless.yml and the entitlements from the commit, is the stronger form: nothing of the build but the app reaches it
+([ci.md](ci.md#in-two-jobs)). What is in the app is the build's in each.
 
 ### The Xcode packs
 
@@ -763,7 +769,10 @@ and unable to open the store, but as the same user in the same container as the 
 the container has (a `_FILE` variable's) is readable to the build's code, and so is the environment of a shell of the
 container that holds a secret variable (`/proc/<pid>/environ`). Keeping the build apart from the secrets is then your
 pipeline's job: build in one container that has no secret, and sign and upload what it built in another, with the
-pack read-only in both ([ci.md](ci.md#in-the-image)). `xless run --docker` makes that split itself.
+pack read-only in both. The build's container writes the checkout as your user, so give it `.git` read-only and
+nothing else of the runner, and after it run nothing on the runner from the checkout but a `git diff` at the
+repository's top ([ci.md](ci.md#in-the-image) has the rule and why). `xless run --docker` makes the split of the
+containers itself; what runs on the runner after it is the pipeline's.
 
 ### With an installed Xcode
 

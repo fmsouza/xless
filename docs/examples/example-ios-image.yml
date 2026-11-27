@@ -3,7 +3,9 @@
 # Xcode pack's volume once. The image holds nothing of Apple's; the pack holds Apple's SDK, so it stays on the runner (no
 # registry, no cache, no artifact). Never let pull requests of others run on such a runner.
 # Each step is a container of the image, with the pack read-only: the build in one without any secret, the signing in another.
-# Copy it to your app repository's .github/workflows/ and adapt IMAGE and PACK. Why, and what it does not protect: docs/ci.md.
+# The build writes the checkout, but not its .git (mounted read-only), and after it nothing on the runner runs the checkout
+# but the git diff at the repository's top: keep both when you adapt it (docs/ci.md#in-the-image says why).
+# Copy it to your app repository's .github/workflows/ and adapt IMAGE, PACK and APP. What it does not protect: docs/ci.md.
 name: example-ios-image
 on: workflow_dispatch
 permissions:
@@ -12,12 +14,10 @@ env:
   XLESS_NO_INPUT: 1
   IMAGE: xless:1.4.0-amd64                  # the image of the xless on the runner: docker image ls xless
   PACK: xless-xcode-26.2-17C52-amd64        # the pack of the Xcode the project pins: docker volume ls --filter label=org.xless.pack
+  APP: samples/HelloShip                    # the app's directory in the repository (. for its top)
 jobs:
   ship:
     runs-on: [self-hosted, linux, docker]
-    defaults:
-      run:
-        working-directory: samples/HelloShip
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -32,10 +32,13 @@ jobs:
           XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
         run: |
           docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
-            --mount "type=volume,src=$PACK,dst=/xcodes,readonly" -v "$PWD:/work" -w /work "$IMAGE" \
+            --mount "type=volume,src=$PACK,dst=/xcodes,readonly" \
+            -v "$GITHUB_WORKSPACE:/work" -v "$GITHUB_WORKSPACE/.git:/work/.git:ro" -w "/work/$APP" "$IMAGE" \
             xless run . --to finalize
-      - name: What the build changed in the project (no secret)
-        run: git diff --exit-code
+      # At the repository's top, whose .git the build could not write; not in the app's directory, where the build
+      # may have made a repository of its own.
+      - name: What the build changed in the repository (no secret)
+        run: git -C "$GITHUB_WORKSPACE" --no-optional-locks diff --exit-code
       - name: Sign, and upload to TestFlight
         env:
           XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
@@ -46,5 +49,6 @@ jobs:
         run: |
           docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
             -e ASC_KEY_ID -e ASC_ISSUER_ID -e ASC_KEY_P8 -e XLESS_DIST_KEY \
-            --mount "type=volume,src=$PACK,dst=/xcodes,readonly" -v "$PWD:/work" -w /work "$IMAGE" \
+            --mount "type=volume,src=$PACK,dst=/xcodes,readonly" \
+            -v "$GITHUB_WORKSPACE:/work" -v "$GITHUB_WORKSPACE/.git:/work/.git:ro" -w "/work/$APP" "$IMAGE" \
             xless run . --from sign

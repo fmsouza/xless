@@ -282,8 +282,10 @@ missing and stops (exit 2). In the xless image itself an overlay lacks Node, Rus
 run: the build's tools get no secret variable and cannot open the store, but they run as the same user in the same
 container as the steps that sign, so a secret *file* that the container has (a `_FILE` variable's) is readable to the
 build's code ([security.md](security.md#the-image-used-directly)). So build in one container with no secret, and sign
-and upload in another, as [ci.md](ci.md#in-the-image) does. `xless run --docker` from a host makes that split itself: the
-build in a container without any secret.
+and upload in another, as [ci.md](ci.md#in-the-image) does. The build's container writes the project as your user: give
+it the checkout's `.git` read-only, and after it run nothing of the checkout on the host but a `git diff` at the
+repository's top (ci.md has the rule, and why). `xless run --docker` from a host makes the split of the containers
+itself: the build in a container without any secret.
 
 ## Another architecture
 

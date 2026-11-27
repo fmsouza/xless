@@ -1,7 +1,9 @@
 # Example only: this workflow is not run by this repository (it lives in docs/examples/, not .github/workflows/).
 # It needs a Linux runner of your own with xless set up natively (`xless setup --sdk <dir>`: the Xcode pack, which holds Apple's
 # SDK, so it stays on the runner) and your own secrets (ASC_*, XLESS_DIST_KEY). Never let pull requests of others run on such a
-# runner. In containers of the xless image instead: example-ios-image.yml.
+# runner. Both steps run as the runner's user, so they keep a mistake of the build away from the secrets, not code that means
+# harm: the build can write .git (and hide its change from git diff, or have git diff run its program), $GITHUB_ENV,
+# $GITHUB_PATH and whatever the signing step runs. For code you do not fully trust: example-ios-image.yml, or two jobs.
 # Copy it to your app repository's .github/workflows/ and adapt it. What the two steps protect, and what they do not: docs/ci.md.
 name: example-ios
 on: workflow_dispatch
