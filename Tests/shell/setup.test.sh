@@ -215,13 +215,20 @@ grep -q 'it is there already' "$t/out" || fail "not said to be there: $(cat "$t/
 extra=(FAKE_IMAGES="$images" BUILD_LOST=1)
 share="$repo" run ok --docker --arch arm64 --with tauri
 [[ $code == 11 ]] && grep -q "xless:$rt-arm64-tauri is not what was built" "$t/err" || fail "a lost build: $code $(cat "$t/err")"
-# No image here: it is built first (it needs no Xcode; a checkout's compiles its own xless), then the kit on it.
+# No image here: it is built first (it needs no Xcode), then the kit on it. A checkout's image compiles its own xless; where
+# the sources are no checkout git can read (CI's container: the tag is the version), the xless is one that is given.
 : > "$images"
 extra=(FAKE_IMAGES="$images")
+if [[ "$rt" =~ ^[0-9a-f]{12}(-dirty)?$ ]]; then given=0; else given=1; printf '\177ELF\002\001\001\0\0\0\0\0\0\0\0\0\002\0\267\0' > "$t/xless-arm64"; extra+=(XLESS_BIN_ARM64="$t/xless-arm64"); fi
 share="$repo" run ok --docker --arch arm64 --with tauri
 [[ $code == 0 ]] || fail "--with alone without an image: $code $(cat "$t/err")"
-grep -q "^buildx build --platform linux/arm64 --load --provenance=false -t xless:$rt-arm64 " "$log" && ! grep -q -- '--xless-bin\|xlessbin' "$log" \
+grep -q "^buildx build --platform linux/arm64 --load --provenance=false -t xless:$rt-arm64 " "$log" \
   && [[ "$(grep -c '^build ' "$log")" == 1 ]] || fail "--with alone without an image runs: $(cat "$log")"
+if [[ $given == 0 ]]; then
+  grep -q -- '--xless-bin\|xlessbin' "$log" && fail "a checkout's image is given an xless: $(cat "$log")"
+else
+  grep -q -- '--build-context xlessbin=' "$log" || fail "the image is not given the xless: $(cat "$log")"
+fi
 extra=()
 
 # Native (the default).
