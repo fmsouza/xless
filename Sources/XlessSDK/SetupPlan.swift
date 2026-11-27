@@ -87,7 +87,8 @@ public struct SetupStep: Equatable, Sendable {
         }
 
         /// A native setup's form, before it replaces the pack: docker builds may mount a directory store (`XLESS_XCODES`) of
-        /// this machine. Stops when a running container uses the pack; a docker that does not answer (none installed, no
+        /// this machine. Stops when a running container of xless's (a run's or a pack setup's, by its label: `xlessOnly`) uses
+        /// the pack; another's that mounts `/` or the home is no build of it. A docker that does not answer (none installed, no
         /// daemon, or a machine without Docker at all, such as the setup container) runs nothing that could, and is no stop.
         public func refuseInUseWhereDockerAnswers(_ docker: @escaping LocalImages.Docker) throws {
             guard let users = try? PackUsers(docker).of(store, xcode: xcode, build: build, arch: arch, xlessOnly: true) else { return }
