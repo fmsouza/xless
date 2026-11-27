@@ -278,6 +278,11 @@ private struct PackChoice {
         run.host.say("==> \(run.dryRun ? "would prepare" : "preparing") the pack \(name) of Xcode \(version) (\(xcode.build)) first (\(why)): "
             + "what of it is not current, from the SDK export \(export.path); \(estimate)")
         for (n, s) in steps.enumerated() {
+            // (not under a running build that has it, of another run or a setup; this run's own containers start after)
+            if !run.dryRun, case let .packRun(job) = s.action, let target = job.writes {
+                do { try target.refuseInUse(run.askDocker, excludingRun: run.runLabel.split(separator: "=", maxSplits: 1).last.map(String.init)) }
+                catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }
+            }
             if !run.dryRun {
                 run.host.say("==> [\(n + 1)/\(steps.count)] \(s.title)")
                 if case let .packRun(job) = s.action {

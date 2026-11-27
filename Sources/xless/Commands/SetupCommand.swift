@@ -387,6 +387,10 @@ struct SetupCommand: AsyncParsableCommand {
                         continue
                     }
                 }
+                // Not under a running build that has it (a run's, or another setup's): asked before each step that writes it.
+                if let target = job.writes {
+                    do { try target.refuseInUse(LocalImages.hereDocker) } catch let problem as ImageProblem { throw XlessError(.sdk, problem.cause, fix: problem.fix) }
+                }
                 for dir in job.directories { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
                 try s.start(passthrough: true)
             default:

@@ -122,6 +122,45 @@ import XlessImages
         #expect(!again.allSteps.contains { $0.isPackSetup })
     }
 
+    /// A pack that a running container has mounted (another run's build, or a setup) is not replaced under it: the run stops and
+    /// names it; once nothing uses it, the run prepares it. A volume is asked about by its name.
+    @Test func aPackInUseIsNotReplaced() throws {
+        let volume = "xless-xcode-27.0-27A266a-arm64"
+        home.packs.change(volume) { $0.parts["swift-build"] = String(repeating: "0", count: 64) }
+        let stale = home.packs.manifest(volume)
+        try home.export("27.0", "27A266a")
+        home.packs.running = [.init(name: "busy_build", run: "77.1700000000", volumes: [volume]), .init(name: "other", volumes: ["xless-xcode-26.2-17C52-arm64"])]
+        let (host, code) = try run()
+        #expect(code == 2, "\(host.lines)")
+        #expect(host.lines.last == "testflight: the pack 27.0-27A266a-arm64 in the volume \(volume) is used by a running container: busy_build (xless:0.14.0-arm64-tauri); "
+            + "preparing it now would replace it under it; wait for that run to end, or stop it (docker stop busy_build), then run this again", "\(host.lines)")
+        #expect(!host.allSteps.contains { $0.isPackSetup || $0.isContainer } && home.packs.manifest(volume) == stale && !home.exists(home.secrets))
+        #expect(home.packs.askedUsers.contains(["ps", "--filter", "volume=\(volume)", "--format", "{{.Names}}\t{{.Image}}\t{{.Label \"xless.run\"}}"]))
+        // the container gone, it prepares
+        home.packs.running = [.init(name: "other", volumes: ["xless-xcode-26.2-17C52-arm64"])]
+        let (again, againCode) = try run()
+        #expect(againCode == 0, "\(again.lines)")
+        #expect(again.allSteps.contains { $0.isPackSetup } && home.packs.manifest(volume)?.parts["swift-build"] != stale?.parts["swift-build"])
+    }
+
+    /// A directory store: the running containers' mounts are inspected, once, for the pack's directory (or the store, or what holds it).
+    @Test func aPackInUseInADirectoryStoreIsNotReplaced() throws {
+        let store = "\(home.root)/xcodes"
+        try home.packs.write(home.packs.current("26.2", "17C52", parts: [.sdk]), in: store)
+        try home.export("26.2", "17C52")
+        try home.write("proj/xless.yml", "name: App\nxcode: \"26.2\"\n")
+        home.packs.running = [.init(name: "elsewhere", directories: ["/somewhere/else"]), .init(name: "builds", directories: ["\(store)/26.2-17C52-arm64"])]
+        let (host, code) = try run([home.project, "--to", "finalize"], ["XLESS_XCODES": store])
+        #expect(code == 2, "\(host.lines)")
+        #expect(host.lines.last?.hasPrefix("testflight: the pack 26.2-17C52-arm64 in \(store)/26.2-17C52-arm64 is used by a running container: builds (xless:0.14.0-arm64-tauri); ") == true, "\(host.lines)")
+        #expect(home.packs.prepared.isEmpty)
+        #expect(home.packs.askedUsers.contains { $0 == ["ps", "-q"] } && home.packs.askedUsers.contains { $0.first == "inspect" && $0.suffix(2) == ["id0", "id1"] })
+        // a container of another directory does not hold it
+        home.packs.running = [.init(name: "elsewhere", directories: ["/somewhere/else"])]
+        let (again, againCode) = try run([home.project, "--to", "finalize"], ["XLESS_XCODES": store])
+        #expect(againCode == 0 && home.packs.prepared == ["type=bind,src=\(store),dst=/xcodes"], "\(again.lines)")
+    }
+
     @Test func stalePartWithoutExportStops() throws {
         home.packs.change("xless-xcode-27.0-27A266a-arm64") { $0.parts["swift-build"] = "old" }
         let (host, code) = try run()

@@ -386,6 +386,16 @@ final class FakePacks: @unchecked Sendable {
     /// The stores the preparing containers wrote into.
     var prepared: [String] { lock.withLock { setups } }
 
+    /// A running container of the machine: its name, image, `xless.run` label, and what it mounts (volume names, host directories).
+    struct Running { var name: String; var image = "xless:0.14.0-arm64-tauri"; var run = ""; var volumes: [String] = []; var directories: [String] = [] }
+    private var containers: [Running] = []
+    var running: [Running] {
+        get { lock.withLock { containers } }
+        set { lock.withLock { containers = newValue } }
+    }
+    /// The `docker ps` and `docker inspect` that asked about them.
+    private(set) var askedUsers: [[String]] = []
+
     /// A pack in a directory store, as a setup leaves it: its pack.json and the entries of its parts.
     func write(_ manifest: PackManifest, in store: String) throws {
         let root = URL(fileURLWithPath: store).appendingPathComponent(XcodePack.name(xcode: manifest.xcode, build: manifest.build, arch: manifest.arch))
@@ -406,6 +416,26 @@ final class FakePacks: @unchecked Sendable {
             return (0, "\(name)\n")
         }
         if words.contains("info") { return (0, "[\"name=seccomp,profile=builtin\"]\n") }
+        // which running containers use a pack (PackUsers); the clean-up's `ps -aq --filter label=…` is not this
+        if !words.contains("run"), let ps = words.firstIndex(of: "ps"), !words.contains("-aq") {
+            lock.withLock { askedUsers.append(Array(words[ps...])) }
+            if let filter = words.first(where: { $0.hasPrefix("volume=") }) {
+                let volume = String(filter.dropFirst("volume=".count))
+                return (0, running.filter { $0.volumes.contains(volume) }.map { "\($0.name)\t\($0.image)\t\($0.run)\n" }.joined())
+            }
+            if words.last == "-q" { return (0, running.indices.map { "id\($0)\n" }.joined()) }
+        }
+        if !words.contains("run"), let inspect = words.firstIndex(of: "inspect"), inspect + 2 < words.endIndex, words[inspect + 1] == "--format", words[inspect + 2].contains(".Mounts") {
+            lock.withLock { askedUsers.append(Array(words[inspect...])) }
+            let all = running
+            return (0, words[(inspect + 3)...].compactMap { id -> String? in
+                guard let i = Int(id.dropFirst(2)), all.indices.contains(i) else { return nil }
+                let c = all[i]
+                let mounts = c.volumes.map { ["Type": "volume", "Name": $0, "Source": "/var/lib/docker/volumes/\($0)/_data"] } + c.directories.map { ["Type": "bind", "Source": $0] }
+                let json = String(decoding: try! JSONSerialization.data(withJSONObject: mounts), as: UTF8.self)
+                return "/\(c.name)\t\(c.image)\t\(c.run.isEmpty ? "<no value>" : c.run)\t\(json)\n"
+            }.joined())
+        }
         guard words.contains("run") else { return nil }
         if words.contains(where: { $0.contains("--- xless pack") }) { // the reading container
             var at: [String: String] = [:]

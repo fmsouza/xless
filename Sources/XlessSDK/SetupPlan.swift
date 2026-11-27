@@ -55,8 +55,36 @@ public struct SetupStep: Equatable, Sendable {
         public var directories: [URL]
         /// nil: the plan knows the pack is not current.
         public var unlessCurrent: PackCheck?
+        /// The pack it writes, which no running container may be using when it runs (`PackUsers`); nil: none to ask about.
+        public var writes: PackTarget?
 
-        public init(directories: [URL], unlessCurrent: PackCheck?) { self.directories = directories; self.unlessCurrent = unlessCurrent }
+        public init(directories: [URL], unlessCurrent: PackCheck?, writes: PackTarget? = nil) {
+            self.directories = directories; self.unlessCurrent = unlessCurrent; self.writes = writes
+        }
+    }
+
+    /// A pack in its store: what a step that writes it names (`PackRun.writes`).
+    public struct PackTarget: Equatable, Sendable {
+        public var store: PackStore
+        /// The canonical version.
+        public var xcode: String
+        public var build: String
+        public var arch: String
+        public var name: String { XcodePack.name(xcode: xcode, build: build, arch: arch) }
+        public var place: String {
+            switch store {
+            case .volumes: "the volume \(PackVolumes.name(xcode: xcode, build: build, arch: arch))"
+            case let .directory(dir): dir.appendingPathComponent(name).path
+            }
+        }
+
+        public init(store: PackStore, xcode: String, build: String, arch: String) { self.store = store; self.xcode = xcode; self.build = build; self.arch = arch }
+
+        /// Stops when a running container (not of the run `excludingRun`) uses it: preparing would replace it under that one.
+        public func refuseInUse(_ docker: @escaping LocalImages.Docker, excludingRun: String? = nil) throws {
+            let users = try PackUsers(docker).of(store, xcode: xcode, build: build, arch: arch, excludingRun: excludingRun)
+            if !users.isEmpty { throw PackUsers.refusal(pack: name, place: place, users: users) }
+        }
     }
 
     public let title: String
@@ -183,6 +211,7 @@ public enum SetupPlan {
         var directories = exporting ? [exportDir] : []
         var steps: [SetupStep] = []
         let suffix = unless == nil ? "" : ", skipped when the pack is current (it is read first)"
+        let target = SetupStep.PackTarget(store: store, xcode: version, build: x.build, arch: a)
         switch store {
         case .volumes:
             if case .nothing = found {
@@ -197,7 +226,7 @@ public enum SetupPlan {
                     argv: ["docker", "run", "--rm", "--pull=never", "--platform", "linux/\(a)", "--network", "none"]
                         + store.mount(xcode: version, build: x.build, arch: a, writable: true)
                         + [image, "sh", "-c", ownerScript, "sh", ids[0], ids.count > 1 ? ids[1] : ids[0]],
-                    estimate: "seconds", action: .packRun(SetupStep.PackRun(directories: [], unlessCurrent: unless))))
+                    estimate: "seconds", action: .packRun(SetupStep.PackRun(directories: [], unlessCurrent: unless, writes: target))))
             }
         case let .directory(dir):
             directories.append(dir)
@@ -210,7 +239,7 @@ public enum SetupPlan {
             argv: PackSetup.argv(image: image, arch: a, xcode: version, build: x.build, store: store, source: from, reexport: reexport,
                                  user: user, environment: environment),
             estimate: est("~6 min; ~7 GB in the store" + (exporting ? ", and ~2 min more to export the SDK" + (source.kind == .xip ? " (up to ~15 GB in the cache while the .xip is unpacked, ~3.5 GB stays)" : " (~3 GB in the cache)") : "")),
-            action: .packRun(SetupStep.PackRun(directories: directories, unlessCurrent: unless))))
+            action: .packRun(SetupStep.PackRun(directories: directories, unlessCurrent: unless, writes: target))))
         return (steps, notes)
     }
 

@@ -158,3 +158,72 @@ public enum PackSetup {
         return argv + [image, "xless", "setup"] + command
     }
 }
+
+/// The running containers that use a pack, asked before it is prepared: preparing replaces it, and a build that has it mounted
+/// would go on with a mix of the old pack and the new one (a volume's new files under the same paths), or with its directory
+/// emptied under it (a directory store). Both `xless setup --docker` and a run that prepares a pack ask, and stop when any runs.
+public struct PackUsers {
+    private let docker: LocalImages.Docker
+
+    public init(_ docker: @escaping LocalImages.Docker) { self.docker = docker }
+
+    /// The label every container of a run carries (`xless.run=<pid>.<time>`).
+    public static let runLabel = "xless.run"
+
+    /// "<name> (<image>)" of each running container that has the pack of `xcode` (canonical version), `build` and `arch` mounted,
+    /// but for those of the run `excludingRun` (its `xless.run` label's value). A volume: `docker ps --filter volume=<name>`. A
+    /// directory store: `docker ps -q`, then one `docker inspect` of those containers' mounts; one that mounts the pack's
+    /// directory, the store, something in the pack or a directory that holds the store counts.
+    public func of(_ store: PackStore, xcode: String, build: String, arch: String, excludingRun: String? = nil) throws -> [String] {
+        let row = "{{.Names}}\t{{.Image}}\t{{.Label \"\(Self.runLabel)\"}}"
+        switch store {
+        case .volumes:
+            let volume = PackVolumes.name(xcode: xcode, build: build, arch: arch)
+            let listed = docker(["ps", "--filter", "volume=\(volume)", "--format", row])
+            guard listed.code == 0 else { throw problem("docker ps --filter volume=\(volume)") }
+            return rows(listed.output, excludingRun: excludingRun) { _ in true }
+        case let .directory(dir):
+            let ids = docker(["ps", "-q"])
+            guard ids.code == 0 else { throw problem("docker ps -q") }
+            let running = ids.output.split(whereSeparator: \.isWhitespace).map(String.init)
+            if running.isEmpty { return [] }
+            let format = "{{.Name}}\t{{.Config.Image}}\t{{index .Config.Labels \"\(Self.runLabel)\"}}\t{{json .Mounts}}"
+            let inspected = docker(["inspect", "--format", format] + running)
+            guard inspected.code == 0 else { throw problem("docker inspect") }
+            let root = dir.standardizedFileURL.path
+            let pack = dir.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch)).standardizedFileURL.path
+            return rows(inspected.output, excludingRun: excludingRun) { fields in
+                guard fields.count > 3, let data = fields[3].data(using: .utf8),
+                      let mounts = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
+                return mounts.contains { mount in
+                    guard let source = (mount["Source"] as? String).map({ URL(fileURLWithPath: $0).standardizedFileURL.path }) else { return false }
+                    // the pack, in it, the store, or what holds the store
+                    return source == pack || source.hasPrefix(pack + "/") || source == root || root.hasPrefix(source == "/" ? "/" : source + "/")
+                }
+            }
+        }
+    }
+
+    private func rows(_ output: String, excludingRun: String?, _ uses: ([String]) -> Bool) -> [String] {
+        output.split(whereSeparator: \.isNewline).compactMap { line in
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count >= 3, uses(fields) else { return nil }
+            if let excludingRun, fields[2] == excludingRun { return nil }
+            let name = fields[0].hasPrefix("/") ? String(fields[0].dropFirst()) : fields[0]
+            return "\(name) (\(fields[1]))"
+        }
+    }
+
+    private func problem(_ command: String) -> ImageProblem {
+        ImageProblem("docker cannot tell which containers are running (\(command) failed), so whether one uses the pack before it is replaced",
+                      fix: "check that docker runs (docker ps), then run this again")
+    }
+
+    /// Why the pack is not prepared now, and what to do, when `users` run.
+    public static func refusal(pack: String, place: String, users: [String]) -> ImageProblem {
+        let names = users.map { String($0.prefix { $0 != " " }) }
+        return ImageProblem("the pack \(pack) in \(place) is used by \(users.count == 1 ? "a running container" : "running containers"): \(users.joined(separator: ", ")); "
+                                + "preparing it now would replace it under \(users.count == 1 ? "it" : "them")",
+                            fix: "wait for \(users.count == 1 ? "that run" : "those runs") to end, or stop \(users.count == 1 ? "it" : "them") (docker stop \(names.joined(separator: " "))), then run this again")
+    }
+}

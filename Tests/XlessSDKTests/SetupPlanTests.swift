@@ -136,7 +136,7 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
                              "--mount", "type=volume,src=xless-xcode-27.0-27A266a-arm64,dst=/xcodes",
                              "xless:0.14.0-arm64", "xless", "setup", "--xcode", "/xcode/My Xcode.xip"])
     // The export lands in the host's cache: its directory is made first, as the calling user.
-    #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: nil)))
+    #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: nil, writes: SetupStep.PackTarget(store: .volumes, xcode: "27.0", build: "27A266a", arch: "arm64"))))
     #expect(pack(d).estimate.contains("~6 min"))
     // The kit is built on the image built before it.
     #expect(d.steps[4].action == .kit(.tauri, arch: "arm64"))
@@ -174,7 +174,7 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
     let stale = plan(docker: docker)
     #expect(kinds(stale.steps) == ["owner", "pack"])
     #expect(stale.notes.contains { $0.contains("swift-build part was prepared by another recipe") && !$0.contains("sdk part") })
-    #expect(pack(stale).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: nil)))
+    #expect(pack(stale).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: nil, writes: SetupStep.PackTarget(store: .volumes, xcode: "27.0", build: "27A266a", arch: "arm64"))))
     // A volume that holds no pack yet: prepared, and not created again.
     docker.volumes = ["xless-xcode-27.0-27A266a-arm64": Optional<PackManifest>.none]
     #expect(kinds(plan(docker: docker).steps) == ["owner", "pack"])
@@ -193,8 +193,8 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
     #expect(docker.reads == 0)
     let check = SetupStep.PackCheck(volume: "xless-xcode-27.0-27A266a-arm64", pack: "27.0-27A266a-arm64", arch: "arm64", image: "xless:0.14.0-arm64",
                                     build: "27A266a", expected: current().parts)
-    #expect(d.steps[1].action == .packRun(SetupStep.PackRun(directories: [], unlessCurrent: check)))
-    #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: check)))
+    #expect(d.steps[1].action == .packRun(SetupStep.PackRun(directories: [], unlessCurrent: check, writes: SetupStep.PackTarget(store: .volumes, xcode: "27.0", build: "27A266a", arch: "arm64"))))
+    #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: check, writes: SetupStep.PackTarget(store: .volumes, xcode: "27.0", build: "27A266a", arch: "arm64"))))
     #expect(pack(d).title.hasSuffix(", skipped when the pack is current (it is read first)"))
     #expect(d.notes.contains { $0.contains("read once the image xless:0.14.0-arm64 is built") })
     // A dry run never starts the reading container, even with the image here.
@@ -232,7 +232,8 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
     #expect(kinds(d.steps) == ["image", "pack"])
     #expect(values("--mount", pack(d).argv).last == "type=bind,src=\(dir.path),dst=/xcodes")
     // The directory is made first, as the calling user (and so is the export's).
-    #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a"), dir], unlessCurrent: nil)))
+    #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a"), dir], unlessCurrent: nil,
+                                                          writes: SetupStep.PackTarget(store: .directory(dir), xcode: "27.0", build: "27A266a", arch: "arm64"))))
     // A current pack there, read on the host: nothing to do.
     let place = dir.appendingPathComponent("27.0-27A266a-arm64")
     try FileManager.default.createDirectory(at: place, withIntermediateDirectories: true)
@@ -274,7 +275,9 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
     for s in d.steps where kinds([s]) == ["pack"] {
         #expect(values("--mount", s.argv).first == "type=bind,src=/exports/x27,dst=/cache/xless/sdk/xcode27.0-27A266a,readonly")
         #expect(Array(s.argv.suffix(2)) == ["--sdk", "/cache/xless/sdk/xcode27.0-27A266a"])
-        #expect(s.action == .packRun(SetupStep.PackRun(directories: [], unlessCurrent: nil)))
+        // (each architecture's pack is the one its step writes, and no running container may be using)
+        let arch = String((values("--platform", s.argv).first ?? "").dropFirst("linux/".count))
+        #expect(s.action == .packRun(SetupStep.PackRun(directories: [], unlessCurrent: nil, writes: SetupStep.PackTarget(store: .volumes, xcode: "27.0", build: "27A266a", arch: arch))))
     }
     // The cache's own export: the same, read-only.
     let cached = cache.appendingPathComponent("sdk/xcode27.0-27A266a")
