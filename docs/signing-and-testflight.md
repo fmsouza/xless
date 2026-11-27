@@ -104,7 +104,9 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   environment. [`xless secrets import-env`](secrets.md#moving-from-testflightenv) moves it into the store.
 
   The TestFlight demo account's password (`<passwordSecret>_FILE` when xless.yml or the overlay names its own secret)
-  is needed only by a run that uploads with `testflight.external.review.demoAccount`, and only the upload gets it
+  is needed only by a run that uploads with `testflight.external.review.demoAccount`, and xless hands it to the upload
+  only. That is what xless hands out, not all that a build's code can read: natively, and in the one container of an
+  `xless.yml` project under `--docker`, the password's file is where the build runs
   ([secrets.md](secrets.md#xless-run-and-docker-builds)).
 
 - **Native or image.** Natively (the default) the build uses the Xcode pack `xless setup` prepared
@@ -155,9 +157,9 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   review, public links): `testflight.external` and `xless testflight`. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
 
-With a project directory on Linux everything runs in one process (with `--docker`, in one container, unless the build
-has an image of its own that is not the xless image), so package code built there could read the key files. (On a Mac and
-in WSL, natively, the build and the signing are two processes of one user:
+With a project directory everything runs in one process natively on Linux, and with `--docker`, on Linux or a Mac, in
+one container (unless the build has an image of its own that is not the xless image: then in two), so package code built
+there could read the key files. (On a Mac and in WSL, natively, the build and the signing are two processes of one user:
 [security.md](security.md#the-build-and-your-secrets).) Build up to `finalize` first, with no secret, then sign and
 upload what it built, with the same build number for both runs. That keeps a build's mistake from the secrets, not code that means harm: what the first run wrote, and
 natively what it left running, are there when the second one signs
@@ -179,6 +181,11 @@ three steps, with the second in [a sandbox](security.md#an-overlays-build-on-a-m
    number, a read-only query. Skipped when `XLESS_BUILD_NUMBER` or `--build-number` is given.
 2. `xless ship --to finalize`, with **no** secret file or variable: prepare, build, assets, finalize.
 3. `xless ship --from sign`, with the secrets: sign, package, upload. No build code runs here.
+
+That is what each container is handed. Natively the steps are processes of one user: steps 1 and 3 read the store or
+your environment themselves, and step 2 is started without the secret variables and unable to open the store, but a
+secret's file that your user can read is there for its code (on a Mac the sandbox keeps your home directory from it):
+[security.md](security.md#the-build-and-your-secrets).
 
 `--from` and `--to` choose which steps run, and each step needs only its own secrets: `--build-number <n> --to
 finalize` needs none. Secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are written
@@ -210,7 +217,8 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
   [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (the app signed with
   `XLESS_DIST_KEY_FILE` under a `MAC_APP_STORE` provisioning profile embedded as
   `Contents/embedded.provisionprofile`, the pkg signed with `XLESS_INSTALLER_KEY_FILE`, uploaded, delivered to the
-  `testflight.groups` block). Only that second ship has the two keys; the DMG ship has the Developer ID key. A
+  `testflight.groups` block). With `--docker`, only that second ship's container is handed the two keys, and the DMG
+  ship's the Developer ID key (natively each ship reads what it needs itself); neither runs build code. A
   failure in either channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
 - App Store Connect refuses a package that is not signed with a Mac Installer Distribution certificate
   (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#5d-mac-installer-distribution-key-the-mac-app-store-package);

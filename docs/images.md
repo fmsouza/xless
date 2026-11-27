@@ -163,8 +163,8 @@ XLESS_IMAGE=my-app-image xless run --docker --config app.yml
 
 - It is used for the build step alone: the steps with the secrets run in the xless image. For a Swift-only project this
   makes the run two containers instead of one, and the one that builds has no secret, when the image is not the xless
-  image itself. xless compares the two images' IDs: a tag of the xless image, or a Dockerfile that adds nothing to its
-  `FROM`, is the same image, and the run is one container with the secrets, as without `image:`
+  image itself. xless compares the two images' IDs: a tag of the xless image is the same image, and a Dockerfile that
+  adds nothing to its `FROM` may be (the same ID). The run is then one container with the secrets, as without `image:`
   ([security.md](security.md#a-build-that-means-harm)). A run that builds and signs says which it is: its `==>` line that
   names the Xcode ends with `build my-app-image, signing and upload xless:1.4.0-arm64` when there are two, and with the
   xless image's name alone when there is one. The build's container gets the pack read-only, as every container of the

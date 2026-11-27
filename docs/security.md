@@ -639,8 +639,9 @@ An app's build runs code you did not write. What that code can reach depends on 
   them) builds in an `xless ship` of its own, without a secret variable and unable to open the store, and is signed and
   uploaded after it by another. The build runs as you, with what is said of a project's native build below.
 - **A project directory (`xless run <dir>`)** is one `xless ship`: build, sign and upload in one process (one
-  container with `--docker`, which gets the secrets the run needs; two when the build has an image of its own that is
-  not the xless image itself, in the table below). xless keeps what it holds out of the build tools'
+  container with `--docker`, which gets the secrets the run needs). When the build has an image of its own that is not
+  the xless image itself, `--docker` runs two `xless ship` in two containers, the first without a secret (the table
+  below). xless keeps what it holds out of the build tools'
   reach: they start without the secret variables (and without any name of your own the run reads a secret from),
   in a POSIX session of their own, which [the xless agent refuses](#who-may-use-what-the-agent-holds), and a fresh, empty
   session keyring, so a held store unlock or a kept Apple ID session is not theirs to read, and with
@@ -668,10 +669,11 @@ each step of `xless run --docker`:
 |---|---|---|---|
 | Tauri, Cargo | xless image | `tauri` kit, or your `image:` | xless image |
 | React Native, Expo | xless image | `react-native` kit, or your `image:` | xless image |
-| `xless.yml`, no `image:`, or one that names the xless image itself (a tag of it, or a Dockerfile that adds nothing to it) | (none) | xless image, in the one container with the secrets | the same container |
+| `xless.yml`, no `image:`, or one that names the xless image itself (a tag of it; a Dockerfile that adds nothing to its `FROM` may give the same image too) | (none) | xless image, in the one container with the secrets | the same container |
 | `xless.yml` with `image:` or `XLESS_IMAGE`, an image that is not the xless image itself | (none) | your image, without a secret | xless image |
 
-Whether an image of your own is the xless image is decided by the two images' IDs, not by their names. A run of an
+Whether an image of your own is the xless image is decided by the two images' IDs, not by their names, so
+do not guess it from the Dockerfile. A run of an
 `xless.yml` project that builds and signs says which row it is in: the `==>` line that names the Xcode ends with
 `build <your image>, signing and upload <the xless image>` when there are two containers, and with the xless image's
 name alone when there is one.
@@ -948,7 +950,8 @@ What the sandbox is not:
   the store. The xless of a macOS release hides its own environment; one that you built from source does not.
 - **Every overlay's build shares the home directory of the builds**, as they share the images' volumes: an app's code can change the
   packages that another's build finds there. Two apps that should not trust each other want two users of the Mac, or two
-  `XLESS_CACHE`. (That is for native builds: in Docker neither keeps them apart,
+  `XLESS_CACHE`. (That is for native builds. In Docker `XLESS_CACHE` is not read, and two users on one
+  Docker daemon are not kept apart; two users who each have a daemon of their own are:
   [a build that means harm](#a-build-that-means-harm).)
 - **What the build leaves running can write the work copy while the app is signed.** It can change what is signed, not what it is
   signed as, which is in the overlay that it cannot write. (It could make the app what it likes before.) In Docker it ends with the
