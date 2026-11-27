@@ -104,6 +104,52 @@ platforms:
     #expect(!fm.fileExists(atPath: root.path + "/used-arm64"))
 }
 
+/// The same build with the SDK and the toolchain of an Xcode pack: SwiftPM is pointed at the pack's SDK (never through
+/// XDG_CONFIG_HOME), the pack's toolchain builds (Ruling R10: --swift-sdk and --arch, a scratch directory of its own).
+@Test func aMacAppIsBuiltWithThePacksSDK() throws {
+    let fm = FileManager.default
+    let made = fm.temporaryDirectory.appendingPathComponent("xless-macbuilder-\(UUID().uuidString)")
+    try fm.createDirectory(at: made, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: made) }
+    let root = URL(fileURLWithPath: try #require(realpath(made.path, nil).map { p in defer { free(p) }; return String(cString: p) }))
+    #if arch(arm64)
+    let hostArch = "arm64"
+    #else
+    let hostArch = "amd64"
+    #endif
+    let store = root.appendingPathComponent("xcodes"), share = root.appendingPathComponent("share")
+    let pack = XcodePack(root: store.appendingPathComponent(XcodePack.name(xcode: "26.2", build: "17C52", arch: hostArch)),
+                         manifest: PackManifest(format: 1, xcode: "26.2", build: "17C52", arch: hostArch, swift: "6.2.3", mode: .separate, parts: ["sdk": "h"]))
+    let bin = pack.sdkBundle.appendingPathComponent("toolset/bin"), project = root.appendingPathComponent("p")
+    for directory in [project, bin, share, pack.toolchain.appendingPathComponent("usr/bin")] { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
+    try Data("{}".utf8).write(to: pack.sdkBundle.appendingPathComponent("toolset-swb.json"))
+    try Data(#"{"xcodeBuild":"17C52"}"#.utf8).write(to: pack.meta)
+    try Data(#"{"version":"6.2.3","root":"toolchain"}"#.utf8).write(to: pack.record)
+    try pack.manifest.write(to: pack.manifestFile)
+    for (name, cpu) in [("arm64", 0x0100000c), ("x86_64", 0x01000007)] as [(String, UInt32)] {
+        let words: [UInt32] = [0xfeedfacf, cpu, 0, 2, 0, 0, 0, 0]
+        try Data(words.flatMap { withUnsafeBytes(of: $0.littleEndian) { Array($0) } }).write(to: root.appendingPathComponent(name))
+    }
+    try ExecutableFile.write("""
+        #!/bin/sh
+        echo "$@" >> '\(root.path)/argv'
+        while [ $# -gt 0 ]; do case "$1" in --scratch-path) s="$2" ;; --arch) a="$2" ;; --swift-sdks-path) echo "$2" > '\(root.path)/sdks' ;; esac; shift; done
+        mkdir -p "$s/out/Products/Release"
+        cp '\(root.path)'/"$a" "$s/out/Products/Release/DemoMac"
+
+        """, to: bin.appendingPathComponent("swift"), stage: .build)
+    // XDG_CONFIG_HOME is the user's own, without an SDK: the pack's is used.
+    let env = ["PATH": "/usr/bin:/bin", "HOME": root.appendingPathComponent("home").path, "XDG_CONFIG_HOME": root.appendingPathComponent("config").path,
+               "XLESS_XCODES": store.path, "XLESS_SHARE": share.path]
+    let config = try ProjectConfig.parse(yaml: macYAML.replacingOccurrences(of: "HelloShip", with: "Demo"))
+    let app = try MacBuilder.build(project: project, config: config, paths: StagePaths(project: project, platform: .macos), env: env, note: { _ in })
+    #expect(fm.fileExists(atPath: app.appendingPathComponent("Contents/MacOS/Demo").path))
+    #expect(try String(contentsOf: root.appendingPathComponent("sdks"), encoding: .utf8) == pack.sdkBundle.deletingLastPathComponent().path + "\n")
+    let argv = try String(contentsOf: root.appendingPathComponent("argv"), encoding: .utf8)
+    #expect(argv.contains("--scratch-path \(project.path)/.xless/macos-build-arm64-swift-6.2.3"))
+    #expect(argv.contains("--swift-sdk arm64-apple-macosx --arch arm64") && !argv.contains("--triple"))
+}
+
 // MARK: - The resource bundles of a build
 
 /// A `swift build` in miniature: it makes what is missing of its products, or (`blind`) only where it has never built.
