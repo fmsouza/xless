@@ -327,6 +327,13 @@ for flag in --old --native; do
   [[ $code == 0 ]] || fail "$flag with a build's XDG_CONFIG_HOME exits $code: $(cat "$t/err")"
   survives "$flag, XDG_CONFIG_HOME of a build"
   grep -q 'it is, or leads to' "$t/out" || [[ "$flag" == --native ]] || fail "$flag does not say it leaves the SDK of the pack: $(cat "$t/out")"
+  # (d) the same with the store of that pack not named now (an earlier XLESS_XCODES): what is in a pack is a pack's, wherever the store is
+  mkolder; echo '{}' > "$cache/sdk/xcode27.0-27A266a/toolchain-meta.json"; mkdir -p "$xdg/swiftpm"
+  extra=(XDG_CONFIG_HOME="$xdg")
+  run "$flag" --yes
+  [[ $code == 0 ]] || fail "$flag with a build's XDG_CONFIG_HOME into a store not named exits $code: $(cat "$t/err")"
+  survives "$flag, XDG_CONFIG_HOME of a build into a store not named"
+  grep -q "inside the Xcode pack $t/store2/26.2-17C52-arm64" "$t/out" || [[ "$flag" == --native ]] || fail "$flag does not say it leaves the pack's SDK: $(cat "$t/out")"
   extra=(); rm -rf "$nh" "$t/home/.swiftpm" "$t/home/.config/xless" "$cache/xless"
 done
 mkcache

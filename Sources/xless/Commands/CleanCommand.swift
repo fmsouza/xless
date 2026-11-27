@@ -59,11 +59,18 @@ struct CleanCommand: AsyncParsableCommand {
         let real = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path }
         let guarded = [XcodeStore(env: env).root, layout.root.appendingPathComponent("xcodes"), cacheRoot].map(real)
         var skipped: [String] = []
+        // Nor what lies in a pack of any store: one that an earlier XLESS_XCODES named is not among those.
         let olderInstall = layout.olderInstall(env: env).filter { path in
-            let r = real(path)
-            guard let inside = guarded.first(where: { r == $0 || r.hasPrefix($0 + "/") }) else { return true }
-            skipped.append("leaving \(path.path): it is, or leads to, \(r == path.standardizedFileURL.path ? "" : r + ", ")inside \(inside) (a pack store or the cache), not an older install's")
-            return false
+            let r = real(path), led = r == path.standardizedFileURL.path ? "" : r + ", "
+            if let inside = guarded.first(where: { r == $0 || r.hasPrefix($0 + "/") }) {
+                skipped.append("leaving \(path.path): it is, or leads to, \(led)inside \(inside) (a pack store or the cache), not an older install's")
+                return false
+            }
+            if let pack = Self.pack(holding: r) {
+                skipped.append("leaving \(path.path): it is, or leads to, \(led)inside the Xcode pack \(pack), not an older install's")
+                return false
+            }
+            return true
         }
         for line in skipped { say(line) }
         // --native removes its root whole: only one that is a native home and holds nothing else (see `rootProblem`).
@@ -370,6 +377,16 @@ struct CleanCommand: AsyncParsableCommand {
         let manifest = root.appendingPathComponent("pack.json")
         if FileManager.default.fileExists(atPath: manifest.path) { try FileManager.default.removeItem(at: manifest) }
         try PackPlan.removeTree(root)
+    }
+
+    /// The pack that holds the real path `path` (it, or a directory above it, has a `pack.json`), or nil.
+    private static func pack(holding path: String) -> String? {
+        var dir = URL(fileURLWithPath: path)
+        while dir.path != "/" && !dir.path.isEmpty {
+            if FileManager.default.fileExists(atPath: dir.appendingPathComponent("pack.json").path) { return dir.path }
+            dir.deleteLastPathComponent()
+        }
+        return nil
     }
 
     /// The leftovers of interrupted setups in `store`: `<name>.partial`, `<name>.old` and `<name>.lock` of a pack's name
