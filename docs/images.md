@@ -127,8 +127,9 @@ those runs or stop them.
 
 **Which step runs where:** an overlay app's build (and nothing else) runs in the kit's image, without any secret. The
 steps that hold a secret (the next build number, signing, the upload) run in the xless image, where no toolchain of
-another language is. A Swift-only project's `xless ship` is one container of the xless image
-([security.md](security.md#the-build-and-your-secrets)); the pack is read-only in each
+another language is. A Swift-only project's `xless ship` is one container of the xless image, which builds and holds the
+secrets, unless its build has an [image of its own](#an-image-of-your-own)
+([security.md](security.md#a-build-that-means-harm)); the pack is read-only in each
 ([why](security.md#the-xcode-packs)).
 
 ## An image of your own
@@ -161,9 +162,13 @@ XLESS_IMAGE=my-app-image xless run --docker --config app.yml
 ```
 
 - It is used for the build step alone: the steps with the secrets run in the xless image. For a Swift-only project this
-  makes the run two containers instead of one, and the one that builds has no secret. It gets the pack read-only, as
-  every container of the run does. The project's directory is mounted whole into it, so it may not be your home
-  directory or one above it.
+  makes the run two containers instead of one, and the one that builds has no secret, when the image is not the xless
+  image itself. xless compares the two images' IDs: a tag of the xless image, or a Dockerfile that adds nothing to its
+  `FROM`, is the same image, and the run is one container with the secrets, as without `image:`
+  ([security.md](security.md#a-build-that-means-harm)). A run that builds and signs says which it is: its `==>` line that
+  names the Xcode ends with `build my-app-image, signing and upload xless:1.4.0-arm64` when there are two, and with the
+  xless image's name alone when there is one. The build's container gets the pack read-only, as every container of the
+  run does. The project's directory is mounted whole into it, so it may not be your home directory or one above it.
 - xless never builds it for you: your project's Dockerfile is code, and building it is your decision. It holds no Xcode,
   so another pin needs nothing of it; build it again after each new xless.
 - It must be built on the image of this xless, as that image is now. xless checks the labels that it stamps on its images

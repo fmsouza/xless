@@ -80,7 +80,8 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
 - **Secrets.** With the keys in the encrypted store ([secrets.md](secrets.md#xless-run-and-docker-builds)), a run
   needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run, before its
   first step ([in WSL](security.md#in-wsl) natively after the build, for each step that needs it), or none while the store is kept unlocked ([staying unlocked](secrets.md#staying-unlocked)) (with
-  `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload;
+  `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload, which for an
+  `xless.yml` project without an image of its own is the one that builds too;
   `--allow-disk-secrets` where there is no tmpfs, as on macOS). To override the store, as CI does, set the paths of your
   secret files in the environment: a `NAME_FILE` set there wins over the store. The files are mounted read-only into the
   container (natively, read where they are); values are never printed or put on a command line. A run that stops before
@@ -154,9 +155,11 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   review, public links): `testflight.external` and `xless testflight`. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
 
-With a project directory everything runs in one process (one container with `--docker`), so package code built there
-could read the key files. Build up to `finalize` first, with no secret, then sign and upload what it built, with the same build
-number for both runs. That keeps a build's mistake from the secrets, not code that means harm: what the first run wrote, and
+With a project directory on Linux everything runs in one process (with `--docker`, in one container, unless the build
+has an image of its own that is not the xless image), so package code built there could read the key files. (On a Mac and
+in WSL, natively, the build and the signing are two processes of one user:
+[security.md](security.md#the-build-and-your-secrets).) Build up to `finalize` first, with no secret, then sign and
+upload what it built, with the same build number for both runs. That keeps a build's mistake from the secrets, not code that means harm: what the first run wrote, and
 natively what it left running, are there when the second one signs
 ([what does keep such a build from the secrets](security.md#a-build-that-means-harm)).
 
