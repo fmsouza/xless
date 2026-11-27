@@ -433,27 +433,29 @@ struct CleanCommand: AsyncParsableCommand {
 
     /// The names a native home has at its top level: what `xless setup` makes (`NativeLayout`: bin, tools, toolchains and the older record; the
     /// store xcodes), with the `.partial`, `.old`, `.lock` and `.download` that setup leaves beside them (PackLock, PackPlan, NativeSetupPlan)
-    /// and the macOS signer's `rcodesign.lock`.
+    /// and the macOS signer's `rcodesign.lock` (and the `.DS_Store` Finder leaves in a directory it shows).
     private static func isNativeHomeEntry(_ name: String) -> Bool {
         let bases = ["bin", "tools", "toolchains", "xcodes", "swift-toolchain.json"]
-        if name == "rcodesign.lock" { return true }
+        if name == "rcodesign.lock" || name == ".DS_Store" { return true }
         return bases.contains { base in name == base || [".partial", ".old", ".lock", ".download"].contains { name == base + $0 } }
     }
 
-    /// Whether `root` has what only xless's setup makes: a link `bin/xtool` or `bin/rcodesign`, a `tools/xtool-*` or `tools/rcodesign-*`, a pack
-    /// (`xcodes/*/pack.json`) or an older install's record. A bare `bin/` or `tools/` proves nothing.
+    /// Whether `root` has what only xless's setup makes: a link `bin/xtool` or `bin/rcodesign` (a file of that name is anyone's), a
+    /// `tools/xtool-*` or `tools/rcodesign-*`, a pack (`xcodes/*/pack.json`) or an older install's record. A bare `bin/` or `tools/` proves nothing.
     private static func hasNativeMark(_ root: URL) -> Bool {
         let fm = FileManager.default
         func exists(_ u: URL) -> Bool { (try? fm.attributesOfItem(atPath: u.path)) != nil }   // a link too, broken or not
+        func isLink(_ u: URL) -> Bool { (try? fm.destinationOfSymbolicLink(atPath: u.path)) != nil }
         func names(_ dir: String) -> [String] { (try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(dir).path)) ?? [] }
-        if exists(root.appendingPathComponent("bin/xtool")) || exists(root.appendingPathComponent("bin/rcodesign")) || exists(root.appendingPathComponent("swift-toolchain.json")) { return true }
+        if isLink(root.appendingPathComponent("bin/xtool")) || isLink(root.appendingPathComponent("bin/rcodesign")) || exists(root.appendingPathComponent("swift-toolchain.json")) { return true }
         if names("tools").contains(where: { $0.hasPrefix("xtool-") || $0.hasPrefix("rcodesign-") }) { return true }
         return names("xcodes").contains { exists(root.appendingPathComponent("xcodes/\($0)/pack.json")) }
     }
 
     /// Why `root` is not a native home that `--native` may remove whole, or nil. It must be absolute; not `/`; and not hold (on real paths) anything
     /// in `holds` (the home directory, the share, the binary, the cache, the vault, the configuration: a native home is a leaf). When it exists and
-    /// is not empty it must have nothing at its top level but the names of a native home (the first strangers are named) and a mark of xless's setup.
+    /// is not empty it must have nothing at its top level but the names of a native home, nothing in `bin/` but setup's links (the first
+    /// strangers are named), and a mark of xless's setup.
     private static func rootProblem(_ root: URL, env: [String: String], holds: [(what: String, url: URL)]) -> (cause: String, fix: String)? {
         let given = [env["XLESS_NATIVE_HOME"], env["XDG_DATA_HOME"]].compactMap { $0 }.first { !$0.isEmpty }
         let fix = given != nil
@@ -469,7 +471,9 @@ struct CleanCommand: AsyncParsableCommand {
         }
         let fm = FileManager.default
         guard fm.fileExists(atPath: root.path), let entries = try? fm.contentsOfDirectory(atPath: root.path), !entries.isEmpty else { return nil }
-        let strangers = entries.filter { !isNativeHomeEntry($0) }.sorted()
+        // (bin/ is on the PATH of a native build: what else is there would be a person's own program)
+        let inBin = ((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent("bin").path)) ?? []).filter { !["xtool", "rcodesign", ".DS_Store"].contains($0) }
+        let strangers = entries.filter { !isNativeHomeEntry($0) }.sorted() + inBin.sorted().map { "bin/\($0)" }
         if !strangers.isEmpty {
             return ("the native home \(path) holds what xless did not put there (\(strangers.prefix(5).joined(separator: ", "))\(strangers.count > 5 ? ", and \(strangers.count - 5) more" : "")), so it is not removed",
                     fix)

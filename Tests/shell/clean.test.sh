@@ -518,12 +518,18 @@ refused() {   # DIR WANT [ENV…]: --native --yes (and --all) refuse DIR, naming
 # xless's own install prefix, which XLESS_PREFIX and XLESS_NATIVE_HOME can be mixed up for: bin/xless and share/
 lp="$t/home/.local"; rm -rf "$lp"; mkdir -p "$lp/bin" "$lp/share/xless/vault"; : > "$lp/bin/xless"; : > "$lp/share/xless/vault/secrets.vault"
 refused "$lp" "xless's data directory (with the secrets vault)"
-refused "$lp" 'holds what xless did not put there (share)' XDG_DATA_HOME="$t/elsewhere" XLESS_SHARE="$t/share" 
+refused "$lp" 'holds what xless did not put there (share, bin/xless)' XDG_DATA_HOME="$t/elsewhere" XLESS_SHARE="$t/share"
 [[ -f "$lp/bin/xless" && -f "$lp/share/xless/vault/secrets.vault" ]] || fail "~/.local lost a file"
 # a project directory with bin/ and tools/ only: neither is a mark of xless's setup
-mkdir -p "$t/proj/bin" "$t/proj/tools"; : > "$t/proj/bin/run.sh"
+mkdir -p "$t/proj/bin" "$t/proj/tools"; : > "$t/proj/tools/run.sh"
 refused "$t/proj" 'holds none of what xless.s setup makes'
-[[ -f "$t/proj/bin/run.sh" ]] || fail "a project directory lost a file"
+[[ -f "$t/proj/tools/run.sh" ]] || fail "a project directory lost a file"
+# a bin/xtool that is a file, not the link setup makes, is no mark; and a bin/ with more than setup's links is not setup's
+mkdir -p "$t/proj2/bin"; echo mine > "$t/proj2/bin/xtool"
+refused "$t/proj2" 'holds none of what xless.s setup makes'
+mkdir -p "$t/proj3/bin"; ln -s x "$t/proj3/bin/xtool"; echo mine > "$t/proj3/bin/run.sh"
+refused "$t/proj3" 'holds what xless did not put there (bin/run.sh)'
+[[ -f "$t/proj2/bin/xtool" && -f "$t/proj3/bin/run.sh" ]] || fail "a directory with a bin of its own lost a file"
 # a native home that holds the cache, the share or the configuration (a leaf it is not)
 nhx="$t/nh-holds"; rm -rf "$nhx"; mkdir -p "$nhx/bin" "$nhx/tools/cache" "$nhx/tools/share"; ln -s x "$nhx/bin/xtool"; echo 9.9.9 > "$nhx/tools/share/VERSION"
 refused "$nhx" 'the cache' XDG_CACHE_HOME="$nhx/tools/cache"
@@ -537,8 +543,7 @@ refused "$nhs" 'holds what xless did not put there (notes.txt)'
 [[ -f "$nhs/notes.txt" && -f "$nhs/xcodes/26.2-17C52-arm64/pack.json" ]] || fail "a native home with a stranger lost a file"
 # a genuine native home (with the leftovers setup makes) is removed, after the question names its path
 nhg="$t/nh-genuine"; rm -rf "$nhg"; mkdir -p "$nhg/bin" "$nhg/tools/xtool-1.21.0" "$nhg/xcodes/26.2-17C52-arm64" "$nhg/xcodes/26.2-17C52-arm64.partial" "$nhg/toolchains"
-ln -s x "$nhg/bin/xtool"; echo "$pack_json" > "$nhg/xcodes/26.2-17C52-arm64/pack.json"; : > "$nhg/xcodes/26.2-17C52-arm64.lock"
-rg="$(cd "$nhg" && pwd -P)"; rg="${rg/#\/private/}"
+ln -s x "$nhg/bin/xtool"; echo "$pack_json" > "$nhg/xcodes/26.2-17C52-arm64/pack.json"; : > "$nhg/xcodes/26.2-17C52-arm64.lock"; : > "$nhg/.DS_Store"   # (which Finder leaves)
 extra=(XLESS_NATIVE_HOME="$nhg")
 on n --native
 [[ $code == 0 && -d "$nhg" ]] && grep -qF "Remove the native install $nhg, and 1 Xcode pack of the native install? [y/N]" "$t/out" || fail "--native does not ask with the path: $(cat "$t/out")"
