@@ -3,8 +3,9 @@
 # Xcode pack's volume once. The image holds nothing of Apple's; the pack holds Apple's SDK, so it stays on the runner (no
 # registry, no cache, no artifact). Never let pull requests of others run on such a runner.
 # Each step is a container of the image, with the pack read-only: the build in one without any secret, the signing in another.
-# The build writes the checkout, but not its .git (mounted read-only), and after it nothing on the runner runs the checkout
-# but the git diff at the repository's top: keep both when you adapt it (docs/ci.md#in-the-image says why).
+# This is one job on one runner: it keeps a build's mistake away from the secrets, not code that means harm, and its git diff
+# is a check for accidents. For code you do not trust, use two jobs (docs/ci.md#in-two-jobs, docs/security.md#a-build-that-means-harm).
+# The read-only .git and the check's --ignore-submodules=all are hardening; docs/ci.md#in-the-image says what each does not close.
 # Copy it to your app repository's .github/workflows/ and adapt IMAGE, PACK and APP. What it does not protect: docs/ci.md.
 name: example-ios-image
 on: workflow_dispatch
@@ -35,10 +36,10 @@ jobs:
             --mount "type=volume,src=$PACK,dst=/xcodes,readonly" \
             -v "$GITHUB_WORKSPACE:/work" -v "$GITHUB_WORKSPACE/.git:/work/.git:ro" -w "/work/$APP" "$IMAGE" \
             xless run . --to finalize
-      # At the repository's top, whose .git the build could not write; not in the app's directory, where the build
-      # may have made a repository of its own.
+      # A check for accidents. At the repository's top, whose .git the build could not write, and into no submodule's path:
+      # the build may have made a repository of its own in any directory.
       - name: What the build changed in the repository (no secret)
-        run: git -C "$GITHUB_WORKSPACE" --no-optional-locks diff --exit-code
+        run: git -C "$GITHUB_WORKSPACE" --no-optional-locks diff --exit-code --ignore-submodules=all
       - name: Sign, and upload to TestFlight
         env:
           XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}

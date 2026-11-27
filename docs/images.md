@@ -102,8 +102,8 @@ says that no pack was prepared. `--dry-run` prints each step and its command.
 
 Measured on an arm64 Mac: preparing a pack from the export takes about five and a half minutes, about four of them
 compiling Swift Build; preparing the `sdk` part again alone takes about a minute and a half. Exporting the SDK from the
-`.xip` first took 3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up to about 15 GB in the cache while the `.xip` is unpacked (about 3.5 GB
-stays). Setup prints its estimate with each step.
+`.xip` first took 3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up to about
+15 GB in the cache while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
 
 A pack that running containers use is not replaced under them: setup refuses, names the containers, and says to wait for
 those runs or stop them.
@@ -281,11 +281,11 @@ missing and stops (exit 2). In the xless image itself an overlay lacks Node, Rus
 **Keeping the build apart from the secrets is then your pipeline's job.** A whole run in one container is a native Linux
 run: the build's tools get no secret variable and cannot open the store, but they run as the same user in the same
 container as the steps that sign, so a secret *file* that the container has (a `_FILE` variable's) is readable to the
-build's code ([security.md](security.md#the-image-used-directly)). So build in one container with no secret, and sign
-and upload in another, as [ci.md](ci.md#in-the-image) does. The build's container writes the project as your user: give
-it the checkout's `.git` read-only, and after it run nothing of the checkout on the host but a `git diff` at the
-repository's top (ci.md has the rule, and why). `xless run --docker` from a host makes the split of the containers
-itself: the build in a container without any secret.
+build's code ([security.md](security.md#the-image-used-directly)). Building in one container with no secret and signing
+in another, as [ci.md](ci.md#in-the-image) does, keeps a build's mistake from the secrets, not code that means harm:
+the build's container writes the project as your user, and what it leaves there is on the machine when the secrets come.
+For that, sign in another job, or use `xless run --docker` from a host, where the build has a container of its own
+([security.md](security.md#a-build-that-means-harm)).
 
 ## Another architecture
 

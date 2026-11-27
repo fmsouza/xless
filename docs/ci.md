@@ -102,8 +102,9 @@ steps:
 
 Both runs need the same build number: without one, each takes the minute it starts in, and `upload` refuses the difference.
 
-That is for code that you mostly trust: the steps keep a mistake of the build away from the secrets, not code that means harm.
-On one machine, what the build's code can still do:
+That is for code that you mostly trust: the steps keep a mistake of the build away from the secrets, not code that means harm,
+and the `git diff` step is a check for accidents. For code that means harm, use [two jobs](#in-two-jobs) or `xless run --docker`
+([security.md](security.md#a-build-that-means-harm)). On one machine, what the build's code can still do:
 
 - **Change `xless.yml`** (the team, the bundle ID) or an entitlements file, as nothing keeps a native build from it. The third step
   finds such a change made by mistake, not one that the build hides: it can write `.git`, so it can stage its change in the
@@ -118,8 +119,9 @@ On one machine, what the build's code can still do:
 
 ### In two jobs
 
-The stronger form, for an `xless.yml` app, is two jobs on two machines (the runners that GitHub offers are new for each job): the
-second has the secrets and gets nothing but the built app. It takes `xless.yml` and the entitlements from the commit.
+For code that you do not trust, the form for an `xless.yml` app is two jobs on two machines (the runners that GitHub offers are new
+for each job): the second has the secrets and gets nothing of the build but the built app. It takes `xless.yml` and the
+entitlements from the commit ([why](security.md#a-build-that-means-harm)).
 
 ```yaml
 permissions:
@@ -152,7 +154,6 @@ jobs:
       - run: |
           mkdir -p .xless/build/ios
           tar -C .xless/build/ios --no-same-owner -xf "$RUNNER_TEMP/built/app.tar" final
-          git diff --exit-code
       - env:
           XLESS_BUILD_NUMBER: ${{ needs.build.outputs.number }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -174,9 +175,14 @@ jobs:
   that no other job lands where the keys are.
 - Use no cache in the second job: the first could have filled it.
 - The artifact is the unsigned app. Whoever may read the repository can download it while it is kept.
+- **The second job runs nothing that the build made**: no script and no `git` on it. It checks out the commit, unpacks the
+  tar's `final` alone into `.xless/build/ios` of that checkout, and runs xless's signing on it. GNU tar refuses member
+  names with `..`; given a tar whose links lead out of `final` and whose later members go through them, GNU tar 1.34 wrote
+  nothing outside and failed, so the step stops.
 - The app is still the build's: the second job signs and uploads what the first one made
-  ([what the build decides](security.md#the-build-and-your-secrets)). For code that you do not trust, build with
-  `--docker` in the first job, which shows the build nothing but the project, and read that page first.
+  ([what the build decides](security.md#the-build-and-your-secrets)). xless looks at it as a tree before it signs a copy,
+  which keeps the build from reaching outside the app through it, and proves nothing about what the app does. The first
+  job has no secret, so how it builds (natively, `--docker`, in the image) changes what its runner keeps, not the signing.
 
 This was tried in pieces, without Apple's answer: the signing, in a fresh checkout with that directory alone, up to its first call to App
 Store Connect, the packaging, and the upload up to its own. It has not been run as a workflow.
@@ -188,20 +194,31 @@ once, each step can be a container of the image ([images.md](images.md#using-the
 without any secret, the signing in another, with the pack read-only in both. Nothing of the runner but the checkout and the
 pack is in either.
 
-The build's container writes the checkout as the runner's user, so what it leaves there is what reaches the steps after
-it, on the runner itself. The rule for the job:
+This is one job on one runner: like the native steps above, it keeps a build's mistake away from the secrets, not code
+that means harm ([security.md](security.md#a-build-that-means-harm)); for that, use [two jobs](#in-two-jobs). The
+build's container writes the checkout as the runner's user, and what it leaves there is on the runner when the secrets
+come. What the job below still does, as hardening, and what each part does not close:
 
-- **`.git` is read-only in the build's container** (a mount of its own over the checkout's), so the build can neither name
-  a program in `.git/config` (`core.fsmonitor`, `core.pager`, `diff.external`, an alias), add a hook, nor stage or commit
-  what it changed. Mounting only the app's directory is not enough: the build can make a repository of its own there
-  (`git init`), and a `git` started in that directory reads it, runs what its configuration names, and finds nothing
-  changed.
-- **After the build, nothing on the runner runs or reads the checkout but one check**: `git -C "$GITHUB_WORKSPACE"
-  --no-optional-locks diff --exit-code`, at the repository's top, whose `.git` the build could not write. A script of the
-  repository, a local action (`.github/actions`), a `Makefile` or a tool that reads its configuration from the working
-  directory would run what the build left. The signing runs in a container of the xless image, which runs nothing of the
-  project. Options such as `git -c core.fsmonitor= -c core.hooksPath=/dev/null` do not make a `git` safe in a checkout
-  whose `.git` the build could write: what else its configuration names stays, and the index may hide the change.
+- **`.git` is read-only in the build's container** (a mount of its own over the checkout's). It closes the top
+  repository's `.git/config` (`core.fsmonitor`, `core.pager`, `diff.external`, an alias), its hooks, its index and its
+  refs: the build can neither name a program there nor stage or commit what it changed. It does not close a `.git` in
+  the working tree below it: the build can make a repository of its own in any directory (`git init`), also in a
+  submodule's path, empty or not (where `actions/checkout` fetched the submodule, its `.git` is a file the build can
+  rewrite). So mounting only the app's directory gives nothing of this: a `git` started there reads the build's own
+  repository.
+- **The check runs at the repository's top, as `git -C "$GITHUB_WORKSPACE" --no-optional-locks diff --exit-code
+  --ignore-submodules=all`.** Without `--ignore-submodules=all`, `git diff` looks into each submodule's path, and a
+  repository the build made there has the runner run what its configuration names. With it, git looks
+  into none, and a change to a tracked file is still reported. It does not close a filter or a diff driver that the
+  runner's own git configuration defines (git-lfs's is common): a `.gitattributes` the build wrote can select it for its
+  files. It compares tracked files only: an untracked or ignored file the build wrote (an entitlements file that git
+  ignores, say) is not compared. Options such as `-c core.fsmonitor=` do not stand in for the read-only `.git`.
+- **Nothing else of the checkout runs on the runner after the build**: no script of the repository, local action
+  (`.github/actions`), `Makefile` or tool that reads its configuration from the working directory; the signing runs in a
+  container of the xless image, which runs xless alone. It does not cover what runs there anyway: `actions/checkout`'s
+  post step runs `git submodule foreach --recursive …` in the workspace to remove credentials (v4.2.2, whatever
+  `persist-credentials` says), which enters a repository the build made in a submodule's path and runs what its
+  configuration names, after the signing step.
 - **The build's container gets the checkout and the pack, and nothing else of the runner**: not `$RUNNER_TEMP` (where
   `$GITHUB_ENV` and `$GITHUB_PATH` are), not the runner's home or its tool cache, not Docker's socket. What the build
   leaves running ends with its container (Docker stops every process of a container when its first one ends).
@@ -223,8 +240,8 @@ steps:
       docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
         --mount "type=volume,src=$PACK,dst=/xcodes,readonly" \
         -v "$GITHUB_WORKSPACE:/work" -v "$GITHUB_WORKSPACE/.git:/work/.git:ro" -w /work "$IMAGE" xless run . --to finalize
-  - name: What the build changed in the project (no secret)
-    run: git -C "$GITHUB_WORKSPACE" --no-optional-locks diff --exit-code
+  - name: What the build changed in the project, a check for accidents (no secret)
+    run: git -C "$GITHUB_WORKSPACE" --no-optional-locks diff --exit-code --ignore-submodules=all
   - name: Sign and upload
     env:
       XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
@@ -241,15 +258,12 @@ steps:
 - `-e NAME` without a value passes the step's variable on, so the secrets are not on the command line.
 - `.git` must be a directory, as `actions/checkout` makes it. Where it is a file (a worktree, a submodule), the build
   could rewrite where it points: check out a plain clone.
-- The signing container still reads what the build wrote in the project: the app, and the xless.yml and entitlements that
-  the check has just compared with the commit. What the app is stays the build's
+- The signing container reads what the build wrote in the project: the app, and the xless.yml and entitlements, which the
+  check compared with the commit when git tracks them. What the app is stays the build's
   ([what the build decides](security.md#the-build-and-your-secrets)).
-- **Two jobs are stronger** ([above](#in-two-jobs)): the second one, on another machine, starts from a new checkout and gets
-  nothing of the build but the built app, so none of the rules above has to hold for the signing to be apart from it. Use
-  them where the CI allows it; build the first job's app with `xless run --docker` or in the image as above.
 - This is for an `xless.yml` app. For a Tauri, Cargo or React Native app, `xless run --docker --config …` on the runner
-  makes the same split by itself, in the kit's image and the xless image ([images.md](images.md#what-a-run-does)); the
-  rule after the run (nothing on the runner runs the checkout) is the same.
+  starts the build's container itself, in the kit's image, and the steps with the secrets in the xless image
+  ([images.md](images.md#what-a-run-does), [what that does and does not keep apart](security.md#a-build-that-means-harm)).
 - After an upgrade of xless, set `IMAGE` to the new image; the pack stays, unless the new xless prepares it in another
   way, and then `xless setup --docker --sdk <dir>` on the runner prepares it again.
 
@@ -260,7 +274,7 @@ steps:
 [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow, with the two steps, to copy into your app's
 repository and adapt. It runs on a self-hosted Linux runner with xless set up natively.
 [examples/example-ios-image.yml](examples/example-ios-image.yml) runs the two steps in containers of the xless image, with the
-pack volume read-only ([above](#in-the-image)). Neither has been run as a workflow. The commands of the steps of
+pack volume read-only ([above](#in-the-image)). Both are one job: for code you do not trust, use [two jobs](#in-two-jobs). Neither has been run as a workflow. The commands of the steps of
 example-ios-image.yml, and those above with the app at the repository's top, were run by hand on a copy of
 `samples/HelloShip` in a git repository (Docker on an arm64 Mac, with `GITHUB_WORKSPACE` set): the build, with the pack of
 Xcode 26.2 and with that of Xcode 27.0, made the finalized app with `.git` read-only, and left nothing for the `git diff`
