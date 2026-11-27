@@ -39,8 +39,14 @@ public enum PackRecipe {
         }
         func feed(_ name: String, _ text: String) { feed(name, Data(text.utf8)) }
         func file(_ path: String) throws {
-            guard let data = try? Data(contentsOf: share.appendingPathComponent(path)) else {
-                throw XlessError(.sdk, "xless's \(path) is missing from \(share.path)", fix: "install xless again, or set XLESS_SHARE to its share directory")
+            let url = share.appendingPathComponent(path)
+            let data: Data
+            do { data = try Data(contentsOf: url) } catch {
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    throw XlessError(.sdk, "xless's \(path) is missing from \(share.path)", fix: "install xless again, or set XLESS_SHARE to its share directory")
+                }
+                throw XlessError(.sdk, "xless's \(path) in \(share.path) cannot be read: \(error.localizedDescription)",
+                                 fix: "make it readable (its permissions), or install xless again")
             }
             feed(path, data)
         }

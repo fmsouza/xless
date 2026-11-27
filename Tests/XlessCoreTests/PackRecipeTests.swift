@@ -174,6 +174,22 @@ func swiftBuildHashIgnoresTheFixture(file: String) throws {
     #expect(try digest(.sdk, build: "17C52", table, share) == digest(.sdk, build: "17C52", third, share))
 }
 
+// A recipe file that is there but cannot be read is said to be unreadable, not missing.
+@Test func anUnreadableRecipeFileIsSaidToBeUnreadable() throws {
+    let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
+    let file = share.appendingPathComponent("docker/toolchain/clang-driver")
+    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path) }
+    guard (try? Data(contentsOf: file)) == nil else { return } // root reads it anyway
+    do {
+        _ = try digest(.sdk, share)
+        Issue.record("expected a throw")
+    } catch let e as XlessError {
+        #expect(e.cause.contains("docker/toolchain/clang-driver") && e.cause.contains("cannot be read") && !e.cause.contains("missing"), "\(e.cause)")
+    }
+}
+
 @Test func swiftVersionComesFromTheTable() throws {
     #expect(try PackRecipe.swiftVersion(build: "17C52", table: table) == "6.2.3")
     #expect(throws: XlessError.self) { try PackRecipe.swiftVersion(build: "nope", table: table) }
