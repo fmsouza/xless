@@ -16,8 +16,17 @@ import Foundation
 ///
 /// A Mac building with its own Xcode reads none of this (`MacNative`, `DarwinSDK(xcode:)`).
 public struct XcodeEnvironment: Sendable {
-    /// The project's pin, which `xless run` gives the stage commands it starts.
+    /// The project's pin, which `xless run` gives the stage commands it starts, and a command sets when it loads the
+    /// project (`pin(configured:env:)`).
     public static let pinVariable = "XLESS_XCODE_PIN"
+
+    /// The value `pinVariable` takes in a command that has loaded a project whose `xcode:` is `configured`, so that a
+    /// stage run by hand, the shims it starts and every child find the Xcode `xless run` would. nil: leave it alone
+    /// (a value in `env` wins: a run has set it), or the project pins nothing.
+    public static func pin(configured: String?, env: [String: String]) -> String? {
+        guard value(env, pinVariable) == nil, let configured, !configured.isEmpty else { return nil }
+        return configured
+    }
 
     /// nil: no pack (every part overridden, or a machine set up before the packs).
     public let pack: XcodePack?

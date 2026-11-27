@@ -94,6 +94,10 @@ struct Context {
         var context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh, expecting: expecting)
         context.configFile = opts.configURL
         for name in context.config.secretNames { SecretEnvironment.scrub(name) }
+        // The project's pinned Xcode, for this command and every child, as `xless run` gives it (XcodeEnvironment).
+        if let pin = XcodeEnvironment.pin(configured: context.config.xcode, env: ProcessInfo.processInfo.environment) {
+            setenv(XcodeEnvironment.pinVariable, pin, 1)
+        }
         return context
     }
 

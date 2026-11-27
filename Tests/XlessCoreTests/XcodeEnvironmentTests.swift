@@ -174,6 +174,17 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(pinned.pack?.manifest.build == "17C52" && pinned.meta.path.contains("26.2-17C52-"))
 }
 
+@Test func aLoadedProjectGivesItsPinToTheEnvironment() {
+    // A stage run by hand takes the project's `xcode:`, as `xless run` gives it.
+    #expect(XcodeEnvironment.pin(configured: "26.2", env: [:]) == "26.2")
+    #expect(XcodeEnvironment.pin(configured: "26.2", env: [XcodeEnvironment.pinVariable: ""]) == "26.2")
+    // A value already in the environment wins (a run has set it).
+    #expect(XcodeEnvironment.pin(configured: "26.2", env: [XcodeEnvironment.pinVariable: "27.0"]) == nil)
+    // No pin sets nothing.
+    #expect(XcodeEnvironment.pin(configured: nil, env: [:]) == nil)
+    #expect(XcodeEnvironment.pin(configured: nil, env: [XcodeEnvironment.pinVariable: "27.0"]) == nil)
+}
+
 @Test func swiftBuildIsOnPathWhenThePackHasNone() throws {
     let store = try tempDir(), bin = try tempDir("xcode-env-bin")
     try makePack(in: store, parts: ["sdk": "h"])
