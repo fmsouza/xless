@@ -51,7 +51,9 @@ code=0; "${env[@]}" XLESS_RUN_AS_SCRIPT=1 XLESS_SELF="$t/mine" "$script" p >/dev
 [[ $code -eq 2 ]] && grep -q "is older than scripts/testflight.sh" "$t/err" || fail "an older xless ($code): $(cat "$t/err")"
 # the real xless, as the script runs it: in the images unless an SDK is installed here, its steps by $XLESS_SELF
 printf 'name: App\n' > "$t/proj/xless.yml"
-cp "$t/bin/xless" "$t/bin/docker"
+# docker: the fake xless, but for the contexts it has (xless asks for them first: DockerContext)
+{ printf '#!/bin/sh\n[ "$1 $2" != "context ls" ] || { printf "default\\nstub\\n"; exit 0; }\n'; tail -n +2 "$t/bin/xless"; } > "$t/bin/docker"
+chmod +x "$t/bin/docker"
 run=("${env[@]}" PATH="$t/bin:/usr/bin:/bin" XLESS_SHARE="$repo" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_SELF="$XLESS_RUN" DOCKER_CONTEXT=stub)
 out=$("${run[@]}" "$script" "$t/proj" --to finalize --dry-run 2>"$t/err") || fail "the script and xless: $(cat "$t/err")"
 [[ "$out" == "docker --context stub run "*" xless ship --platform ios --to finalize " ]] || fail "in the images: $out"
