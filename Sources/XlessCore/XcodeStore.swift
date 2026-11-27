@@ -136,7 +136,8 @@ public enum XcodeResolver {
 
     private static func choose(_ packs: [XcodePack], pin: String?, arch: String, order: [String], store: XcodeStore?) throws -> XcodePack {
         let wanted = pin.map(XcodeVersion.canonical)
-        func fits(_ xcode: String) -> Bool { wanted == nil || xcode == wanted }
+        // (as versions: a pack.json may spell 26.2 as 26.2.0)
+        func fits(_ xcode: String) -> Bool { wanted == nil || XcodeVersion.canonical(xcode) == wanted }
         let found = packs.filter { fits($0.manifest.xcode) && $0.manifest.arch == arch }
             .sorted { better(($0.manifest.xcode, $0.manifest.build), ($1.manifest.xcode, $1.manifest.build), order: order) }
         let hurt = (store?.broken() ?? []).filter { fits($0.xcode) && $0.arch == arch }

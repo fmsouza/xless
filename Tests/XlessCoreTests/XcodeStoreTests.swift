@@ -99,6 +99,27 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(problem { try resolve(store) }?.cause.contains("26.2-17C52-arm64") == true)
 }
 
+// A broken pack of the other architecture is not this machine's: it neither stops nor hides the pack this one uses.
+@Test func aBrokenPackOfTheOtherArchitectureIsNotThisMachines() throws {
+    let store = try tempDir()
+    defer { try? FileManager.default.removeItem(at: store) }
+    try makePack(in: store, xcode: "26.2", build: "17C52")
+    let bad = store.appendingPathComponent("27.0-27A266a-amd64")
+    try FileManager.default.createDirectory(at: bad, withIntermediateDirectories: true)
+    try "{ nope".write(to: bad.appendingPathComponent("pack.json"), atomically: true, encoding: .utf8)
+    #expect(try resolve(store).manifest.build == "17C52")
+    #expect(try resolve(store, pin: "26.2").manifest.build == "17C52")
+}
+
+// A pin and a pack's own version are compared as versions: a pack.json that spells 26.2 as 26.2.0 is the pin's.
+@Test func aPinFindsAPackWhoseVersionIsSpelledOtherwise() throws {
+    let store = try tempDir()
+    defer { try? FileManager.default.removeItem(at: store) }
+    try makePack(in: store, xcode: "26.2.0", build: "17C52")
+    #expect(try resolve(store, pin: "26.2").manifest.build == "17C52")
+    #expect(try resolve(store, pin: "26.2.0").manifest.build == "17C52")
+}
+
 @Test func onlyTheOtherArchitecture() throws {
     let store = try tempDir()
     try makePack(in: store, xcode: "26.2", build: "17C52", arch: "amd64")
