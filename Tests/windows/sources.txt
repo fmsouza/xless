@@ -10,6 +10,7 @@
 + Sources/XlessCore/DarwinSDK.swift
 + Sources/XlessCore/DarwinSDKLocator.swift
 - Sources/XlessCore/DittoShim.swift
++ Sources/XlessCore/DockerContext.swift
 + Sources/XlessCore/DottedVersion.swift
 + Sources/XlessCore/EntitlementRewrites.swift
 + Sources/XlessCore/EnvironmentNames.swift
@@ -304,6 +305,7 @@
 - Tests/XlessCoreTests/BuiltTreeTests.swift
 - Tests/XlessCoreTests/ChildProcessTests.swift
 - Tests/XlessCoreTests/DittoShimTests.swift
++ Tests/XlessCoreTests/DockerContextTests.swift
 + Tests/XlessCoreTests/DottedVersionTests.swift
 + Tests/XlessCoreTests/EnvironmentNamesTests.swift
 - Tests/XlessCoreTests/ExecutableFileTests.swift
