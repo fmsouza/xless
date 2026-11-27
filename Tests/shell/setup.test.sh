@@ -30,6 +30,8 @@ if [[ "$1" == info ]]; then
 fi
 # the images of $FAKE_IMAGES; a `build` adds the image its arguments name, and so does the image's `buildx build`
 if [[ "$1 $2" == "context show" ]]; then echo here; fi
+# the contexts of $STUB_CONTEXTS; none listed (nothing is checked) when it is not set
+if [[ "$1 $2" == "context ls" ]]; then printf '%s\n' ${STUB_CONTEXTS:-}; fi
 if [[ -n "${FAKE_IMAGES:-}" ]]; then
   if [[ "$1" == image && "$2" != rm ]]; then exec "$FAKE" "$@"; fi
   if [[ "$1 $2" == "buildx build" ]]; then "$FAKE" base arm64 27.0 27A266a >> "$FAKE_IMAGES"; fi
@@ -143,6 +145,24 @@ grep -q 'xless-base\|xless-tauri\|xless-rn\|docker build ' "$t/out" && fail "the
 grep -q '^run\|^volume create\|^buildx' "$log" && fail "--dry-run ran docker: $(cat "$log")"
 [[ ! -e "$t/home/.cache/xless/sdk" ]] || fail "--dry-run made the export's directory"
 grep -q 'next: xless run' "$t/out" && fail "--dry-run promised the next step"
+# The docker is chosen as `xless run` chooses it: a DOCKER_CONTEXT that docker does not have stops the setup (exit 2) before
+# docker is asked anything else, naming where it was set and the contexts there are; one it has is given to every docker command.
+extra=(DOCKER_CONTEXT=gone STUB_CONTEXTS="colima default")
+run ok --docker --xcode "$xip" --arch arm64 --dry-run
+[[ $code == 2 ]] || fail "a missing context: exit $code: $(cat "$t/err")"
+grep -qxF "error: [config] DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: colima, default — set DOCKER_CONTEXT to one of them in the environment, or remove it there: xless then uses colima-xless when that context exists, else docker's current one" "$t/err" \
+  || fail "a missing context's message: $(cat "$t/err")"
+[[ "$(cat "$log")" == "context ls --format {{.Name}}" ]] || fail "docker asked more than its contexts: $(cat "$log")"
+printf 'DOCKER_CONTEXT=gone\n' > "$t/run.env"
+extra=(XLESS_TESTFLIGHT_ENV="$t/run.env" DOCKER_CONTEXT=colima STUB_CONTEXTS="colima default")
+run ok --docker --xcode "$xip" --arch arm64 --dry-run
+[[ $code == 2 ]] && grep -qF "DOCKER_CONTEXT is gone (set in $t/run.env)" "$t/err" || fail "the run's file of settings is not read: $code $(cat "$t/err")"
+extra=(STUB_CONTEXTS="default colima-xless")
+run ok --docker --xcode "$xip" --arch arm64 --dry-run
+[[ $code == 0 ]] || fail "colima-xless: exit $code: $(cat "$t/err")"
+grep -q '^--context colima-xless ' "$log" || fail "no docker command with the context: $(cat "$log")"
+grep -v '^context ls' "$log" | grep -qv '^--context colima-xless ' && fail "a docker command without the context: $(cat "$log")"
+extra=()
 # The xless that goes into the image is always a copy in the setup work dir (<arch>-bin/xless): its source directory
 # (~/.local/bin, say) is never what docker-images.sh gets as the build context.
 mkdir -p "$t/ext"; echo stub > "$t/ext/xless"; echo "do not send me to docker" > "$t/ext/other-file"

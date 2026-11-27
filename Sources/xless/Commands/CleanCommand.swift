@@ -43,6 +43,8 @@ struct CleanCommand: AsyncParsableCommand {
     @Flag(help: "Print what would be removed, and remove nothing.") var dryRun = false
 
     func run() async throws {
+        // The docker whose images, volumes and containers it lists, as every xless command chooses it.
+        try HostDocker.check()
         let env = ProcessInfo.processInfo.environment
         let fm = FileManager.default
         let home = env["HOME"].map { URL(fileURLWithPath: $0) } ?? fm.homeDirectoryForCurrentUser
@@ -100,7 +102,7 @@ struct CleanCommand: AsyncParsableCommand {
             do {
                 let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
                 if listOnly || doOld {
-                    let all = try Shell.docker(ls, stage: .sdk).stdout
+                    let all = try HostDocker.docker(ls, stage: .sdk).stdout
                     if asks {
                         for ref in tag.map({ CleanPlan.old(fromListing: all, version: $0) }) ?? CleanPlan.legacy(fromListing: all) {
                             guard let image = LocalImages.here.image(ref), CleanPlan.isStillOld(ref, id: image.id, now: image, version: tag) else { continue }
@@ -110,7 +112,7 @@ struct CleanCommand: AsyncParsableCommand {
                     } else { imageRefs = CleanPlan.images(fromListing: all) }
                 }
                 if listOnly || doVolumes || doPacks {
-                    let listing = try Shell.docker(["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout
+                    let listing = try HostDocker.docker(["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout
                     if listOnly || doVolumes { workVolumes = CleanPlan.volumes(fromListing: listing) }
                     if listOnly || doPacks { packVolumes = CleanPlan.packs(fromListing: listing) }
                 }
@@ -262,12 +264,12 @@ struct CleanCommand: AsyncParsableCommand {
 
         var failures: [String] = []
         if !workVolumes.isEmpty {
-            do { try Shell.docker(["volume", "rm"] + workVolumes, stage: .sdk, passthrough: true) } catch {
+            do { try HostDocker.docker(["volume", "rm"] + workVolumes, stage: .sdk, passthrough: true) } catch {
                 failures.append("some volumes were not removed (one in use by a container? docker ps -a)")
             }
         }
         if !removablePackVolumes.isEmpty {
-            do { try Shell.docker(["volume", "rm"] + removablePackVolumes.map(\.name), stage: .sdk, passthrough: true) } catch {
+            do { try HostDocker.docker(["volume", "rm"] + removablePackVolumes.map(\.name), stage: .sdk, passthrough: true) } catch {
                 failures.append("some pack volumes were not removed (one in use by a container? docker ps -a)")
             }
         }
@@ -277,17 +279,17 @@ struct CleanCommand: AsyncParsableCommand {
                     say("kept \(ref): it is another image now")
                     continue
                 }
-                do { try Shell.docker(["image", "rm", ref], stage: .sdk, passthrough: true) } catch {
+                do { try HostDocker.docker(["image", "rm", ref], stage: .sdk, passthrough: true) } catch {
                     failures.append("\(ref) was not removed (in use by a container? docker ps -a)")
                 }
             }
         } else if !imageRefs.isEmpty {
-            do { try Shell.docker(["image", "rm"] + imageRefs, stage: .sdk, passthrough: true) } catch {
+            do { try HostDocker.docker(["image", "rm"] + imageRefs, stage: .sdk, passthrough: true) } catch {
                 failures.append("some images were not removed (one in use by a container? docker ps -a)")
             }
         }
         if doOld {
-            do { try Shell.docker(["image", "prune", "--force", "--filter", "label=\(CleanPlan.imageLabel)"], stage: .sdk, passthrough: true) } catch {
+            do { try HostDocker.docker(["image", "prune", "--force", "--filter", "label=\(CleanPlan.imageLabel)"], stage: .sdk, passthrough: true) } catch {
                 failures.append("the untagged older builds were not pruned")
             }
         }

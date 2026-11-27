@@ -193,7 +193,7 @@ let notOnWindows: [String: [String]] = [
         "AgentProgram.swift", "AgentServer.swift", "AgentState.swift", "AgentWire.swift", "SecretPages.swift",
     ],
     "xless": [
-        "Context.swift", "LiveCheck.swift", "MacNative.swift", "NativeOverlay.swift", "Overlays.swift", "Stages.swift",
+        "Context.swift", "HostDocker.swift", "LiveCheck.swift", "MacNative.swift", "NativeOverlay.swift", "Overlays.swift", "Stages.swift",
         "Commands/CargoCommands.swift", "Commands/CleanCommand.swift", "Commands/DockerCommand.swift", "Commands/InspectCommand.swift",
         "Commands/LiveCheckCommand.swift", "Commands/NextBuildCommand.swift", "Commands/SDKCommands.swift", "Commands/SecretsImportEnvCommand.swift", "Commands/SecretsMaterializeCommand.swift",
         "Commands/SessionCommand.swift", "Commands/SetupCommand.swift", "Commands/ShimCommands.swift", "Commands/ShipCommand.swift",
@@ -210,7 +210,7 @@ let notOnWindows: [String: [String]] = [
     "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],
     "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
     "XlessCLITests": [
-        "BuildIsolationTests.swift", "LiveCheckTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
+        "BuildIsolationTests.swift", "HostDockerTests.swift", "LiveCheckTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
         "SecretsNamedByTests.swift", "NativeOverlayTests.swift", "ShimCommandsTests.swift", "XcodePinTests.swift",
     ],
 ]

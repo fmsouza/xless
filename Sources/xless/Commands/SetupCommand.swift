@@ -208,6 +208,8 @@ struct SetupCommand: AsyncParsableCommand {
             throw XlessError(.sdk, "a native setup needs \(missing.joined(separator: ", ")), which \(missing.count == 1 ? "is" : "are") not on PATH",
                              fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build in Docker instead: xless setup --docker\(sourceArgs)")
         }
+        // The docker it asks whether a running build uses the pack, as every xless command chooses it.
+        try HostDocker.check()
         // Before anything is written into the store: the SDK has headers whose names differ only in case.
         try PackStore.requireCaseSensitive(store)
         // A second setup of this pack waits for the first, then finds what it left.
@@ -279,6 +281,8 @@ struct SetupCommand: AsyncParsableCommand {
 
     private func dockerSetup(source: XcodeSource.Identified?, archs: [String], kits: [Kit], env: [String: String], exe: URL, share: URL, home: URL, cwd: URL,
                              table: [String: String], cacheRoot: URL) throws {
+        // Before docker is asked anything: the docker, as every xless command chooses it.
+        try HostDocker.check()
         let fm = FileManager.default
         let host = Self.hostArch
         let work = fm.temporaryDirectory.appendingPathComponent("xless-setup-\(UUID().uuidString)")
@@ -419,7 +423,7 @@ struct SetupCommand: AsyncParsableCommand {
         if case .current = try state() { return say("    it is there already") }
         var env = ProcessInfo.processInfo.environment
         for name in LocalImages.builderVariables { env[name] = nil }
-        do { try Shell.docker(kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
+        do { try HostDocker.docker(kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
             throw ImageProblem("\(kit.image(on: base)) was not built: \(e.cause)", fix: "its output is above: it needs buildx (docker buildx version), the network and room on Docker's disk")
         }
         guard case .current = try state() else {
@@ -430,7 +434,7 @@ struct SetupCommand: AsyncParsableCommand {
     /// The images an older xless left (one per Xcode, or the tools image), in one line.
     private static func oldImages() -> String? {
         let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
-        guard let all = try? Shell.docker(ls, stage: .sdk).stdout else { return nil }
+        guard let all = try? HostDocker.docker(ls, stage: .sdk).stdout else { return nil }
         let old = all.split(whereSeparator: \.isNewline).map(String.init).filter(ImageName.isLegacy)
         return old.isEmpty ? nil : "note: \(old.count) image tag\(old.count == 1 ? "" : "s") of an older xless (as \(old[0])) \(old.count == 1 ? "is" : "are") not used any more: xless clean --old removes \(old.count == 1 ? "it" : "them")"
     }
@@ -549,7 +553,7 @@ struct SetupCommand: AsyncParsableCommand {
 
     /// Docker's data root, and whether the daemon is rootless.
     private static func dockerInfo() throws -> (root: String, rootless: Bool) {
-        let info = try Shell.docker(["info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"], stage: .sdk).stdout
+        let info = try HostDocker.docker(["info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"], stage: .sdk).stdout
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return (String(info.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""), info.contains("name=rootless"))
     }
@@ -577,7 +581,7 @@ struct SetupCommand: AsyncParsableCommand {
             }
             throw XlessError(.sdk, "`docker info` failed\(detail)", fix: "check that `docker info` works, then run xless setup again")
         }
-        do { try Shell.docker(["buildx", "version"], stage: .sdk) } catch {
+        do { try HostDocker.docker(["buildx", "version"], stage: .sdk) } catch {
             throw XlessError(.sdk, "docker buildx is not available", fix: "install Docker's buildx plugin (e.g. the docker-buildx-plugin package)")
         }
         if need.cache.totalGB > 0 {
@@ -711,7 +715,10 @@ private extension SetupStep {
     /// Runs its command: docker's are the client's, any other is a tool's.
     func start(passthrough: Bool = false) throws {
         let arguments = Array(argv.dropFirst())
-        if argv[0] == "docker" { try Shell.docker(arguments, stage: .sdk, passthrough: passthrough) } else { try Shell.run(argv[0], arguments, stage: .sdk, passthrough: passthrough) }
+        if argv[0] == "docker" { try HostDocker.docker(arguments, stage: .sdk, passthrough: passthrough) } else {
+            // (docker-images.sh calls docker itself: with the same docker)
+            try Shell.run(argv[0], arguments, baseEnvironment: try HostDocker.environment(), stage: .sdk, passthrough: passthrough)
+        }
     }
 }
 
@@ -719,7 +726,7 @@ extension LocalImages {
     /// This machine's docker, for what reads its images and volumes.
     static var hereDocker: LocalImages.Docker {
         { arguments in
-            guard let answer = try? Shell.docker(arguments, stage: .sdk) else { return (1, "") }
+            guard let answer = try? HostDocker.docker(arguments, stage: .sdk) else { return (1, "") }
             return (0, answer.stdout)
         }
     }

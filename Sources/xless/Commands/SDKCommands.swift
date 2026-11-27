@@ -88,6 +88,7 @@ struct SDKExportCommand: AsyncParsableCommand {
     @Option(help: "BuildMachineOSBuild value (default: the supported-Xcode table's).") var buildMachineOSBuild: String?
 
     func run() async throws {
+        try HostDocker.check() // the docker it exports in, as every xless command chooses it
         let outDir = URL(fileURLWithPath: out).standardizedFileURL
         let app = URL(fileURLWithPath: xcode)
         let osBuild = try xless.buildMachineOSBuild(flag: buildMachineOSBuild, xcodeApp: app)
@@ -108,14 +109,14 @@ struct SDKExportCommand: AsyncParsableCommand {
                     throw XlessError(.sdk, problem.cause, fix: problem.fix)
                 }
             }
-            let probe = try? Shell.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
+            let probe = try? HostDocker.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
                                            "test", "-d", "/xcode/Contents/Developer"], stage: .sdk)
             guard probe != nil else {
                 throw XlessError(.sdk, "the Docker VM cannot see \(xcode)",
                                  fix: "Colima: `colima stop && colima start --mount /Applications:r --mount $HOME:w`; Docker Desktop: add /Applications to File Sharing, or clone Xcode.app under $HOME (cp -cR) and pass --xcode")
             }
             let dir = try Files.fresh(outDir.appendingPathComponent(a))
-            try Shell.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)",
+            try HostDocker.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)",
                               "-v", "\(xcode):/xcode:ro", "-v", "\(dir.path):/out", image,
                               "xtool", "sdk", "build", "/xcode", "/out"], stage: .sdk, passthrough: true)
             guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("darwin.xtoolsdk").path) else {
