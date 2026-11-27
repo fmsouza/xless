@@ -38,14 +38,19 @@ sdk() {   # a freshly installed fake SDK bundle: no absolute path in it, links r
 }
 # bare <wrapper> <command…>: the wrapper run with an empty environment and a PATH where nothing is.
 bare() { env -i PATH=/nonexistent "$@"; }
-# reaches <toolchain bin> <where>: its ld64.lld reaches the bundle's with no command of the system, by its absolute path
-# and by a bare name from its own directory (`sh ld64.lld`: $0 without a slash).
+# reaches <toolchain bin> <where>: its ld64.lld reaches the bundle's with no command of the system, by its absolute path,
+# by a bare name from its own directory (`sh ld64.lld`: $0 without a slash), and by a bare name found on PATH from another
+# directory (`bash ld64.lld`: bash looks the script up on PATH, and $0 stays bare; PATH is the toolchain's directory alone, as
+# Swift Build's holds the toolchain's directories).
 reaches() {
   local out
   out=$(bare "$1/ld64.lld" a b 2>&1) || true
   [[ "$out" == "bundle-lld a b" ]] || fail "$2: ld64.lld with no command of the system: $out"
   out=$(cd "$1" && bare /bin/sh ld64.lld a b 2>&1) || true
   [[ "$out" == "bundle-lld a b" ]] || fail "$2: ld64.lld run as sh ld64.lld: $out"
+  [[ ! -e "$t/ld64.lld" ]] || fail "$t holds an ld64.lld"
+  out=$(cd "$t" && env -i PATH="$1" /bin/bash ld64.lld a b 2>&1) || true
+  [[ "$out" == "bundle-lld a b" ]] || fail "$2: ld64.lld found on PATH by its bare name: $out"
 }
 fit() { sh "$repo/scripts/fit-toolchain.sh" "$pack" "$1" "$repo/docker/toolchain" >"$t/out" 2>&1 || fail "fit-toolchain.sh $1: $(cat "$t/out")"; }
 
