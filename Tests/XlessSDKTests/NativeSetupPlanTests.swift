@@ -35,10 +35,16 @@ private let madeShare = Result<URL, Error> {
 private func sharePlace() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("native-plan-share-\(getpid())") }
 private func share() throws -> URL { try madeShare.get() }
 
+/// The links of bin/ as setup makes them for the pinned versions (xtool 1.21.0, rcodesign 0.29.0).
+private func pinnedLinks(_ link: URL) -> String? {
+    ["/n/bin/xtool": "/n/tools/xtool-1.21.0/AppRun", "/n/bin/rcodesign": "/n/tools/rcodesign-0.29.0/rcodesign"][link.path]
+}
+
 private func plan(_ x: KnownXcode = xcode27, arch: String = "arm64", table t: [String: String] = table, share sh: URL? = nil, reexport: Bool = false,
-                  store s: XcodeStore = store, existing: @escaping (URL) -> Bool = { _ in false }) throws -> [SetupStep] {
+                  store s: XcodeStore = store, existing: @escaping (URL) -> Bool = { _ in false },
+                  linked: @escaping (URL) -> String? = pinnedLinks) throws -> [SetupStep] {
     try NativeSetupPlan.make(source: (x, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: arch, share: try sh ?? share(),
-                             cacheRoot: cache, layout: layout, store: s, table: t, reexport: reexport, abilities: bare, existing: existing)
+                             cacheRoot: cache, layout: layout, store: s, table: t, reexport: reexport, abilities: bare, linked: linked, existing: existing)
 }
 
 private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
@@ -171,6 +177,13 @@ private func tempDir() throws -> URL {
     // A tool unpacked but not linked into bin/ (a run stopped in between): installed again.
     let unlinked = try plan { present.subtracting(["/n/bin/xtool"]).contains($0.path) }
     #expect(downloads(unlinked).map(\.final.path) == ["/n/tools/xtool-1.21.0", "/n/xcodes/27.0-27A266a-arm64.partial/toolchain"])
+    // A tool of another version, linked by a setup before a pin moved (XTOOL_VERSION, RCODESIGN_VERSION): installed again, at
+    // the pinned version, before the export and the pack use it.
+    let older: (URL) -> String? = { ["/n/bin/xtool": "/n/tools/xtool-1.20.0/AppRun", "/n/bin/rcodesign": "/n/tools/rcodesign-0.28.0/rcodesign"][$0.path] }
+    let moved = try plan(existing: { present.contains($0.path) }, linked: older)
+    #expect(downloads(moved).map(\.final.path) == ["/n/tools/xtool-1.21.0", "/n/tools/rcodesign-0.29.0", "/n/xcodes/27.0-27A266a-arm64.partial/toolchain"])
+    // (a link that leads nowhere, or is no link: installed again too)
+    #expect(downloads(try plan(existing: { present.contains($0.path) }, linked: { _ in nil })).map(\.kind) == [.appImage, .rcodesign, .swiftToolchain])
     // --reexport: the export first, then its metadata.
     let again = try plan(reexport: true) { present.contains($0.path) }
     if case .export = again[0].action {} else { Issue.record("first step is not the export: \(again[0].title)") }
@@ -223,7 +236,7 @@ private func tempDir() throws -> URL {
     let export = URL(fileURLWithPath: "/exports/x27")
     let tools: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign"]
     let steps = try NativeSetupPlan.make(source: (xcode27, .export, export), arch: "arm64", share: share(), cacheRoot: cache, layout: layout,
-                                         store: store, table: table, reexport: false, abilities: bare, existing: { tools.contains($0.path) })
+                                         store: store, table: table, reexport: false, abilities: bare, linked: pinnedLinks, existing: { tools.contains($0.path) })
     for s in steps { if case .export = s.action { Issue.record("an export source was exported again: \(s.title)") } }
     #expect(steps[0].action == .meta(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
                                      out: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))

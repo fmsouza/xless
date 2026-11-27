@@ -79,10 +79,11 @@ public enum NativeSetupPlan {
     /// `store`: where the pack goes (`XcodeStore`); the pack there now, if any, is read to tell which of its parts are current.
     /// `abilities`: what this machine can prepare (`PackPlan.abilities`). `existing`: whether a file is there.
     /// `installed`: a tool (`xtool`, `rcodesign`) of the pinned version already on this machine (`pinnedOnPath`), which is
-    /// then not downloaded into `layout`, and the export runs that xtool.
+    /// then not downloaded into `layout`, and the export runs that xtool. `linked`: where a link leads (nil: no link).
     public static func make(source: XcodeSource.Identified, arch: String, share: URL, cacheRoot: URL, layout: NativeLayout,
                             store: XcodeStore, table: [String: String], reexport: Bool, abilities: PackPlan.Abilities,
                             installed: (_ tool: String, _ version: String) -> URL? = { _, _ in nil },
+                            linked: (URL) -> String? = { try? FileManager.default.destinationOfSymbolicLink(atPath: $0.path) },
                             existing: (URL) -> Bool) throws -> [SetupStep] {
         let x = source.xcode, a = PackRecipe.tableArch(arch), lower = a.lowercased()
         func pin(_ key: String) throws -> String { try Self.pin(key, table: table, arch: arch) }
@@ -93,12 +94,13 @@ public enum NativeSetupPlan {
             ("rcodesign", rcV, try rcodesign(arch: arch, mac: false, table: table, layout: layout), "seconds"),
         ]
         var steps: [SetupStep] = []
-        // Installed when its marker is there: a tool's link in bin/ (which a run stopped after the move lacks); or when the
-        // pinned version is on PATH already (the image's), which is then the one that runs.
+        // Installed when its marker is there: a tool's link in bin/ to the pinned version (which a run stopped after the move
+        // lacks; one to another version, of a setup before the pin moved, is replaced, so the export and the pack never run a
+        // tool the recipe hash does not name); or when the pinned version is on PATH already (the image's), which then runs.
         var xtool = layout.bin.appendingPathComponent("xtool")
         for (tool, version, d, estimate) in downloads {
             let marker = layout.bin.appendingPathComponent(tool)
-            if existing(marker) { continue }
+            if let link = d.link, linked(marker) == d.final.appendingPathComponent(link.target).path, existing(marker) { continue }
             if let found = installed(tool, version) {
                 if tool == "xtool" { xtool = found }
                 continue
