@@ -36,9 +36,9 @@ hdr = struct.pack("<IiiIIIII", 0xfeedfacf, 0x0100000c, 0, 2, 2, 72 + 16, 0, 0)
 open(path, "wb").write(hdr + seg + lc + payload + sig)
 P
 }
-# A fat file of two such slices (x86_64 and arm64), each with its own signature byte.
-fat() {   # FILE SIGNATURE-BYTE
-  macho "$T/slice1" "$2"; macho "$T/slice2" "$2"
+# A fat file of two such slices (x86_64 and arm64), each with its own signature byte and payload.
+fat() {   # FILE SIGNATURE-BYTE [PAYLOAD-X86_64] [PAYLOAD-ARM64]
+  macho "$T/slice1" "$2" "${3:-}"; macho "$T/slice2" "$2" "${4:-}"
   python3 - "$1" "$T/slice1" "$T/slice2" <<'P'
 import struct, sys
 out, s1, s2 = sys.argv[1], open(sys.argv[2], "rb").read(), open(sys.argv[3], "rb").read()
@@ -112,6 +112,25 @@ test_same_length_path_swap_passes_and_is_listed() {
   grep -q "0x2 $OLD_TC" "$T/out" || fail "baseline offset not listed: $(cat "$T/out")"
   grep -q "0x2 $NEW_TC_SAME" "$T/out" || fail "candidate offset not listed: $(cat "$T/out")"
   grep -q 'same length' "$T/out" || fail "method not named: $(cat "$T/out")"
+}
+test_same_length_path_swap_with_another_change_fails() {
+  mkfixture "$T/a17"; mkfixture "$T/b17"
+  printf '\x01\x02%s/usr/lib/swift\x00tail' "$OLD_TC" > "$T/a17/App.app/Frameworks/data.bin"
+  printf '\x01\x02%s/usr/lib/swift\x00tall' "$NEW_TC_SAME" > "$T/b17/App.app/Frameworks/data.bin"
+  [[ $(code "$T/a17" "$T/b17") == 1 ]] || fail "a same-length swap and a changed byte pass: $(cat "$T/out")"
+  grep -q 'App.app/Frameworks/data.bin: differs outside its 1 moved path(s) (same length)' "$T/out" || fail "verdict: $(cat "$T/out")"
+  ! grep -q ': path only' "$T/out" || fail "calls it path only: $(cat "$T/out")"
+}
+test_fat_file_is_compared_slice_by_slice() {
+  mkfixture "$T/a18"; mkfixture "$T/b18"
+  # both slices path only (and signed differently)
+  fat "$T/a18/App.app/Fat" A "$OLD_TC/lib" "$OLD_TC/lib"; fat "$T/b18/App.app/Fat" B "$NEW_TC_SAME/lib" "$NEW_TC_SAME/lib"
+  [[ $(code "$T/a18" "$T/b18") == 0 ]] || fail "path-only slices: $(cat "$T/out")"
+  grep -q 'App.app/Fat: path only (2 slices' "$T/out" || fail "not listed per slice: $(cat "$T/out")"
+  # one slice differs besides its path
+  fat "$T/b18/App.app/Fat" B "$NEW_TC_SAME/lib" "$NEW_TC_SAME/lix"
+  [[ $(code "$T/a18" "$T/b18") == 1 ]] || fail "a differing slice passes: $(cat "$T/out")"
+  grep -q 'App.app/Fat: differs' "$T/out" || fail "verdict: $(cat "$T/out")"
 }
 test_longer_path_in_text_passes_by_substitution() {
   mkfixture "$T/a4"; mkfixture "$T/b4"
@@ -267,6 +286,8 @@ test_usage() {
 test_identical_trees_pass
 test_byte_flipped_outside_a_path_fails
 test_same_length_path_swap_passes_and_is_listed
+test_same_length_path_swap_with_another_change_fails
+test_fat_file_is_compared_slice_by_slice
 test_longer_path_in_text_passes_by_substitution
 test_longer_path_that_moves_other_bytes_is_refused
 test_missing_file_fails
