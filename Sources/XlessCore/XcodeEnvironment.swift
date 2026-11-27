@@ -98,13 +98,21 @@ public struct XcodeEnvironment: Sendable {
         let config = cache.appendingPathComponent("xless/xtool-config").appendingPathComponent(pack?.root.lastPathComponent ?? "xcode")
         let swiftpm = config.appendingPathComponent("swiftpm"), link = swiftpm.appendingPathComponent("swift-sdks")
         let target = swiftSDKsPath.path
+        func linked() -> Bool { (try? fm.destinationOfSymbolicLink(atPath: link.path)) == target }
         do {
             try fm.createDirectory(at: swiftpm, withIntermediateDirectories: true)
-            if (try? fm.destinationOfSymbolicLink(atPath: link.path)) == target { return config }
-            if (try? fm.attributesOfItem(atPath: link.path)) != nil { try fm.removeItem(at: link) }
-            do { try fm.createSymbolicLink(atPath: link.path, withDestinationPath: target) } catch {
-                // Another build made it at the same moment.
-                guard (try? fm.destinationOfSymbolicLink(atPath: link.path)) == target else { throw error }
+            if linked() { return config }
+            // A new link renamed over the old one (rename(2) replaces it in one step), so two builds that both find it
+            // missing or stale each leave the right one, and neither removes what the other made.
+            let fresh = swiftpm.appendingPathComponent(".swift-sdks.\(UUID().uuidString)")
+            try fm.createSymbolicLink(atPath: fresh.path, withDestinationPath: target)
+            defer { try? fm.removeItem(at: fresh) }
+            if rename(fresh.path, link.path) != 0 {
+                // A directory is there (rename does not replace one): removed, unless another build already did.
+                do { try fm.removeItem(at: link) } catch where !fm.fileExists(atPath: link.path) || linked() {}
+                if !linked(), rename(fresh.path, link.path) != 0, !linked() {
+                    throw XlessError(.build, "cannot link \(link.path): \(String(cString: strerror(errno)))", fix: "remove \(link.path)")
+                }
             }
         } catch {
             throw XlessError(.build, "xtool's configuration \(config.path) cannot be made: \(error.localizedDescription)",

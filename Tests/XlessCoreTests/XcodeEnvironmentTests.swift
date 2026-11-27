@@ -316,6 +316,38 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(nothing?.stage == .ib && nothing?.fix.hasPrefix("xless setup --xcode") == true)
 }
 
+@Test func xtoolsConfigurationIsRepairedAndSharedByBuildsAtOnce() throws {
+    let store = try tempDir(), cache = try tempDir("xcode-env-cache")
+    let root = try makePack(in: store)
+    let env = try isolated(store: store, ["XDG_CACHE_HOME": cache.path])
+    let x = try XcodeEnvironment.current(env: env)
+    let link = cache.appendingPathComponent("xless/xtool-config/\(root.lastPathComponent)/swiftpm/swift-sdks")
+    let target = root.appendingPathComponent("config/swiftpm/swift-sdks").path
+    try fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+    // A directory where the link goes: replaced.
+    try fm.createDirectory(at: link.appendingPathComponent("stray"), withIntermediateDirectories: true)
+    _ = try x.toolEnvironment(env)
+    #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == target)
+    // A stale link, seen by many builds at once: none fails, and the link is right after.
+    try fm.removeItem(at: link)
+    try fm.createSymbolicLink(atPath: link.path, withDestinationPath: "/gone/config/swiftpm/swift-sdks")
+    let failures = Failures()
+    DispatchQueue.concurrentPerform(iterations: 16) { _ in
+        do { _ = try x.toolEnvironment(env) } catch { failures.add("\(error)") }
+    }
+    #expect(failures.all.isEmpty)
+    #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == target)
+    // Nothing but the link is left in its directory.
+    #expect(try fm.contentsOfDirectory(atPath: link.deletingLastPathComponent().path) == ["swift-sdks"])
+}
+
+private final class Failures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [String] = []
+    func add(_ s: String) { lock.lock(); list.append(s); lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return list }
+}
+
 @Test func theDarwinSDKFallsBackOnlyWithoutAnyXcode() throws {
     // Nothing at all: where a native setup puts it, so that what needs it names a path.
     let none = try isolated()
