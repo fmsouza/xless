@@ -61,6 +61,10 @@ extension ProjectRun {
             images = RunImages(build: started(base), secrets: started(base))
             if let name = own?.name ?? kit?.image(on: base) { images.build = RunImages.Image(name: name, reference: name) }
         }
+        // (an older xless's variable: said once, so that a person who sets it knows it changes nothing)
+        if setting("XLESS_SIGN_IMAGE") != nil {
+            host.say("==> note: XLESS_SIGN_IMAGE is set, but nothing reads it any more: the steps with the secrets run in this xless's own image")
+        }
         let pack = try choosePack(image: base)
         images.pack = pack
         dockerRun += pack.arguments

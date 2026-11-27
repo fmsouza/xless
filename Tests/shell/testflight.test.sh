@@ -637,10 +637,11 @@ for value in --privileged '[a]'; do
   code=0; "${pinned[@]}" "$S" --config "$t/pin/option.yml" >/dev/null 2>"$t/err" || code=$?
   [[ $code -eq 2 ]] && grep -qF "image: in $t/pin/option.yml" "$t/err" || fail "image: $value: exit $code $(cat "$t/err")"
 done
-# XLESS_SIGN_IMAGE is not read any more: the steps with the secrets are in xless's own image, whatever it names
+# XLESS_SIGN_IMAGE is not read any more (a note says so, once): the steps with the secrets are in xless's own image, whatever it names
 "$fake" base "$A" 26.2 17C52 keys:2 sha256:keys base26.2,xless26.2,keys >> "$t/images"
 out=$("${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
-[[ "$(line "--from sign")" == *" $P xless ship "* ]] && ! grep -q "XLESS_SIGN_IMAGE" "$t/err" || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
+[[ "$(line "--from sign")" == *" $P xless ship "* && "$(grep -c "XLESS_SIGN_IMAGE" "$t/err")" -eq 1 ]] && grep -qF "note: XLESS_SIGN_IMAGE is set, but nothing reads it any more" "$t/err" \
+  || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
 # Tauri overlays and xless.yml projects take the pin too
 printf 'type: tauri\nsource: app\nbundleID: com.example.x\nxcode: 26.2\n' > "$t/pin/tauri.yml"
 images 26.2 17C52 > "$t/images"

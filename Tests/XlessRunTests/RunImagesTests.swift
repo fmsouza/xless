@@ -457,7 +457,10 @@ import XlessImages
         try home.write("ov/app.yml", "type: react-native\nsource: ../src\n")
         let (host, code) = try run(nil, ["XLESS_SIGN_IMAGE": "mine:1"])
         #expect(code == 0 && names(host) == [Self.base, "\(Self.base)-react-native", Self.base])
-        #expect(!host.lines.contains { $0.contains("XLESS_SIGN_IMAGE") })
+        // said once, and nothing else
+        #expect(host.lines.filter { $0.contains("XLESS_SIGN_IMAGE") } == ["==> note: XLESS_SIGN_IMAGE is set, but nothing reads it any more: the steps with the secrets run in this xless's own image"])
+        let (unset, _) = try run(nil, [:])
+        #expect(!unset.lines.contains { $0.contains("XLESS_SIGN_IMAGE") })
     }
 
     /// The tag without an Xcode is an older xless's now, and not used.
