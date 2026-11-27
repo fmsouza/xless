@@ -37,6 +37,9 @@ export LC_ALL=C
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$ROOT/scripts/docker-context.sh"   # docker_context: the docker xless run --docker uses (step 8 decides it: D)
+D=(docker)
 XLESS="${XLESS:-xless}"
 DIR="${XLESS_M7_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/xless-m7}"
 STATE="$DIR/state"
@@ -440,10 +443,10 @@ watch_containers() {   # OUT
   set +e
   : > "$out"
   while [[ ! -e "$DIR/watch.stop" ]] && kill -0 "$$"; do
-    for c in $(docker ps -q --filter label=xless.run 2>/dev/null || true); do
+    for c in $("${D[@]}" ps -q --filter label=xless.run 2>/dev/null || true); do
       [[ "$seen" != *" $c "* ]] || continue
       seen+="$c "
-      docker inspect "$c" 2>/dev/null | python3 -I -c '
+      "${D[@]}" inspect "$c" 2>/dev/null | python3 -I -c '
 import json, re, sys
 try:
     c = json.load(sys.stdin)[0]
@@ -767,15 +770,20 @@ step7() {
 
 docker_ready() {
   local v; v="$(state_get xless_version)"
-  if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then docker image inspect "xless:$v-$ARCH" >/dev/null 2>&1 || return 1
-  else [[ -n "$(docker image ls --quiet --filter label=org.xless.image=true --filter "label=dev.xless.arch=$ARCH" 2>/dev/null)" ]] || return 1; fi
+  if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then "${D[@]}" image inspect "xless:$v-$ARCH" >/dev/null 2>&1 || return 1
+  else [[ -n "$("${D[@]}" image ls --quiet --filter label=org.xless.image=true --filter "label=dev.xless.arch=$ARCH" 2>/dev/null)" ]] || return 1; fi
   # (a pack volume by its name, as xless reads one (PackVolumes.parse): one made by hand has no label)
-  docker volume ls --format '{{.Name}}' 2>/dev/null | grep -qE "^xless-xcode-[0-9]+(\.[0-9]+)*-[A-Za-z0-9]+-$ARCH\$"
+  "${D[@]}" volume ls --format '{{.Name}}' 2>/dev/null | grep -qE "^xless-xcode-[0-9]+(\.[0-9]+)*-[A-Za-z0-9]+-$ARCH\$"
 }
 
 step8() {
   local rc watch="$DIR/watch.8" containers="$DIR/containers.8" ok=1
   command -v docker >/dev/null 2>&1 || { result 8 FAIL "docker is not installed"; return 1; }
+  # The docker of xless run --docker (scripts/docker-context.sh), for the look at its images, volumes and containers too; a
+  # DOCKER_CONTEXT docker does not have fails here, as xless would refuse it.
+  local ctx
+  if ! ctx="$(docker_context acceptance-m7 2>"$DIR/context.err")"; then result 8 FAIL "$(cat "$DIR/context.err")"; return 1; fi
+  D=(docker); [[ -z "$ctx" ]] || { D+=(--context "$ctx"); unset DOCKER_HOST; }
   # The image of this xless (xless:<version>-<arch>; a source build's is named by its commit: any xless image of $ARCH then)
   # and an Xcode pack volume for $ARCH, which xless setup --docker makes. (A run prepares a missing pack from the SDK export
   # in the cache by itself; asking for it here keeps that out of the watched run.)

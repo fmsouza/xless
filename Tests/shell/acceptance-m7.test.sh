@@ -90,7 +90,10 @@ STUB
 cat > "$t/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 S="$STUB_DIR"
+# the context it was given ("-": none), for each call; its contexts: default and colima-xless
+if [[ "${1:-}" == --context ]]; then echo "$2 $3" >> "$S/contexts"; shift 2; else echo "- ${1:-}" >> "$S/contexts"; fi
 case "$1" in
+  context) printf 'default\ncolima-xless\n'; exit 0 ;;
   image) echo c0ffee; exit 0 ;;
   # the pack volumes, made by hand (no label: a listing filtered by xless's label finds none; xless finds them by name)
   # (STUB_ODD_VOLUME_ONCE: the first listing has only a volume that is no pack's by its name, as xless reads one)
@@ -133,7 +136,7 @@ kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub acc
     XLESS_M7_CONTACT_EMAIL=rev@example.com \
     STUB_LOGIN_FAIL="${STUB_LOGIN_FAIL:-0}" STUB_SAVED_SESSION="${STUB_SAVED_SESSION:-0}" STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
     STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" STUB_ODD_VOLUME_ONCE="${STUB_ODD_VOLUME_ONCE:-0}" \
-    ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} \
+    ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} ${DOCKER_CONTEXT:+DOCKER_CONTEXT=$DOCKER_CONTEXT} \
     bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
 }
 calls() { grep -c -- "$2" "$t/$1/stub/log" || true; }
@@ -193,6 +196,11 @@ for i in 6 7 9; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is 
 [[ $(calls main '^release publish') == 1 ]] || fail "not published once"
 { grep -q 'run --docker .* --to finalize' "$t/main/stub/log" && grep -q 'run --docker .* --from sign' "$t/main/stub/log"; } || fail "the docker run was not split"
 grep -q 'container c0ffeebuild .*mounts=/work env=' "$r" || fail "the build container was not inspected: $(grep -n container "$r")"
+# step 8's docker is the one xless run --docker uses (scripts/docker-context.sh): colima-xless here, for every look at it
+for call in ps inspect volume image; do
+  grep -q "^colima-xless $call\$" "$t/main/stub/contexts" || fail "step 8 did not use colima-xless for docker $call: $(sort "$t/main/stub/contexts" | uniq -c)"
+done
+if grep -v '^colima-xless \|^- context$' "$t/main/stub/contexts"; then fail "step 8 looked at another docker"; fi
 for c in 'team list --verbose' 'keys list --team <redacted> --verbose' 'apps list --team <redacted> --verbose'; do
   grep -qF "\`xless $c\`: 3 trace line(s), 0 finding(s)" "$r" || fail "the trace of '$c' was not scanned: $(grep 'trace line' "$r")"
 done
@@ -229,6 +237,13 @@ mkdir -p "$t/dock/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dock/stub/review"
 STUB_LEAK_DOCKER=1 kit dock
 [[ $code == 1 ]] || fail "docker leak: exit $code"
 grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dock/record.md" || fail "a build container with the store passed step 8"
+# a DOCKER_CONTEXT that docker does not have fails step 8 before anything runs, as xless would refuse it
+before=$(grep -c '^run-build ' "$t/dock/stub/log")
+DOCKER_CONTEXT=gone kit dock
+[[ $code == 1 ]] || fail "a DOCKER_CONTEXT docker does not have: exit $code"
+grep -q '^| 8 | .* | \*\*FAIL\*\*.*DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name' "$t/dock/record.md" \
+  || fail "the missing context is not step 8's failure: $(grep '^| 8 |' "$t/dock/record.md")"
+[[ $(grep -c '^run-build ' "$t/dock/stub/log") == "$before" ]] || fail "xless run --docker ran with a missing context"
 kit dock   # step 8 starts again: its failure is not judged a second time from the old containers
 [[ $code == 0 ]] || fail "step 8 again without the leak: exit $code: $(tail -5 "$t/dock/err")"
 builds=(); while IFS= read -r line; do builds+=("$line"); done < <(grep '^run-build ' "$t/dock/stub/log" | tail -4)   # two halves, then two halves
