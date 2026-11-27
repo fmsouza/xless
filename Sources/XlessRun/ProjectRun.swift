@@ -69,6 +69,8 @@ public final class ProjectRun {
     var environment: [String: String]
     /// Where the settings of `environment` may come from, for the messages.
     let environmentFile: String
+    /// The names `environmentFile` set.
+    var fromEnvironmentFile: Set<String> = []
     var dryRun = false
     /// What the build leaves running is this run's to end (`endBuild`).
     var endsOrphans = false
@@ -155,7 +157,10 @@ public final class ProjectRun {
             let text: String
             do { text = try String(contentsOfFile: environmentFile, encoding: .utf8) } catch { throw RunStop.usage("cannot read \(environmentFile)") }
             do {
-                for (name, value) in try EnvFile.parse(text, environment: environment) where name != ChildProcess.session { environment[name] = value }
+                for (name, value) in try EnvFile.parse(text, environment: environment) where name != ChildProcess.session {
+                    environment[name] = value
+                    fromEnvironmentFile.insert(name)
+                }
             } catch let problem as EnvFile.Problem {
                 throw RunStop.usage("\(environmentFile), line \(problem.line) \(problem.what): the file is read as NAME=value lines, and nothing in it is run")
             }
@@ -202,6 +207,18 @@ public final class ProjectRun {
         }
     }
 
+    /// The docker of the run, as every xless command chooses it (`DockerContext`): before anything of docker is used, once the
+    /// secrets are known (`findSecrets`), which its environment leaves out.
+    func chooseDockerContext() throws {
+        let given = DockerContext.setting(environment: environment, file: nil).map {
+            DockerContext.Setting(name: $0.name, source: fromEnvironmentFile.contains(DockerContext.variable) ? environmentFile : $0.source)
+        }
+        let listing = ask(["docker"] + DockerContext.listing, quiet: true, without: [DockerContext.variable])
+        do {
+            dockerCLI = ["docker"] + DockerContext.arguments(try DockerContext.choose(given, contexts: listing.code == 0 ? DockerContext.listed(listing.output) : nil))
+        } catch { throw RunStop.usage("\(error.cause); \(error.fix)") }
+    }
+
     func has(_ program: String) -> Bool { host.program(program, path: environment["PATH"]) != nil }
 
     // MARK: - Processes
@@ -234,8 +251,9 @@ public final class ProjectRun {
     }
 
     /// Asks a program something: its exit code and what it printed. Not a step of the run.
-    func ask(_ words: [String], quiet: Bool = false, confined: Bool = false) -> (code: Int32, output: String) {
-        guard let started = try? cleanup.start(RunStep(words, environment: environment(.nothing), output: .captured, quiet: quiet, confined: confined)) else { return (127, "") }
+    func ask(_ words: [String], quiet: Bool = false, confined: Bool = false, without: [String] = []) -> (code: Int32, output: String) {
+        let environment = environment(.nothing).filter { !without.contains($0.key) }
+        guard let started = try? cleanup.start(RunStep(words, environment: environment, output: .captured, quiet: quiet, confined: confined)) else { return (127, "") }
         let answer = host.finish(started)
         cleanup.change { $0.job = nil }
         return answer
@@ -282,10 +300,8 @@ public final class ProjectRun {
 
     func prepareDocker() throws {
         guard has("docker") else { throw RunStop.usage("docker is not installed (and no native xless is on PATH)") }
-        var name = setting("DOCKER_CONTEXT")
-        if name == nil, RunText.lines(ask(["docker", "context", "ls", "--format", "{{.Name}}"], quiet: true).output).contains("colima-xless") { name = "colima-xless" }
+        try chooseDockerContext()
         architecture = host.architecture
-        if let name { dockerCLI += ["--context", name] }
         // --pull=never: an image is one of this machine (chooseImages says which is missing), never a registry's.
         // --init: an init process forwards the stop signal docker run proxies to xless (which, as PID 1, would ignore it).
         // The label lets the clean-up find this run's containers.

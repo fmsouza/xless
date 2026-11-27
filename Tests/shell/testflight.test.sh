@@ -23,7 +23,7 @@ I="xless:$("$fake" tag)-$A"
 # A fake docker that knows two contexts, so context selection is testable without a daemon, and whose images are $t/images.
 cat > "$t/bin/docker" <<D
 #!/usr/bin/env bash
-if [[ "\$1 \$2" == "context ls" ]]; then printf 'default\ncolima-xless\n'; exit 0; fi
+if [[ "\$1 \$2" == "context ls" ]]; then printf 'default\ncolima-xless\nother\n'; exit 0; fi
 [[ "\$1" != --context ]] || shift 2
 [[ "\$1" != image ]] || FAKE_IMAGES="$t/images" exec "$fake" "\$@"
 D
@@ -42,6 +42,10 @@ out=$("${base[@]}" "$S" "$t/proj" 2>/dev/null) || fail "dry run failed"
 # explicit context wins, image override, build number override
 out=$("${base[@]}" DOCKER_CONTEXT=other XLESS_IMAGE=img:1 XLESS_BUILD_NUMBER=42 "$S" "$t/proj" 2>/dev/null)
 [[ "$out" == *"--context other"* && "$out" == *" img:1 xless ship"* ]] || fail "overrides ignored: $out"
+# a context docker does not have stops the run before anything, with the contexts there are
+code=0; msg=$("${base[@]}" DOCKER_CONTEXT=gone "$S" "$t/proj" 2>&1) || code=$?
+[[ $code == 2 && "$msg" == *"DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: default, colima-xless, other;"* ]] \
+  || fail "a missing context: exit $code: $msg"
 # XLESS_BUILD_NUMBER is passed by name; its value is in the script's environment, not argv
 [[ "$out" == *"-e XLESS_BUILD_NUMBER "* ]] || fail "build number not passed by name: $out"
 
