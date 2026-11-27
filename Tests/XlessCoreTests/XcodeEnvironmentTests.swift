@@ -107,8 +107,15 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let z = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path, "XLESS_TOOLCHAIN_META": meta.path]))
     #expect(z.sdkBundle.path == bundle.path && z.meta.path == meta.path && z.pack?.root.path == root.path)
     // No pack found: the SDK there is the override it names.
-    let none = try XcodeEnvironment.current(env: try isolated(["XDG_CONFIG_HOME": xdg.path]))
+    let alone = try isolated(["XDG_CONFIG_HOME": xdg.path])
+    let none = try XcodeEnvironment.current(env: alone)
     #expect(none.pack == nil && none.sdkBundle.path == bundle.path)
+    // Nothing else is named: no metadata (reading it names the store, where a setup puts the packs), no toolchain record,
+    // no include directory, and nothing read from where an image of before the packs kept them.
+    #expect(none.meta.path == URL(fileURLWithPath: alone["XLESS_XCODES"]!).appendingPathComponent("toolchain-meta.json").path)
+    #expect(!fm.fileExists(atPath: none.meta.path) && none.record == nil && none.include == nil && none.toolchain == nil)
+    let include = try XcodeEnvironment.current(env: try isolated(["XLESS_TOOLCHAIN_INCLUDE": "/i"]))
+    #expect(include.pack == nil && include.include?.path == "/i" && include.record == nil)
 }
 
 @Test func overridesAloneNeedNoPack() throws {

@@ -31,8 +31,6 @@ import Testing
 }
 
 @Test func theNativeRecordOfBeforeThePacksIsNotRead() throws {
-    // Only meaningful outside an image (the image's record would win).
-    guard !FileManager.default.fileExists(atPath: "/opt/xless/swift-toolchain.json") else { return }
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let env = ["XLESS_NATIVE_HOME": root.path, "HOME": "/nonexistent"]

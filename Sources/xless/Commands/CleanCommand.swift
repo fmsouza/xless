@@ -41,10 +41,10 @@ struct CleanCommand: AsyncParsableCommand {
         let doImages = images || all, doVolumes = volumes || all, doCache = cache || all, doOld = old || doImages, doNative = native || all
         let listOnly = !(doOld || doVolumes || doCache || doNative)
         // The native install: its home, and, when it has a toolchain record, the SDK and metadata its setup installed
-        // (never an image's; an SDK put there by `xless sdk install` alone stays).
+        // (an SDK put there by `xless sdk install` alone stays; no image has one).
         let layout = NativeLayout(env: env)
         let nativePaths = ([layout.root] + (fm.fileExists(atPath: layout.record.path) ? [DarwinSDKLocator.bundle(env: env), ToolchainMeta.defaultLocation(env: env)] : []))
-            .filter { !$0.path.hasPrefix("/opt/xless/") && fm.fileExists(atPath: $0.path) }
+            .filter { fm.fileExists(atPath: $0.path) }
         var removing = !listOnly && !dryRun
 
         // --old alone: what each tag is now, for the check right before it goes.
