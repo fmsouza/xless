@@ -35,7 +35,7 @@ public struct NativeLayout: Sendable, Equatable {
         let fm = FileManager.default
         let bundle = DarwinSDKLocator.bundle(env: env)
         guard fm.fileExists(atPath: bundle.path), fm.fileExists(atPath: record.path) else { return [] }
-        return [bundle, ToolchainMeta.defaultLocation(env: env), toolchains, record].filter { fm.fileExists(atPath: $0.path) }
+        return [bundle, ToolchainMeta.olderLocation(env: env), toolchains, record].filter { fm.fileExists(atPath: $0.path) }
     }
 
     public func toolchain(version: String) -> URL { toolchains.appendingPathComponent("swift-\(version)") }

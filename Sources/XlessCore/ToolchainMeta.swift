@@ -61,6 +61,12 @@ public struct ToolchainMeta: Codable, Sendable, Equatable {
     /// $XDG_CONFIG_HOME|~/.config /xless/toolchain-meta.json. A command reads the Xcode's metadata at `XcodeEnvironment.meta`.
     public static func defaultLocation(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         if let p = env["XLESS_TOOLCHAIN_META"], !p.isEmpty { return URL(fileURLWithPath: p) }
+        return olderLocation(env: env)
+    }
+
+    /// Where an older xless wrote it, whatever `XLESS_TOOLCHAIN_META` says now (that variable is live: it names a file the person uses,
+    /// which `xless clean` must never take for an older install's): $XDG_CONFIG_HOME|~/.config /xless/toolchain-meta.json.
+    public static func olderLocation(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         let base = env["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? "\(env["HOME"] ?? "~")/.config"
         return URL(fileURLWithPath: "\(base)/xless/toolchain-meta.json")
     }

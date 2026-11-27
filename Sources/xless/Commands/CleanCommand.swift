@@ -50,7 +50,18 @@ struct CleanCommand: AsyncParsableCommand {
         let listOnly = !(doOld || doVolumes || doCache || doNative || doPacks)
         let layout = NativeLayout(env: env)
         // What an older xless installed natively, as setup's note sees it: read before anything goes (the record is in the native home).
-        let olderInstall = layout.olderInstall(env: env)
+        // Not what lies in a pack store or the cache, or leads there by a link (`XDG_CONFIG_HOME` of a build is `<cache>/xless/xtool-config/<pack>`,
+        // whose swift-sdks is a link into the pack): those are packs and exports, not an older install.
+        let real = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path }
+        let guarded = [XcodeStore(env: env).root, layout.root.appendingPathComponent("xcodes"), cacheRoot].map(real)
+        var skipped: [String] = []
+        let olderInstall = layout.olderInstall(env: env).filter { path in
+            let r = real(path)
+            guard let inside = guarded.first(where: { r == $0 || r.hasPrefix($0 + "/") }) else { return true }
+            skipped.append("leaving \(path.path): it is, or leads to, \(r == path.standardizedFileURL.path ? "" : r + ", ")inside \(inside) (a pack store or the cache), not an older install's")
+            return false
+        }
+        for line in skipped { say(line) }
         // The native install: its home (which holds the store of packs), and the SDK and metadata an older xless's setup installed.
         let store = XcodeStore(env: env)
         let storeInHome = store.root.standardizedFileURL.path.hasPrefix(layout.root.standardizedFileURL.path + "/")
@@ -121,7 +132,7 @@ struct CleanCommand: AsyncParsableCommand {
         }
         // The native home goes whole unless a pack in it is in use; a store of its own (XLESS_XCODES) loses its packs, not the directory.
         var nativePaths = (homeBlocked ? [] : [layout.root]) + olderInstall.filter { !$0.path.hasPrefix(layout.root.path + "/") }.filter { path in
-            path == DarwinSDKLocator.bundle(env: env) || path == ToolchainMeta.defaultLocation(env: env)
+            path == DarwinSDKLocator.bundle(env: env) || path == ToolchainMeta.olderLocation(env: env)
         }
         nativePaths = nativePaths.filter { fm.fileExists(atPath: $0.path) }
         let storeRoots = storeInHome || !doPacks ? [] : removableStorePacks.map(\.root)

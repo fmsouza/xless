@@ -274,6 +274,37 @@ grep -q 'docker does not answer' "$t/err" || fail "cause not named: $(cat "$t/er
 run
 [[ $code == 0 ]] && grep -q 'docker does not answer' "$t/out" || fail "listing with docker down: $code $(cat "$t/out")"
 
+# What an override or a link leads to is not an older install's: XLESS_TOOLCHAIN_META names a file in use (an export's, a pack's), and a build's
+# XDG_CONFIG_HOME is <cache>/xless/xtool-config/<pack>, whose swift-sdks links into the pack. Nothing of those goes, under --old or --native.
+store="$t/store2"; rm -rf "$store"; mkdir -p "$store/26.2-17C52-arm64/config/swiftpm/swift-sdks/darwin.artifactbundle"
+echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; echo '{}' > "$store/26.2-17C52-arm64/toolchain-meta.json"
+echo sdk > "$store/26.2-17C52-arm64/config/swiftpm/swift-sdks/darwin.artifactbundle/f"
+survives() {   # DESCRIPTION: what must be there
+  [[ -f "$cache/sdk/xcode27.0-27A266a/toolchain-meta.json" && -f "$store/26.2-17C52-arm64/toolchain-meta.json" && -f "$store/26.2-17C52-arm64/pack.json" \
+     && -f "$store/26.2-17C52-arm64/config/swiftpm/swift-sdks/darwin.artifactbundle/f" ]] || fail "$1: an export or a pack lost a file"
+}
+for flag in --old --native; do
+  # (a) XLESS_TOOLCHAIN_META names an export's metadata in the cache; (b) a pack's
+  for target in "$cache/sdk/xcode27.0-27A266a/toolchain-meta.json" "$store/26.2-17C52-arm64/toolchain-meta.json"; do
+    mkolder; echo '{}' > "$cache/sdk/xcode27.0-27A266a/toolchain-meta.json"
+    extra=(XLESS_XCODES="$store" XLESS_TOOLCHAIN_META="$target")
+    run "$flag" --yes
+    [[ $code == 0 ]] || fail "$flag with XLESS_TOOLCHAIN_META=$target exits $code: $(cat "$t/err")"
+    survives "$flag, XLESS_TOOLCHAIN_META=$target"
+    [[ ! -e "$t/home/.config/xless/toolchain-meta.json" ]] || fail "$flag left the older install's own metadata"
+  done
+  # (c) XDG_CONFIG_HOME of a build: swift-sdks is a link into the pack
+  mkolder; echo '{}' > "$cache/sdk/xcode27.0-27A266a/toolchain-meta.json"
+  xdg="$cache/xless/xtool-config/26.2-17C52-arm64"; mkdir -p "$xdg/swiftpm"; ln -s "$store/26.2-17C52-arm64/config/swiftpm/swift-sdks" "$xdg/swiftpm/swift-sdks"
+  extra=(XLESS_XCODES="$store" XDG_CONFIG_HOME="$xdg")
+  run "$flag" --yes
+  [[ $code == 0 ]] || fail "$flag with a build's XDG_CONFIG_HOME exits $code: $(cat "$t/err")"
+  survives "$flag, XDG_CONFIG_HOME of a build"
+  grep -q 'it is, or leads to' "$t/out" || [[ "$flag" == --native ]] || fail "$flag does not say it leaves the SDK of the pack: $(cat "$t/out")"
+  extra=(); rm -rf "$nh" "$t/home/.swiftpm" "$t/home/.config/xless" "$cache/xless"
+done
+mkcache
+
 # --native: the native home (its store of packs too) and the SDK and metadata an older install put elsewhere, without Docker; listed by
 # default, kept by --cache. The packs are asked about.
 extra=(DOCKER_DOWN=1)
