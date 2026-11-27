@@ -5,7 +5,8 @@
 **Relocatable.** An SDK installed with `xtool sdk install` holds no absolute path at all: not in any file, not in any
 symlink. Moved to another directory and mounted read-only, SwiftPM and Swift Build still found it and the compile phase
 ran against it. No "same path everywhere" rule is needed. **End-to-end build not shown; link
-step unmeasured** (the one phase that reads the SDK's `.tbd` stubs and `ld64.lld` from the read-only mount never ran).
+step unmeasured**: in every run, the unmoved control's too, the link step started and failed before it read the SDK's
+`.tbd` stubs (X's strace has no open of a `.tbd` file), so its reads of the read-only mount were never made.
 Measured with Swift 6.4 in a Linux container; native macOS not measured.
 
 - **Which switch the tools get: `--swift-sdks-path <pack>/swiftpm/swift-sdks`, with the user's own (or a
@@ -70,18 +71,23 @@ Who wrote where during the install (`xtool sdk install`): the bundle under `/tmp
 ### (b) Builds
 
 Both X and S, moved and read-only, and the control C, unmoved and writable, end the same way: `swift build` plans the
-package, the Swift and C compile steps run against the SDK (in X, strace shows about 17,200 successful opens of files in the SDK's `SDKs/`
-trees under `/tmp/p2` among about 23,500 `SDKs/` lines in the log, failed opens included, and the compiler wrote `HelloShipApp.o` and `ContentView.o`), and the link step
-`clang -r ... --ld-path=<bundle>/toolset/bin/ld64.lld` fails ("`HelloShip.o: No such file or directory`", "linker command
+package, the Swift and C compile steps run against the SDK (in X, strace shows 17,224 successful opens of files in the SDK's `SDKs/`
+trees under `/tmp/p2` among 23,546 `SDKs/` lines in the log, failed opens included, and the compiler wrote `HelloShipApp.o` and `ContentView.o`), and the link step
+`clang -r ... --ld-path=<bundle>/toolset/bin/ld64.lld` starts and fails before it reads the SDK ("`HelloShip.o: No such file or directory`", "linker command
 failed"). The control fails at the same step with the same message, so this is not about relocation. Probably (not investigated) the plain image
 lacks the pieces xless's build adds (the `xless-ld64` linker shim and the toolchain pins of Ruling R10, which are in
 `docker/Dockerfile`'s later stages, not in the tools image). Everything here was measured with Swift 6.4, not with 6.2.3 (the Swift of the Xcode 26.2 app, not downloaded).
 
 | Run | SDK found | Compile phase against the moved read-only SDK | Link |
 |---|---|---|---|
-| C: `/tmp/p1`, writable, `XDG_CONFIG_HOME=/tmp/p1/config` | yes | ran | fails (image lacks the linker shim) |
-| X: `/tmp/p2` read-only, `XDG_CONFIG_HOME=/tmp/p2/config` | yes | ran | fails, same message as C |
-| S: `/tmp/p2` read-only, `--swift-sdks-path`, user's own XDG | yes | ran | fails, same message as C |
+| C: `/tmp/p1`, writable, `XDG_CONFIG_HOME=/tmp/p1/config` | yes | ran | fails before it reads the SDK (image lacks the linker shim) |
+| X: `/tmp/p2` read-only, `XDG_CONFIG_HOME=/tmp/p2/config` | yes | ran | fails before it reads the SDK, same message as C |
+| S: `/tmp/p2` read-only, `--swift-sdks-path`, user's own XDG | yes | ran | fails before it reads the SDK, same message as C |
+
+The counts of X come from its strace log (`~/.cache/xless/spike-out/build-X.strace`): `grep -c 'SDKs/' build-X.strace`
+gives the 23,546 lines, and `grep 'openat(' build-X.strace | grep '"/tmp/p2/[^"]*SDKs/' | grep -cE '= [0-9]+$'` the
+17,224 opens that returned a descriptor (4,949 more returned an error, and 1,373 are split by `strace -f` into an unfinished
+and a resumed line, not counted).
 
 Earlier iterations of the script gave two more data points: with `--swift-sdk arm64-apple-ios` and no `XCODE_EXTRA_PLATFORM_FOLDERS`,
 the build stops with "unable to find platform for 'iphoneos'" in the unmoved control as well (so the platform folder is
