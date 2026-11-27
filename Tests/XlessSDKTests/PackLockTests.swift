@@ -39,17 +39,21 @@ private final class Flag: @unchecked Sendable {
     }
     // Another pack's lock is another lock.
     #expect(throws: Never.self) { _ = try PackLock(store: store, name: "27.0-27A266a-arm64", wait: false) }
-    // A waiting holder gets it only once the first is released.
+    // A waiting holder gets it only once the first is released. The waiter signals once it has let the lock go again (its
+    // value is gone at the end of its scope), so the check after it does not race the waiter's release; the bound on the
+    // wait is only there so that a lock that never comes fails the test instead of hanging it.
     let got = DispatchSemaphore(value: 0), done = Flag()
     Thread.detachNewThread {
-        let lock = try? PackLock(store: store, name: name, wait: true)
-        done.set(lock != nil)
+        do {
+            let lock = try PackLock(store: store, name: name, wait: true)
+            done.set(true)
+            withExtendedLifetime(lock) {}
+        } catch {}
         got.signal()
-        _ = lock
     }
-    #expect(got.wait(timeout: .now() + 0.5) == .timedOut)
+    #expect(got.wait(timeout: .now() + 0.5) == .timedOut && !done.value)
     first = nil
-    #expect(got.wait(timeout: .now() + 10) == .success)
+    #expect(got.wait(timeout: .now() + 120) == .success)
     #expect(done.value)
     // Released by the waiter too (its value went away): free again.
     #expect(throws: Never.self) { _ = try PackLock(store: store, name: name, wait: false) }
