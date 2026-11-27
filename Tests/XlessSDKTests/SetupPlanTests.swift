@@ -195,7 +195,7 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
                                     build: "27A266a", expected: current().parts)
     #expect(d.steps[1].action == .packRun(SetupStep.PackRun(directories: [], unlessCurrent: check)))
     #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: check)))
-    #expect(pack(d).title.contains("unless the pack is current"))
+    #expect(pack(d).title.hasSuffix(", skipped when the pack is current (it is read first)"))
     #expect(d.notes.contains { $0.contains("read once the image xless:0.14.0-arm64 is built") })
     // A dry run never starts the reading container, even with the image here.
     docker.images = ["xless:0.14.0-arm64"]

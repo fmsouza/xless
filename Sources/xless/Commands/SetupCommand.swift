@@ -298,7 +298,9 @@ struct SetupCommand: AsyncParsableCommand {
                                       existing: { fm.fileExists(atPath: $0.path) })
         let place: String
         switch store {
-        case .volumes: place = "a volume of its own (\(PackVolumes.prefix)<version>-<build>-<arch>)"
+        case .volumes:
+            let x = source.map { (SetupPlan.canonicalVersion($0.xcode.shortVersion), $0.xcode.build) }
+            place = x.map { x in "the volume " + archs.map { PackVolumes.name(xcode: x.0, build: x.1, arch: $0) }.joined(separator: " and ") } ?? "a volume of its own"
         case let .directory(dir): place = "\(dir.path) (XLESS_XCODES)"
         }
         if let x = source?.xcode, let source {

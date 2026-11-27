@@ -188,7 +188,7 @@ public enum SetupPlan {
         }
         var directories = exporting ? [exportDir] : []
         var steps: [SetupStep] = []
-        let suffix = unless == nil ? "" : " (unless the pack is current, which is read first)"
+        let suffix = unless == nil ? "" : ", skipped when the pack is current (it is read first)"
         switch store {
         case .volumes:
             if case .nothing = found {
