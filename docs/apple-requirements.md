@@ -19,9 +19,9 @@ file; Apple's `xip` tool is not used.
 
 `xless setup` runs `xtool sdk build` on the `.xip`, which writes a Darwin SDK bundle (`darwin.xtoolsdk`, about 3 GB)
 into `~/.cache/xless/sdk/xcode<version>-<build>/<arch>/`; xtool unpacks the `.xip` there first, so that directory
-peaks at about 15 GB. That bundle, and the metadata read from it, is all xless takes from the download. A native setup installs it for
-Swift under your home directory ([native-install.md](native-install.md)); with `--docker` it goes into the
-xless image, and is in the images built on that.
+peaks at about 15 GB. That bundle, and the metadata read from it, is all xless takes from the download. Setup installs it for Swift in
+an Xcode pack: natively under your home directory ([native-install.md](native-install.md)), with `--docker` in a Docker
+volume ([images.md](images.md#where-the-packs-are)). The xless image holds none of it.
 
 | File or tree (inside the Xcode bundle) | Used by | Why there is no open replacement |
 |---|---|---|
@@ -107,7 +107,6 @@ to run them.
 | `scripts/sim-launch.sh` (`make sim-launch`) | `simctl`, `codesign --verify` | Launching a simulator build on the Mac's iOS Simulator |
 | `scripts/ib-parity.sh` (`make ib-parity`) | `ibtool`, `xcodebuild`, `simctl` | Golden drift, and a pixel comparison of a launch screen compiled both ways |
 | `scripts/parity.sh` (`make parity`) | `xcodebuild`, `assetutil` | HelloShip built by Xcode against the same app built by xless |
-| `scripts/build-images.sh` (`make images`) | `xip --expand` for a `.xip`; then `xless sdk export` | The Mac way to build the images, from before `xless setup` |
 | `xless sdk export`, `xless sdk meta --xcode <Xcode.app>` | the Xcode's `swift --version` | Reading an installed `Xcode.app` on the Mac (`xless setup` uses the version table instead) |
 | `xless tauri report` / `xless tauri compare` built for macOS (so `make test-rn-linux`, `make test-tauri-linux` and `scripts/arch-compare.sh` on a Mac host) | `assetutil --info` | Comparing asset catalogs; the Linux build of xless never calls it and skips that comparison |
 | `scripts/ib-corpus/known-fonts.sh`, `scripts/ib-corpus/differential.py` | `swiftc` and `simctl`; `ibtool` | The font name list and random-storyboard checks of the storyboard compiler |

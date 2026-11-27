@@ -60,11 +60,13 @@ The installer checks the download against the release's checksums. To check the 
 ## The runner
 
 - **The account commands** run on any Linux, macOS or Windows runner, with nothing but xless and the variables.
-- **A build on Linux** needs Apple's SDK on the runner, so it is a runner of your own that was set up once (`xless setup
-  --sdk <dir>`, from [a copy of the SDK export](maintainers.md#images-on-other-machines)). The runners that GitHub offers start
-  empty, and there is no image to give them: one holds Apple's SDK, so it is never pushed to a registry. Nor does the SDK go into a
-  CI cache or an artifact: not `~/.cache/xless/sdk`, and not what `xless setup` makes of it (`~/.local/share/xless-native`, the
-  `swift-sdks` directory).
+- **A build on Linux** needs Apple's SDK on the runner, so it is a runner of your own that was set up once, from
+  [a copy of the SDK export](maintainers.md#images-on-other-machines): natively (`xless setup --sdk <dir>`), or with Docker
+  (`xless setup --docker --sdk <dir>`: the xless image and the Xcode pack's volume, for `xless run --docker` or for
+  [jobs in the image](#in-the-image)). The xless image holds nothing of Apple's, but a build needs the Xcode pack too,
+  which does: the SDK export and the packs never go to a registry, a CI cache or an artifact (not `~/.cache/xless/sdk`,
+  not the store `~/.local/share/xless-native/xcodes`, not a pack volume). So the runners that GitHub offers, which start
+  empty, do not build.
 - **A build on a Mac** needs the runner's Xcode, and for an overlay its Rust, Node or Ruby
   ([native-install.md](native-install.md#on-a-mac)).
 
@@ -175,7 +177,57 @@ jobs:
 This was tried in pieces, without Apple's answer: the signing, in a fresh checkout with that directory alone, up to its first call to App
 Store Connect, the packaging, and the upload up to its own. It has not been run as a workflow.
 
+### In the image
+
+On a runner of your own with Docker, where `xless setup --docker --sdk <dir>` made the xless image and the pack volume
+once, each step can be a container of the image ([images.md](images.md#using-the-image-directly)): the build in one
+without any secret, the signing in another, with the pack read-only in both. Nothing of the runner but the checkout and the
+pack is in either.
+
+```yaml
+env:
+  XLESS_NO_INPUT: 1
+  IMAGE: xless:1.4.0-amd64                      # the image xless setup --docker built on this runner
+  PACK: xless-xcode-26.2-17C52-amd64            # the pack volume of the Xcode the project pins
+steps:
+  - id: number
+    run: echo "minutes=$(( $(date +%s) / 60 ))" >> "$GITHUB_OUTPUT"
+  - name: Build (no secret)
+    env:
+      XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
+    run: |
+      docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
+        --mount "type=volume,src=$PACK,dst=/xcodes,readonly" -v "$PWD:/work" -w /work "$IMAGE" xless run . --to finalize
+  - name: What the build changed in the project (no secret)
+    run: git diff --exit-code
+  - name: Sign and upload
+    env:
+      XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      XLESS_DIST_KEY: ${{ secrets.XLESS_DIST_KEY }}
+    run: |
+      docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
+        -e ASC_KEY_ID -e ASC_ISSUER_ID -e ASC_KEY_P8 -e XLESS_DIST_KEY \
+        --mount "type=volume,src=$PACK,dst=/xcodes,readonly" -v "$PWD:/work" -w /work "$IMAGE" xless run . --from sign
+```
+
+- `-e NAME` without a value passes the step's variable on, so the secrets are not on the command line.
+- The two containers are apart, but the build's container wrote the project, which the second one reads: what the
+  build decides is as in the steps above, and the `git diff` step is there for the same reason. What the build leaves
+  running ends with its container (Docker stops every process of a container when its first one ends), and
+  `$GITHUB_ENV` and `$GITHUB_PATH` are not in it, so nothing of the build is left when the secrets come.
+- This is for an `xless.yml` app. For a Tauri, Cargo or React Native app, `xless run --docker --config …` on the runner
+  makes the same split by itself, in the kit's image and the xless image ([images.md](images.md#what-a-run-does)).
+- After an upgrade of xless, set `IMAGE` to the new image; the pack stays, unless the new xless prepares it in another
+  way, and then `xless setup --docker --sdk <dir>` on the runner prepares it again.
+
+[examples/example-ios-image.yml](examples/example-ios-image.yml) is the same as a whole workflow.
+
 ## An example
 
 [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow, with the two steps, to copy into your app's
-repository and adapt. It runs on a self-hosted Linux runner. It has not been run yet.
+repository and adapt. It runs on a self-hosted Linux runner with xless set up natively.
+[examples/example-ios-image.yml](examples/example-ios-image.yml) runs the two steps in containers of the xless image, with the
+pack volume read-only ([above](#in-the-image)). Neither has been run yet.

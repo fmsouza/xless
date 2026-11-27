@@ -34,8 +34,8 @@ The [README](../README.md) says what xless is and how to install it. These are t
 - [tauri.md](tauri.md): Tauri v2 apps, for iOS and macOS.
 - [cargo.md](cargo.md): plain Cargo apps (a Rust binary with its own event loop), for iOS and macOS.
 - [native-install.md](native-install.md): without Docker: what goes where on Linux, what is used on a Mac, what there is on Windows.
-- [images.md](images.md): the Docker image (`--docker`), the kits for Tauri, Cargo and React Native apps, an image of your own, and
-  how to build it by hand.
+- [images.md](images.md): the Docker image (`--docker`) and the Xcode packs it builds with, where the packs are, the kits for
+  Tauri, Cargo and React Native apps, an image of your own, preparing by hand, and the image used directly.
 
 ## Sign and ship
 

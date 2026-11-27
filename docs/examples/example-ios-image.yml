@@ -1,0 +1,50 @@
+# Example only: this workflow is not run by this repository (it lives in docs/examples/, not .github/workflows/).
+# It needs a Linux runner of your own with Docker, on which `xless setup --docker --sdk <dir>` made the xless image and the
+# Xcode pack's volume once. The image holds nothing of Apple's; the pack holds Apple's SDK, so it stays on the runner (no
+# registry, no cache, no artifact). Never let pull requests of others run on such a runner.
+# Each step is a container of the image, with the pack read-only: the build in one without any secret, the signing in another.
+# Copy it to your app repository's .github/workflows/ and adapt IMAGE and PACK. Why, and what it does not protect: docs/ci.md.
+name: example-ios-image
+on: workflow_dispatch
+permissions:
+  contents: read
+env:
+  XLESS_NO_INPUT: 1
+  IMAGE: xless:1.4.0-amd64                  # the image of the xless on the runner: docker image ls xless
+  PACK: xless-xcode-26.2-17C52-amd64        # the pack of the Xcode the project pins: docker volume ls --filter label=org.xless.pack
+jobs:
+  ship:
+    runs-on: [self-hosted, linux, docker]
+    defaults:
+      run:
+        working-directory: samples/HelloShip
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # Build numbers must increase across every machine that uploads this version (ITMS-90062), so use
+      # the same monotonic scheme everywhere: minutes since 1970. (github.run_number restarts at 1.)
+      - name: The build number
+        id: number
+        run: echo "minutes=$(( $(date +%s) / 60 ))" >> "$GITHUB_OUTPUT"
+      - name: Build HelloShip (no secret)
+        env:
+          XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
+        run: |
+          docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
+            --mount "type=volume,src=$PACK,dst=/xcodes,readonly" -v "$PWD:/work" -w /work "$IMAGE" \
+            xless run . --to finalize
+      - name: What the build changed in the project (no secret)
+        run: git diff --exit-code
+      - name: Sign, and upload to TestFlight
+        env:
+          XLESS_BUILD_NUMBER: ${{ steps.number.outputs.minutes }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          XLESS_DIST_KEY: ${{ secrets.XLESS_DIST_KEY }}
+        run: |
+          docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e XLESS_NO_INPUT -e XLESS_BUILD_NUMBER \
+            -e ASC_KEY_ID -e ASC_ISSUER_ID -e ASC_KEY_P8 -e XLESS_DIST_KEY \
+            --mount "type=volume,src=$PACK,dst=/xcodes,readonly" -v "$PWD:/work" -w /work "$IMAGE" \
+            xless run . --from sign

@@ -31,7 +31,7 @@ Keep tools that run other people's code (`npm install`, `make`) out of such a sc
 | Code | Meaning |
 |---|---|
 | 0 | Done (`release submit`: submitted, or a dry run that passed) |
-| 2 | `xless run`: a usage or configuration error of the run itself |
+| 2 | `xless run`: a usage or configuration error of the run itself. A build stage (`prepare`, `build`): the Xcode pack is missing or stale, and `xless setup` prepares it |
 | 10 | A configuration error: `xless.yml`, an overlay |
 | 11–19 | The SDK or a stage of a build ([pipeline.md](pipeline.md#stages)) |
 | 20 | An account command failed ([errors](apple-account.md#errors)), or `store validate` found something |

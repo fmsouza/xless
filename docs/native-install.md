@@ -10,8 +10,11 @@ are the alternative. This page says what the native install puts where, what it 
 ## What it builds
 
 `xless.yml` projects (Swift packages), for iOS and macOS, through every stage up to TestFlight. React Native, Tauri and
-plain Cargo apps (`--config <overlay.yml>`) need much more than the native install has (Node and CocoaPods, rustup's
-Apple targets, Swift Build, the Xcode tool shims), so on Linux `xless run` refuses them without `--docker`.
+plain Cargo apps (`--config <overlay.yml>`) need more than the native install has. On Linux `xless run` builds one
+without `--docker` only where what it needs is installed: an Xcode pack and rustup (Cargo), and Node (Tauri); Swift
+Build, the Xcode tool shims, Node, Ruby, Bundler and `hermesc` (React Native). A native setup on a bare host prepares no
+Swift Build part, so React Native builds there with `--docker` only. Elsewhere the run names what is missing and stops
+(exit 2). A container of a kit's image has it all ([images.md](images.md#using-the-image-directly)).
 [On a Mac](#tauri-cargo-and-react-native-apps-on-a-mac) they build natively.
 
 ## What it needs
@@ -29,7 +32,7 @@ Apple targets, Swift Build, the Xcode tool shims), so on Linux `xless run` refus
 - Free space: `XLESS_SETUP_CACHE_GB` (17 GB) under the cache while the SDK is exported, and `XLESS_SETUP_NATIVE_GB`
   (10 GB) under the store of Xcode packs while a pack is prepared. An environment variable of the same name overrides
   each figure.
-- The `.xip` only until the SDK is exported. After that, `xless setup` with no `--xcode` installs from the export in
+- The `.xip` only until the SDK is exported. After that, `xless setup` with no `--xcode` prepares the pack from the export in
   `~/.cache/xless/sdk/`, and `--sdk <dir>` names one kept elsewhere
   ([troubleshooting.md](troubleshooting.md#without-the-xip)).
 
@@ -48,11 +51,12 @@ replaces on every upgrade), so upgrading xless keeps the native install.
 xless puts the native toolchain and tools first on its own `PATH` when it starts, so they win over any other `swift`
 (swiftly's, your distribution's) for everything it runs, and nothing is added to your shell's startup files.
 
-The Swift toolchain is fitted to the SDK the way the images fit theirs (`scripts/fit-toolchain.sh`, with the same
-files as `docker/Dockerfile`): its `clang` and `clang++` become a small driver that adds, for Darwin targets only,
+The Swift toolchain is fitted to the SDK when the pack is prepared, as in a pack of `--docker`
+(`scripts/fit-toolchain.sh`, with the files in `docker/toolchain/`): its `clang` and `clang++` become a small driver that adds, for Darwin targets only,
 the `TARGET_OS_*` definitions Apple's clang has and the open-source one lacks, and the SDK's toolsets get the same
 flags. For Xcode 26.2 (Swift 6.2.3) the SDK also uses that toolchain's clang headers with the Xcode's runtime
-libraries. This changes only xless's own copy of Swift.
+libraries. This changes only the pack's copy of Swift. A native setup prepares no Swift Build part: only a pack prepared in the
+image has one ([What it builds](#what-it-builds)).
 
 ## On a Mac
 
@@ -143,7 +147,18 @@ XLESS_BUILD_READ=~/projects/shared-package xless run --config ~/ci/my-app.overla
 others; with the same Xcode it does nothing when the pack is current (`--reexport` exports the SDK again). A project
 pins one with `xcode:`; without a pin a build uses the newest. A pack is prepared beside its place and put there whole,
 so a failed setup leaves the pack that was there, and a second setup of the same pack waits for the first. An Xcode
-installed natively by an xless of before the packs is not used: setup says so and prepares the pack.
+installed natively by an xless of before the packs is not used: setup says so and prepares the pack, and `xless clean
+--old` removes the old install.
+
+Every command finds the pack the same way: `XLESS_XCODE=<pack directory>` names one and wins; else the store
+(`XLESS_XCODES`, default `~/.local/share/xless-native/xcodes`), by the pin or the newest. A missing pack, or one that
+this xless prepares in another way (after an upgrade that changed how), stops a build with exit code 2 and the `xless
+setup` that prepares it ([images.md](images.md#where-the-packs-are) has the rest).
+
+The store must be on a case-sensitive file system: the SDK has headers whose names differ only in case, and setup
+refuses another before it writes anything. One store may serve both a native xless and `--docker` (`XLESS_XCODES` set
+for both). Then do not run a native `xless setup` while an `xless run --docker` builds: a native setup does not look for
+the containers that use a pack, so nothing keeps it from replacing one under them.
 
 ## Running it
 
@@ -207,4 +222,6 @@ In Git Bash, MSYS turns an argument such as `/v1/apps` into a Windows path: `MSY
 
 ## Removing it
 
-`xless clean --native` removes the native home, the installed SDK and its metadata ([uninstall.md](uninstall.md)).
+`xless clean --native` removes the native home with the packs of its store, and the SDK and metadata that an older xless
+installed; it asks first ([uninstall.md](uninstall.md#xless-clean)). A store elsewhere (`XLESS_XCODES`) is removed by
+`xless clean --packs`.

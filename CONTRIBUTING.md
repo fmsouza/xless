@@ -62,7 +62,10 @@ tests of the xless agent need a session whose leader lives (a terminal's shell; 
 makes one).
 
 Before you push, run what you can locally: `swift test` (in a terminal), `make test-linux` (the tests in Linux, through Docker),
-`bash Tests/shell/<name>.test.sh`, and `bash Tests/shell/check-doc-links.test.sh` after editing the documentation.
+`bash Tests/shell/<name>.test.sh`, and `bash Tests/shell/check-doc-links.test.sh` after editing the documentation. After a
+change to `docker/`, run `make images` and `make test-image` (the image holds nothing of Apple's, and builds from a pack
+volume read-only: [maintainers.md](docs/maintainers.md#xcode-packs)); a change to what prepares an Xcode pack makes
+every pack stale, which that section says too.
 
 The tests pass as root and as a regular user, under any umask and locale, and run in parallel. A test (or code) that
 writes a script or stand-in tool and runs it writes it with `ExecutableFile.write` (XlessCore), never with `Data.write`

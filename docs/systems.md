@@ -13,12 +13,13 @@ the release) is the same on every system. The **build** half needs Apple's SDK: 
 | Download Xcode (`xless xcode download`) | yes | yes | no | yes |
 | Swift package apps, for iOS and macOS | yes, after `xless setup` | yes, with the installed Xcode | no | yes, as Linux ([read first](security.md#in-wsl)) |
 | The same for the iOS simulator | no | yes | no | no |
-| Tauri and Cargo apps, for iOS and macOS | in Docker | yes, with the installed Xcode and Rust (Tauri: Node), or in Docker | no | as Linux |
-| React Native and Expo apps, for iOS and its simulator | in Docker | yes, with the installed Xcode, Node and Ruby, or in Docker | no | as Linux |
+| Tauri and Cargo apps, for iOS and macOS | in Docker, or in a kit's image used directly | yes, with the installed Xcode and Rust (Tauri: Node), or in Docker | no | as Linux |
+| React Native and Expo apps, for iOS and its simulator | in Docker, or in the kit's image used directly | yes, with the installed Xcode, Node and Ruby, or in Docker | no | as Linux |
 | Sign, notarize, package, upload | yes | yes | no | yes |
 | Checked on each pull request | the tests, on x86_64 and arm64 | the tests; a sample built, and signed with a throw-away certificate | the account commands and their tests | the Linux tests with the kernel taken for WSL's; nothing in WSL itself |
 
-Docker in this table is [the images](images.md) you build on your own machine; they hold Apple's SDK and never leave it. A
+Docker in this table is [the image](images.md) you build on your own machine, with the Xcode packs it builds with. The
+image holds nothing of Apple's; the packs hold Apple's SDK and never leave your machines. A
 simulator app that Docker built is launched on a Mac ([react-native.md](react-native.md#simulator-builds)).
 
 ## Linux

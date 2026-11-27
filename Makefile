@@ -43,13 +43,13 @@ sdk-export:
 XLESS_HERE = XLESS_SHARE="$(CURDIR)" $(or $(XLESS_SELF),swift run xless)
 
 .PHONY: kits
-# make kits [KITS=tauri,react-native] [ARCHS="arm64"]: what Tauri, Cargo, React Native and Expo apps need, on the newest Xcode's
-# image (docker/tauri, docker/react-native). `xless run` builds the one it needs by itself.
+# make kits [KITS=tauri,react-native] [ARCHS="arm64"]: what Tauri, Cargo, React Native and Expo apps need, on the xless image
+# of this checkout (docker/tauri, docker/react-native). `xless run` builds the one it needs by itself.
 KITS ?= tauri,react-native
 kits:
 	$(XLESS_HERE) setup --docker --with $(KITS) --arch $(ARCHS)
 
-# `xless run` of this machine's xless (XLESS_SELF, else PATH), as scripts/testflight.sh has it: in the images, unless an SDK is
+# `xless run` of this machine's xless (XLESS_SELF, else PATH), as scripts/testflight.sh has it: in the images, unless an Xcode pack is
 # installed natively (XLESS_USE_DOCKER=1 or 0 decides).
 XLESS_RUN = XLESS_RUN_AS_SCRIPT=1 "$${XLESS_SELF:-xless}" run
 

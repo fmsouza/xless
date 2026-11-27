@@ -33,7 +33,7 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 - **Code your build runs** (npm scripts, `build.rs`, SwiftPM plugins and macros, CocoaPods hooks, Xcode build phases),
   partly. Every tool xless runs starts without a secret variable, in a POSIX session of its own (which the xless agent
   refuses) and in an empty session keyring (no held unlock, no kept Apple ID session), and unable to open the store, and
-  an overlay app's build runs in a container that has no secret, or on a Mac in a sandbox. Any other
+  an overlay app's build runs in a container that has no secret (`--docker`), or on a Mac in a sandbox. Any other
   native build still runs as you and can read your files ([below](#the-build-and-your-secrets), and
   [what the Mac's sandbox leaves open](#an-overlays-build-on-a-mac)).
 - **Logs, terminals and bug reports.** No secret is printed, put in an error, in a `--verbose` trace or on a command
@@ -44,7 +44,8 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 Out of scope: malware or a person running **as you**, outside what xless starts, while the store is unlocked or a
 session is kept ([what it can do](#what-an-attacker-who-runs-as-you-can-do)), someone who has both the store file and its
 passphrase, and a compromised Apple account or Apple service. Code that runs on your machine as you can read your files
-and wait for you to type the passphrase: that is why the overlays build in Docker.
+and wait for you to type the passphrase: that is why `xless run --docker` builds in a container without a secret, and an
+overlay's build on a Mac in a sandbox.
 
 ## Guarantees
 
@@ -629,6 +630,9 @@ An app's build runs code you did not write. What that code can reach depends on 
   container ends; without a tmpfs the run refuses unless `--allow-disk-secrets`
   ([secrets.md](secrets.md#xless-run-and-docker-builds)). Docker's default seccomp profile also keeps containers out
   of the kernel keyring.
+- **An overlay app natively on Linux** (where its tools are installed: a container of a kit's image, or a host that has
+  them) builds in an `xless ship` of its own, without a secret variable and unable to open the store, and is signed and
+  uploaded after it by another. The build runs as you, with what is said of a project's native build below.
 - **A project directory (`xless run <dir>`)** is one `xless ship`: build, sign and upload in one process (one
   container with `--docker`, which gets the secrets the run needs). xless keeps what it holds out of the build tools'
   reach: they start without the secret variables (and without any name of your own the run reads a secret from),
@@ -661,11 +665,12 @@ each step of `xless run --docker`:
 | `xless.yml`, no `image:` | (none) | xless image, in the one container with the secrets | the same container |
 | `xless.yml` with `image:` or `XLESS_IMAGE` | (none) | your image, without a secret | xless image |
 
-`XLESS_SIGN_IMAGE`, from before, may only name the xless image itself: anything with more in it is refused. A container is
+Every container of the run gets the Xcode pack read-only ([below](#the-xcode-packs)). `XLESS_SIGN_IMAGE`, from before,
+is read no more: the run says that it is set and changes nothing. A container is
 started from an image on your machine (`docker run --pull=never`), by the ID of the one that was checked, so a tag that moves
 during a run changes nothing, and a name that is not on your machine stops the run instead of asking a registry. (A kit's
 `docker build` starts `FROM` the local image by its name; what it made is checked, layers and all, before it is used.)
-xless checks an image's labels (its Xcode, architecture and xless) and that an image of your own starts with the
+xless checks an image's labels (its architecture and the xless that built it) and that an image of your own starts with the
 layers of the xless image. That finds an image left behind by an upgrade or built on the wrong one; it is not a proof of
 what the image holds, since whoever can write to your Docker can make one that passes. Only the Dockerfiles shipped with
 xless are ever built by a run, from its own share directory, with no secret in the context, an argument or a layer.
@@ -720,6 +725,45 @@ A build step still reaches the later steps of its machine. On GitHub Actions it 
 their environment and their programs, and what it leaves running there can read the environment of a later step of the same user. A
 second job on another machine, which gets the built app as an artifact and takes xless.yml and the entitlements from the commit, is the
 stronger form ([ci.md](ci.md#in-two-jobs)). What is in the app is the build's in either.
+
+### The Xcode packs
+
+Everything of an Xcode that `xless run --docker` builds with is in its pack ([images.md](images.md#what-there-is)): the
+SDK, the Swift toolchain fitted to it, and Swift Build. One pack serves every project of the machine that uses that
+Xcode, so what could write it could put code into the next build of another app, and into the steps that sign.
+
+- **Only the setup container writes a pack.** `xless setup --docker`, and a run that prepares a missing or stale pack
+  before it starts, run one container of the xless image with the Xcode or its SDK export read-only, the export's
+  directory in the cache, and the store read-write. It has no project, no secret, and nothing else of the machine. It
+  runs as you (`--user`; with rootless Docker as the container's root, which is you), prepares the pack beside its place
+  and renames it there whole. (Before it, for a new volume, a short container of the image runs as root without a
+  network, with that volume alone, and gives its top directory to you when it is not yours or writable already.)
+- **Every container of a run gets the pack read-only**, and that pack alone: a volume mounted read-only at `/xcodes`, or,
+  from a directory store, the pack's own directory. The build runs the app's code, and the next build and the signing
+  use the same pack. A run whose containers would get a pack writable (a pack volume mounted writable, or a writable
+  directory that holds the store or is inside it, such as `XLESS_XCODES` inside the project) is refused before anything
+  runs, with exit code 2.
+- **A pack in use is not replaced.** Setup refuses to prepare a pack again while a running container has it mounted, and
+  names the containers: they would read files that change under them. On a Linux host that shares a directory store
+  between `--docker` and a native xless, a native `xless setup` does not look for those containers, so nothing keeps it
+  from replacing a pack that a running `xless run --docker` uses: run the two one at a time.
+- **`pack.json` and the image's labels are consistency checks, not proof of origin.** `pack.json` records the Xcode, the
+  architecture and each part's recipe hash; xless compares them with what it would prepare, which finds a pack prepared
+  from other files or pins than this xless's (a stale one). Whoever can write the volume or the store (anyone who can use your
+  Docker, or root) can write one that passes, as with an image's labels ([above](#the-build-and-your-secrets)).
+- **The image holds nothing of Apple's**, no SDK and no file of an Xcode, and no label or build argument that names one:
+  `make test-image` checks every layer of it. So it may be pushed to a registry. The SDK export and the packs hold Apple's
+  SDK: they stay on your machines ([maintainers.md](maintainers.md#images-on-other-machines)).
+
+### The image used directly
+
+A container of the xless image that you start yourself (by hand, or as a CI job's container) is a Linux host with
+xless installed, and a whole `xless run` in it is a native run: the build's tools start without the secret variables
+and unable to open the store, but as the same user in the same container as the steps that sign. A secret file that
+the container has (a `_FILE` variable's) is readable to the build's code, and so is the environment of a shell of the
+container that holds a secret variable (`/proc/<pid>/environ`). Keeping the build apart from the secrets is then your
+pipeline's job: build in one container that has no secret, and sign and upload what it built in another, with the
+pack read-only in both ([ci.md](ci.md#in-the-image)). `xless run --docker` makes that split itself.
 
 ### With an installed Xcode
 
