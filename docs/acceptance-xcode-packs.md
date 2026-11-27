@@ -14,7 +14,7 @@ Nothing was pushed or delivered.
 
 | Criterion | Result |
 |---|---|
-| The samples built with packs are those the baked images built (Xcode 27.0 and 26.2, arm64) | PARTLY — 6 of 8 pairs identical, 1 path only, 1 differs: the macOS HelloShip of Xcode 27.0, by the moved path of Swift alone, which moves its code. See below |
+| The samples built with packs are those the baked images built (Xcode 27.0 and 26.2, arm64) | PARTLY — 6 of 8 pairs identical, 1 path only, 1 differs: the macOS HelloShip of Xcode 27.0, whose longer rpath to Swift moves the sections of `__TEXT`; with addresses mapped through that move, nothing else was found to differ. See below |
 | Run to run, a sample builds byte for byte the same (the noise floor) | PASS — nothing to mask |
 | amd64 | NOT RUN — the commands are below |
 | A new xless over existing packs prepares nothing | PASS — both packs, prepared by an earlier xless, were found current |
@@ -73,7 +73,7 @@ run to run once the inputs above are the same, so nothing is masked as run-to-ru
 
 | Sample | Xcode 27.0 | Xcode 26.2 |
 |---|---|---|
-| HelloShip | **differs**: the iOS executable is path only; the macOS executable differs by the moved path of Swift alone (below) | **path only**: the macOS executable, 37 paths of the SDK in each slice's symbol table |
+| HelloShip | **differs**: the iOS executable is path only; the macOS executable differs: a longer rpath to Swift moves `__TEXT` (below) | **path only**: the macOS executable, 37 paths of the SDK in each slice's symbol table |
 | HelloCargo | identical (11 files) | identical (11 files) |
 | HelloTauri | identical (16 files) | identical (16 files) |
 | HelloRN | identical (94 files) | identical (94 files) |
@@ -115,14 +115,33 @@ too; below 6.4 it keeps `--swift-sdk` and `--arch` (6.2.3's `--triple` builds bo
   The load commands are 40 bytes longer and fit in the header's padding; `LC_UUID` differs; every other byte is the same.
 - **HelloShip, Xcode 27.0, `macos/HelloShip.app/Contents/MacOS/HelloShip`**: the same rpath, `/usr/lib/swift-6.2/macosx`
   against `/xcodes/27.0-27A266a-arm64/toolchain/usr/lib/swift-6.2/macosx`, in each slice; the other rpaths are the
-  baseline's (`/usr/lib/swift`, `@loader_path`, `@executable_path/../Frameworks`). Its load command is 40 bytes longer,
-  and this link leaves no header padding to take them: every section of `__TEXT` moves by 0x28 or 0x30 (`__text` at
-  0xf00 against 0xed8 in the arm64 slice), so the code that reaches `__DATA` differs. `otool -l` of the two differs in
-  nothing else but those sections' addresses and offsets, the entry point's offset (+40) and the UUID; the segments are
-  where they were. SwiftPM writes that rpath from where its own toolchain is (`<toolchain>/usr/lib/swift-6.2/<platform>`,
-  no option turns it off), so only a SwiftPM run from `/usr` gives the baseline's: the image's own SwiftPM with the
-  pack's compilers in a toolset does, but Swift Build then still runs the image's own `clang` and `swift-frontend` for
-  some steps, unfitted to the SDK. The path does not exist on a Mac, in either build.
+  baseline's (`/usr/lib/swift`, `@loader_path`, `@executable_path/../Frameworks`). That load command is 40 bytes longer
+  (`sizeofcmds` 3736 → 3776 in the arm64 slice, 3880 → 3920 in the x86_64 one) and the sections of `__TEXT` start later:
+  `__text` and `__stubs` by 0x28 and the others by 0x30 in the arm64 slice (`__text` at 0xf00 against 0xed8), all by 0x20
+  in the x86_64 one. The segments, and every section of `__DATA_CONST` and `__DATA`, are where they were. The tool
+  calls the file different, and says its printable strings differ once the path is replaced: the runs that differ are
+  the bytes of `LC_UUID`, some of which are printable (`LLDuUU1D` against `UU1D` and `!:\)` in the arm64 slice).
+  Compared with each address mapped through that move, on one more pair built for the purpose (the same verdict):
+  - the load commands: besides the rpath and the sections' addresses and offsets, only `LC_UUID` and `LC_MAIN`'s
+    `entryoff` differ, and `entryoff` by its section's shift (0x2100 → 0x2128, 0x2170 → 0x2190);
+  - the code: `__text` (and the x86_64 `__stubs`) disassembled, every address made absolute (the PC-relative operands of
+    `adr`, `adrp`, `ldr` literals and `%rip` resolved) and the candidate's mapped back by its section's shift: no line
+    differs (2,657 arm64 and 2,879 + 1,497 x86_64 lines);
+  - the other sections: byte for byte the same, but for `__swift5_typeref`, `__const`, `__constg_swiftt` and
+    `__swift5_entry` of `__TEXT`, `__unwind_info`, and `__got`, `__const` and `__data`. There every differing byte lies
+    in a word whose new value is the old one plus the shift of the section it points into, read as a 32-bit offset
+    from the word itself (Swift's relative pointers), a 32-bit offset from the image base (`__unwind_info`) or a
+    chained-fixup rebase (its target address in the low 36 bits). This is a check of each differing word against those
+    three readings, not a parse of the Swift metadata;
+  - `__LINKEDIT`: the symbol table, the function starts, the chained fixups and the exports as `objdump` prints them are
+    the same once the candidate's addresses are mapped back; its bytes were not compared one by one, and the code
+    signature is left out;
+  - the bytes outside every section, up to `__LINKEDIT`, are zero in both.
+
+  SwiftPM writes that rpath from where its own toolchain is (`<toolchain>/usr/lib/swift-6.2/<platform>`, no option turns
+  it off), so only a SwiftPM run from `/usr` gives the baseline's: the image's own SwiftPM with the pack's compilers in a
+  toolset does, but Swift Build then still runs the image's own `clang` and `swift-frontend` for some steps, unfitted to
+  the SDK. The path does not exist on a Mac, in either build.
 
 With Xcode 26.2 both sides build with another Swift than the image's own (6.2.3), the same way, and the products agree.
 
@@ -237,6 +256,7 @@ passed alone. That is the baked image's Swift, unchanged by the packs.
   through Docker only.
 - Rootless Docker and a directory store of packs are covered by unit tests, not exercised for real.
 - A Swift app for macOS built with a pack's toolchain records that toolchain's place in one rpath, as the baked images
-  recorded theirs; where the path is longer than the baseline's, the code moves with it (the 27.0 HelloShip above).
+  recorded theirs; where the path is longer than the baseline's, the sections of `__TEXT` move with it (the 27.0
+  HelloShip above).
 - Cargo's and Tauri's outputs in a work copy are not rebuilt when the pack they were linked against is prepared again,
   as above.
