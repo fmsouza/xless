@@ -52,6 +52,29 @@ out=$(run clang++ -target aarch64-unknown-linux-gnu @r4.resp -c a.cpp); [[ "$out
 [[ "$(run clang-cpp -target aarch64-unknown-linux-gnu a.c | head -1)" == --driver-mode=cpp ]] || fail "clang-cpp mode"
 [[ "$(run clang -cc1 -triple arm64-apple-ios -E a.c)" == "$(printf '%s\n' -cc1 -triple arm64-apple-ios -E a.c)" ]] || fail "-cc1 changed"
 
+# @DRIVER@ as a bare name: the driver beside this one, found from its own path (through links, from any directory),
+# so a moved toolchain still runs.
+mkdir -p "$t/rel/bin" "$t/elsewhere"
+cp "$t/real" "$t/rel/bin/real-driver"
+python3 -c 'import sys; t = open(sys.argv[1]).read(); open(sys.argv[2], "w").write(t.replace("@DRIVER@", "real-driver").replace("@FLAGS@", sys.argv[3]))' \
+  "$root/docker/toolchain/clang-driver" "$t/rel/bin/clang" "$flags"
+chmod +x "$t/rel/bin/clang"; ln -s clang "$t/rel/bin/clang++"
+ln -s "$t/rel/bin/clang" "$t/elsewhere/cc"            # a link from another directory, with an absolute target
+ln -s ../rel/bin/clang "$t/elsewhere/cc-rel"          # and with a relative one
+ln -s ../rel/bin "$t/elsewhere/bindir"                # a link to the directory
+bare() { local out; out=$(cd "$1" && env -i "$2" "${@:3}") || fail "bare driver $2 failed"
+  [[ "$out" == "$(printf '%s\n' "${@:3}")"$'\n'"$added" ]] || fail "bare driver $2: $(tr '\n' ' ' <<<"$out")"; }
+bare "$t" "$t/rel/bin/clang" -target arm64-apple-ios17.0 -c a.c
+bare "$t/elsewhere" "$t/rel/bin/clang" -target arm64-apple-ios17.0 -c a.c
+bare "$t/elsewhere" "$t/elsewhere/cc" -target arm64-apple-ios17.0 -c a.c
+bare "$t/elsewhere" ./cc-rel -target arm64-apple-ios17.0 -c a.c
+bare "$t/elsewhere" ./bindir/clang -target arm64-apple-ios17.0 -c a.c
+bare "$t/rel/bin" ./clang -target arm64-apple-ios17.0 -c a.c
+out=$(cd "$t/elsewhere" && env -i "$t/rel/bin/clang++" -target aarch64-unknown-linux-gnu -c a.cpp)
+[[ "$out" == "$(printf '%s\n' --driver-mode=g++ -target aarch64-unknown-linux-gnu -c a.cpp)" ]] || fail "bare clang++: $out"
+mv "$t/rel" "$t/moved"
+[[ "$(env -i "$t/moved/bin/clang" -target aarch64-unknown-linux-gnu -c a.c | head -1)" == -target ]] || fail "moved driver"
+
 # A Linux compile on an amd64 host (cargo build scripts, cc host builds) runs the real driver with exactly its own arguments.
 test_x86_64_linux_unchanged() {
   local out; out=$(run clang -target x86_64-unknown-linux-gnu -c x.c)

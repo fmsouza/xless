@@ -15,9 +15,22 @@
 # unchanged: -fdefine-target-os-macros would define TARGET_OS_LINUX 1, TARGET_OS_MAC 0, … for a Linux target, which
 # Apple's clang and stock clang never do, and C code testing `defined(TARGET_OS_MAC)` would take its Apple branch.
 # The flags go to compiles (-c, -S, -E, -fsyntax-only, -M, -MM, or a source file or stdin as input), not to links.
-# @DRIVER@ and @FLAGS@ are filled in at install: the real driver (absolute path) and the flags. Shell builtins only: build
-# systems run compilers with a reduced PATH.
+# @DRIVER@ and @FLAGS@ are filled in at install: the real driver and the flags. The driver is an absolute path, or a bare
+# name: the file of that name beside this one (its location with symbolic links followed), so a toolchain that is moved
+# still runs. Shell builtins only, but for readlink when this is a link: build systems run compilers with a reduced PATH.
 real=@DRIVER@
+case "$real" in
+  /*) ;;
+  *)
+    self=$0
+    case "$self" in */*) ;; *) self=$(command -v -- "$self") ;; esac
+    while [ -L "$self" ]; do
+      link=$(PATH=/usr/bin:/bin:$PATH readlink "$self")
+      case "$link" in /*) self=$link ;; *) self=${self%/*}/$link ;; esac
+    done
+    case "$self" in */*) dir=${self%/*} ;; *) dir=. ;; esac
+    real=$(cd -P "$dir" && pwd -P)/$real ;;
+esac
 flags='@FLAGS@'
 case "$1" in -cc1*) exec "$real" "$@" ;; esac
 mode=
