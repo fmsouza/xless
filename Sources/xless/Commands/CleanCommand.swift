@@ -374,14 +374,24 @@ struct CleanCommand: AsyncParsableCommand {
     }
 
     /// `root` removed (its directories made writable first), but for the real paths `keeping` under it and the directories
-    /// that lead to them.
+    /// that lead to them. Below `root` no symbolic link is followed: a link is removed as a link, whatever it leads to.
     private static func removeTree(_ root: URL, keeping: [String]) throws {
+        try removeTree(root, real: root.resolvingSymlinksInPath().standardizedFileURL.path, keeping: keeping)
+    }
+
+    /// `url`, whose real path is `here` (every directory walked into is one, not a link to one).
+    private static func removeTree(_ url: URL, real here: String, keeping: [String]) throws {
         let fm = FileManager.default
-        let here = root.resolvingSymlinksInPath().standardizedFileURL.path
         if keeping.contains(here) { return }
-        guard keeping.contains(where: { $0.hasPrefix(here + "/") }) else { return try PackPlan.removeTree(root) }
-        for child in try fm.contentsOfDirectory(atPath: root.path) {
-            try removeTree(root.appendingPathComponent(child), keeping: keeping)
+        guard keeping.contains(where: { $0.hasPrefix(here + "/") }) else { return try PackPlan.removeTree(url) }
+        for child in try fm.contentsOfDirectory(atPath: url.path) {
+            let entry = url.appendingPathComponent(child)
+            var info = stat()
+            if lstat(entry.path, &info) == 0, info.st_mode & S_IFMT == S_IFLNK {
+                try fm.removeItem(atPath: entry.path)
+                continue
+            }
+            try removeTree(entry, real: here + "/" + child, keeping: keeping)
         }
     }
 

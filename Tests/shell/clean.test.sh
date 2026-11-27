@@ -396,6 +396,15 @@ run --cache --yes
 grep -qx "leaving the store of Xcode packs $t/home/.cache/xless/xcodes, inside the cache: --packs removes its packs" "$t/out" || fail "--cache does not say it leaves the store: $(cat "$t/out")"
 run --cache --packs --yes
 [[ $code == 0 && ! -e "$cache/xcodes/26.2-17C52-arm64" ]] || fail "--cache --packs and a store in the cache: $code $(cat "$t/err")"
+# ... and a link in the cache that leads to a directory above the store (here the home) is removed as a link: nothing
+# behind it is looked into or removed.
+mkcache; mkdir -p "$cache/packs/26.2-17C52-arm64"; echo "$pack_json" > "$cache/packs/26.2-17C52-arm64/pack.json"
+echo mine > "$t/home/keep-me"; ln -s "$t/home" "$cache/x"
+extra=(XLESS_XCODES="$cache/packs")
+run --cache --yes
+[[ $code == 0 && -f "$t/home/keep-me" && -f "$cache/packs/26.2-17C52-arm64/pack.json" && ! -L "$cache/x" && ! -e "$cache/sdk" ]] \
+  || fail "--cache and a link in it to the home: $code $(ls -la "$t/home" "$cache" 2>&1) $(cat "$t/err")"
+rm -rf "$cache" "$t/home/keep-me"
 extra=(XLESS_XCODES="$store")
 # ... and --old leaves it whole.
 mkdir -p "$store/26.2-17C52-arm64"; echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; extra=(XLESS_XCODES="$store")
