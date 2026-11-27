@@ -113,11 +113,13 @@ code=0; "${runs[@]}" "$x" run "$t/p" --to finalize --no-such-option >/dev/null 2
 # an xless.yml that is not YAML: the run itself says so, before ship does
 code=0; echo 'nonsense: [' > "$t/p/xless.yml"; "${runs[@]}" "$x" run "$t/p" --to finalize >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 10 ]] || fail "xless run of an unreadable xless.yml exits $code, want 10: $(cat "$t/err")"
-# On Linux, an overlay builds in the images only: refused natively, naming --docker, before anything runs.
+# On Linux, an overlay builds natively only where its tools are (docs/troubleshooting.md): here they are not, so it is
+# refused with exit 2, naming --docker, before anything runs.
 if [[ "$(uname)" == Linux ]]; then
   : > "$t/dlog"
   code=0; "${runs[@]}" "$x" run --config "$t/tauri.yml" >"$t/out" 2>"$t/err" || code=$?
-  [[ $code -eq 10 ]] || fail "native overlay exits $code, want 10: $(cat "$t/err")"
+  [[ $code -eq 2 ]] || fail "native overlay exits $code, want 2: $(cat "$t/err")"
+  grep -q 'needs, and this machine lacks: ' "$t/err" || fail "the overlay refusal does not say what is missing: $(cat "$t/err")"
   grep -q -- '--docker' "$t/err" || fail "the overlay refusal does not name --docker: $(cat "$t/err")"
   [[ ! -s "$t/out" && ! -s "$t/dlog" ]] || fail "something ran for a refused overlay: $(cat "$t/out" "$t/dlog")"
 fi
