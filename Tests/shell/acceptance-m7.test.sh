@@ -92,7 +92,8 @@ cat > "$t/bin/docker" <<'STUB'
 S="$STUB_DIR"
 case "$1" in
   image) echo c0ffee; exit 0 ;;
-  volume) printf 'xless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C52-amd64\n'; exit 0 ;;   # the pack volumes, labelled org.xless.pack
+  # the pack volumes, made by hand (no label: a listing filtered by xless's label finds none; xless finds them by name)
+  volume) [[ "$*" == *label=* ]] || printf 'xless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C52-amd64\n'; exit 0 ;;
   ps) [[ -e "$S/container" ]] && echo "c0ffee$(cat "$S/container")" ; exit 0 ;;
   inspect)
     if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi
