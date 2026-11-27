@@ -117,10 +117,5 @@ public enum SetupPlan {
     }
 
     /// As scripts/build-images.sh and a project's pin spell it: major.minor, plus the patch when it is not 0.
-    public static func canonicalVersion(_ v: String) -> String {
-        let p = v.split(separator: ".").map { Int($0) ?? 0 }
-        var s = "\(p.first ?? 0).\(p.count > 1 ? p[1] : 0)"
-        if p.count > 2, p[2] != 0 { s += ".\(p[2])" }
-        return s
-    }
+    public static func canonicalVersion(_ v: String) -> String { XcodeVersion.canonical(v) }
 }
