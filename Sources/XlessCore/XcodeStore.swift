@@ -81,10 +81,21 @@ public enum XcodeResolver {
     /// else `~/.cache/xless/sdk`), and what to do in a container, where the pack is mounted read-only.
     static func prepareAgain(_ pack: XcodePack, env: [String: String]) -> String {
         let m = pack.manifest
-        let cache = env["XDG_CACHE_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? ((env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()) + "/.cache")
-        let export = "\(cache)/xless/sdk/xcode\(m.xcode)-\(m.build)"
-        return "xless setup --sdk \(export) prepares it (without that SDK export: xless setup --xcode <path to Xcode \(m.xcode)'s .app or .xip>); "
+        return "xless setup --sdk \(export(pack, env: env)) prepares it (without that SDK export: xless setup --xcode <path to Xcode \(m.xcode)'s .app or .xip>); "
             + "in a container, whose pack is read-only, run xless setup --docker --sdk <that export> on the host instead, then start the container again"
+    }
+
+    /// The fix for a pack without Swift Build: a native setup prepares none (docs/native-install.md); only a pack prepared in
+    /// xless's image has it. `pack`: the one without it, nil when there is none to name.
+    public static func swiftBuildFix(_ pack: XcodePack?, env: [String: String]) -> String {
+        "only a pack prepared in xless's image has Swift Build: xless setup --docker --sdk \(pack.map { export($0, env: env) } ?? "<the Xcode's SDK export>") "
+            + "prepares it; then build with xless run --docker, or in a container of that image (docs/images.md#using-the-image-directly)"
+    }
+
+    /// The SDK export of `pack`'s Xcode in the cache.
+    private static func export(_ pack: XcodePack, env: [String: String]) -> String {
+        let cache = env["XDG_CACHE_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? ((env["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()) + "/.cache")
+        return "\(cache)/xless/sdk/xcode\(pack.manifest.xcode)-\(pack.manifest.build)"
     }
 
     /// The pack to use: `XLESS_XCODE`'s, else the store's (`XLESS_XCODES`) chosen by `pin` or the newest.
@@ -165,7 +176,7 @@ public enum XcodeResolver {
         let parts: [(Need, PackPart, String)] = [(.sdk, .sdk, "Darwin SDK"), (.swiftBuild, .swiftBuild, "Swift Build")]
         for (need, part, label) in parts where needs.contains(need) {
             guard let have = pack.manifest.parts[part.rawValue] else {
-                throw XcodeProblem("the pack \(pack.name) has no \(label)", fix: prepareAgain(pack, env: env))
+                throw XcodeProblem("the pack \(pack.name) has no \(label)", fix: part == .swiftBuild ? swiftBuildFix(pack, env: env) : prepareAgain(pack, env: env))
             }
             if let want = try expected(pack, part), want != have {
                 throw XcodeProblem("the \(label) of the pack \(pack.name) was prepared by another recipe than this xless uses",

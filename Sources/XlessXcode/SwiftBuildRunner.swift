@@ -22,7 +22,7 @@ public enum SwiftBuildRunner {
     static func swbuild(_ environment: SwiftBuildEnvironment, path: String?, stage: Stage) throws -> URL {
         guard let swbuild = environment.swbuild ?? XcodeEnvironment.which("swbuild", path: path) else {
             throw XlessError(stage, "Swift Build is not here: the Xcode pack has no swbuild, and none is on PATH",
-                             fix: "xless setup --xcode <path to Xcode's .app or .xip> prepares the Swift Build part of its pack")
+                             fix: XcodeResolver.swiftBuildFix(nil, env: ProcessInfo.processInfo.environment))
         }
         return swbuild
     }
@@ -48,7 +48,7 @@ public enum SwiftBuildRunner {
         } catch let e as XlessError {
             throw e
         } catch {
-            throw XlessError(stage, "cannot run \(swbuild.path): \(error)", fix: "xless setup --xcode <path to Xcode's .app or .xip> prepares the Swift Build part of its pack again")
+            throw XlessError(stage, "cannot run \(swbuild.path): \(error)", fix: "check that \(swbuild.path) is there and can run; " + XcodeResolver.swiftBuildFix(nil, env: ProcessInfo.processInfo.environment))
         }
         let data = (try? Data(contentsOf: log)) ?? Data()
         var summary = SwiftBuildOutput.summarize(data)

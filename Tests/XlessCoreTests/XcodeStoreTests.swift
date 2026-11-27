@@ -178,7 +178,8 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
 }
 
 // The fixes are commands to run: the setup that prepares from the cached export, else from the .xip; for a missing or stale
-// part, the export of that pack's Xcode by its path, and what to do where the pack is read-only (a container).
+// part, the export of that pack's Xcode by its path, and what to do where the pack is read-only (a container); for a missing
+// Swift Build part, the setup of the image (a native setup prepares none).
 @Test func theFixesAreCommands() throws {
     let store = try tempDir()
     let none = problem { try resolve(store, pin: "26.2") }
@@ -189,10 +190,14 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let stale = problem { try resolve(store, extra: env, expected: { _, _ in "other" }) }
     let fix = "xless setup --sdk /home/me/.cache/xless/sdk/xcode26.2-17C52 prepares it (without that SDK export: xless setup --xcode <path to Xcode 26.2's .app or .xip>); "
         + "in a container, whose pack is read-only, run xless setup --docker --sdk <that export> on the host instead, then start the container again"
-    #expect(missing?.fix == fix)
     #expect(stale?.fix == fix)
-    let cached = problem { try resolve(store, needs: [.swiftBuild], extra: ["HOME": "/home/me", "XDG_CACHE_HOME": "/c"]) }
+    // a missing Swift Build part: a native setup prepares none, only a setup of the image does
+    #expect(missing?.fix == "only a pack prepared in xless's image has Swift Build: xless setup --docker --sdk /home/me/.cache/xless/sdk/xcode26.2-17C52 prepares it; "
+        + "then build with xless run --docker, or in a container of that image (docs/images.md#using-the-image-directly)")
+    let cached = problem { try resolve(store, extra: ["HOME": "/home/me", "XDG_CACHE_HOME": "/c"], expected: { _, _ in "other" }) }
     #expect(cached?.fix.hasPrefix("xless setup --sdk /c/xless/sdk/xcode26.2-17C52 prepares it") == true)
+    let cachedSwiftBuild = problem { try resolve(store, needs: [.swiftBuild], extra: ["HOME": "/home/me", "XDG_CACHE_HOME": "/c"]) }
+    #expect(cachedSwiftBuild?.fix.contains("xless setup --docker --sdk /c/xless/sdk/xcode26.2-17C52 prepares it") == true)
 }
 
 // XLESS_XCODE's pack is checked as a store's is: of this machine's architecture, and of this xless's pack format.
