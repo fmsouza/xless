@@ -90,7 +90,7 @@ public struct SetupStep: Equatable, Sendable {
         /// this machine. Stops when a running container uses the pack; a docker that does not answer (none installed, no
         /// daemon, or a machine without Docker at all, such as the setup container) runs nothing that could, and is no stop.
         public func refuseInUseWhereDockerAnswers(_ docker: @escaping LocalImages.Docker) throws {
-            guard let users = try? PackUsers(docker).of(store, xcode: xcode, build: build, arch: arch) else { return }
+            guard let users = try? PackUsers(docker).of(store, xcode: xcode, build: build, arch: arch, xlessOnly: true) else { return }
             if !users.isEmpty { throw PackUsers.refusal(pack: name, place: place, users: users) }
         }
     }
@@ -99,6 +99,14 @@ public struct SetupStep: Equatable, Sendable {
     public let argv: [String]
     public let estimate: String
     public let action: Action
+
+    /// The indexes of a native plan's steps before which the setup asks whether a running xless build uses the pack it replaces
+    /// (`PackTarget.refuseInUseWhereDockerAnswers`): the first, before the downloads and Swift Build's minutes, and the commit,
+    /// since a build may have started meanwhile. None when the plan replaces no pack.
+    public static func inUseChecks(_ steps: [SetupStep]) -> [Int] {
+        guard let commit = steps.firstIndex(where: { if case .packCommit = $0.action { true } else { false } }) else { return [] }
+        return commit == 0 ? [0] : [0, commit]
+    }
 
     public init(title: String, argv: [String], estimate: String, action: Action = .run) {
         self.title = title; self.argv = argv; self.estimate = estimate; self.action = action

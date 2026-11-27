@@ -148,7 +148,7 @@ import XlessImages
         // (the export's path as Foundation spells it: /private/var is /var)
         let export = URL(fileURLWithPath: "\(home.exports)/xcode27.0-27A266a").standardizedFileURL.path
         #expect(has(words, ["--mount", "type=bind,src=\(export),dst=/cache/xless/sdk/xcode27.0-27A266a,readonly"]), "\(words)")
-        #expect(has(words, ["--mount", "type=volume,src=\(volume),dst=/xcodes", Self.base, "xless", "setup", "--sdk", "/cache/xless/sdk/xcode27.0-27A266a"]))
+        #expect(has(words, ["--mount", "type=volume,src=\(volume),dst=/xcodes", "--label", "xless.setup=27.0-27A266a-arm64", Self.base, "xless", "setup", "--sdk", "/cache/xless/sdk/xcode27.0-27A266a"]))
         #expect(words.contains { $0.hasPrefix("xless.run=4242.") } && !words.contains("--init"))
         #expect(!words.contains { $0.contains("/work") || $0.contains("/source") || $0.contains("/config") || $0.contains("secrets") || $0.contains(".pem") || $0.contains(".p8") })
         #expect(Set(runs[setup].environment.keys).isDisjoint(with: SecretEnvironment.names + ["XLESS_SESSION", "SOME_PASSWORD"]))

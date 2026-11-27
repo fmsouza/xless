@@ -71,6 +71,25 @@ import Testing
         #expect(try fake.users.of(.directory(real), xcode: "26.2", build: "17C52", arch: "arm64") == ["byreal (img)", "bylink (img)"])
     }
 
+    /// A native setup counts xless's containers alone: a run's (its `xless.run` label) and a pack setup's (`xless.setup`). Another
+    /// container that mounts `/` or a directory above the store (cAdvisor's `/:/rootfs:ro`) is no xless build of the pack.
+    @Test func aNativeSetupCountsXlessContainersAlone() throws {
+        let fake = Fake()
+        fake.ids = "a1\nb2\nc3\nd4\n"
+        func mounts(_ sources: String...) -> String { "[" + sources.map { "{\"Type\":\"bind\",\"Source\":\"\($0)\"}" }.joined(separator: ",") + "]" }
+        fake.inspect = [
+            "/cadvisor\tgcr.io/cadvisor/cadvisor\t<no value>\t\(mounts("/"))\t<no value>",
+            "/builder\txless:1-arm64\t42.1\t\(mounts("/data/xcodes/26.2-17C52-arm64"))\t<no value>",
+            "/setup\txless:1-arm64\t<no value>\t\(mounts("/data/xcodes"))\t26.2-17C52-arm64",
+            "/otherrun\txless:1-arm64\t43.1\t\(mounts("/elsewhere"))\t<no value>",
+        ].joined(separator: "\n") + "\n"
+        let store = PackStore.directory(URL(fileURLWithPath: "/data/xcodes"))
+        #expect(try fake.users.of(store, xcode: "26.2", build: "17C52", arch: "arm64", xlessOnly: true) == ["builder (xless:1-arm64)", "setup (xless:1-arm64)"])
+        #expect(fake.asked[1][2].hasSuffix("\t{{json .Mounts}}\t{{index .Config.Labels \"xless.setup\"}}"))
+        // Asked for any container (clean, a docker setup): the one that mounts / counts too.
+        #expect(try fake.users.of(store, xcode: "26.2", build: "17C52", arch: "arm64") == ["cadvisor (gcr.io/cadvisor/cadvisor)", "builder (xless:1-arm64)", "setup (xless:1-arm64)"])
+    }
+
     @Test func aDockerThatCannotSayIsAProblem() {
         let fake = Fake()
         fake.code = 1

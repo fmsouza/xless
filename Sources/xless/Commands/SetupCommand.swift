@@ -240,17 +240,19 @@ struct SetupCommand: AsyncParsableCommand {
             if !steps.isEmpty { say("    (\(SetupPlan.estimateNote))") }
             let start = Date()
             let staging = PackPlan.staging(of: store.directory(xcode: version, build: x.build, arch: arch))
+            let checks = SetupStep.inUseChecks(steps)
             do {
                 for (n, s) in steps.enumerated() {
-                    say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
-                    let t0 = Date()
-                    // Not under a running docker build that mounts this store (XLESS_XCODES): asked right before the pack is replaced.
-                    if case .packCommit = s.action {
+                    // Not under a running xless docker build that mounts this store (XLESS_XCODES): asked before the first step,
+                    // and again right before the pack is replaced.
+                    if checks.contains(n) {
                         let target = SetupStep.PackTarget(store: .directory(store.root), xcode: version, build: x.build, arch: arch)
                         do { try target.refuseInUseWhereDockerAnswers(LocalImages.hereDocker) } catch let problem as ImageProblem {
                             throw XlessError(.sdk, problem.cause, fix: problem.fix) // the staging directory is discarded below
                         }
                     }
+                    say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
+                    let t0 = Date()
                     try execute(s, xcode: x, layout: layout)
                     say("    done in \(Self.minutes(since: t0))")
                 }

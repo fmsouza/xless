@@ -163,6 +163,7 @@ public enum PackSetup {
         argv += ["-e", "XDG_CACHE_HOME=/cache"]
         for key in passed { if let v = environment[key], !v.isEmpty { argv += ["-e", "\(key)=\(v)"] } }
         argv += store.mount(xcode: xcode, build: build, arch: arch, writable: true)
+        argv += ["--label", "\(PackUsers.setupLabel)=\(XcodePack.name(xcode: xcode, build: build, arch: arch))"]
         return argv + [image, "xless", "setup"] + command
     }
 }
@@ -177,12 +178,16 @@ public struct PackUsers {
 
     /// The label every container of a run carries (`xless.run=<pid>.<time>`).
     public static let runLabel = "xless.run"
+    /// The label of the container that prepares a pack (`xless.setup=<pack name>`, `PackSetup`).
+    public static let setupLabel = "xless.setup"
 
     /// "<name> (<image>)" of each running container that has the pack of `xcode` (canonical version), `build` and `arch` mounted,
     /// but for those of the run `excludingRun` (its `xless.run` label's value). A volume: `docker ps --filter volume=<name>`. A
     /// directory store: `docker ps -q`, then one `docker inspect` of those containers' mounts; one that mounts the pack's
-    /// directory, the store, something in the pack or a directory that holds the store counts.
-    public func of(_ store: PackStore, xcode: String, build: String, arch: String, excludingRun: String? = nil) throws -> [String] {
+    /// directory, the store, something in the pack or a directory that holds the store counts. `xlessOnly` (a native setup, of a
+    /// directory store): of those, only xless's own containers count, a run's (`runLabel`) or a pack setup's (`setupLabel`); a
+    /// container of something else that mounts `/` or the home (a monitor's `/:/rootfs:ro`) is no build of the pack.
+    public func of(_ store: PackStore, xcode: String, build: String, arch: String, excludingRun: String? = nil, xlessOnly: Bool = false) throws -> [String] {
         let row = "{{.Names}}\t{{.Image}}\t{{.Label \"\(Self.runLabel)\"}}"
         switch store {
         case .volumes:
@@ -195,7 +200,7 @@ public struct PackUsers {
             guard ids.code == 0 else { throw problem("docker ps -q") }
             let running = ids.output.split(whereSeparator: \.isWhitespace).map(String.init)
             if running.isEmpty { return [] }
-            let format = "{{.Name}}\t{{.Config.Image}}\t{{index .Config.Labels \"\(Self.runLabel)\"}}\t{{json .Mounts}}"
+            let format = "{{.Name}}\t{{.Config.Image}}\t{{index .Config.Labels \"\(Self.runLabel)\"}}\t{{json .Mounts}}\t{{index .Config.Labels \"\(Self.setupLabel)\"}}"
             let inspected = docker(["inspect", "--format", format] + running)
             guard inspected.code == 0 else { throw problem("docker inspect") }
             // (as files: a link in either path, /var on a Mac for one, does not hide that they are the same)
@@ -204,6 +209,10 @@ public struct PackUsers {
             return rows(inspected.output, excludingRun: excludingRun) { fields in
                 guard fields.count > 3, let data = fields[3].data(using: .utf8),
                       let mounts = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
+                if xlessOnly {
+                    func labelled(_ i: Int) -> Bool { fields.count > i && !fields[i].isEmpty && fields[i] != "<no value>" }
+                    guard labelled(2) || labelled(4) else { return false }
+                }
                 return mounts.contains { mount in
                     guard let source = (mount["Source"] as? String).map(Self.real) else { return false }
                     // the pack, in it, the store, or what holds the store

@@ -134,7 +134,7 @@ pk="$(grep -F 'xless setup --xcode' "$t/out" || true)"
 [[ -n "$pk" ]] || fail "the plan does not prepare the pack in the image: $(cat "$t/out")"
 for want in "docker run --rm --pull=never --platform linux/arm64 --user $(id -u):$(id -g) -e HOME=/tmp " "src=$xip,dst=/xcode/Xcode copy.xip,readonly" \
             "type=bind,src=$t/home/.cache/xless/sdk/xcode27.0-27A266a,dst=/cache/xless/sdk/xcode27.0-27A266a " "-e XDG_CACHE_HOME=/cache" \
-            "--mount type=volume,src=xless-xcode-27.0-27A266a-arm64,dst=/xcodes xless:$st-arm64 xless setup --xcode '/xcode/Xcode copy.xip'"; do
+            "--mount type=volume,src=xless-xcode-27.0-27A266a-arm64,dst=/xcodes --label xless.setup=27.0-27A266a-arm64 xless:$st-arm64 xless setup --xcode '/xcode/Xcode copy.xip'"; do
   grep -qF -- "$want" <<<"$pk" || fail "the pack's container lacks '$want': $pk"
 done
 grep -q 'xtool sdk build\|xless sdk meta' "$t/out" && fail "the host exports the SDK: $(cat "$t/out")"

@@ -242,7 +242,7 @@ docker run --rm --pull=never --platform linux/$A --network none --mount type=vol
 ```sh
 docker run --rm --pull=never --platform linux/$A --user "$(id -u):$(id -g)" -e HOME=/tmp \
   --mount type=bind,src="$SDK",dst=/cache/xless/sdk/xcode$V-$B,readonly -e XDG_CACHE_HOME=/cache \
-  --mount type=volume,src=$VOLUME,dst=/xcodes $IMAGE xless setup --sdk /cache/xless/sdk/xcode$V-$B
+  --mount type=volume,src=$VOLUME,dst=/xcodes --label xless.setup=$V-$B-$A $IMAGE xless setup --sdk /cache/xless/sdk/xcode$V-$B
 ```
 
 With rootless Docker leave out `--user …` (and step 2's second command). Without an export yet, the same container

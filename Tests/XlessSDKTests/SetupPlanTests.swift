@@ -134,6 +134,7 @@ private func values(_ option: String, _ argv: [String]) -> [String] {
                              "--mount", "type=bind,src=/cache/xless/sdk/xcode27.0-27A266a,dst=/cache/xless/sdk/xcode27.0-27A266a",
                              "-e", "XDG_CACHE_HOME=/cache",
                              "--mount", "type=volume,src=xless-xcode-27.0-27A266a-arm64,dst=/xcodes",
+                             "--label", "xless.setup=27.0-27A266a-arm64",
                              "xless:0.14.0-arm64", "xless", "setup", "--xcode", "/xcode/My Xcode.xip"])
     // The export lands in the host's cache: its directory is made first, as the calling user.
     #expect(pack(d).action == .packRun(SetupStep.PackRun(directories: [cache.appendingPathComponent("sdk/xcode27.0-27A266a")], unlessCurrent: nil, writes: SetupStep.PackTarget(store: .volumes, xcode: "27.0", build: "27A266a", arch: "arm64"))))
@@ -412,21 +413,35 @@ private func makeTarball(version: String, arch: String, in dir: URL) throws -> U
     #expect(XlessRelease.elfDockerArch(text) == nil)
 }
 
-/// A native setup replaces a pack of a directory store only when no running container uses it; where docker does not
-/// answer, nothing runs that could, and it goes on.
+/// A native setup replaces a pack of a directory store only when no running xless container uses it; where docker does not
+/// answer, nothing runs that could, and it goes on. A container of something else that mounts `/` is no xless build.
 @Test func aNativeSetupDoesNotReplaceAPackARunningBuildUses() throws {
     let dir = URL(fileURLWithPath: "/srv/xcodes")
     let target = SetupStep.PackTarget(store: .directory(dir), xcode: "27.0", build: "27A266a", arch: "arm64")
+    let cadvisor = "/cadvisor\tgcr.io/cadvisor/cadvisor\t<no value>\t[{\"Source\":\"/\"}]\t<no value>\n"
     let using: LocalImages.Docker = { words in
         switch words.first {
-        case "ps": return (0, "abc\n")
-        case "inspect": return (0, "/builder\txless:1-arm64\t1.2\t[{\"Source\":\"/srv/xcodes/27.0-27A266a-arm64\"}]\n")
+        case "ps": return (0, "abc\ndef\n")
+        case "inspect": return (0, cadvisor + "/builder\txless:1-arm64\t1.2\t[{\"Source\":\"/srv/xcodes/27.0-27A266a-arm64\"}]\t<no value>\n")
         default: return (1, "")
         }
     }
     do { try target.refuseInUseWhereDockerAnswers(using); Issue.record("expected a refusal") } catch let p as ImageProblem {
-        #expect(p.cause.contains("builder (xless:1-arm64)") && p.cause.contains("/srv/xcodes/27.0-27A266a-arm64"), "\(p.cause)")
+        #expect(p.cause.contains("builder (xless:1-arm64)") && !p.cause.contains("cadvisor") && p.cause.contains("/srv/xcodes/27.0-27A266a-arm64"), "\(p.cause)")
     }
+    try target.refuseInUseWhereDockerAnswers { words in words.first == "ps" ? (0, "abc\n") : (0, cadvisor) }
     try target.refuseInUseWhereDockerAnswers { _ in (1, "Cannot connect to the Docker daemon") }
     try target.refuseInUseWhereDockerAnswers { words in words.first == "ps" ? (0, "") : (1, "") }
+}
+
+/// A native setup asks whether a running xless build uses the pack before its first step (the download and Swift Build take
+/// minutes, and are discarded when the commit is refused) and again right before the commit (a build may have started since);
+/// a plan that replaces no pack asks nothing.
+@Test func aNativeSetupAsksBeforeItStartsAndBeforeTheCommit() {
+    let staging = URL(fileURLWithPath: "/s/x.partial"), final = URL(fileURLWithPath: "/s/x")
+    func step(_ action: SetupStep.Action) -> SetupStep { SetupStep(title: "t", argv: ["x"], estimate: "seconds", action: action) }
+    #expect(SetupStep.inUseChecks([step(.run), step(.run), step(.packCommit(staging: staging, final: final))]) == [0, 2])
+    #expect(SetupStep.inUseChecks([step(.packCommit(staging: staging, final: final))]) == [0])
+    #expect(SetupStep.inUseChecks([step(.run), step(.run)]).isEmpty)
+    #expect(SetupStep.inUseChecks([]).isEmpty)
 }
