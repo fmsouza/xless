@@ -15,7 +15,9 @@
 #   scripts/test-cargo-linux.sh --platform macos
 # --platform ios|macos|all (default all).
 # Variables: ARCH (arm64 or amd64; default the host's: ARCH=amd64 on an arm64 Mac runs the amd64 chain under emulation),
-#   XLESS_IMAGE (default xless:local-<arch>-xcode<versions.env's>-tauri; with an Xcode pin, e.g. xless:local-arm64-xcode26.2-tauri),
+#   XCODE (default versions.env's XCODE_VERSION): the Xcode whose pack the container gets, read-only, as xless run gives it
+#   (its volume xless-xcode-<XCODE>-<build>-<arch>, or its directory in XLESS_XCODES), e.g. XCODE=26.2;
+#   XLESS_IMAGE (default xless:<this checkout's tag>-<arch>-tauri, which xless setup --docker --with tauri builds),
 #   DOCKER_CONTEXT (default colima-xless if it exists).
 # The repository is mounted read-only and must be a normal git checkout, not a git worktree (a worktree's .git file points
 # outside the mount, so the container cannot read the tracked files or GIT_SHA); the sample's files are the tracked ones,
@@ -32,8 +34,8 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's work copy and Rust toolchains stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-xcode="$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")"
-image="${XLESS_IMAGE:-xless:local-$arch-xcode$xcode-tauri}"   # xless setup --docker --with tauri builds it
+xcode="${XCODE:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}"   # the Xcode whose pack builds (XCODE=26.2: that pin's)
+image="${XLESS_IMAGE:-xless:$("$root/scripts/docker-images.sh" tag --arch "$arch")-$arch-tauri}"   # xless setup --docker --with tauri builds it
 platform=all
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,8 +47,23 @@ done
 [[ "$platform" == ios || "$platform" == macos || "$platform" == all ]] || { echo "--platform must be ios, macos or all" >&2; exit 2; }
 args=(docker)
 [[ -z "$ctx" ]] || args+=(--context "$ctx")
+# The Xcode's pack, read-only, as xless run gives it to every container (xless setup --docker prepares it): the newest build of
+# $xcode for $arch in its volume, or in the directory XLESS_XCODES names (that pack's directory alone).
+pack_args() {
+  local name dir
+  if [[ -n "${XLESS_XCODES:-}" ]]; then
+    dir="$(ls -d "$XLESS_XCODES/$xcode"-*-"$arch" 2>/dev/null | sort | tail -1)"
+    [[ -n "$dir" && -f "$dir/pack.json" ]] || { echo "$1: no pack of Xcode $xcode for $arch in $XLESS_XCODES; prepare it: xless setup --docker --xcode <Xcode $xcode .xip>" >&2; exit 2; }
+    name="$(basename "$dir")"; pack=(--mount "type=bind,src=$dir,dst=/xcodes/$name,readonly" -e "XLESS_XCODE=/xcodes/$name")
+  else
+    name="$("${args[@]}" volume ls --filter label=org.xless.pack --format '{{.Name}}' | grep -E "^xless-xcode-${xcode//./\\.}-[^-]+-$arch\$" | sort | tail -1 || true)"
+    [[ -n "$name" ]] || { echo "$1: no pack volume of Xcode $xcode for $arch; prepare it: xless setup --docker --xcode <Xcode $xcode .xip>" >&2; exit 2; }
+    pack=(--mount "type=volume,src=$name,dst=/xcodes,readonly" -e "XLESS_XCODE=/xcodes/${name#xless-xcode-}")
+  fi
+}
+pack_args test-cargo-linux
 
-"${args[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
+"${args[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} "${pack[@]}" -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
   -e PLATFORM="$platform" "$image" bash -s <<'IN'
 set -euo pipefail
 o=/repo/samples/HelloCargo/xless.overlay.example.yml
