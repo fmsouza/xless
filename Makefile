@@ -19,6 +19,8 @@ SDK_DIR ?= dist/sdk
 # make images [ARCHS="arm64"]: the xless image of this checkout, xless:<short commit>[-dirty]-<arch> (scripts/build-images.sh).
 # It holds no Xcode: an Xcode is an Xcode pack, which `xless setup` prepares. Nothing here pushes an image.
 images:
+	@if [ "$(origin XCODE)" = "command line" ] || [ "$(origin XCODE)" = environment ]; then \
+	  echo "make images: the image holds no Xcode, so XCODE is not used here; prepare the Xcode's pack with xless setup --docker --xcode $(XCODE)" >&2; exit 2; fi
 	scripts/build-images.sh $(ARCHS)
 
 .PHONY: test-image
