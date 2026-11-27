@@ -73,16 +73,41 @@ public struct XcodeEnvironment: Sendable {
     /// For `swift build` against the Darwin SDK.
     public var swiftSDKsArguments: [String] { ["--swift-sdks-path", swiftSDKsPath.path] }
 
-    /// The environment of a tool that finds the SDK only through `XDG_CONFIG_HOME` (xtool): that variable at the SDK's
-    /// config home when the SDK is not already where it points, and `PATH` with the toolchain (`SwiftToolchain.path`).
-    /// SwiftPM, under it, warns that it cannot write its own state there when the pack is read-only.
-    public func toolEnvironment(_ env: [String: String]) -> [String: String] {
+    /// The environment of a tool that finds the SDK only through `XDG_CONFIG_HOME` (xtool), and `PATH` with the toolchain
+    /// (`SwiftToolchain.path`). When the SDK is not already where that variable points (it is in a pack), the variable
+    /// names a scratch configuration (`xtoolConfig`) whose `swiftpm/swift-sdks` links to the pack's: SwiftPM and xtool
+    /// write their own state there, and nothing ever writes to the pack. An override or the legacy install leaves it alone.
+    public func toolEnvironment(_ env: [String: String]) throws -> [String: String] {
         var out = env
         if sdkBundle.standardizedFileURL.path != DarwinSDKLocator.bundle(env: env).standardizedFileURL.path {
-            out["XDG_CONFIG_HOME"] = sdkBundle.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+            out["XDG_CONFIG_HOME"] = try xtoolConfig(env: env).path
         }
         if let toolchain { out["PATH"] = toolchain.path(env["PATH"]) }
         return out
+    }
+
+    /// `<cache>/xless/xtool-config/<pack>` (`$XDG_CACHE_HOME`, else `~/.cache`), holding `swiftpm/swift-sdks` as a
+    /// link to the directory of the SDK bundle; made when missing, the link replaced when it points elsewhere (a moved pack).
+    func xtoolConfig(env: [String: String]) throws -> URL {
+        let fm = FileManager.default
+        let cache = Self.value(env, "XDG_CACHE_HOME").flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : nil }
+            ?? URL(fileURLWithPath: Self.value(env, "HOME") ?? NSHomeDirectory()).appendingPathComponent(".cache")
+        let config = cache.appendingPathComponent("xless/xtool-config").appendingPathComponent(pack?.root.lastPathComponent ?? "xcode")
+        let swiftpm = config.appendingPathComponent("swiftpm"), link = swiftpm.appendingPathComponent("swift-sdks")
+        let target = swiftSDKsPath.path
+        do {
+            try fm.createDirectory(at: swiftpm, withIntermediateDirectories: true)
+            if (try? fm.destinationOfSymbolicLink(atPath: link.path)) == target { return config }
+            if (try? fm.attributesOfItem(atPath: link.path)) != nil { try fm.removeItem(at: link) }
+            do { try fm.createSymbolicLink(atPath: link.path, withDestinationPath: target) } catch {
+                // Another build made it at the same moment.
+                guard (try? fm.destinationOfSymbolicLink(atPath: link.path)) == target else { throw error }
+            }
+        } catch {
+            throw XlessError(.build, "xtool's configuration \(config.path) cannot be made: \(error.localizedDescription)",
+                             fix: "make \(cache.path) writable, or set XDG_CACHE_HOME to a writable directory")
+        }
+        return config
     }
 
     /// The Xcode's parts in `env`. Throws `XcodeProblem` when no pack fits (missing, of another version or architecture,

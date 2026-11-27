@@ -209,7 +209,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(x.pack == nil && x.sdkBundle.path == bundle.path)
     #expect(x.meta.path == home.appendingPathComponent(".config/xless/toolchain-meta.json").path)
     #expect(x.toolchain == SwiftToolchain(version: "6.4.0", root: "/n/toolchains/swift-6.4.0"))
-    #expect(x.toolEnvironment(env) == env.merging(["PATH": "/n/toolchains/swift-6.4.0/usr/bin:/usr/bin:/bin"]) { $1 })
+    #expect(try x.toolEnvironment(env) == env.merging(["PATH": "/n/toolchains/swift-6.4.0/usr/bin:/usr/bin:/bin"]) { $1 })
     // With a pack, nothing of it is read.
     let store = URL(fileURLWithPath: env["XLESS_XCODES"]!)
     let root = try makePack(in: store)
@@ -236,15 +236,43 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
 }
 
 @Test func toolEnvironmentPointsXtoolAtThePack() throws {
-    let store = try tempDir()
+    let store = try tempDir(), cache = try tempDir("xcode-env-cache")
     let root = try makePack(in: store)
-    let env = try isolated(store: store, ["XDG_CONFIG_HOME": "/home/u/.config"])
+    let env = try isolated(store: store, ["XDG_CONFIG_HOME": "/home/u/.config", "XDG_CACHE_HOME": cache.path])
     let x = try XcodeEnvironment.current(env: env)
-    let tools = x.toolEnvironment(env)
-    // xtool finds the SDK only under XDG_CONFIG_HOME.
-    #expect(tools["XDG_CONFIG_HOME"] == root.appendingPathComponent("config").path)
+    let before = try fm.subpathsOfDirectory(atPath: root.path).sorted()
+    let tools = try x.toolEnvironment(env)
+    // xtool finds the SDK only under XDG_CONFIG_HOME: a scratch configuration whose swift-sdks is the pack's.
+    let config = cache.appendingPathComponent("xless/xtool-config").appendingPathComponent(root.lastPathComponent)
+    let link = config.appendingPathComponent("swiftpm/swift-sdks")
+    #expect(tools["XDG_CONFIG_HOME"] == config.path)
+    #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == root.appendingPathComponent("config/swiftpm/swift-sdks").path)
+    #expect(fm.fileExists(atPath: link.appendingPathComponent("darwin.artifactbundle").path))
     #expect(tools["PATH"] == root.appendingPathComponent("toolchain/usr/bin").path + ":/usr/bin:/bin")
     #expect(tools["HOME"] == env["HOME"])
+    // A second call reuses it.
+    let made = try fm.attributesOfItem(atPath: link.path)[.systemFileNumber] as? Int
+    #expect(try x.toolEnvironment(env)["XDG_CONFIG_HOME"] == config.path)
+    #expect(try fm.attributesOfItem(atPath: link.path)[.systemFileNumber] as? Int == made)
+    // Nothing is written under the pack.
+    #expect(try fm.subpathsOfDirectory(atPath: root.path).sorted() == before)
+    // A moved pack: the link follows it.
+    let moved = try tempDir("xcode-env-moved").appendingPathComponent(root.lastPathComponent)
+    try fm.moveItem(at: root, to: moved)
+    let y = try XcodeEnvironment.current(env: env.merging(["XLESS_XCODE": moved.path]) { $1 })
+    #expect(try y.toolEnvironment(env)["XDG_CONFIG_HOME"] == config.path)
+    #expect(try fm.destinationOfSymbolicLink(atPath: link.path) == moved.appendingPathComponent("config/swiftpm/swift-sdks").path)
+    #expect(fm.fileExists(atPath: link.appendingPathComponent("darwin.artifactbundle").path))
+}
+
+@Test func toolEnvironmentLeavesAnSDKOverrideAlone() throws {
+    let store = try tempDir(), config = try tempDir("xcode-env-config"), cache = try tempDir("xcode-env-cache")
+    try makePack(in: store)
+    try fm.createDirectory(at: config.appendingPathComponent("swiftpm/swift-sdks/darwin.artifactbundle"), withIntermediateDirectories: true)
+    let env = try isolated(store: store, ["XDG_CONFIG_HOME": config.path, "XDG_CACHE_HOME": cache.path])
+    let tools = try XcodeEnvironment.current(env: env).toolEnvironment(env)
+    #expect(tools["XDG_CONFIG_HOME"] == config.path)
+    #expect(!fm.fileExists(atPath: cache.appendingPathComponent("xless").path))
 }
 
 @Test func aMissingToolchainOverrideIsAnErrorOfItsOwn() throws {

@@ -11,7 +11,7 @@ public enum IOSBuilder {
         let ios = try config.platform(.ios)
         let xcode = try XcodeEnvironment.current(env: env)
         try XtoolManifest.write(config: config, project: project)
-        try Shell.run("xtool", ["dev", "build", "--configuration", "release"], cwd: project, baseEnvironment: xcode.toolEnvironment(env),
+        try Shell.run("xtool", ["dev", "build", "--configuration", "release"], cwd: project, baseEnvironment: try xcode.toolEnvironment(env),
                       stage: .build, passthrough: true)
         let produced = project.appendingPathComponent("xtool/\(ios.product).app")
         guard FileManager.default.fileExists(atPath: produced.path) else {
