@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `xless clean`, run against the built xless with a `docker` stub first on PATH (it lists fake images and volumes and
 # records every call): no option lists and removes nothing, --dry-run removes nothing, --all removes exactly xless's
-# tags, volumes, Xcode packs and cache (and asks about the packs), --old removes the legacy images, the images of another xless
+# tags, volumes, Xcode packs and cache (--volumes only the work volumes, --packs only the packs, asked about), --old removes the legacy images, the images of another xless
 # version and an older native install, asks first (yes, no, --yes, no terminal), removes no tag that is another image by then,
 # and NEVER a pack, a pack volume, the store, an SDK export, a person's own tag or the swift-sdks directory; a pack that a
 # running container uses is left; --cache alone needs no Docker, and a Docker that doesn't answer is an error for --images.
@@ -125,23 +125,37 @@ grep -q 'builder prune\|system prune' "$log" && fail "pruned Docker-wide caches"
 [[ ! -e "$cache" ]] || fail "cache left behind"
 grep -q 'docker builder prune' "$t/out" || fail "no build cache hint: $(cat "$t/out")"
 
-# --volumes: the work volumes and the packs; the images and the cache stay. A pack that a running container uses stays, and the exit code says so.
+# --volumes: the work volumes only, as it always did: every pack volume stays, nothing is asked, the images and the cache stay.
 mkcache
-on n --volumes
-[[ $code == 0 && -z "$(removed)" ]] || fail "--volumes, answered no: $code $(removed)"
-on y --volumes
-[[ $code == 0 && "$(removed)" == "volume rm xless-cargo xless-rn-work-ov-12345678
-volume rm xless-xcode-26.2-17C52-arm64 xless-xcode-27.0-27A266a-arm64" && -d "$cache" ]] || fail "--volumes, answered yes: $code $(removed)"
+run --volumes
+[[ $code == 0 && "$(removed)" == "volume rm xless-cargo xless-rn-work-ov-12345678" && -d "$cache" ]] || fail "--volumes: $code $(removed) $(cat "$t/err")"
+grep -q 'xless-xcode\|Xcode pack' "$t/out" && fail "--volumes speaks of the packs: $(cat "$t/out")"
 extra=(PACK_IN_USE=xless-xcode-27.0-27A266a-arm64)
-run --volumes --yes
-[[ $code == 11 ]] || fail "--volumes with a pack in use exits $code: $(cat "$t/out")"
-[[ "$(removed)" == "volume rm xless-cargo xless-rn-work-ov-12345678
-volume rm xless-xcode-26.2-17C52-arm64" ]] || fail "--volumes removed the pack in use: $(removed)"
+run --volumes
+[[ $code == 0 && "$(removed)" == "volume rm xless-cargo xless-rn-work-ov-12345678" ]] || fail "--volumes with a pack in use: $code $(removed)"
+extra=()
+# --packs: the pack volumes and nothing else (no work volume, no image, no prune, not the cache); asked about, with the Xcode of each.
+on n --packs
+[[ $code == 0 && -z "$(removed)" ]] || fail "--packs, answered no: $code $(removed)"
+grep -qx '  xless-xcode-26.2-17C52-arm64  Xcode 26.2 (17C52, arm64)' "$t/out" && grep -q 'preparing a pack again takes minutes and needs its SDK export' "$t/out" \
+  && grep -q 'Remove 2 Xcode pack volumes?' "$t/out" || fail "--packs asks: $(cat "$t/out")"
+on none --packs
+[[ $code == 11 && -z "$(removed)" ]] || fail "--packs without a terminal: $code $(removed)"
+on y --packs
+[[ $code == 0 && "$(removed)" == "volume rm xless-xcode-26.2-17C52-arm64 xless-xcode-27.0-27A266a-arm64" && -d "$cache" ]] || fail "--packs, answered yes: $code $(removed)"
+# A pack that a running container uses is left, with --packs and with --all; the exit code says so.
+extra=(PACK_IN_USE=xless-xcode-27.0-27A266a-arm64)
+run --packs --yes
+[[ $code == 11 && "$(removed)" == "volume rm xless-xcode-26.2-17C52-arm64" ]] || fail "--packs with a pack in use: $code $(removed)"
 grep -q 'leaving the pack xless-xcode-27.0-27A266a-arm64: in use by builder (xless:9.9.9-arm64)' "$t/out" || fail "the container is not named: $(cat "$t/out")"
 grep -q 'docker stop builder' "$t/err" || fail "no way out: $(cat "$t/err")"
-run --volumes --dry-run
+run --all --yes
+[[ $code == 11 ]] && grep -qx 'volume rm xless-xcode-26.2-17C52-arm64' "$log" && ! removed | grep -q 'xless-xcode-27.0' || fail "--all with a pack in use: $code $(removed)"
+grep -qx 'volume rm xless-cargo xless-rn-work-ov-12345678' "$log" || fail "--all with a pack in use did not go on: $(removed)"
+run --packs --dry-run
 [[ $code == 0 && -z "$(removed)" ]] && grep -q 'would leave the pack xless-xcode-27.0-27A266a-arm64' "$t/out" || fail "dry run, pack in use: $code $(cat "$t/out")"
 extra=()
+mkcache
 
 # --old: what older layouts leave: the legacy images and those of another xless version (xless:9.9.9-… and its kits stay), the label
 # prune; no pack volume, no other volume, no cache.
@@ -299,7 +313,10 @@ store="$t/store"; mkdir -p "$store/26.2-17C52-arm64" "$store/notes"; echo "$pack
 mkdir -p "$nh/bin"
 extra=(XLESS_XCODES="$store")
 run --native --yes
-[[ $code == 0 && ! -e "$store/26.2-17C52-arm64" && -f "$store/notes/f" && ! -e "$nh" ]] || fail "--native with XLESS_XCODES: $code $(cat "$t/err")"
+[[ $code == 0 && -d "$store/26.2-17C52-arm64" && ! -e "$nh" ]] || fail "--native took the packs of a store of its own: $code $(cat "$t/err")"
+run --packs --yes
+[[ $code == 0 && ! -e "$store/26.2-17C52-arm64" && -f "$store/notes/f" ]] || fail "--packs with XLESS_XCODES: $code $(cat "$t/err")"
+grep -qx 'volume rm xless-xcode-26.2-17C52-arm64 xless-xcode-27.0-27A266a-arm64' "$log" || true
 # ... and --old leaves it whole.
 mkdir -p "$store/26.2-17C52-arm64"; echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; extra=(XLESS_XCODES="$store")
 run --old --yes

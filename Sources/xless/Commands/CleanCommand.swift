@@ -20,21 +20,23 @@ struct CleanCommand: AsyncParsableCommand {
         the images of another xless version than this one's (never this one's, nor its kits), and an older native install (the SDK \
         darwin.artifactbundle that xless installed, its toolchain-meta.json, the Swift toolchains and the record: not a pack). It lists them and \
         asks (--yes answers). --volumes removes the volumes xless docker creates (\(CleanPlan.volumes.joined(separator: ", ")) \
-        and \(CleanPlan.volumePrefix)*) and the Xcode packs (\(PackVolumes.prefix)<version>-<build>-<arch>): preparing a pack again takes minutes \
-        and needs its SDK export or the Xcode, so it lists the packs and asks (--yes answers); a pack that a running container uses is left. \
+        and \(CleanPlan.volumePrefix)*), and nothing else. --packs removes the Xcode packs (the volumes \(PackVolumes.prefix)<version>-<build>-<arch>, and \
+        the packs of a store of your own, XLESS_XCODES): preparing a pack again takes minutes and needs its SDK export or the Xcode, so it \
+        lists the packs and asks (--yes answers); a pack that a running container uses is left. \
         --cache removes $XDG_CACHE_HOME/xless (default ~/.cache/xless): the exported SDKs that packs are prepared from (your only \
         copy without the .xip), Tauri work copies and downloads. --native removes the native install: $XLESS_NATIVE_HOME (default \
-        ~/.local/share/xless-native: the Xcode packs in its xcodes directory, xtool, rcodesign), those of $XLESS_XCODES too, and an older \
-        install's SDK and toolchain-meta.json. --all does the four. The xless install itself (~/.local/bin/xless and \
+        ~/.local/share/xless-native: xtool, rcodesign and its xcodes directory, where the native packs are) and an older \
+        install's SDK and toolchain-meta.json. --all does the five. The xless install itself (~/.local/bin/xless and \
         ~/.local/share/xless) and Docker's build cache, which other projects share (docker builder prune), are left alone.
         """)
 
     @Flag(help: "Remove the xless images (every tag of every version, and older untagged builds).") var images = false
     @Flag(help: "Remove only what older layouts left: legacy images, images of another xless version, an older native install. Never a pack.") var old = false
-    @Flag(help: "Remove the Docker volumes xless docker creates, and the Xcode packs.") var volumes = false
+    @Flag(help: "Remove the Docker volumes xless docker creates (Rust toolchains, React Native work copies and caches), not the Xcode packs.") var volumes = false
+    @Flag(help: "Remove the Xcode packs: the pack volumes (xless-xcode-<version>-<build>-<arch>) and the packs of a store of your own (XLESS_XCODES). Asks first.") var packs = false
     @Flag(help: "Remove the cache directory ($XDG_CACHE_HOME/xless, default ~/.cache/xless), with the SDK exports in it.") var cache = false
-    @Flag(help: "Remove the native install (toolchain, tools, the Xcode packs of its store, an older install's SDK and metadata).") var native = false
-    @Flag(help: "--images, --volumes, --cache and --native.") var all = false
+    @Flag(help: "Remove the native install: its home with the tools and the Xcode packs of its store (xcodes), and an older install's SDK and metadata.") var native = false
+    @Flag(help: "--images, --volumes, --packs, --cache and --native.") var all = false
     @Flag(help: "Do not ask (when removing packs, or with --old).") var yes = false
     @Flag(help: "Print what would be removed, and remove nothing.") var dryRun = false
 
@@ -44,7 +46,8 @@ struct CleanCommand: AsyncParsableCommand {
         let home = env["HOME"].map { URL(fileURLWithPath: $0) } ?? fm.homeDirectoryForCurrentUser
         let cacheRoot = SetupPlan.cacheRoot(env: env, home: home)
         let doImages = images || all, doVolumes = volumes || all, doCache = cache || all, doOld = old || doImages, doNative = native || all
-        let listOnly = !(doOld || doVolumes || doCache || doNative)
+        let doPacks = packs || all
+        let listOnly = !(doOld || doVolumes || doCache || doNative || doPacks)
         let layout = NativeLayout(env: env)
         // What an older xless installed natively, as setup's note sees it: read before anything goes (the record is in the native home).
         let olderInstall = layout.olderInstall(env: env)
@@ -61,7 +64,7 @@ struct CleanCommand: AsyncParsableCommand {
         let asks = old && !doImages
         var imageRefs: [String] = [], workVolumes: [String] = [], packVolumes: [CleanPlan.PackVolume] = [], oldIDs: [String: String] = [:]
         var dockerAnswered = true
-        if listOnly || doOld || doVolumes {
+        if listOnly || doOld || doVolumes || doPacks {
             do {
                 let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
                 if listOnly || doOld {
@@ -74,10 +77,10 @@ struct CleanCommand: AsyncParsableCommand {
                         }
                     } else { imageRefs = CleanPlan.images(fromListing: all) }
                 }
-                if listOnly || doVolumes {
+                if listOnly || doVolumes || doPacks {
                     let listing = try Shell.docker(["volume", "ls", "--format", "{{.Name}}"], stage: .sdk).stdout
-                    workVolumes = CleanPlan.volumes(fromListing: listing)
-                    packVolumes = CleanPlan.packs(fromListing: listing)
+                    if listOnly || doVolumes { workVolumes = CleanPlan.volumes(fromListing: listing) }
+                    if listOnly || doPacks { packVolumes = CleanPlan.packs(fromListing: listing) }
                 }
             } catch {
                 guard listOnly else {
@@ -106,7 +109,9 @@ struct CleanCommand: AsyncParsableCommand {
         }
         var removableStorePacks: [XcodePack] = []
         var homeBlocked = false
-        if doNative || listOnly {
+        // The packs of the store: those in the native home go with --native (as the home always did), those of a store of its own (XLESS_XCODES) with --packs.
+        let storeFlag = storeInHome ? doNative : doPacks
+        if storeFlag || listOnly {
             let dockerStore = PackStore(env: env)
             for p in storePacks {
                 var users: [String] = []
@@ -119,7 +124,7 @@ struct CleanCommand: AsyncParsableCommand {
             path == DarwinSDKLocator.bundle(env: env) || path == ToolchainMeta.defaultLocation(env: env)
         }
         nativePaths = nativePaths.filter { fm.fileExists(atPath: $0.path) }
-        let storeRoots = storeInHome ? [] : removableStorePacks.map(\.root)
+        let storeRoots = storeInHome || !doPacks ? [] : removableStorePacks.map(\.root)
         let oldNative = old ? olderInstall : []
         let cacheExists = fm.fileExists(atPath: cacheRoot.path)
         let exports = (try? fm.contentsOfDirectory(atPath: cacheRoot.appendingPathComponent("sdk").path))?.filter { !$0.hasPrefix(".") } ?? []
@@ -128,7 +133,7 @@ struct CleanCommand: AsyncParsableCommand {
             asks && !imageRefs.isEmpty ? (imageRefs.count == 1 ? "this image tag" : "these \(imageRefs.count) image tags") : nil,
             asks && !imageRefs.isEmpty ? "the untagged older builds" : nil,
             !removablePackVolumes.isEmpty ? "\(removablePackVolumes.count) Xcode pack volume\(removablePackVolumes.count == 1 ? "" : "s")" : nil,
-            doNative && !removableStorePacks.isEmpty ? "\(removableStorePacks.count) Xcode pack\(removableStorePacks.count == 1 ? "" : "s") of the native store" : nil,
+            storeFlag && !removableStorePacks.isEmpty ? "\(removableStorePacks.count) Xcode pack\(removableStorePacks.count == 1 ? "" : "s") of the store" : nil,
             !oldNative.isEmpty ? "what an older xless installed natively" : nil,
         ].compactMap { $0 }
         let mustAsk = removing && !questions.isEmpty && !yes
@@ -147,7 +152,9 @@ struct CleanCommand: AsyncParsableCommand {
         if listOnly || doVolumes {
             say("\(verb) \(workVolumes.count) volume\(workVolumes.count == 1 ? "" : "s")" + (workVolumes.isEmpty ? "" : ":"))
             for v in workVolumes { say("  \(v)") }
-            if dockerAnswered || doVolumes {
+        }
+        if listOnly || doPacks {
+            if dockerAnswered || doPacks {
                 say("\(verb) \(removablePackVolumes.count) Xcode pack volume\(removablePackVolumes.count == 1 ? "" : "s")" + (removablePackVolumes.isEmpty ? "" : ":"))
                 for p in removablePackVolumes { say("  \(p.name)  \(p.summary)") }
                 if !removablePackVolumes.isEmpty {
@@ -163,13 +170,15 @@ struct CleanCommand: AsyncParsableCommand {
             }
         }
         if listOnly || doNative {
-            if nativePaths.isEmpty && storeRoots.isEmpty { say("no native install") }
+            if nativePaths.isEmpty { say("no native install") }
             for p in nativePaths { say("\(verb) the native install's \(p.path) (\(Self.size(of: p)))") }
+        }
+        if listOnly || storeFlag {
             for p in removableStorePacks { say("\(verb) the Xcode pack \(p.name) of the store \(store.root.path): Xcode \(p.manifest.xcode) (\(p.manifest.build), \(p.manifest.arch))") }
             if !removableStorePacks.isEmpty { say("  preparing a pack again takes minutes and needs its SDK export (xless setup --sdk <export>) or the Xcode (xless setup --xcode <Xcode.app or .xip>)") }
         }
         if listOnly {
-            say("nothing removed: pass --images, --old, --volumes, --cache, --native or --all (--dry-run to see what they would remove)")
+            say("nothing removed: pass --images, --old, --volumes, --packs, --cache, --native or --all (--dry-run to see what they would remove)")
             return
         }
         if mustAsk {
@@ -215,8 +224,8 @@ struct CleanCommand: AsyncParsableCommand {
                 failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
             }
         }
-        if doNative {
-            for p in nativePaths + storeRoots {
+        if doNative || doPacks {
+            for p in (doNative ? nativePaths : []) + storeRoots {
                 guard fm.fileExists(atPath: p.path) else { continue }
                 do { try fm.removeItem(at: p) } catch { failures.append("\(p.path) was not fully removed (\(Self.firstLine(error)))") }
             }
