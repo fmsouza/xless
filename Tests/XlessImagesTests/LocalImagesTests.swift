@@ -132,12 +132,18 @@ func problem(_ body: () throws -> some Any) -> String {
     }
 
     #if !os(Windows)
+    private static let checkoutRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    /// bash, the script and git are here (a skip is recorded otherwise, not passed in silence).
+    private static var scriptRuns: Bool {
+        FileManager.default.isExecutableFile(atPath: "/bin/bash") && FileManager.default.fileExists(atPath: checkoutRoot.appendingPathComponent("scripts/docker-images.sh").path)
+            && ImageName.runGit(["--version"], in: checkoutRoot).code == 0
+    }
+
     /// The script and Swift name this very checkout's image the same way.
-    @Test func theScriptAndXlessAgreeOnTheTag() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    @Test(.enabled(if: scriptRuns, "needs bash, scripts/docker-images.sh and git"))
+    func theScriptAndXlessAgreeOnTheTag() throws {
+        let root = Self.checkoutRoot
         let script = root.appendingPathComponent("scripts/docker-images.sh")
-        guard FileManager.default.isExecutableFile(atPath: "/bin/bash"), FileManager.default.fileExists(atPath: script.path),
-              ImageName.runGit(["--version"], in: root).code == 0 else { return } // skipped: no bash, script or git here
         let process = Process(), out = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [script.path, "tag", "--arch", "arm64"]
