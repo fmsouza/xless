@@ -62,6 +62,7 @@
 + Sources/XlessCore/WindowsConsole.swift
 + Sources/XlessCore/WindowsProcess.swift
 + Sources/XlessCore/XcodePin.swift
++ Sources/XlessCore/XcodePack.swift
 + Sources/XlessCore/XcodeToolsProfile.swift
 - Sources/XlessCore/XcrunShim.swift
 - Sources/XlessCore/XlessShare.swift
@@ -342,6 +343,7 @@
 + Tests/XlessCoreTests/WindowsConsoleTests.swift
 - Tests/XlessCoreTests/WindowsFilterTests.swift
 + Tests/XlessCoreTests/WindowsSourcesTests.swift
++ Tests/XlessCoreTests/XcodePackTests.swift
 + Tests/XlessCoreTests/XcodeToolsProfileTests.swift
 - Tests/XlessCoreTests/XcrunShimTests.swift
 - Tests/XlessCoreTests/XlessShareTests.swift
