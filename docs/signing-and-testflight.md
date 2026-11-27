@@ -75,7 +75,8 @@ their tools are installed (a kit's image used directly: [images.md](images.md#us
 `--docker` too ([on a Mac](build.md#overlays-on-a-mac)). Arguments after the project or overlay go to `xless ship`, for example `--from upload` to retry only the upload (a `--` may come before
 them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<overlay.yml>`, with `ARGS="…"`) is the
 `xless run` of the `xless` on `PATH` (or `XLESS_SELF`), in the images unless this machine has a pack of the Xcode
-(`XLESS_USE_DOCKER=1` or `0` decides).
+(`XLESS_USE_DOCKER=1` or `0` decides). A pack that is there but cannot be used (stale, broken) sends it to the images
+with a note that names the pack and its fix.
 
 - **Secrets.** With the keys in the encrypted store ([secrets.md](secrets.md#xless-run-and-docker-builds)), a run
   needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run, before its

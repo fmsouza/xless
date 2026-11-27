@@ -198,10 +198,14 @@ public final class ProjectRun {
         case "1": docker = true
         case "0": docker = false
         case "auto":
-            // Natively when this machine has the Xcode (`XcodeEnvironment`: a pack, or a native install of before them).
+            // Natively when this machine has the Xcode (`XcodeEnvironment`: a pack, or a native install of before them). A
+            // pack that is there but cannot be used (stale, of another pin, broken) sends the run to the images, and says so.
             var env = environment
             if let pin = xcodePin { env[XcodeEnvironment.pinVariable] = pin }
-            let meta = (try? XcodeEnvironment.current(env: env))?.meta
+            var meta: URL?
+            do { meta = try XcodeEnvironment.lookup(env: env)?.meta } catch {
+                host.say("==> note: \(error); so this run is in the images (docker)")
+            }
             docker = !(meta.map { FileManager.default.fileExists(atPath: $0.path) } ?? false) || !has(xself)
         default: throw RunStop.usage("XLESS_USE_DOCKER must be 0, 1 or unset")
         }

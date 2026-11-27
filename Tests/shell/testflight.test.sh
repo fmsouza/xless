@@ -93,6 +93,12 @@ pk="$t/xcodes/99.0-99Z99-$pa"; mkdir -p "$pk"; printf '{}' > "$pk/toolchain-meta
 printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{"sdk":"h"}}' "$pa" > "$pk/pack.json"
 out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_XCODES="$t/xcodes" "$S" "$t/proj" 2>/dev/null) || fail "auto native (a pack) failed"
 [[ "$out" == "xless ship --platform ios "* ]] || fail "a pack in the store is ignored: $out"
+# A pack that cannot be used (here: it has no Darwin SDK): in the images, and the run says why.
+printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{}}' "$pa" > "$pk/pack.json"
+out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_XCODES="$t/xcodes" "$S" "$t/proj" 2>"$t/err") || fail "auto beside a broken pack failed: $(cat "$t/err")"
+[[ "$out" == *"docker "* ]] || fail "a pack that cannot be used runs natively: $out"
+grep -qF "==> note: the pack 99.0-99Z99-$pa has no Darwin SDK; " "$t/err" && grep -qF "so this run is in the images (docker)" "$t/err" \
+  || fail "a pack that cannot be used is passed over in silence: $(cat "$t/err")"
 # The metadata a native setup of before the packs left (~/.config/xless) is not read: in the images.
 mkdir -p "$t/home/.config/xless"; printf '{}' > "$t/home/.config/xless/toolchain-meta.json"
 out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto beside an older native install failed"
