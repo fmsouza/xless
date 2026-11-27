@@ -43,8 +43,6 @@ struct CleanCommand: AsyncParsableCommand {
     @Flag(help: "Print what would be removed, and remove nothing.") var dryRun = false
 
     func run() async throws {
-        // The docker whose images, volumes and containers it lists, as every xless command chooses it.
-        try HostDocker.check()
         let env = ProcessInfo.processInfo.environment
         let fm = FileManager.default
         let home = env["HOME"].map { URL(fileURLWithPath: $0) } ?? fm.homeDirectoryForCurrentUser
@@ -106,6 +104,9 @@ struct CleanCommand: AsyncParsableCommand {
         var imageRefs: [String] = [], workVolumes: [String] = [], packVolumes: [CleanPlan.PackVolume] = [], oldIDs: [String: String] = [:]
         var dockerAnswered = true
         if listOnly || doOld || doVolumes || doPacks {
+            // The docker whose images, volumes and containers it lists, as every xless command chooses it: checked before
+            // anything goes (--cache and --native alone call no docker, so they leave it be).
+            try HostDocker.check()
             do {
                 let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
                 if listOnly || doOld {

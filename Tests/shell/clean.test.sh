@@ -285,6 +285,11 @@ run --all --yes
 [[ $code == 2 && -d "$cache" ]] || fail "clean with a context docker lacks: $code $(cat "$t/err")"
 grep -qF "DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: default, colima" "$t/err" || fail "its message: $(cat "$t/err")"
 [[ "$(cat "$log")" == "context ls --format {{.Name}}" ]] || fail "clean asked docker more than its contexts: $(cat "$log")"
+# --cache alone calls no docker, so the context is not its business (docs/uninstall.md: it needs no Docker)
+: > "$log"
+run --cache
+[[ $code == 0 && ! -e "$cache" ]] || fail "--cache with a context docker lacks: $code $(cat "$t/err")"
+[[ ! -s "$log" ]] || fail "--cache asked docker: $(cat "$log")"
 extra=()
 
 # --cache alone needs no Docker; --images with a Docker that doesn't answer fails (exit 11) and removes nothing.

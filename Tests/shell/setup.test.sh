@@ -311,7 +311,8 @@ else
   sed -n 's/.*needs \(.*\), which.*/\1/p' "$t/err" | grep -q curl && fail "curl named as missing: $(cat "$t/err")"
   [[ ! -e "$t/native" ]] || fail "a refused setup wrote $t/native"
   # Not enough room for the native install: exit 11, naming the variable, nothing installed.
-  extra=(XLESS_NATIVE_HOME="$t/native" XLESS_SETUP_CACHE_GB=0 XLESS_SETUP_NATIVE_GB=999999)
+  # (and a DOCKER_CONTEXT docker lacks is not what stops it: docker is asked only before a step that may replace a pack in use)
+  extra=(XLESS_NATIVE_HOME="$t/native" XLESS_SETUP_CACHE_GB=0 XLESS_SETUP_NATIVE_GB=999999 DOCKER_CONTEXT=gone STUB_CONTEXTS="colima default")
   # (only where this host has every command, or the commands refusal would come first)
   if [[ -z "$(for c in curl tar gzip unzip zip git python3; do command -v "$c" >/dev/null || echo "$c"; done)" ]]; then
     run ok --xcode "$xip"

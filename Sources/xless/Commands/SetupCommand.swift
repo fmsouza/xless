@@ -208,8 +208,6 @@ struct SetupCommand: AsyncParsableCommand {
             throw XlessError(.sdk, "a native setup needs \(missing.joined(separator: ", ")), which \(missing.count == 1 ? "is" : "are") not on PATH",
                              fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build in Docker instead: xless setup --docker\(sourceArgs)")
         }
-        // The docker it asks whether a running build uses the pack, as every xless command chooses it.
-        try HostDocker.check()
         // Before anything is written into the store: the SDK has headers whose names differ only in case.
         try PackStore.requireCaseSensitive(store)
         // A second setup of this pack waits for the first, then finds what it left.
@@ -243,6 +241,8 @@ struct SetupCommand: AsyncParsableCommand {
             let start = Date()
             let staging = PackPlan.staging(of: store.directory(xcode: version, build: x.build, arch: arch))
             let checks = SetupStep.inUseChecks(steps)
+            // The docker it asks whether a running build uses the pack, as every xless command chooses it: only a setup that asks.
+            if !checks.isEmpty { try HostDocker.check() }
             do {
                 for (n, s) in steps.enumerated() {
                     // Not under a running xless docker build that mounts this store (XLESS_XCODES): asked before the first step,
