@@ -42,6 +42,30 @@ public struct SwiftToolchain: Codable, Sendable, Equatable {
     /// True when it is the image's own Swift (nothing to put on PATH).
     public var isEngine: Bool { bin.standardizedFileURL.path == Self.engineBin }
 
+    /// The release of the image's own Swift (`engineBin`'s `swiftc --version`), measured once; nil where there is none
+    /// (no Swift there, or not Linux: only the images and a Linux host build with an engine).
+    public static let engineRelease: String? = {
+        #if os(Linux)
+        let swiftc = engineBin + "/swiftc"
+        guard FileManager.default.isExecutableFile(atPath: swiftc),
+              let out = try? Shell.run(swiftc, ["--version"], stage: .build).stdout else { return nil }
+        return parseVersion(out)
+        #else
+        return nil
+        #endif
+    }()
+
+    /// True when its SwiftPM is the engine's release (`engine`, by default `engineRelease`): the engine itself, or a copy
+    /// of the same release, as an Xcode pack whose Swift is the image's own holds (fitted to its SDK, so its tools stay on
+    /// PATH: `isEngine` is false). It then builds as the engine's SwiftPM does, with the same arguments and in the same
+    /// scratch directory, so its products are those of an image with that Xcode built in. Only another release builds its
+    /// own way (Ruling R10).
+    public func isEngineRelease(_ engine: String? = SwiftToolchain.engineRelease) -> Bool {
+        if isEngine { return true }
+        guard let engine = engine.flatMap(DottedVersion.init), let mine = DottedVersion(version) else { return false }
+        return engine == mine
+    }
+
     /// The record at `record`: a `root` relative to the record's directory (a pack's, which can be moved) is made
     /// absolute; an absolute one (an older record, `XLESS_SWIFT_TOOLCHAIN`'s) stays as it is.
     public static func load(record: URL, stage: Stage = .build) throws -> SwiftToolchain {

@@ -54,19 +54,29 @@ public enum MacBuilder {
         }
     }
 
-    /// `swift build` of the wrapper package for one architecture. Another Swift than the image's own (Ruling R10: its
-    /// SwiftPM, on PATH; measured with 6.2.3):
+    /// Whether another Swift selects the architecture by `--swift-sdk` and `--arch` (`swiftBuildArguments`): below 6.4. From
+    /// 6.4 on its `--triple` builds the one architecture, and its `--swift-sdk` links the executable with the rpath
+    /// `$ORIGIN` (an ELF token dyld does not expand) where the triple gives `@loader_path` (measured with 6.4.0).
+    static func selectsTheArchitectureBySwiftSDK(_ swift: SwiftToolchain) -> Bool {
+        guard let v = DottedVersion(swift.version) else { return true }
+        return v < DottedVersion("6.4")!
+    }
+
+    /// `swift build` of the wrapper package for one architecture. Another Swift release than the image's own (Ruling R10:
+    /// its SwiftPM, on PATH; measured with 6.2.3):
     /// - names the executable product, as `SwiftPackages.build` does: its Swift Build otherwise builds only targets and
     ///   links no executable;
     /// - selects the architecture with `--swift-sdk <arch>-apple-macosx --arch <arch>` rather than a triple: with
     ///   `--triple` its Swift Build builds every standard macOS architecture (arm64 and x86_64) and joins them with
     ///   `lipo`, which the image does not have; `--arch` is refused next to `--triple`. The deployment target is then the
-    ///   wrapper package's `platforms` (`minimumOS`), which the triple's version otherwise sets.
+    ///   wrapper package's `platforms` (`minimumOS`), which the triple's version otherwise sets. Below 6.4 only
+    ///   (`selectsTheArchitectureBySwiftSDK`).
     /// `swiftSDKs`: where SwiftPM finds the Darwin SDK (`XcodeEnvironment.swiftSDKsArguments`: the pack is read-only, so
     /// not through `XDG_CONFIG_HOME`).
     static func swiftBuildArguments(wrapper: URL, scratch: URL, arch: String, minimumOS: String, toolset: URL,
                                     product: String, own: SwiftToolchain?, swiftSDKs: [String] = []) -> [String] {
-        let target = own == nil ? ["--triple", "\(arch)-apple-macosx\(minimumOS)"] : ["--swift-sdk", "\(arch)-apple-macosx", "--arch", arch]
+        let target = own.map(selectsTheArchitectureBySwiftSDK) ?? false ? ["--swift-sdk", "\(arch)-apple-macosx", "--arch", arch]
+            : ["--triple", "\(arch)-apple-macosx\(minimumOS)"]
         var args = ["build", "--package-path", wrapper.path, "--scratch-path", scratch.path,
                     "-c", "release", "--build-system", "swiftbuild"] + target + ["--toolset", toolset.path] + swiftSDKs
         if own != nil { args += ["--product", "\(product)Mac"] }
@@ -76,7 +86,7 @@ public enum MacBuilder {
     public static func note(_ text: String) { FileHandle.standardError.write(Data("xless: note: \(text)\n".utf8)) }
 
     public static func build(project: URL, config: ProjectConfig, paths: StagePaths, env: [String: String] = ProcessInfo.processInfo.environment,
-                             note: (String) -> Void = Self.note) throws -> URL {
+                             engineRelease: String? = SwiftToolchain.engineRelease, note: (String) -> Void = Self.note) throws -> URL {
         let mac = try config.platform(.macos)
         let xcode = try XcodeEnvironment.current(env: env)
         let sdk = xcode.sdkBundle
@@ -102,9 +112,10 @@ public enum MacBuilder {
         ]
         var slices: [Data] = [], executables: [URL] = []
         var resourceBundles: [URL] = []
-        // Ruling R10: another Swift than the image's own (the build stage put it on PATH) builds in its own scratch
-        // directory, never reusing a previous toolchain's products; its SwiftPM may lay them out elsewhere than `out/`.
-        let own = xcode.toolchain.flatMap { $0.isEngine ? nil : $0 }
+        // Ruling R10: another Swift release than the image's own (the build stage put it on PATH) builds in its own
+        // scratch directory, never reusing a previous toolchain's products; its SwiftPM may lay them out elsewhere than
+        // `out/`. A copy of the engine's release (a pack whose Swift is the image's own) builds as the engine does.
+        let own = xcode.toolchain.flatMap { $0.isEngineRelease(engineRelease) ? nil : $0 }
         for arch in archs {
             let scratch = project.appendingPathComponent(".xless/macos-build-\(arch)" + (own.map { "-swift-\($0.version)" } ?? ""), isDirectory: true)
             func executable() -> URL? {
