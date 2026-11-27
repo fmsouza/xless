@@ -302,9 +302,12 @@ struct CleanCommand: AsyncParsableCommand {
             // file goes last, while it is held.
             for name in Set(leftovers.map(\.name)).sorted() {
                 let mine = leftovers.filter { $0.name == name }.map(\.url)
-                guard let dir = mine.first?.deletingLastPathComponent(),
-                      let lock = try? PackLock(store: XcodeStore(root: dir), name: name, wait: false) else {
+                guard let dir = mine.first?.deletingLastPathComponent() else { continue }
+                let lock: PackLock
+                do { lock = try PackLock(store: XcodeStore(root: dir), name: name, wait: false) } catch is PackLock.Busy {
                     say("leaving \(mine.map(\.path).joined(separator: ", ")): an xless setup of \(name) is running"); continue
+                } catch {
+                    failures.append("\(mine.map(\.path).joined(separator: ", ")) \(mine.count == 1 ? "was" : "were") not removed (\(Self.firstLine(error)))"); continue
                 }
                 withExtendedLifetime(lock) {
                     for url in mine.filter({ !$0.path.hasSuffix(".lock") }) + [lock.file] {

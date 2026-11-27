@@ -187,3 +187,19 @@ private final class Flag: @unchecked Sendable {
             && e.fix == "unset XLESS_XCODES, so that the packs are Docker volumes, or set it to a directory on a case-sensitive file system (on a Mac: a case-sensitive APFS volume)"
     }
 }
+
+/// A lock that cannot be taken for another reason than a setup holding it (here, a lock file this user cannot open) is that
+/// reason, not "another setup is preparing it".
+@Test func aLockThatCannotBeTakenIsNotABusyOne() throws {
+    let store = try tempStore()
+    defer { try? fm.removeItem(at: store.root.deletingLastPathComponent()) }
+    let old = store.root.appendingPathComponent("\(name).old")
+    try manifest().write(to: old.appendingPathComponent("pack.json"))
+    let lock = PackLock.file(store: store, name: name)
+    try Data().write(to: lock)
+    try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: lock.path)
+    defer { try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lock.path) }
+    guard open(lock.path, O_RDWR) < 0 else { return } // (root opens it all the same: nothing to tell apart)
+    #expect { try PackStore.recoverAll(store) } throws: { ($0 as? XlessError)?.cause.hasPrefix("cannot open \(lock.path)") == true }
+    #expect(fm.fileExists(atPath: old.path))
+}

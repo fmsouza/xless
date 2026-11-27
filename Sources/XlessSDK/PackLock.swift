@@ -99,7 +99,8 @@ extension PackStore {
                 } else if try PackPlan.recover(final) { back.append(name) }
             }
             if name == holding { try tidy(); continue }
-            guard let lock = try? PackLock(store: store, name: name, wait: false) else { continue }
+            let lock: PackLock
+            do { lock = try PackLock(store: store, name: name, wait: false) } catch is PackLock.Busy { continue }
             try withExtendedLifetime(lock) { try tidy() }
         }
         return back

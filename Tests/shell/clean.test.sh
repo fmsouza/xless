@@ -377,6 +377,16 @@ grep -qx "would remove the leftover $rt/store/26.2-17C52-arm64.old of an interru
 run --packs --yes
 left=$(cd "$store" && ls -A); chmod -R u+w "$store"
 [[ $code == 0 && "$left" == notes ]] || fail "--packs left part of a pack or a leftover: $code $left $(cat "$t/err")"
+# A leftover whose lock cannot be taken for another reason than a running setup (a lock file this user cannot open) is
+# left, and said to be left for that reason: not taken for a running setup's.
+if [[ $(id -u) != 0 ]]; then
+  mkdir -p "$store/27.0-27A266a-arm64.partial"; : > "$store/27.0-27A266a-arm64.lock"; chmod 000 "$store/27.0-27A266a-arm64.lock"
+  run --packs --yes
+  chmod 644 "$store/27.0-27A266a-arm64.lock"
+  [[ $code != 0 && -d "$store/27.0-27A266a-arm64.partial" ]] && grep -q "27.0-27A266a-arm64.partial were not removed (cannot open $rt/store/27.0-27A266a-arm64.lock: " "$t/err" \
+    && ! grep -q 'an xless setup of 27.0-27A266a-arm64 is running' "$t/out" || fail "an unopenable lock: $code $(cat "$t/out" "$t/err")"
+  rm -rf "$store/27.0-27A266a-arm64.partial" "$store/27.0-27A266a-arm64.lock"
+fi
 # A store inside the cache (XLESS_XCODES under it): --cache leaves it, since its packs go with --packs only (asked about, and
 # not while in use); --cache --packs removes both.
 mkcache; mkdir -p "$cache/xcodes/26.2-17C52-arm64"; echo "$pack_json" > "$cache/xcodes/26.2-17C52-arm64/pack.json"
