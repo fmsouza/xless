@@ -36,19 +36,25 @@ public enum ImageName {
     /// The part of the tag that names the xless of `share` (its share directory), as scripts/docker-images.sh decides it: the
     /// commit of the checkout that `share` is the top of (when it has one), else the release (its VERSION file's, else versions.env's).
     public static func tag(ofShare share: URL, git: Git = ImageName.runGit) throws -> String {
+        try resolution(ofShare: share, git: git).tag
+    }
+
+    /// `tag(ofShare:)`, and whether it is the fallback of a checkout: `share` is a git checkout (it has a `.git`), yet git did not give its
+    /// commit, so the tag is the release's (`0.0.0-dev`) and no image is known to be this xless's (`xless clean --old` then treats the tag as unknown).
+    public static func resolution(ofShare share: URL, git: Git = ImageName.runGit) throws -> (tag: String, fellBack: Bool) {
         let root = share.resolvingSymlinksInPath()
         let top = git(["rev-parse", "--show-toplevel"], root)
         if top.code == 0,
            URL(fileURLWithPath: top.output.trimmingCharacters(in: .whitespacesAndNewlines)).resolvingSymlinksInPath().path == root.path {
             let commit = git(["rev-parse", "--short=12", "HEAD"], root)
             let id = commit.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if commit.code == 0, !id.isEmpty { return checkoutTag(commit: id, dirty: git(["diff", "--quiet", "HEAD"], root).code != 0) }
+            if commit.code == 0, !id.isEmpty { return (checkoutTag(commit: id, dirty: git(["diff", "--quiet", "HEAD"], root).code != 0), false) }
         }
         guard let release = XlessShare.release(of: share) else {
             throw ImageProblem("xless's share directory \(share.path) records no release (no VERSION file, no XLESS_VERSION in versions.env), so the image of this xless has no name",
                                fix: "install xless again, or set XLESS_SHARE to its share directory")
         }
-        return release
+        return (release, FileManager.default.fileExists(atPath: root.appendingPathComponent(".git").path))
     }
 
     private static let remembered = NSLock(), cache = Box()

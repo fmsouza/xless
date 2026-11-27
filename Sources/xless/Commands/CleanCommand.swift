@@ -70,8 +70,10 @@ struct CleanCommand: AsyncParsableCommand {
         }
         var removing = !listOnly && !dryRun
 
-        let tag = (try? XlessShare.locate(env: env, executable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])))
-            .flatMap { try? ImageName.cachedTag(ofShare: $0) }
+        // This xless's tag; unknown when there is no share, or a checkout's git did not give its commit (the tag would be the release's, not the one of its images).
+        let resolved = (try? XlessShare.locate(env: env, executable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])))
+            .flatMap { try? ImageName.resolution(ofShare: $0) }
+        let tag = resolved.flatMap { $0.fellBack ? nil : $0.tag }
 
         // --old alone: what each tag is now, for the check right before it goes.
         let asks = old && !doImages
@@ -105,7 +107,7 @@ struct CleanCommand: AsyncParsableCommand {
             }
         }
         if old && tag == nil && !listOnly {
-            say("note: this xless's image tag is not known (no share directory with a release), so only the legacy images are listed, not those of other versions")
+            say("note: this xless's image tag is not known (\(resolved?.fellBack == true ? "git did not give the commit of its checkout" : "no share directory with a release")), so only the legacy images are listed, not those of other versions")
         }
 
         // The packs that running containers use stay. A volume: the containers that mount it; a directory store (XLESS_XCODES): those that mount it.

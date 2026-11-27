@@ -107,6 +107,30 @@ func problem(_ body: () throws -> some Any) -> String {
         #expect(try ImageName.tag(ofShare: share, git: git) == "0.0.0-dev")
     }
 
+    /// `xless clean --old` trusts a tag that names the release or the commit; one that a checkout fell back to (git failed there) is not that.
+    @Test func aCheckoutWhoseGitFailedHasFallenBack() throws {
+        let checkout = try share(files: ["versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: checkout) }
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        let top = checkout.resolvingSymlinksInPath().path + "\n"
+        let broken: ImageName.Git = { words, _ in words == ["rev-parse", "--show-toplevel"] ? (0, top) : (128, "") }
+        let fell = try ImageName.resolution(ofShare: checkout, git: broken)
+        #expect(fell.tag == "0.0.0-dev" && fell.fellBack)
+        let working: ImageName.Git = { words, _ in
+            switch words {
+            case ["rev-parse", "--show-toplevel"]: return (0, top)
+            case ["rev-parse", "--short=12", "HEAD"]: return (0, "0123456789ab\n")
+            default: return (0, "")
+            }
+        }
+        let fine = try ImageName.resolution(ofShare: checkout, git: working)
+        #expect(fine.tag == "0123456789ab" && !fine.fellBack)
+        let release = try share(files: ["VERSION": "0.14.0\n"])
+        defer { try? FileManager.default.removeItem(at: release) }
+        let plain = try ImageName.resolution(ofShare: release, git: noGit)
+        #expect(plain.tag == "0.14.0" && !plain.fellBack, "a release has no .git: its tag is trusted")
+    }
+
     #if !os(Windows)
     /// The script and Swift name this very checkout's image the same way.
     @Test func theScriptAndXlessAgreeOnTheTag() throws {

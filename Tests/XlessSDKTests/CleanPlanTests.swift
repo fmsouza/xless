@@ -14,7 +14,7 @@ xless:0.13.0-arm64-react-native
 xless:0.14.0-arm64
 xless:0.14.0-arm64-tauri
 xless:0.14.0-amd64-react-native
-xless:0.15.0-rc.1-arm64
+xless:0.0.0-dev-arm64
 xless:0123456789ab-arm64
 xless:0123456789ab-dirty-arm64-tauri
 xless-tauri:local-amd64-xcode27.0
@@ -47,7 +47,7 @@ private let legacyTags = [
 ]
 private let versioned = [
     "xless:0.13.0-arm64", "xless:0.13.0-arm64-react-native", "xless:0.14.0-arm64", "xless:0.14.0-arm64-tauri", "xless:0.14.0-amd64-react-native",
-    "xless:0.15.0-rc.1-arm64", "xless:0123456789ab-arm64", "xless:0123456789ab-dirty-arm64-tauri",
+    "xless:0.0.0-dev-arm64", "xless:0123456789ab-arm64", "xless:0123456789ab-dirty-arm64-tauri",
 ]
 
 @Test func imagesIncludeVersionedAndLegacyTags() {
@@ -58,7 +58,7 @@ private let versioned = [
 
 /// A person's own tag, one with a registry or a namespace, a tag that is no form of xless's, `<none>`: never listed (nor removed).
 @Test func aPersonsOwnTagIsLeftAlone() {
-    let theirs = ["xless:mine", "xless:1", "xless:0.14.0", "xless:0.14.0-s390x", "xless:0.14.0-arm64-other", "xless:latest-arm64", "xless:<none>", "xless-rn:<none>",
+    let theirs = ["xless:mine", "xless:1", "xless:0.14.0", "xless:0.14.0-s390x", "xless:0.14.0-arm64-other", "xless:2.0.0-mine-arm64", "xless:0.14.0-xcode26.2-arm64", "xless:0.15.0-rc.1-arm64", "xless:latest-arm64", "xless:<none>", "xless-rn:<none>",
                   "xless-rn:locally-made", "ghcr.io/x/xless:0.14.0-arm64", "ghcr.io/x/xless:1", "me/xless:local-arm64", "localhost:5000/xless:0.13.0-arm64",
                   "registry.example.com/xless:local-arm64", "xless-other:local", "xless-lintest:183", "swift:6.4.0-jammy", "alpine:latest", "xless-base:mine",
                   "xless:0123456789a-arm64", "xless:0123456789abc-arm64", "xless:0123456789AB-arm64", "xless", ""]
@@ -72,20 +72,20 @@ private let versioned = [
     #expect(CleanPlan.old(fromListing: "xless:0.13.0-arm64\nxless:0.14.0-arm64\n", version: "0.14.0") == ["xless:0.13.0-arm64"])
     #expect(CleanPlan.old(fromListing: "xless:0.14.0-arm64-tauri\nxless:0.14.0-amd64-react-native\nxless:0.14.0-arm64\n", version: "0.14.0") == [])
     #expect(Set(CleanPlan.old(fromListing: listing, version: "0.14.0")) == Set(legacyTags + [
-        "xless:0.13.0-arm64", "xless:0.13.0-arm64-react-native", "xless:0.15.0-rc.1-arm64", "xless:0123456789ab-arm64", "xless:0123456789ab-dirty-arm64-tauri",
+        "xless:0.13.0-arm64", "xless:0.13.0-arm64-react-native", "xless:0.0.0-dev-arm64", "xless:0123456789ab-arm64", "xless:0123456789ab-dirty-arm64-tauri",
     ]))
     #expect(CleanPlan.old(fromListing: "", version: "0.14.0") == [])
 }
 
-/// In a checkout the tag is a commit: every earlier commit is another version, the current one (clean or dirty) and its kits are kept.
-@Test func theCurrentCommitAndItsKitsAreKeptAlsoWhenDirty() {
+/// In a checkout the tag is a commit: only the images of other commits are old; every image and kit of this commit, clean or `-dirty`, is kept.
+@Test func onlyOtherCommitsAndVersionsAreOldWhateverThisCommitsState() {
     let l = "xless:0123456789ab-arm64\nxless:0123456789ab-arm64-tauri\nxless:0123456789ab-dirty-arm64\nxless:0123456789ab-dirty-arm64-react-native\n"
         + "xless:fedcba987654-arm64\nxless:fedcba987654-dirty-arm64-tauri\n"
-    #expect(CleanPlan.old(fromListing: l, version: "0123456789ab-dirty") == [
-        "xless:0123456789ab-arm64", "xless:0123456789ab-arm64-tauri", "xless:fedcba987654-arm64", "xless:fedcba987654-dirty-arm64-tauri",
-    ])
-    #expect(CleanPlan.old(fromListing: l, version: "0123456789ab") == [
-        "xless:0123456789ab-dirty-arm64", "xless:0123456789ab-dirty-arm64-react-native", "xless:fedcba987654-arm64", "xless:fedcba987654-dirty-arm64-tauri",
+    let others = ["xless:fedcba987654-arm64", "xless:fedcba987654-dirty-arm64-tauri"]
+    #expect(CleanPlan.old(fromListing: l, version: "0123456789ab-dirty") == others)
+    #expect(CleanPlan.old(fromListing: l, version: "0123456789ab") == others)
+    #expect(CleanPlan.old(fromListing: l, version: "fedcba987654") == [
+        "xless:0123456789ab-arm64", "xless:0123456789ab-arm64-tauri", "xless:0123456789ab-dirty-arm64", "xless:0123456789ab-dirty-arm64-react-native",
     ])
 }
 

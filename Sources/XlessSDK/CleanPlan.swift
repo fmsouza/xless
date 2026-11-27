@@ -16,9 +16,10 @@ public enum CleanPlan {
     public static let volumePrefix = "xless-rn-work-"
 
     /// The two forms of an xless image's tag besides the legacy one: `<tag>-<arch>` and `<tag>-<arch>-<kit>`, where `<tag>` is a
-    /// release (`0.14.0`, `0.14.0-rc.1`) or a checkout's commit (`ImageName.checkoutTag`: 12 hex, and `-dirty`).
+    /// release (`X.Y.Z`: what scripts/next-version.sh makes; `0.0.0-dev`, a source build's) or a checkout's commit (`ImageName.checkoutTag`: 12 hex,
+    /// and `-dirty`). A tag with another word in it (`2.0.0-mine`, `0.14.0-xcode26.2`) is a person's.
     /// Anything else in the `xless` repository (`xless:mine`, `xless:1`) is a person's own.
-    static var tagVersion: Regex<(Substring, Substring?, Substring?)> { /[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)*|[0-9a-f]{12}(-dirty)?/ }
+    static var tagVersion: Regex<(Substring, Substring?)> { /[0-9]+\.[0-9]+\.[0-9]+|0\.0\.0-dev|[0-9a-f]{12}(-dirty)?/ }
 
     /// The `<tag>` of an image of this layout's tag (`0.14.0` of `0.14.0-arm64-tauri`), or nil for any other tag.
     public static func version(ofTag tag: String) -> String? {
@@ -49,10 +50,17 @@ public enum CleanPlan {
     /// `reference` is an image of an older xless (a legacy tag), which nothing uses any more.
     public static func isLegacyImage(_ reference: String) -> Bool { isXlessImage(reference) && split(reference).map { $0.tag.wholeMatch(of: ImageName.legacyTag) != nil } == true }
 
+    /// A checkout's tag without its `-dirty`: the commit. The image of this commit is this xless's, clean or not.
+    private static func core(_ version: String) -> String {
+        guard version.hasSuffix("-dirty") else { return version }
+        let commit = String(version.dropLast("-dirty".count))
+        return commit.wholeMatch(of: /[0-9a-f]{12}/) != nil ? commit : version
+    }
+
     /// `reference` is an image of this layout made by another xless than the one whose tag is `version`.
     public static func isOtherVersion(_ reference: String, than version: String) -> Bool {
         guard isXlessImage(reference), let tag = split(reference)?.tag, let found = Self.version(ofTag: tag) else { return false }
-        return found != version
+        return core(found) != core(version)
     }
 
     /// The image references to remove, from `docker image ls --format '{{.Repository}}:{{.Tag}}'`: every local tag of xless's
@@ -63,7 +71,7 @@ public enum CleanPlan {
     public static func legacy(fromListing listing: String) -> [String] { references(listing, where: isLegacyImage) }
 
     /// What nothing uses any more: the legacy tags, and the images and kits of another xless than the one whose tag is `version`
-    /// (`ImageName.cachedTag`). Never the image of that one, nor its kits, nor a pack.
+    /// (`ImageName.cachedTag`). Never the image of that one, nor its kits (of a checkout's commit: clean or `-dirty`), nor a pack.
     public static func old(fromListing listing: String, version: String) -> [String] {
         references(listing) { isLegacyImage($0) || isOtherVersion($0, than: version) }
     }

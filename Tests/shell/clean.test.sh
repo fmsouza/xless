@@ -222,6 +222,16 @@ image rm xless:local-arm64
 image rm xless:local-arm64-xcode27.0-tauri
 image prune --force --filter label=org.xless.image=true' ]] || fail "--old without a known tag: $code $(removed) $(cat "$t/err")"
 extra=()
+# A checkout whose git fails: its tag would be the release's, not the commit its images are named by: unknown, so the legacy images alone.
+mkdir -p "$t/share2/.git"; echo 9.9.9 > "$t/share2/VERSION"
+extra=(XLESS_SHARE="$t/share2")
+run --old --yes
+[[ $code == 0 && "$(removed)" == 'image rm xless-base:local-arm64
+image rm xless:local-arm64
+image rm xless:local-arm64-xcode27.0-tauri
+image prune --force --filter label=org.xless.image=true' ]] || fail "--old with a checkout whose git failed: $code $(removed) $(cat "$t/err")"
+grep -q 'git did not give the commit of its checkout' "$t/out" || fail "--old does not say why the tag is unknown: $(cat "$t/out")"
+extra=()
 # Only untagged builds, and this xless's: nothing to ask about.
 cp "$t/bin/docker" "$t/docker.keep"
 sed -i.bak 's/xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0-tauri xless:9.9.9-arm64 xless:9.9.9-arm64-tauri/xless:9.9.9-arm64 xless:9.9.9-arm64-tauri/; s/xless:9.8.0-arm64 xless:9.8.0-arm64-react-native//' "$t/bin/docker"; rm "$t/bin/docker.bak"
