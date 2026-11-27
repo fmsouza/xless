@@ -71,7 +71,8 @@ private func environment(store: URL, _ extra: [String: String] = [:]) throws -> 
     // A pack without Swift Build: refused with the setup that prepares it, as a usage error.
     let noSwiftBuild = #expect(throws: XlessError.self) { try SwiftBuildEnvironment.fromProcess(try environment(store: store), stage: .build) }
     #expect(noSwiftBuild?.cause.contains("has no Swift Build") == true && noSwiftBuild?.stage == .build && noSwiftBuild?.exitCode == 2)
-    #expect(noSwiftBuild?.fix.contains("Swift Build part") == true)
+    // (the fix is the command that prepares the pack again, from its SDK export: the part is named in the cause)
+    #expect(noSwiftBuild?.fix.hasPrefix("xless setup --sdk ") == true && noSwiftBuild?.fix.contains("/xless/sdk/xcode") == true)
 }
 
 @Test func theSwiftBuildEnvironmentNeedsThePacksIncludeDirectory() throws {
