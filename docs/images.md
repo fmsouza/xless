@@ -106,7 +106,8 @@ compiling Swift Build; preparing the `sdk` part again alone takes about a minute
 15 GB in the cache while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
 
 A pack that running containers use is not replaced under them: setup refuses, names the containers, and says to wait for
-those runs or stop them.
+those runs or stop them. A native `xless setup` of a directory store that `--docker` runs mount (`XLESS_XCODES`) asks docker
+the same, right before it replaces the pack.
 
 ## What a run does
 

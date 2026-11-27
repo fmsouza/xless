@@ -411,3 +411,22 @@ private func makeTarball(version: String, arch: String, in dir: URL) throws -> U
     try Data("not an elf at all, just text".utf8).write(to: text)
     #expect(XlessRelease.elfDockerArch(text) == nil)
 }
+
+/// A native setup replaces a pack of a directory store only when no running container uses it; where docker does not
+/// answer, nothing runs that could, and it goes on.
+@Test func aNativeSetupDoesNotReplaceAPackARunningBuildUses() throws {
+    let dir = URL(fileURLWithPath: "/srv/xcodes")
+    let target = SetupStep.PackTarget(store: .directory(dir), xcode: "27.0", build: "27A266a", arch: "arm64")
+    let using: LocalImages.Docker = { words in
+        switch words.first {
+        case "ps": return (0, "abc\n")
+        case "inspect": return (0, "/builder\txless:1-arm64\t1.2\t[{\"Source\":\"/srv/xcodes/27.0-27A266a-arm64\"}]\n")
+        default: return (1, "")
+        }
+    }
+    do { try target.refuseInUseWhereDockerAnswers(using); Issue.record("expected a refusal") } catch let p as ImageProblem {
+        #expect(p.cause.contains("builder (xless:1-arm64)") && p.cause.contains("/srv/xcodes/27.0-27A266a-arm64"), "\(p.cause)")
+    }
+    try target.refuseInUseWhereDockerAnswers { _ in (1, "Cannot connect to the Docker daemon") }
+    try target.refuseInUseWhereDockerAnswers { words in words.first == "ps" ? (0, "") : (1, "") }
+}

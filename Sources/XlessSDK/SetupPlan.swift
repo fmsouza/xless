@@ -85,6 +85,14 @@ public struct SetupStep: Equatable, Sendable {
             let users = try PackUsers(docker).of(store, xcode: xcode, build: build, arch: arch, excludingRun: excludingRun)
             if !users.isEmpty { throw PackUsers.refusal(pack: name, place: place, users: users) }
         }
+
+        /// A native setup's form, before it replaces the pack: docker builds may mount a directory store (`XLESS_XCODES`) of
+        /// this machine. Stops when a running container uses the pack; a docker that does not answer (none installed, no
+        /// daemon, or a machine without Docker at all, such as the setup container) runs nothing that could, and is no stop.
+        public func refuseInUseWhereDockerAnswers(_ docker: @escaping LocalImages.Docker) throws {
+            guard let users = try? PackUsers(docker).of(store, xcode: xcode, build: build, arch: arch) else { return }
+            if !users.isEmpty { throw PackUsers.refusal(pack: name, place: place, users: users) }
+        }
     }
 
     public let title: String

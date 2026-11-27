@@ -244,6 +244,13 @@ struct SetupCommand: AsyncParsableCommand {
                 for (n, s) in steps.enumerated() {
                     say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
                     let t0 = Date()
+                    // Not under a running docker build that mounts this store (XLESS_XCODES): asked right before the pack is replaced.
+                    if case .packCommit = s.action {
+                        let target = SetupStep.PackTarget(store: .directory(store.root), xcode: version, build: x.build, arch: arch)
+                        do { try target.refuseInUseWhereDockerAnswers(LocalImages.hereDocker) } catch let problem as ImageProblem {
+                            throw XlessError(.sdk, problem.cause, fix: problem.fix) // the staging directory is discarded below
+                        }
+                    }
                     try execute(s, xcode: x, layout: layout)
                     say("    done in \(Self.minutes(since: t0))")
                 }

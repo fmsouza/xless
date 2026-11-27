@@ -824,8 +824,8 @@ Xcode, so what could write it could put code into the next build of another app,
   runs, with exit code 2.
 - **A pack in use is not replaced.** Setup refuses to prepare a pack again while a running container has it mounted, and
   names the containers: they would read files that change under them. On a Linux host that shares a directory store
-  between `--docker` and a native xless, a native `xless setup` does not look for those containers, so nothing keeps it
-  from replacing a pack that a running `xless run --docker` uses: run the two one at a time.
+  between `--docker` and a native xless, a native `xless setup` asks docker too, right before it replaces the pack; where
+  docker does not answer (not installed, or its daemon not running), no container runs that could use it.
 - **`pack.json` and the image's labels are consistency checks, not proof of origin.** `pack.json` records the Xcode, the
   architecture and each part's recipe hash; xless compares them with what it would prepare, which finds a pack prepared
   from other files or pins than this xless's (a stale one). Whoever can write the volume or the store (anyone who can use your
