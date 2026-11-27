@@ -113,7 +113,7 @@ A pack's `pack.json` holds a **recipe hash** for each part, which `PackRecipe` c
 
 | Part | Made from (the hash's inputs) |
 |---|---|
-| `sdk` | `scripts/fit-toolchain.sh`; `docker/toolchain/clang-driver`, `target-os-check`, `record-flags.py`, `target-os/derived.txt` and `target-os/<build>.txt`; the Swift toolchain's URL and sha256 for the architecture; whether that toolchain is the image's own Swift; every `versions.env` entry ending in `_<build>`; `XTOOL_VERSION`; the Xcode build |
+| `sdk` | `scripts/fit-toolchain.sh`; `docker/toolchain/clang-driver`, `target-os-check`, `record-flags.py`, `target-os/derived.txt` and `target-os/<build>.txt`; the Swift toolchain's URL and sha256 for the architecture; whether that toolchain is the image's own Swift; every `versions.env` entry ending in `_<build>` but `XCODE_XIP_SHA256_<build>` (another vetted `.xip` of the same Xcode makes the same pack); `XTOOL_VERSION`; the Xcode build |
 | `swift-build` | `SWB_TAG` and every `SWB_*` pin; the toolchain's sha256; the distribution of `SWIFT_IMAGE` (`jammy`); `scripts/pack-swift-build.sh` |
 
 Both start with `PackRecipe.format`, the pack format number. A pack whose hash is not the one this xless computes is

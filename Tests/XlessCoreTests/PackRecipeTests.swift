@@ -84,6 +84,18 @@ func sdkHashChangesWithEachKey(key: String) throws {
     #expect(try digest(.sdk, build: "17C52", share) != before)
 }
 
+// Another vetted .xip of the same Xcode (XCODE_XIP_SHA256_<build>) makes the same pack: the checksums are no input.
+@Test func sdkHashIgnoresTheXipChecksums() throws {
+    let share = try makeShare()
+    var t = table
+    t["XCODE_XIP_SHA256_27A266a"] = "aaaa"
+    let before = try digest(.sdk, t, share)
+    t["XCODE_XIP_SHA256_27A266a"] = "aaaa bbbb"
+    #expect(try digest(.sdk, t, share) == before)
+    t["XCODE_XIP_SHA256_27A266a"] = nil
+    #expect(try digest(.sdk, t, share) == before)
+}
+
 @Test(arguments: ["SWB_TAG", "SWB_SHA256", "SWB_SYSTEM_VERSION", "SWIFT_TOOLCHAIN_6_4_0_SHA256_AARCH64", "SWIFT_IMAGE"])
 func swiftBuildHashChangesWithItsPins(key: String) throws {
     let share = try makeShare()

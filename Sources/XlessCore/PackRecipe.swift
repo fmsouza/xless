@@ -27,7 +27,8 @@ public enum PackRecipe {
     /// - both parts: `format`
     /// - `.sdk`: the files `scripts/fit-toolchain.sh`, `docker/toolchain/clang-driver`, `target-os-check`, `record-flags.py`,
     ///   `target-os/derived.txt`, `target-os/<build>.txt`; the toolchain's `…_URL_<ARCH>` then `…_SHA256_<ARCH>`; `mode`;
-    ///   every table entry whose key ends in `_<build>`, by key; `XTOOL_VERSION`; `build`
+    ///   every table entry whose key ends in `_<build>` but the .xip checksums (`XCODE_XIP_SHA256_<build>`), by key;
+    ///   `XTOOL_VERSION`; `build`
     /// - `.swiftBuild`: `SWB_TAG`; every `SWB_*` entry by key; the toolchain's `…_SHA256_<ARCH>`; the distribution of
     ///   `SWIFT_IMAGE` (`jammy`); the file `scripts/pack-swift-build.sh`
     public static func hash(_ part: PackPart, build: String, arch: String, table: [String: String], share: URL) throws -> String {
@@ -62,7 +63,8 @@ public enum PackRecipe {
                          "docker/toolchain/target-os/\(build).txt"] { try file(path) }
             for key in ["\(toolchain)_URL_\(a)", "\(toolchain)_SHA256_\(a)"] { feed(key, try pin(key)) }
             feed("mode", mode(swift: swift, table: table).rawValue)
-            for key in table.keys.filter({ $0.hasSuffix("_\(build)") }).sorted() { feed(key, table[key]!) }
+            // The .xip checksums are left out: another vetted .xip of the same Xcode makes the same pack.
+            for key in table.keys.filter({ $0.hasSuffix("_\(build)") && !$0.hasPrefix(xipChecksumPrefix) }).sorted() { feed(key, table[key]!) }
             feed("XTOOL_VERSION", try pin("XTOOL_VERSION"))
             feed("build", build)
         case .swiftBuild:
@@ -79,6 +81,9 @@ public enum PackRecipe {
         }
         return sha.finalize().map { String(format: "%02x", $0) }.joined()
     }
+
+    /// The key of an Xcode's vetted .xip checksums (`XCODE_XIP_SHA256_<build>`): no input of a pack.
+    static let xipChecksumPrefix = "XCODE_XIP_SHA256_"
 
     /// versions.env's spelling of an architecture (the same as `NativeSetupPlan.tableArch`, which XlessCore cannot import).
     static func tableArch(_ arch: String) -> String { arch == "arm64" ? "AARCH64" : "X86_64" }
