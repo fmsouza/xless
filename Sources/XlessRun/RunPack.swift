@@ -294,15 +294,18 @@ private struct PackChoice {
         }
         // (the image is here, or the run would have stopped: no step builds it)
         let steps = plan.steps.filter { $0.argv.first == "docker" }
+        // Not under a running build that has it, of another run or a setup (this run's own containers start after): asked once,
+        // before anything is said or done, for the pack the steps write.
+        if !run.dryRun, let target = steps.lazy.compactMap({ step -> SetupStep.PackTarget? in
+            if case let .packRun(job) = step.action { return job.writes } else { return nil }
+        }).first {
+            do { try target.refuseInUse(run.askDocker, excludingRun: run.runLabel.split(separator: "=", maxSplits: 1).last.map(String.init)) }
+            catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }
+        }
         let what = (parts.isEmpty ? PackPart.allCases : parts).map { "its \($0.rawValue) part (\(PackPlan.estimate(of: $0)))" }.joined(separator: " and ")
         run.host.say("==> \(run.dryRun ? "would prepare" : "preparing") the pack \(name) of Xcode \(version) (\(xcode.build)) first (\(why)): "
             + "\(what), from the SDK export \(export.path)")
         for (n, s) in steps.enumerated() {
-            // (not under a running build that has it, of another run or a setup; this run's own containers start after)
-            if !run.dryRun, case let .packRun(job) = s.action, let target = job.writes {
-                do { try target.refuseInUse(run.askDocker, excludingRun: run.runLabel.split(separator: "=", maxSplits: 1).last.map(String.init)) }
-                catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }
-            }
             if !run.dryRun {
                 run.host.say("==> [\(n + 1)/\(steps.count)] \(s.title)")
                 if case let .packRun(job) = s.action {

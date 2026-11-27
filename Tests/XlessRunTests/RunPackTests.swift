@@ -177,6 +177,7 @@ import XlessImages
         #expect(host.lines.last == "testflight: the pack 27.0-27A266a-arm64 in the volume \(volume) is used by a running container: busy_build (xless:0.14.0-arm64-tauri); "
             + "preparing it now would replace it under it; wait for that run to end, or stop it (docker stop busy_build), then run this again", "\(host.lines)")
         #expect(!host.allSteps.contains { $0.isPackSetup || $0.isContainer } && home.packs.manifest(volume) == stale && !home.exists(home.secrets))
+        #expect(!host.lines.contains { $0.contains("preparing the pack") }, "refused before it says it prepares: \(host.lines)")
         #expect(home.packs.askedUsers.contains(["ps", "--filter", "volume=\(volume)", "--format", "{{.Names}}\t{{.Image}}\t{{.Label \"xless.run\"}}"]))
         // the container gone, it prepares
         home.packs.running = [.init(name: "other", volumes: ["xless-xcode-26.2-17C52-arm64"])]
