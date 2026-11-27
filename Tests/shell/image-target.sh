@@ -11,11 +11,9 @@
 case "$(uname -m)" in arm64|aarch64) host=arm64 ;; *) host=amd64 ;; esac
 arch="${XLESS_IMAGE_ARCH:-$host}"
 root="${root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-context="${DOCKER_CONTEXT:-}"
-if [[ -z "$context" ]] && command -v docker >/dev/null 2>&1; then
-  if docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx colima-xless; then context=colima-xless
-  else context="$(docker context show 2>/dev/null || true)"; fi
-fi
+# shellcheck source=SCRIPTDIR/../../scripts/docker-context.sh
+. "$root/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it (none: docker's current one)
+context="$(docker_context image-target)" || exit 2
 d=(docker)
 [[ -z "$context" ]] || d+=(--context "$context")
 image="${XLESS_IMAGE:-xless:$("$root/scripts/docker-images.sh" tag --arch "$arch")-$arch}"

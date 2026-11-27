@@ -22,8 +22,9 @@
 # xless-cargo (the first run downloads them and builds the Rust code, which takes a few minutes; later runs are faster).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-ctx="${DOCKER_CONTEXT:-}"
-if [[ -z "$ctx" ]] && docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx 'colima-xless'; then ctx=colima-xless; fi
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$root/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
+ctx="$(docker_context test-tauri-linux)" || exit 2
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 vsuf=""; plat=()   # ARCH=amd64|arm64 runs the image of that architecture (under emulation when it is not the host's)
 if [[ -n "${ARCH:-}" ]]; then

@@ -19,9 +19,10 @@ for a in "${archs[@]}"; do
   esac
 done
 
-if [[ -z "${DOCKER_CONTEXT:-}" ]] && docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx colima-xless; then
-  export DOCKER_CONTEXT=colima-xless
-fi
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$repo/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
+ctx="$(docker_context build-images)" || exit 2
+[[ -z "$ctx" ]] || export DOCKER_CONTEXT="$ctx"
 echo "==> the xless image of this checkout for ${archs[*]}; docker context: ${DOCKER_CONTEXT:-(current)}" >&2
 start=$(date +%s)
 for a in "${archs[@]}"; do "$repo/scripts/docker-images.sh" image --arch "$a"; done

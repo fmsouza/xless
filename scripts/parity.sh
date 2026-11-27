@@ -20,8 +20,9 @@ status=0
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$ROOT/versions.env")}"
 image="${XLESS_IMAGE:-xless:$("$ROOT/scripts/docker-images.sh" tag --arch "$arch")-$arch}"
-ctx="${DOCKER_CONTEXT:-}"
-if [[ -z "$ctx" ]] && docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx 'colima-xless'; then ctx=colima-xless; fi
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$ROOT/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
+ctx="$(docker_context parity)" || exit 2
 args=(docker)
 [[ -z "$ctx" ]] || args+=(--context "$ctx")
 # shellcheck source=SCRIPTDIR/xcode-pack-args.sh
