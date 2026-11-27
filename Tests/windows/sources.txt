@@ -27,6 +27,7 @@
 - Sources/XlessCore/NativeLayout.swift
 - Sources/XlessCore/NativeTools.swift
 + Sources/XlessCore/PEM.swift
++ Sources/XlessCore/PackRecipe.swift
 - Sources/XlessCore/PackageResolved.swift
 + Sources/XlessCore/PlainFile.swift
 + Sources/XlessCore/Platform.swift
@@ -312,6 +313,7 @@
 - Tests/XlessCoreTests/NativeLayoutTests.swift
 - Tests/XlessCoreTests/NativeToolsTests.swift
 + Tests/XlessCoreTests/PEMTests.swift
++ Tests/XlessCoreTests/PackRecipeTests.swift
 - Tests/XlessCoreTests/PackageResolvedTests.swift
 - Tests/XlessCoreTests/PlainFileTests.swift
 - Tests/XlessCoreTests/PlistBuddyShimTests.swift

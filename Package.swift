@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/attaswift/BigInt", from: "5.4.0"), // Apple ID sign-in: SRP's big-number arithmetic
     ],
     targets: [
-        .target(name: "XlessCore", dependencies: ["CXlessProcess", .product(name: "Yams", package: "Yams")]),
+        .target(name: "XlessCore", dependencies: ["CXlessProcess", .product(name: "Yams", package: "Yams"), .product(name: "Crypto", package: "swift-crypto")]),
         // The Docker images: their names and labels, the choice of one, and the derived images built from shipped Dockerfiles.
         .target(name: "XlessImages", dependencies: ["XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
         .target(name: "XlessSDK", dependencies: ["XlessCore", "XlessImages", .product(name: "Crypto", package: "swift-crypto")]),
