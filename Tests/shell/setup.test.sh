@@ -130,7 +130,7 @@ grep -q 'docker-images.sh image --arch arm64 --xless-bin ' "$t/out" || fail "the
 grep -qF -- "--xcode-build" "$t/out" && fail "the image is given an Xcode: $(cat "$t/out")"
 grep -qF "docker volume create --label org.xless.pack=true xless-xcode-27.0-27A266a-arm64" "$t/out" || fail "no volume for the pack: $(cat "$t/out")"
 grep -qF "chown" "$t/out" || fail "the volume is not made the user's: $(cat "$t/out")"
-pk="$(grep -F 'xless setup --xcode' "$t/out")"
+pk="$(grep -F 'xless setup --xcode' "$t/out" || true)"
 [[ -n "$pk" ]] || fail "the plan does not prepare the pack in the image: $(cat "$t/out")"
 for want in "docker run --rm --pull=never --platform linux/arm64 --user $(id -u):$(id -g) -e HOME=/tmp " "src=$xip,dst=/xcode/Xcode copy.xip,readonly" \
             "type=bind,src=$t/home/.cache/xless/sdk/xcode27.0-27A266a,dst=/cache/xless/sdk/xcode27.0-27A266a " "-e XDG_CACHE_HOME=/cache" \

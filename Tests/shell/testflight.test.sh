@@ -574,7 +574,7 @@ code=0; "${base[@]}" "$S" "$t/proj" --config "$t/ov/my.overlay.yml" >/dev/null 2
 printf 'type: tauri\n' > "$t/ov/nosrc.yml"
 code=0; "${base[@]}" "$S" --config "$t/ov/nosrc.yml" >/dev/null 2>&1 || code=$?
 [[ $code -eq 2 ]] || fail "overlay without source exits $code, want 2"
-# xcode: pin (Ruling R8): every step in the image of that Xcode (xless setup), xless:local-<arch>-xcode<pin>, or a kit on it
+# xcode: pin: every step in this xless's image (or a kit on it), with the pinned Xcode's pack mounted read-only
 pinned=("${base[@]}")
 mkdir -p "$t/pin/app"
 printf 'type: react-native\nsource: app\nxcode: "26.2"   # the release pipeline'"'"'s Xcode\n' > "$t/pin/rn.yml"

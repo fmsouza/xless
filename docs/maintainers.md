@@ -18,8 +18,10 @@ The scripts named here run from a source checkout. Those that run Apple's progra
   documentation's relative links, and that every page is reached from docs/README.md (`Tests/shell/check-doc-links.test.sh` runs it too).
 
 All the Docker commands below use the active Docker context. To use a separate engine (for example a dedicated Colima
-VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that `xless run --docker` and
-`scripts/sim-launch.sh` prefer a context named `colima-xless` when one exists.
+VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that these prefer a context named
+`colima-xless` when one exists and `DOCKER_CONTEXT` is not set: `xless run --docker`, `scripts/build-images.sh` (`make
+images`), `scripts/sim-launch.sh`, `scripts/parity.sh`, the sample tests `scripts/test-cargo-linux.sh`,
+`scripts/test-tauri-linux.sh` and `scripts/test-rn-linux.sh`, and `make test-image` (`Tests/shell/image-target.sh`).
 
 ## Windows
 
@@ -303,4 +305,4 @@ release when that tag has no GitHub release, i.e. when it was pushed by hand. To
 ## Private notes
 
 The maintainer's design notes and acceptance logs (`docs/superpowers/`, `docs/acceptance/`) are git-ignored and stay on
-the maintainer's machine. Public acceptance records are the `docs/acceptance-m*.md` files.
+the maintainer's machine. Public acceptance records are the `docs/acceptance-m*.md` files and `docs/acceptance-xcode-packs.md`.

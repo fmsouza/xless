@@ -6,7 +6,7 @@
 #        scripts/docker-images.sh tag --arch <arm64|amd64>      prints the part of the tag that names this xless
 #                                                              (<version>, or <commit12>[-dirty]), and nothing else (no docker)
 #   Builds xless:<version>-<arch>: one image per xless version and architecture, with nothing of an Xcode in it (no Apple
-#   file, so it may be published). The Xcode is an Xcode pack, which `xless setup` prepares (in a container of this image
+#   file; the licences of the other software in it are not yet reviewed for publishing it: docs/images.md). The Xcode is an Xcode pack, which `xless setup` prepares (in a container of this image
 #   for `xless setup --docker`) and builds mount read-only. The version is the share's VERSION file's (a release), else
 #   versions.env's XLESS_VERSION; in a git checkout (this directory, physically, is the top of a work tree that has a commit) the
 #   tag is xless:<short commit>[-dirty]-<arch> instead. ImageName.tag(ofShare:) in Sources/XlessImages decides it the same way.
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 die() { echo "docker-images: $*" >&2; exit 2; }
-usage="usage: $0 image --arch <arm64|amd64> [--xless-bin <file>]"
+usage="usage: $0 image --arch <arm64|amd64> [--xless-bin <file>], or $0 tag --arch <arm64|amd64>"
 gone="an image holds no Xcode any more: xless setup prepares the Xcode as an Xcode pack (xless setup --docker --xcode <Xcode .xip or .app>)"
 [[ $# -ge 1 ]] || die "$usage"
 what="$1"; shift
