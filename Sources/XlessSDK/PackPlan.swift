@@ -189,10 +189,13 @@ public enum PackPlan {
          staging.appendingPathComponent("pack.json").path, part.rawValue, hash]
     }
 
-    /// `commit`, as a command.
+    /// `commit`, as a command: a staging directory without `pack.json` refused, the old pack put back when the rename into
+    /// place fails.
     static func commitArgv(staging: URL, final: URL) -> [String] {
         ["sh", "-c", "set -e; rm_tree() { [ ! -e \"$1\" ] || { find \"$1\" -type d -exec chmod u+w {} + && rm -rf \"$1\"; }; }; "
-            + "rm_tree \"$2.old\"; if [ -e \"$2\" ]; then mv \"$2\" \"$2.old\"; fi; mv \"$1\" \"$2\"; rm_tree \"$2.old\"", "sh",
+            + "[ -f \"$1/pack.json\" ] || { echo \"$1 has no pack.json: it is not a prepared pack\" >&2; exit 1; }; "
+            + "rm_tree \"$2.old\"; had=; if [ -e \"$2\" ]; then mv \"$2\" \"$2.old\"; had=1; fi; "
+            + "if ! mv \"$1\" \"$2\"; then [ -z \"$had\" ] || mv \"$2.old\" \"$2\"; exit 1; fi; rm_tree \"$2.old\"", "sh",
          staging.path, final.path]
     }
 
@@ -273,18 +276,18 @@ public enum PackPlan {
     }
 
     /// `.packCommit`: `staging` renamed to `final`; the pack that was there is renamed aside first (`<name>.old`, a leftover
-    /// of which is removed) and removed after. A failed rename puts the old pack back.
-    public static func commit(staging: URL, final: URL) throws {
-        let fm = FileManager.default
+    /// of which is removed) and removed after. A failed rename puts the old pack back. `move`: the rename (a test's).
+    public static func commit(staging: URL, final: URL, move: ((URL, URL) throws -> Void)? = nil) throws {
+        let fm = FileManager.default, move = move ?? { try Self.move($0, to: $1) }
         guard fm.fileExists(atPath: staging.appendingPathComponent("pack.json").path) else {
             throw XlessError(.sdk, "\(staging.path) has no pack.json: it is not a prepared pack", fix: "run xless setup again")
         }
         let old = final.deletingLastPathComponent().appendingPathComponent(final.lastPathComponent + ".old")
         if fm.fileExists(atPath: old.path) { try removeTree(old) }
         let hadOne = fm.fileExists(atPath: final.path)
-        if hadOne { try move(final, to: old) }
-        do { try move(staging, to: final) } catch {
-            if hadOne { try? move(old, to: final) }
+        if hadOne { try move(final, old) }
+        do { try move(staging, final) } catch {
+            if hadOne { try? move(old, final) }
             throw error
         }
         if hadOne { try? removeTree(old) }

@@ -380,15 +380,59 @@ private func cleanUp(_ dir: URL) {
     #expect(try XcodePack.open(current)?.manifest.parts["swift-build"] == "old")
 }
 
+@Test func aFailedRenameIntoPlacePutsTheOldPackBack() throws {
+    let root = try tempDir()
+    defer { cleanUp(root) }
+    let current = try packOnDisk(in: root)
+    let staging = PackPlan.staging(of: current)
+    try PackPlan.begin(staging: staging, from: current, manifest: pack(parts: ["sdk": "s"]).manifest)
+    struct Refused: Error {}
+    // the first rename (the pack in use, aside) succeeds; the second (staging into place) fails
+    var moves: [(String, String)] = []
+    #expect(throws: Refused.self) {
+        try PackPlan.commit(staging: staging, final: current) { from, to in
+            moves.append((from.lastPathComponent, to.lastPathComponent))
+            if from == staging { throw Refused() }
+            guard rename(from.path, to.path) == 0 else { throw Refused() }
+        }
+    }
+    #expect(moves.map { "\($0.0)>\($0.1)" } == ["26.2-17C52-arm64>26.2-17C52-arm64.old", "26.2-17C52-arm64.partial>26.2-17C52-arm64",
+                                                  "26.2-17C52-arm64.old>26.2-17C52-arm64"])
+    #expect(try XcodePack.open(current)?.manifest.parts["swift-build"] == "old")
+    #expect(Set(try FileManager.default.contentsOfDirectory(atPath: root.path)) == ["26.2-17C52-arm64", "26.2-17C52-arm64.partial"])
+}
+
 // MARK: - What --dry-run prints does what the step does
 
-private func sh(_ argv: [String]) throws -> Int32 {
+private func sh(_ argv: [String], environment: [String: String]? = nil) throws -> Int32 {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     p.arguments = argv
+    if let environment { p.environment = environment }
     try p.run()
     p.waitUntilExit()
     return p.terminationStatus
+}
+
+@Test func theCommitCommandPutsTheOldPackBackAndRefusesAnUnpreparedOne() throws {
+    let root = try tempDir()
+    defer { cleanUp(root) }
+    let current = try packOnDisk(in: root)
+    let staging = PackPlan.staging(of: current)
+    // no pack.json in the staging directory: refused, the pack in use untouched
+    try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+    #expect(try sh(PackPlan.commitArgv(staging: staging, final: current)) != 0)
+    #expect(try XcodePack.open(current)?.manifest.parts["swift-build"] == "old")
+    // an `mv` that fails into place (the second): the old pack is put back
+    try PackPlan.begin(staging: staging, from: current, manifest: pack(parts: ["sdk": "s"]).manifest)
+    let bin = root.appendingPathComponent("bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let mv = bin.appendingPathComponent("mv")
+    try Data("#!/bin/sh\ncase \"$1\" in *.partial) exit 1 ;; esac\nexec /bin/mv \"$@\"\n".utf8).write(to: mv)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mv.path)
+    #expect(try sh(PackPlan.commitArgv(staging: staging, final: current), environment: ["PATH": "\(bin.path):/usr/bin:/bin"]) != 0)
+    #expect(try XcodePack.open(current)?.manifest.parts["swift-build"] == "old")
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("26.2-17C52-arm64.old").path))
 }
 
 @Test func theRecordAndCommitCommandsDoWhatTheirStepsDo() throws {
