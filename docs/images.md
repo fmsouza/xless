@@ -284,8 +284,7 @@ container as the steps that sign, so a secret *file* that the container has (a `
 build's code ([security.md](security.md#the-image-used-directly)). Building in one container with no secret and signing
 in another, as [ci.md](ci.md#in-the-image) does, keeps a build's mistake from the secrets, not code that means harm:
 the build's container writes the project as your user, and what it leaves there is on the machine when the secrets come.
-For that, sign in another job, or use `xless run --docker` from a host, where the build has a container of its own
-([security.md](security.md#a-build-that-means-harm)).
+For that, sign in another job ([what keeps such a build from the secrets, and what does not](security.md#a-build-that-means-harm)).
 
 ## Another architecture
 

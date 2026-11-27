@@ -103,8 +103,9 @@ steps:
 Both runs need the same build number: without one, each takes the minute it starts in, and `upload` refuses the difference.
 
 That is for code that you mostly trust: the steps keep a mistake of the build away from the secrets, not code that means harm,
-and the `git diff` step is a check for accidents. For code that means harm, use [two jobs](#in-two-jobs) or `xless run --docker`
-([security.md](security.md#a-build-that-means-harm)). On one machine, what the build's code can still do:
+and the `git diff` step is a check for accidents. For code that means harm, use [two jobs](#in-two-jobs)
+([what keeps such a build from the secrets, and what does not](security.md#a-build-that-means-harm)). On one machine,
+what the build's code can still do:
 
 - **Change `xless.yml`** (the team, the bundle ID) or an entitlements file, as nothing keeps a native build from it. The third step
   finds such a change made by mistake, not one that the build hides: it can write `.git`, so it can stage its change in the
@@ -170,9 +171,12 @@ jobs:
   would register them, with their profiles. So run `xless provision apply` first, from a terminal, and sign with
   `--no-provisioning-updates`, as above: nothing that the build wrote then changes the account (`sign` fails with exit code 24
   instead). Declare the app's extensions too (`platforms.ios.extensions`, [xless-yml.md](xless-yml.md#app-extensions)).
-- **The runners.** The build's keeps what the build left on it: register it with `--ephemeral`, or use a new virtual machine for
-  each job. The signing one takes jobs of this workflow only (a runner group that only this repository and workflow may use), so
-  that no other job lands where the keys are.
+- **The runners.** What must hold is that nothing a build job wrote is on the signing job's machine, other than the
+  artifact. A runner that is new for each job gives that (register it with `--ephemeral`, or use a new virtual machine for
+  each job); a runner that is kept, and also runs build jobs, does not, unless its workspace, caches and tool directories
+  are apart from theirs. The build's runner keeps what the build left on it, so make it new for each job too. The signing
+  one also takes jobs of this workflow only (a runner group that only this repository and workflow may use), so that no
+  other job lands where the keys are.
 - Use no cache in the second job: the first could have filled it.
 - The artifact is the unsigned app. Whoever may read the repository can download it while it is kept.
 - **The second job runs nothing that the build made**: no script and no `git` on it. It checks out the commit, unpacks the

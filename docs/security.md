@@ -44,7 +44,8 @@ its sessions live, what it accepts), the text says what xless does and leaves Ap
 Out of scope: malware or a person running **as you**, outside what xless starts, while the store is unlocked or a
 session is kept ([what it can do](#what-an-attacker-who-runs-as-you-can-do)), someone who has both the store file and its
 passphrase, and a compromised Apple account or Apple service. Code that runs on your machine as you can read your files
-and wait for you to type the passphrase: that is why `xless run --docker` builds in a container without a secret, and an
+and wait for you to type the passphrase: that is why `xless run --docker` builds an overlay app, and an `xless.yml` app with an image of
+its own for the build, in a container without a secret ([a build that means harm](#a-build-that-means-harm)), and an
 overlay's build on a Mac in a sandbox.
 
 ## Guarantees
@@ -726,42 +727,62 @@ or two jobs.
 
 ### A build that means harm
 
-What keeps a build's code that means harm from the secrets is that the secrets never share a machine's state with what
-the build left (its files, what it left running, what it changed of the job), but for the built app, which only xless
-reads. Two arrangements give that.
+What keeps a build's code that means harm from the secrets is that nothing the build wrote or left running is used where
+the secrets are, other than as data that xless reads, and xless runs nothing of it. Two arrangements give that, each with
+its own limits.
 
-- **`xless run --docker`, where the build has a container of its own**: every Tauri, Cargo and React Native app, and an
-  `xless.yml` app with `image:` or `XLESS_IMAGE` (the last line of the table [above](#the-build-and-your-secrets); without
-  one, an `xless.yml` app is built and signed in one container, which has the secrets). xless starts each container
-  itself. The build's gets no secret and no secret file; the overlay and the app's source are read-only in it, and what
-  it leaves running ends with it. The steps with the secrets run in containers of the xless image, which run xless and
-  its own tools alone: no tool of the app, rcodesign in `/` with no configuration of the directory, and `git` only to
-  list an overlay's source, which no container may write, with its file system monitor off. The secrets go from the
-  xless on your machine to those containers alone. What it does not keep apart: what the app is (below), which the
-  signing container takes from where the build wrote it (an overlay's work copy in the cache, or the project); and the
-  project directory of an `xless.yml` app, which its build container writes. After the run that directory holds what
-  the build left, with its `.git` when the project is a repository's top, and a `git` started there runs what that
-  `.git` names: treat it as the build's. In CI, run nothing with a secret on that runner after it: a runner that is new
-  for each job, and no step with a secret after the run (`actions/checkout`'s own post step runs `git submodule
-  foreach` in the workspace, [ci.md](ci.md#in-the-image)).
-- **Two jobs**: the build in a job without any secret, which passes on the built app alone, as an artifact; the signing
-  in another job, on a runner that is new for it, from a new checkout of the commit, which takes xless.yml and the
-  entitlements from that commit, unpacks the app alone where `--from sign` reads it, and runs nothing that the build made
-  (no script, no `git` on it): only xless's signing of the app ([ci.md](ci.md#in-two-jobs)).
+**`xless run --docker` where the build has a container of its own.** That is every Tauri, Cargo and React Native app,
+and an `xless.yml` app whose build has an [image of its own](images.md#an-image-of-your-own) (`image:` or
+`XLESS_IMAGE`) that is not the xless image itself. Without one, or when it names the xless image (a tag of it), an
+`xless.yml` app is built and signed in one container, which has the secret files: that is one machine's state, below.
+Where the build has its own container, xless starts each container itself:
 
-In both, what the app is stays the build's: its code, its Info.plists and its extensions
-([what the build decides in the step that signs](#the-build-and-your-secrets)). xless looks at the app as a tree before it
-signs a copy of it (a link out of it, a pipe or a device is refused), which keeps the build from reaching outside the app
-through it, and proves nothing about what the app does.
+- The build's container gets no secret and no secret file, and what it leaves running ends with it. For an overlay app,
+  the overlay and the app's source are read-only in it, and it writes the work copy: for Tauri and Cargo the work root
+  `~/.cache/xless/work` on your machine, which holds the work copy of every Tauri and Cargo overlay there, for React
+  Native a Docker volume of that overlay's own. For an `xless.yml` app it writes the project directory.
+- The containers with the secrets run in the xless image and run xless and its own tools alone (rcodesign in `/` with
+  no configuration of the directory; `git` only to list an overlay's source, which no container may write, with its file
+  system monitor off). They read, as data, what the build wrote: for an overlay app, the work copy with the built app and
+  xless's records of the build; for an `xless.yml` app, the whole project as the build left it, mounted, of which xless
+  reads the built app, the entitlements files that xless.yml names, and its records under `.xless/`. xless.yml itself
+  comes from the copy that the run read when it began, mounted over the project's.
+- The secrets go from the xless on your machine to those containers alone.
+
+What it does not keep apart:
+
+- What the app is, and for an `xless.yml` app its entitlements: both are the build's.
+- The project directory of an `xless.yml` app after the run: it holds what the build left, with its `.git` when the
+  project is a repository's top, and a `git` started there runs what that `.git` names. Treat it as the build's. In CI,
+  run nothing with a secret on that runner after it: a runner that is new for each job, and no step with a secret after
+  the run (`actions/checkout`'s own post step runs `git submodule foreach` in the workspace, [ci.md](ci.md#in-the-image)).
+- **Apps that do not trust each other, on one machine.** The build containers of all Tauri and Cargo apps write the same
+  work root, and share the Docker volumes `xless-rustup` and `xless-cargo` and the downloads in `~/.cache/xless`; those
+  of React Native apps share the CocoaPods, corepack and Bundler volumes. A work copy keeps its build outputs
+  (`target/`, `node_modules/`, `.xless/`) between runs. So one app's hostile build can change another app's built
+  output, which a later `--from sign` of that app signs, or what that app's next build starts from. Build such apps on
+  different machines (or users with Docker daemons of their own).
+
+**Two jobs.** The build in a job without any secret, which passes on the built app alone, as an artifact. The signing in
+another job, on a machine where nothing that a build job wrote is, other than that artifact: a runner that is new for
+each job gives that; a runner that is kept, and also runs build jobs, does not, unless its workspace, caches and tool
+directories are apart from theirs. The signing job checks out the commit, takes xless.yml and the entitlements from it,
+unpacks the app alone where `--from sign` reads it, and runs nothing that the build made (no script, no `git` on it):
+only xless's signing of the app ([ci.md](ci.md#in-two-jobs)). What the app is stays the build's.
+
+In both, xless looks at the app as a tree before it signs a copy of it (a link out of it, a pipe or a device is refused,
+[above](#the-build-and-your-secrets)), which keeps the build from reaching outside the app through it, and proves nothing
+about what the app does: its code, its Info.plists and its extensions are the build's.
 
 **Every arrangement in which the build and the secrets share one machine's state** (the native build and sign steps of
-one job, the containers of the image run as a job's steps, two native runs one after the other) keeps a build's mistake
-from the secrets: the variables are not set for it, the store is not open to it, the key files are written after it. It
-does not keep away code that means harm: what that code wrote, in the checkout, its `.git` or your files, and what it
-left running natively, are there when the secrets come. A `git diff` there is a check for accidents. On GitHub Actions a
-build step can also write `$GITHUB_ENV` and `$GITHUB_PATH`, which set the environment and the programs of the later
-steps. [ci.md](ci.md#in-the-image) has the hardening that a job of the image's containers can still use, and what each
-part of it does not close.
+one job, the containers of the image run as a job's steps, two native runs one after the other, and `xless run --docker`
+of an `xless.yml` app whose build has no image of its own) keeps a build's mistake from the secrets: the secret
+variables are not set for its tools, and the store is not open to them. It does not keep away code that means harm: what
+that code wrote, in the checkout, its `.git` or your files, what it left running natively, and in one container the
+secret files themselves, are there when the secrets are used. A `git diff` there is a check for accidents. On GitHub
+Actions a build step can also write `$GITHUB_ENV` and `$GITHUB_PATH`, which set the environment and the programs of the
+later steps. [ci.md](ci.md#in-the-image) has the hardening that a job of the image's containers can still use, and what
+each part of it does not close.
 
 ### The Xcode packs
 
@@ -838,10 +859,9 @@ copies nothing of Xcode's into an image, a cache or a release; an app's own buil
 - **xless adds no sandbox of its own** to an `xless.yml` project's build ([an overlay's](#an-overlays-build-on-a-mac) has one). A
   sandbox cannot be put into SwiftPM's, which would have to be turned off. What keeps the secrets from a build is that they come after it:
   the process that builds never has them, and the store stays sealed. What such code starts can outlive the
-  build, in that sandbox or out of it, and do what any program of yours can: read the signer's key file while it is there, for one. When you do not trust a project's code, build it with `--docker` and an
-  [image of your own](images.md#an-image-of-your-own) for its build (`image:`), which shows it nothing of yours but the
-  project and no secret ([a build that means harm](#a-build-that-means-harm)); without one, `--docker` builds and signs an
-  `xless.yml` project in one container.
+  build, in that sandbox or out of it, and do what any program of yours can: read the signer's key file while it is there, for one. When you do not trust a project's code, see
+  [a build that means harm](#a-build-that-means-harm) first: `--docker` builds and signs an `xless.yml` project in one
+  container unless its build has an image of its own.
 - **The signing key never enters a keychain.** `codesign` takes a key from a keychain only: in yours, or in a temporary one, any
   program of yours can ask to sign with it while it is unlocked. So xless signs with rcodesign on a Mac too, whose key file is
   readable by you only, is written after the build and is removed when the signature is made. rcodesign's release is pinned by
@@ -923,7 +943,8 @@ Outside of the sandbox, before it, xless asks git for the source's files, and yo
 (`rustup target add`, and for an iOS Tauri app the component `llvm-tools`): rustup reads the app's toolchain file and runs none of
 its code.
 
-When you do not trust an app's code, build it with `--docker`: what it does not get mounted is not there.
+When you do not trust an app's code, build it with `--docker`: what it does not get mounted is not there. (What the
+builds of several apps still share there: [a build that means harm](#a-build-that-means-harm).)
 
 Where the kernel keyring is unavailable (macOS, a container whose seccomp profile blocks it) there is nothing in it to
 hide; where it is available but a tool cannot be given an empty keyring, xless does not start the tool. Nor does it start

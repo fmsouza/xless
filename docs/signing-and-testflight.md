@@ -155,8 +155,10 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   [research/asc-testflight.md](research/asc-testflight.md).
 
 With a project directory everything runs in one process (one container with `--docker`), so package code built there
-could read the key files. If that matters to you, build up to `finalize` first, with no secret, then sign and upload what it built. Use
-the same build number for both runs:
+could read the key files. Build up to `finalize` first, with no secret, then sign and upload what it built, with the same build
+number for both runs. That keeps a build's mistake from the secrets, not code that means harm: what the first run wrote, and
+natively what it left running, are there when the second one signs
+([what does keep such a build from the secrets](security.md#a-build-that-means-harm)).
 
 ```sh
 export XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 ))
@@ -167,7 +169,7 @@ xless run ~/MyApp --from sign
 ## The three-step split
 
 An overlay app's build runs third-party code: npm scripts, `build.rs`, CocoaPods hooks, Xcode build phases. So with
-`--config`, `xless run --docker` never runs that code next to a secret. It uses three containers (natively on a Mac, the same
+`--config`, `xless run --docker` never runs that code next to a secret ([and what it does not keep apart](security.md#a-build-that-means-harm)). It uses three containers (natively on a Mac, the same
 three steps, with the second in [a sandbox](security.md#an-overlays-build-on-a-mac)):
 
 1. `xless next-build` (`xless tauri next-build` for Tauri), with the App Store Connect key only: the next `dated` build
