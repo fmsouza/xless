@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # scripts/xcode-pack-args.sh's pack_args, sourced as the sample scripts source it (set -euo pipefail): the newest build of
-# $xcode for $arch, from a directory store (XLESS_XCODES) or from the pack volumes, found by name (a volume made by hand has
-# no label); and without one, the message that names what prepares it, and exit 2.
+# $xcode for $arch as xless chooses it (the build last in versions.env's XCODE_RELEASES; one it does not list before those it
+# does, and of those the greater name), from a directory store (XLESS_XCODES) or from the pack volumes, found by name (a volume
+# made by hand has no label); and without one, the message that names what prepares it, and exit 2.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 t=$(mktemp -d)
@@ -25,13 +26,18 @@ echo "$*" >> "$FAKE"
 [ "${DOCKER_DOWN:-0}" != 1 ] || { echo "Cannot connect to the Docker daemon" >&2; exit 1; }
 case "$*" in *"volume ls"*) ;; *) exit 1 ;; esac
 case "$*" in *label=*) printf 'xless-xcode-26.2-17C52-arm64\n' ;;
-  *) printf 'carryon_db\nxless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C60-arm64\nxless-xcode-26.2-17C52-amd64\nxless-xcode-27.0-27A266a-arm64\n' ;; esac
+  *) printf 'carryon_db\nxless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C60-arm64\nxless-xcode-26.2-17C52-amd64\nxless-xcode-27.0-27A266a-arm64\n'
+     printf 'xless-xcode-27.0-27A9-arm64\nxless-xcode-27.0-27A10-arm64\n' ;; esac
 EOF
 chmod +x "$t/docker"
 
-# Volumes: the newest build of 26.2 on arm64 (17C60, made by hand: no label), read-only at /xcodes.
+# Volumes: the newest build of 26.2 on arm64 as xless chooses it, read-only at /xcodes: 17C52, which versions.env lists, before
+# 17C60 (made by hand: no label), which it does not, though 17C60 sorts after it as text.
 out=$(run 26.2 arm64) || fail "volumes: $out"
-[[ "$out" == $'--mount\ntype=volume,src=xless-xcode-26.2-17C60-arm64,dst=/xcodes,readonly\n-e\nXLESS_XCODE=/xcodes/26.2-17C60-arm64' ]] || fail "volumes: $out"
+[[ "$out" == $'--mount\ntype=volume,src=xless-xcode-26.2-17C52-arm64,dst=/xcodes,readonly\n-e\nXLESS_XCODE=/xcodes/26.2-17C52-arm64' ]] || fail "volumes: $out"
+# ... and 27A266a, listed, before 27A9 and 27A10, which are not (and sort after it as text)
+out=$(run 27.0 arm64) || fail "volumes of 27.0: $out"
+[[ "$(sed -n 2p <<<"$out")" == "type=volume,src=xless-xcode-27.0-27A266a-arm64,dst=/xcodes,readonly" ]] || fail "volumes of 27.0: $out"
 grep -q -- 'label=' "$t/docker.log" && fail "the volumes are listed by label: $(cat "$t/docker.log")"
 # None of that Xcode: the message, and exit 2.
 code=0; out=$(run 26.4 arm64 2>&1) || code=$?
@@ -46,7 +52,11 @@ code=0; out=$(DOCKER_DOWN=1 run 26.2 arm64 2>&1) || code=$?
 mkdir -p "$t/store/26.2-17C52-arm64" "$t/store/26.2-17C60-arm64" "$t/store/26.2-17C60-amd64"
 for p in 26.2-17C52-arm64 26.2-17C60-arm64 26.2-17C60-amd64; do echo '{}' > "$t/store/$p/pack.json"; done
 out=$(run 26.2 arm64 "$t/store") || fail "store: $out"
-[[ "$out" == "--mount"$'\n'"type=bind,src=$t/store/26.2-17C60-arm64,dst=/xcodes/26.2-17C60-arm64,readonly"$'\n-e\nXLESS_XCODE=/xcodes/26.2-17C60-arm64' ]] || fail "store: $out"
+[[ "$out" == "--mount"$'\n'"type=bind,src=$t/store/26.2-17C52-arm64,dst=/xcodes/26.2-17C52-arm64,readonly"$'\n-e\nXLESS_XCODE=/xcodes/26.2-17C52-arm64' ]] || fail "store: $out"
+# (of builds it does not list, the greater name, as xless compares them: 17C9 after 17C60)
+rm -r "$t/store/26.2-17C52-arm64"; mkdir -p "$t/store/26.2-17C9-arm64"; echo '{}' > "$t/store/26.2-17C9-arm64/pack.json"
+out=$(run 26.2 arm64 "$t/store") || fail "store of unlisted builds: $out"
+[[ "$(sed -n 4p <<<"$out")" == "XLESS_XCODE=/xcodes/26.2-17C9-arm64" ]] || fail "store of unlisted builds: $out"
 # A store whose path has a comma or a quote: the field quoted, as docker reads --mount (CSV), and as xless writes it.
 mkdir -p "$t/a,b\"c/26.2-17C52-arm64" && echo '{}' > "$t/a,b\"c/26.2-17C52-arm64/pack.json"
 out=$(run 26.2 arm64 "$t/a,b\"c") || fail "a store with a comma: $out"
