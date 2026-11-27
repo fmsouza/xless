@@ -230,4 +230,8 @@ steps:
 [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow, with the two steps, to copy into your app's
 repository and adapt. It runs on a self-hosted Linux runner with xless set up natively.
 [examples/example-ios-image.yml](examples/example-ios-image.yml) runs the two steps in containers of the xless image, with the
-pack volume read-only ([above](#in-the-image)). Neither has been run yet.
+pack volume read-only ([above](#in-the-image)). Neither has been run as a workflow. The two `docker run` commands of
+example-ios-image.yml were run by hand, on a copy of `samples/HelloShip` in a git checkout (Docker on an arm64 Mac): the
+build's, once with the pack of Xcode 26.2 and once with that of Xcode 27.0, made the finalized app each time with nothing
+for `git diff --exit-code` to report (what it writes, `.xless/` and the build's own directories, is not tracked); the
+signing one, without the secrets, stopped where it asks for `ASC_KEY_P8`.
