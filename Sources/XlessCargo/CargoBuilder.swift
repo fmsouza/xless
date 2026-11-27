@@ -96,13 +96,12 @@ public enum CargoBuilder {
 
             let metadata = try readMetadata(cargo(["metadata", "--format-version", "1", "--no-deps"], env: environment(platform: [:])), package: block.package)
             let bin = block.bin ?? metadata.onlyBin ?? block.package
-            // Outputs of another Xcode pack, or of one prepared again by another recipe, go (on a Mac: the Xcode's own, no pack).
-            if !ctx.sdk.isXcode {
-                let identity = PackOutputs.identity(env: ctx.env)
-                let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: metadata.targetDir), record: ctx.packRecord, identity: identity)
-                if !removed.isEmpty {
-                    log("the work copy's outputs were not built with this Xcode pack (\(identity)): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), cargo builds them again")
-                }
+            // Outputs of another Xcode pack, of one prepared again by another recipe, or of the Mac's own Xcode (native and
+            // --docker runs share the work copy), go.
+            let identity = PackOutputs.identity(env: ctx.env, xcode: ctx.sdk.isXcode)
+            let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: metadata.targetDir), record: ctx.packRecord, identity: identity)
+            if !removed.isEmpty {
+                log("the work copy's outputs were not built with this \(ctx.sdk.isXcode ? "Mac's Xcode" : "Xcode pack (\(identity))"): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), cargo builds them again")
             }
 
             // The linker wrapper's debug link gives each thin executable its dSYM when the release profile has debug

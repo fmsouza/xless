@@ -196,13 +196,12 @@ public enum TauriBuilder {
             let metadata = try Shell.run("cargo", ["metadata", "--format-version", "1", "--filter-platform", target, "--manifest-path", manifest.path],
                                          cwd: ctx.appRoot, env: ctx.tools, baseEnvironment: ctx.env, stage: .build).stdout
             let crate = try rootCrate(metadata: Data(metadata.utf8), manifest: manifest)
-            // Outputs of another Xcode pack, or of one prepared again by another recipe, go (on a Mac: the Xcode's own, no pack).
-            if !ctx.sdk.isXcode {
-                let identity = PackOutputs.identity(env: ctx.env)
-                let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: crate.targetDir), record: PackOutputs.record(work: work), identity: identity)
-                if !removed.isEmpty {
-                    log("the work copy's outputs were not built with this Xcode pack (\(identity)): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), built again")
-                }
+            // Outputs of another Xcode pack, of one prepared again by another recipe, or of the Mac's own Xcode (native and
+            // --docker runs share the work copy), go.
+            let identity = PackOutputs.identity(env: ctx.env, xcode: ctx.sdk.isXcode)
+            let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: crate.targetDir), record: PackOutputs.record(work: work), identity: identity)
+            if !removed.isEmpty {
+                log("the work copy's outputs were not built with this \(ctx.sdk.isXcode ? "Mac's Xcode" : "Xcode pack (\(identity))"): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), built again")
             }
             let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)   // on a Mac: the Xcode's own, no pack
             try TauriEnvironment.writeLinkerWrapper(minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
@@ -376,13 +375,12 @@ public enum TauriBuilder {
             r.mainBinaryName = r.mainBinaryName ?? main.bin
             let bundle = r.tauri.raw["bundle"] as? [String: Any] ?? [:]
             let staging = work.appendingPathComponent(".xless/mac", isDirectory: true)
-            // Outputs of another Xcode pack, or of one prepared again by another recipe, go (on a Mac: the Xcode's own, no pack).
-            if !ctx.sdk.isXcode {
-                let identity = PackOutputs.identity(env: ctx.env)
-                let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: main.targetDir), record: PackOutputs.record(work: work), identity: identity)
-                if !removed.isEmpty {
-                    log("the work copy's outputs were not built with this Xcode pack (\(identity)): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), built again")
-                }
+            // Outputs of another Xcode pack, of one prepared again by another recipe, or of the Mac's own Xcode (native and
+            // --docker runs share the work copy), go.
+            let identity = PackOutputs.identity(env: ctx.env, xcode: ctx.sdk.isXcode)
+            let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: main.targetDir), record: PackOutputs.record(work: work), identity: identity)
+            if !removed.isEmpty {
+                log("the work copy's outputs were not built with this \(ctx.sdk.isXcode ? "Mac's Xcode" : "Xcode pack (\(identity))"): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), built again")
             }
 
             var thins: [(triple: String, url: URL)] = [], snapshots: [(triple: String, dir: URL)] = [], targets: [String]? = nil

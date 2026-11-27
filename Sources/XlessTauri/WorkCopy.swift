@@ -131,6 +131,10 @@ public enum WorkCopy {
 /// compile read by path, and a pack prepared again by another recipe has the same paths; so the pack is recorded beside
 /// them, and they are removed when another one builds.
 public enum PackOutputs {
+    /// What builds the outputs: with `xcode` (a Mac's own Xcode) "(xcode)", which native and --docker runs that share a work
+    /// copy tell apart; else the pack in `env`.
+    public static func identity(env: [String: String], xcode: Bool) -> String { xcode ? "(xcode)" : identity(env: env) }
+
     /// The pack in `env` (`XcodePack.identity`), or "(no pack)" (an image's own SDK, or none).
     public static func identity(env: [String: String]) -> String {
         guard let found = try? XcodeEnvironment.lookup(env: env), let pack = found.pack else { return "(no pack)" }
