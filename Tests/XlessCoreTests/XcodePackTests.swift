@@ -13,7 +13,9 @@ private func manifest(parts: [String: String] = ["sdk": "h"]) -> PackManifest {
 }
 
 @Test func manifestRoundTrips() throws {
-    let url = try tempDir().appendingPathComponent("pack.json")
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("pack.json")
     let m = manifest(parts: ["sdk": "a", "swift-build": "b"])
     try m.write(to: url)
     #expect(try PackManifest.load(from: url) == m)
@@ -28,14 +30,18 @@ private func leftovers(beside url: URL) throws -> [String] {
 }
 
 @Test func writeCreatesManifestWhereNoneExistsAndLeavesNoTemporaryFile() throws {
-    let url = try tempDir().appendingPathComponent("pack.json")
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("pack.json")
     try manifest().write(to: url)
     #expect(try PackManifest.load(from: url) == manifest())
     #expect(try leftovers(beside: url).isEmpty)
 }
 
 @Test func writeReplacesAnExistingManifestAndLeavesNoTemporaryFile() throws {
-    let url = try tempDir().appendingPathComponent("pack.json")
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("pack.json")
     try manifest(parts: ["sdk": "old"]).write(to: url)
     try manifest(parts: ["sdk": "new", "swift-build": "b"]).write(to: url)
     #expect(try PackManifest.load(from: url) == manifest(parts: ["sdk": "new", "swift-build": "b"]))
@@ -44,12 +50,14 @@ private func leftovers(beside url: URL) throws -> [String] {
 
 @Test func openWithoutManifestIsNil() throws {
     let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root.appendingPathComponent("config"), withIntermediateDirectories: true)
     #expect(try XcodePack.open(root) == nil)
 }
 
 @Test func openRejectsBrokenManifest() throws {
     let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
     try "{ nope".write(to: root.appendingPathComponent("pack.json"), atomically: true, encoding: .utf8)
     #expect {
         try XcodePack.open(root)

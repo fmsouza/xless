@@ -43,6 +43,7 @@ private func digest(_ part: PackPart, build: String = "27A266a", arch: String = 
 
 @Test func hashesAreSixtyFourHexDigits() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     for part in PackPart.allCases {
         let h = try digest(part, share)
         #expect(h.count == 64 && h.allSatisfy { $0.isHexDigit })
@@ -53,6 +54,7 @@ private func digest(_ part: PackPart, build: String = "27A266a", arch: String = 
 @Test(arguments: sdkFiles.filter { !$0.hasSuffix("/17C52.txt") })
 func sdkHashChangesWithEachFile(file: String) throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     let before = try digest(.sdk, share)
     try write(file, "edited", in: share)
     #expect(try digest(.sdk, share) != before)
@@ -64,6 +66,7 @@ func sdkHashChangesWithEachFile(file: String) throws {
 ])
 func sdkHashChangesWithEachKey(key: String) throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     var t = table
     t["XCODE_SHORT_27A266a"] = "27.0"
     let before = try digest(.sdk, t, share)
@@ -75,6 +78,7 @@ func sdkHashChangesWithEachKey(key: String) throws {
 
 @Test func sdkHashIgnoresOtherArchAndOtherBuilds() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     let before = try digest(.sdk, share)
     var t = table
     t["SWIFT_TOOLCHAIN_6_4_0_URL_X86_64"] = "other"
@@ -87,6 +91,7 @@ func sdkHashChangesWithEachKey(key: String) throws {
 // Another vetted .xip of the same Xcode (XCODE_XIP_SHA256_<build>) makes the same pack: the checksums are no input.
 @Test func sdkHashIgnoresTheXipChecksums() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     var t = table
     t["XCODE_XIP_SHA256_27A266a"] = "aaaa"
     let before = try digest(.sdk, t, share)
@@ -99,6 +104,7 @@ func sdkHashChangesWithEachKey(key: String) throws {
 @Test(arguments: ["SWB_TAG", "SWB_SHA256", "SWB_SYSTEM_VERSION", "SWIFT_TOOLCHAIN_6_4_0_SHA256_AARCH64", "SWIFT_IMAGE"])
 func swiftBuildHashChangesWithItsPins(key: String) throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     let before = try digest(.swiftBuild, share)
     var t = table
     t[key] = key == "SWIFT_IMAGE" ? "swift:6.4.0-noble@sha256:abc" : (t[key] ?? "") + "x"
@@ -107,6 +113,7 @@ func swiftBuildHashChangesWithItsPins(key: String) throws {
 
 @Test func swiftBuildHashIgnoresTheImageDigest() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     var t = table
     let before = try digest(.swiftBuild, t, share)
     t["SWIFT_IMAGE"] = "swift:6.4.1-jammy@sha256:def"
@@ -115,6 +122,7 @@ func swiftBuildHashChangesWithItsPins(key: String) throws {
 
 @Test func swiftBuildHashChangesWithItsScript() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     let before = try digest(.swiftBuild, share)
     try write("scripts/pack-swift-build.sh", "edited", in: share)
     #expect(try digest(.swiftBuild, share) != before)
@@ -122,15 +130,17 @@ func swiftBuildHashChangesWithItsPins(key: String) throws {
 
 @Test func hashesIgnoreTheXlessVersion() throws {
     let share = try makeShare()
-    let before = PackPart.allCases.map { try! digest($0, share) }
+    defer { try? FileManager.default.removeItem(at: share) }
+    let before = try PackPart.allCases.map { try digest($0, share) }
     var t = table
     t["XLESS_VERSION"] = "9.9.9"
     try write("VERSION", "9.9.9", in: share)
-    #expect(PackPart.allCases.map { try! digest($0, t, share) } == before)
+    #expect(try PackPart.allCases.map { try digest($0, t, share) } == before)
 }
 
 @Test func sdkHashIgnoresSwiftBuildPins() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     let before = try digest(.sdk, share)
     var t = table
     t["SWB_TAG"] = "other"; t["SWB_SHA256"] = "other"; t["SWIFT_IMAGE"] = "swift:6.4.0-noble@sha256:abc"
@@ -141,6 +151,7 @@ func swiftBuildHashChangesWithItsPins(key: String) throws {
 @Test(arguments: sdkFiles.filter { $0 != "scripts/fit-toolchain.sh" })
 func swiftBuildHashIgnoresTheFixture(file: String) throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     let before = try digest(.swiftBuild, share)
     try write(file, "edited", in: share)
     try write("scripts/fit-toolchain.sh", "edited", in: share)
@@ -151,6 +162,7 @@ func swiftBuildHashIgnoresTheFixture(file: String) throws {
     #expect(PackRecipe.mode(swift: "6.4.0", table: table) == .own)
     #expect(PackRecipe.mode(swift: "6.2.3", table: table) == .separate)
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     var flipped = table
     flipped["SWIFT_VERSION"] = "6.2.3"
     #expect(try digest(.sdk, build: "27A266a", table, share) != digest(.sdk, build: "27A266a", flipped, share))
@@ -164,6 +176,7 @@ func swiftBuildHashIgnoresTheFixture(file: String) throws {
 
 @Test func missingFixtureThrows() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     try FileManager.default.removeItem(at: share.appendingPathComponent("docker/toolchain/target-os/27A266a.txt"))
     do {
         _ = try digest(.sdk, share)
@@ -175,6 +188,7 @@ func swiftBuildHashIgnoresTheFixture(file: String) throws {
 
 @Test func missingPinThrows() throws {
     let share = try makeShare()
+    defer { try? FileManager.default.removeItem(at: share) }
     var t = table
     t["SWIFT_TOOLCHAIN_6_4_0_SHA256_AARCH64"] = nil
     #expect(throws: XlessError.self) { try digest(.sdk, t, share) }

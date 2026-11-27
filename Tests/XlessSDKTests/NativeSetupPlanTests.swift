@@ -18,22 +18,26 @@ private let table: [String: String] = [
 ]
 private let bare = PackPlan.Abilities(swiftBuild: false)
 
-/// A share with the files the pack's recipe hashes read.
-private let share: URL = {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-plan-share-\(UUID().uuidString)")
+/// A share with the files the pack's recipe hashes read: one for the process, made when a test first needs it and removed when
+/// the process ends.
+private let madeShare = Result<URL, Error> {
+    let dir = sharePlace()
     for path in ["scripts/fit-toolchain.sh", "scripts/pack-swift-build.sh", "docker/toolchain/clang-driver", "docker/toolchain/target-os-check",
                  "docker/toolchain/record-flags.py", "docker/toolchain/target-os/derived.txt", "docker/toolchain/target-os/27A266a.txt",
                  "docker/toolchain/target-os/17C52.txt"] {
         let url = dir.appendingPathComponent(path)
-        try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try! Data(path.utf8).write(to: url)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(path.utf8).write(to: url)
     }
+    atexit { try? FileManager.default.removeItem(at: sharePlace()) }
     return dir
-}()
+}
+private func sharePlace() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("native-plan-share-\(getpid())") }
+private func share() throws -> URL { try madeShare.get() }
 
-private func plan(_ x: KnownXcode = xcode27, arch: String = "arm64", table t: [String: String] = table, share sh: URL = share, reexport: Bool = false,
+private func plan(_ x: KnownXcode = xcode27, arch: String = "arm64", table t: [String: String] = table, share sh: URL? = nil, reexport: Bool = false,
                   store s: XcodeStore = store, existing: @escaping (URL) -> Bool = { _ in false }) throws -> [SetupStep] {
-    try NativeSetupPlan.make(source: (x, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: arch, share: sh,
+    try NativeSetupPlan.make(source: (x, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: arch, share: try sh ?? share(),
                              cacheRoot: cache, layout: layout, store: s, table: t, reexport: reexport, abilities: bare, existing: existing)
 }
 
@@ -82,7 +86,8 @@ private func tempDir() throws -> URL {
     let staging = "/n/xcodes/27.0-27A266a-arm64.partial"
     #expect(steps.contains { $0.action == .packSDK(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"),
                                                     config: URL(fileURLWithPath: "\(staging)/config"), toolchain: URL(fileURLWithPath: "\(staging)/toolchain")) })
-    #expect(steps.contains { $0.argv == ["\(share.path)/scripts/fit-toolchain.sh", staging, "own", "\(share.path)/docker/toolchain"] })
+    let sh = try share()
+    #expect(steps.contains { $0.argv == ["\(sh.path)/scripts/fit-toolchain.sh", staging, "own", "\(sh.path)/docker/toolchain"] })
     #expect(steps.last?.action == .packCommit(staging: URL(fileURLWithPath: staging), final: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64")))
     #expect(!steps.contains { $0.argv.first == "docker" })
 }
@@ -108,7 +113,7 @@ private func tempDir() throws -> URL {
     let root = try tempDir()
     defer { try? FileManager.default.removeItem(at: root) }
     let s = XcodeStore(root: root.appendingPathComponent("xcodes"))
-    let hash = try PackRecipe.hash(.sdk, build: "17C52", arch: "arm64", table: table, share: share)
+    let hash = try PackRecipe.hash(.sdk, build: "17C52", arch: "arm64", table: table, share: share())
     let p26 = XcodePack(root: s.directory(xcode: "26.2", build: "17C52", arch: "arm64"),
                         manifest: PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: "arm64", swift: "6.2.3",
                                                mode: .separate, parts: ["sdk": hash]))
@@ -174,6 +179,7 @@ private func tempDir() throws -> URL {
 @Test func pinnedToolOnPathIsNotDownloaded() throws {
     // Executables that print a version, as xtool (`xtool 1.21.0`) and rcodesign (`apple-codesign 0.29.0`) do; the check runs them.
     let dir = try tempDir(), pinned = dir.appendingPathComponent("pinned"), other = dir.appendingPathComponent("other")
+    defer { try? FileManager.default.removeItem(at: dir) }
     for (bin, xtool, rcodesign) in [(pinned, "1.21.0", "0.29.0"), (other, "1.20.0", "0.28.0")] {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try ExecutableFile.write("#!/bin/sh\n[ \"$1\" = --version ] && echo 'xtool \(xtool)'\n", to: bin.appendingPathComponent("xtool"), stage: .sdk)
@@ -192,7 +198,7 @@ private func tempDir() throws -> URL {
     #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: broken.path) == nil)
 
     func make(_ path: String) throws -> [SetupStep] {
-        try NativeSetupPlan.make(source: (xcode27, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: "arm64", share: share,
+        try NativeSetupPlan.make(source: (xcode27, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: "arm64", share: share(),
                                  cacheRoot: cache, layout: layout, store: store, table: table, reexport: false, abilities: bare,
                                  installed: { NativeSetupPlan.pinnedOnPath($0, version: $1, path: path) }, existing: { _ in false })
     }
@@ -211,7 +217,7 @@ private func tempDir() throws -> URL {
 @Test func anExportSourceIsInstalledFromWhereItIsAndNeverExported() throws {
     let export = URL(fileURLWithPath: "/exports/x27")
     let tools: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign"]
-    let steps = try NativeSetupPlan.make(source: (xcode27, .export, export), arch: "arm64", share: share, cacheRoot: cache, layout: layout,
+    let steps = try NativeSetupPlan.make(source: (xcode27, .export, export), arch: "arm64", share: share(), cacheRoot: cache, layout: layout,
                                          store: store, table: table, reexport: false, abilities: bare, existing: { tools.contains($0.path) })
     for s in steps { if case .export = s.action { Issue.record("an export source was exported again: \(s.title)") } }
     #expect(steps[0].action == .meta(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
