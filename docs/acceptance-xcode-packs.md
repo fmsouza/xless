@@ -20,7 +20,7 @@ Nothing was pushed or delivered.
 | amd64 | NOT RUN — the commands are below |
 | A new xless over existing packs prepares nothing | PASS — both packs, prepared by an earlier xless, were found current |
 | Sizes and times are measured | Below |
-| Outputs kept in a work copy follow a pack prepared again | FAIL for Cargo (and the Rust part of Tauri) — see [Stale outputs](#stale-outputs-after-a-pack-is-prepared-again) |
+| Outputs kept in a work copy follow a pack prepared again | FAIL for Cargo (and the Rust part of Tauri) at fc15c64; PASS for Cargo at 3107e94, after a51de02 (Tauri's builders run the same check; not exercised for real) — see [Stale outputs](#stale-outputs-after-a-pack-is-prepared-again) |
 
 ## The machine
 
@@ -194,8 +194,27 @@ names the pack; React Native's does. The run:
 So the executables of a Cargo app (and the Rust part of a Tauri app) linked against a pack survive that pack being
 prepared again: cargo tracks its sources, flags and declared environment variables, and the SDK's path is the same.
 Had the recipe changed the SDK or the toolchain, the next build would have shipped executables linked against the old
-ones. Swift Build, which tracks the headers and modules a compile read, was not tried. Until the fingerprint names
-the pack's recipe, a clean work copy after `xless setup` prepared a pack again is the safe course.
+ones. Swift Build, which tracks the headers and modules a compile read, was not tried.
+
+Since a51de02 a Cargo or Tauri build records the pack it builds with in the work copy (`.xless/pack`: the pack's name
+and its two recipe hashes) and, when the record is another pack's or missing, removes the Apple targets' outputs
+(`target/aarch64-apple-ios`, `target/aarch64-apple-darwin`, `target/x86_64-apple-darwin`) and `.xless/swift`, `dsym`,
+`mac` and `cargo-mac` before cargo runs. Measured again at 3107e94, HelloCargo for Xcode 26.2 in one kept work volume:
+
+1. Built: 43 s; the three executables written at 16:27:56 to 16:28:06; the record names `sdk=d26661a7be8a…`.
+2. The pack's `sdk` hash in `pack.json` replaced by zeros, then `xless setup --docker --sdk
+   ~/.cache/xless/sdk/xcode26.2-17C52`: "is not current (its sdk part was prepared by another recipe (000000000000,
+   this xless's is d26661a7be8a))", the `sdk` part prepared again in 1 min 33 s.
+3. Built again: 2 s, cargo compiled nothing (`Finished … in 0.07s`), the executables kept their inodes and mtimes, the
+   record unchanged. That is right: the recipe, so the pack's identity and its SDK's content, had not changed.
+4. The record rewritten to name another `sdk` hash (what a pack of another recipe leaves), then built again: 13 s;
+   "the work copy's outputs were not built with this Xcode pack (26.2-17C52-arm64 sdk=d26661… swift-build=db5516…):
+   removed aarch64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin, dsym, cargo-mac, cargo builds them again";
+   cargo compiled `hello-cargo` for the three targets (new inodes, written at 16:30:10 to 16:30:19), and the record
+   was written again.
+5. `scripts/pack-parity.sh` of the products of step 1 against those of steps 3 and 4: "11 files: 11 identical".
+
+A work copy made by an xless before a51de02 has no record: its Apple outputs are built again once.
 
 ## Sizes
 
@@ -221,7 +240,7 @@ On the machine above, each once:
 | The `tauri` kit / the `react-native` kit (it compiles Ruby and `hermesc`) | 18 s / 2 min 30 s |
 | That whole setup (both packs current: nothing prepared) | 6 min 42 s |
 | The pack's `sdk` part prepared again from the 26.2 export: the Swift 6.2.3 download and unpacking, the SDK, the fit | 2 min 43 s: 1 min 53 s, 39 s, 7 s |
-| A whole pack from the export, with Swift Build compiled (about 4 min of it): measured before this record, not again | about 5 min 40 s |
+| A whole pack from the export, with Swift Build compiled: measured at 3107e94, below | 6 min 55 s (27.0) / 6 min 24 s (26.2) |
 | Baked images, for comparison: 27.0 (partly next to other builds) / 26.2 (stages cached from 27.0) | 9 min 18 s / 7 min 4 s |
 | A run's start-up: `xless run --docker <HelloShip> --build-number 1 --to build`, from the command to the first line of the build step's container, with the pack / with the baked image | 0.82, 0.44, 0.44 s / 0.48, 0.36, 0.40 s |
 
@@ -229,6 +248,19 @@ The start-up is the same: the pack is a volume mount. One of the three baseline 
 (`Signal 11` in libdispatch's event loop, `xless exited with code 12`); the next run passed. The baked 26.2 image's
 SwiftPM 6.2.3 crashed the same way twice more, building HelloShip for macOS while another build ran in the VM, and
 passed alone. That is the baked image's Swift, unchanged by the packs.
+
+Again at 3107e94, on the same machine, each once. Both packs were stale for both parts (the fixes of that wave changed
+their recipes), so each setup prepared a whole pack:
+
+| What | Time |
+|---|---|
+| `xless setup --docker --sdk <27.0 export> --with tauri`, all of it | 12 min 9 s |
+| Its image, from an empty build cache (the Swift image already on the machine) | 4 min 51 s |
+| Its whole pack 27.0: the Swift 6.4 download and unpacking, the SDK, the fit, Swift Build, putting it in place | 6 min 55 s: 1 min 55 s, 21 s, 5 s, 4 min 16 s, 16 s |
+| Its `tauri` kit | 20 s |
+| The whole pack 26.2 (`xless setup --docker --sdk <26.2 export> --with tauri`, the image and kit current): the same steps | 6 min 24 s: 1 min 48 s, 19 s, 5 s, 4 min 7 s, 1 s |
+| The 26.2 pack's `sdk` part prepared again alone (Swift Build kept, by hard links): the download, the SDK, the fit, putting it in place | 1 min 33 s: 1 min 2 s, 18 s, 5 s, 5 s |
+| The same two setups again ("is current for this xless: nothing to prepare") | 0 s each |
 
 ## Not run
 
@@ -262,5 +294,5 @@ passed alone. That is the baked image's Swift, unchanged by the packs.
 - A Swift app for macOS built with a pack's toolchain records that toolchain's place in one rpath, as the baked images
   recorded theirs; where the path is longer than the baseline's, the sections of `__TEXT` move with it (the 27.0
   HelloShip above).
-- Cargo's and Tauri's outputs in a work copy are not rebuilt when the pack they were linked against is prepared again,
-  as above.
+- A Tauri work copy's outputs are removed when its pack changes by the same code as Cargo's (above); that was not
+  exercised for real.
