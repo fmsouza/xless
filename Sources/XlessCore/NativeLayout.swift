@@ -27,6 +27,17 @@ public struct NativeLayout: Sendable, Equatable {
     /// The `SwiftToolchain` record of a native install of before the packs (no longer written or read).
     public var record: URL { root.appendingPathComponent("swift-toolchain.json") }
 
+    /// What an xless of before the packs installed natively, when this is such an install: the SDK `darwin.artifactbundle` (not the
+    /// `swift-sdks` directory around it, which may hold a person's own SDKs), its toolchain-meta.json, the Swift toolchains and the
+    /// record. It is one when the bundle and the record are both there (setup's note and `xless clean --old` ask this and nothing else);
+    /// only what exists is returned, in the order to remove it. Nothing: not an older install.
+    public func olderInstall(env: [String: String]) -> [URL] {
+        let fm = FileManager.default
+        let bundle = DarwinSDKLocator.bundle(env: env)
+        guard fm.fileExists(atPath: bundle.path), fm.fileExists(atPath: record.path) else { return [] }
+        return [bundle, ToolchainMeta.defaultLocation(env: env), toolchains, record].filter { fm.fileExists(atPath: $0.path) }
+    }
+
     public func toolchain(version: String) -> URL { toolchains.appendingPathComponent("swift-\(version)") }
     public func xtool(version: String) -> URL { tools.appendingPathComponent("xtool-\(version)") }
     public func rcodesign(version: String) -> URL { tools.appendingPathComponent("rcodesign-\(version)") }

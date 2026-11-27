@@ -110,3 +110,24 @@ private func packEnvironment(store: URL, _ extra: [String: String] = [:]) throws
     let mixed = pinned.merging(["PATH": "/opt/tools/bin:\(native):\(started)"]) { $1 }
     #expect(NativeLayout.activatedPath(env: mixed, linux: true) == "\(older.toolchain.path)/usr/bin:\(bin):/opt/tools/bin:/usr/bin:/bin")
 }
+
+/// An older install is the SDK bundle with the record. The swift-sdks directory around the bundle is a person's, and an SDK without the
+/// record is not xless's: nothing.
+@Test func anOlderInstallNeedsTheBundleAndTheRecord() throws {
+    let fm = FileManager.default
+    let home = fm.temporaryDirectory.appendingPathComponent("older-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: home) }
+    let env = ["HOME": home.path]
+    let layout = NativeLayout(env: env)
+    let bundle = DarwinSDKLocator.bundle(env: env)
+    #expect(layout.olderInstall(env: env).isEmpty)
+    try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+    try fm.createDirectory(at: bundle.deletingLastPathComponent().appendingPathComponent("mine.artifactbundle"), withIntermediateDirectories: true)
+    #expect(layout.olderInstall(env: env).isEmpty, "a bundle alone may be a person's own")
+    try fm.createDirectory(at: layout.root, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: layout.record)
+    try fm.createDirectory(at: layout.toolchains, withIntermediateDirectories: true)
+    #expect(layout.olderInstall(env: env).map(\.path) == [bundle.path, layout.toolchains.path, layout.record.path])
+    try fm.removeItem(at: bundle)
+    #expect(layout.olderInstall(env: env).isEmpty, "a record alone is not an install with an SDK")
+}

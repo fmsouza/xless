@@ -78,7 +78,7 @@ make kits                                            # KITS=tauri,react-native, 
 export in `dist/sdk-xcode<version>/` (git-ignored). A `.xip` is expanded once with Apple's `xip --expand` into
 `~/.cache/xless/xcode/<name>/`. Unlike `xless setup`, the image gets an `xless` compiled from the checkout.
 
-`make sdk-export` is the export alone (`xless sdk export`: `xtool sdk build` in `xless:local-<arch>-setup`, with Xcode
+`make sdk-export` is the export alone (`xless sdk export`: `xtool sdk build` in the xless image, `xless:<tag>-<arch>`, which `xless setup --docker` builds, with Xcode
 mounted read-only, into `dist/sdk/`). The images are built by `scripts/docker-images.sh`, the same recipe `xless setup`
 uses, and the kits by `xless setup --docker --with`, so a kit of the checkout has the labels a run looks for. Every
 download of the image (the static Swift SDK, xtool, rcodesign, Swift Build) is sha256-pinned in `versions.env`; those of

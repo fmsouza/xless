@@ -222,7 +222,7 @@ struct SetupCommand: AsyncParsableCommand {
             }
             // An Xcode installed natively by an xless of before the packs: its SDK and toolchain record, and no pack.
             let old = DarwinSDKLocator.bundle(env: env)
-            let olderInstall = store.packs().isEmpty && fm.fileExists(atPath: old.path) && fm.fileExists(atPath: layout.record.path)
+            let olderInstall = store.packs().isEmpty && !layout.olderInstall(env: env).isEmpty
             if olderInstall {
                 say("note: the Xcode that an older xless installed natively (the SDK in \(old.deletingLastPathComponent().path), the Swift toolchain under \(layout.toolchains.path)) is not used any more: this setup prepares an Xcode pack instead")
             }

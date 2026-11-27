@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import XlessCore
+import XlessImages
 import XlessSDK
 
 struct SDKCommand: AsyncParsableCommand {
@@ -78,11 +79,11 @@ struct SDKMetaCommand: AsyncParsableCommand {
 struct SDKExportCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "export",
-        abstract: "On the Mac: write toolchain-meta.json and build per-arch Darwin SDKs inside the Linux base image.")
+        abstract: "On the Mac: write toolchain-meta.json and build per-arch Darwin SDKs inside the xless image (xless setup --docker builds it).")
 
     @Option(help: "Path to Xcode.app.") var xcode: String = "/Applications/Xcode.app"
     @Option(help: "Output directory.") var out: String = "dist/sdk"
-    @Option(help: "The image with xtool (scripts/docker-images.sh tools): '{arch}' in it is replaced by the architecture, else '-<arch>' is appended.") var baseImage: String = "xless:local-{arch}-setup"
+    @Option(help: "The image with xtool, when not the xless image of this xless (xless setup --docker builds it): '{arch}' in it is replaced by the architecture, else '-<arch>' is appended.") var baseImage: String?
     @Option(parsing: .upToNextOption, help: "Docker architectures.") var arch: [String] = ["arm64", "amd64"]
     @Option(help: "BuildMachineOSBuild value (default: the supported-Xcode table's).") var buildMachineOSBuild: String?
 
@@ -95,7 +96,18 @@ struct SDKExportCommand: AsyncParsableCommand {
         try meta.write(to: outDir.appendingPathComponent("toolchain-meta.json"))
 
         for a in arch {
-            let image = baseImage.contains("{arch}") ? baseImage.replacingOccurrences(of: "{arch}", with: a) : "\(baseImage)-\(a)"
+            let image: String
+            if let baseImage {
+                image = baseImage.contains("{arch}") ? baseImage.replacingOccurrences(of: "{arch}", with: a) : "\(baseImage)-\(a)"
+            } else {
+                let exe = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+                do {
+                    let share = try XlessShare.root(env: ProcessInfo.processInfo.environment, executable: exe)
+                    image = try LocalImages.here.base(version: try ImageName.cachedTag(ofShare: share), arch: a).name
+                } catch let problem as ImageProblem {
+                    throw XlessError(.sdk, problem.cause, fix: problem.fix)
+                }
+            }
             let probe = try? Shell.docker(["run", "--rm", "--pull=never", "--platform", "linux/\(a)", "-v", "\(xcode):/xcode:ro", image,
                                            "test", "-d", "/xcode/Contents/Developer"], stage: .sdk)
             guard probe != nil else {
@@ -115,36 +127,26 @@ struct SDKExportCommand: AsyncParsableCommand {
 }
 #endif
 
+/// Nothing remains of `xless sdk install`: it copied the SDK out of an xless image (--image, gone with the images that held an SDK), or
+/// installed an export where xtool keeps it, which nothing reads any more. The command stays, so an old script is told what to run.
 struct SDKInstallCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "install", abstract: "Copy the Darwin SDK and its toolchain metadata out of an xless SDK image (--image).",
+        commandName: "install", abstract: "No longer installs anything: xless setup --sdk <export> prepares an Xcode pack from an SDK export.",
         discussion: """
-        A native setup no longer installs an SDK on its own: `xless setup --sdk <export>` prepares an Xcode pack from an SDK \
-        export (the directory that holds <arch>/darwin.xtoolsdk and toolchain-meta.json), with the Swift toolchain fitted to it.
+        A native setup does not install an SDK on its own any more, and no image holds one: `xless setup --sdk <export>` prepares an Xcode pack \
+        from an SDK export (the directory that holds <arch>/darwin.xtoolsdk and toolchain-meta.json), with the Swift toolchain fitted to it. \
+        Every form of this command (with --xtoolsdk, --meta or --image) says so and does nothing.
         """)
 
     @Option(help: ArgumentHelp("No longer supported: xless setup --sdk <export> prepares an Xcode pack from the export.", visibility: .hidden)) var xtoolsdk: String?
     @Option(help: ArgumentHelp("No longer supported: see --xtoolsdk.", visibility: .hidden)) var meta: String?
-    @Option(help: "Copy both from an xless SDK image (needs docker).") var image: String?
+    @Option(help: ArgumentHelp("No longer supported: no image holds an SDK; see --xtoolsdk.", visibility: .hidden)) var image: String?
 
     func run() async throws {
-        guard let image else {
-            // The SDK and metadata it wrote (under the configuration directory) are read by nothing any more.
-            let export = xtoolsdk.map { URL(fileURLWithPath: $0).standardizedFileURL.deletingLastPathComponent().deletingLastPathComponent().path }
-                ?? meta.map { URL(fileURLWithPath: $0).standardizedFileURL.deletingLastPathComponent().path }
-            throw XlessError(.sdk, "xless sdk install no longer installs an SDK export: builds read the Xcode from an Xcode pack, which xless setup prepares",
-                             fix: "xless setup --sdk \(export.map(ShellWord.quoted) ?? "<the export directory, holding <arch>/darwin.xtoolsdk and toolchain-meta.json>")")
-        }
-        guard xtoolsdk == nil, meta == nil else {
-            throw XlessError(.sdk, "--image cannot be combined with --xtoolsdk/--meta", fix: "pass --image alone")
-        }
-        let installed = try SDKInstaller.install { sdkStage, metaStage in
-            let cid = try Shell.docker(["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            defer { _ = try? Shell.docker(["rm", cid], stage: .sdk) }
-            try Shell.docker(["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
-            try Shell.docker(["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
-            return sdkStage
-        }
-        print("SDK at \(installed.sdk.path); metadata at \(installed.meta.path)")
+        let export = xtoolsdk.map { URL(fileURLWithPath: $0).standardizedFileURL.deletingLastPathComponent().deletingLastPathComponent().path }
+            ?? meta.map { URL(fileURLWithPath: $0).standardizedFileURL.deletingLastPathComponent().path }
+        throw XlessError(.sdk, "xless sdk install no longer installs an SDK: builds read the Xcode from an Xcode pack, which xless setup prepares"
+                         + (image == nil ? "" : " (no image holds an SDK any more)"),
+                         fix: "xless setup --sdk \(export.map(ShellWord.quoted) ?? "<the export directory, holding <arch>/darwin.xtoolsdk and toolchain-meta.json>")")
     }
 }
