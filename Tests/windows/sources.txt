@@ -471,6 +471,7 @@
 + Tests/XlessCLITests/BundleIDCommandTests.swift
 - Tests/XlessCLITests/CacheRemovalTests.swift
 + Tests/XlessCLITests/CertCommandTests.swift
+- Tests/XlessCLITests/CleanRealPathTests.swift
 + Tests/XlessCLITests/CommandsNotHereTests.swift
 + Tests/XlessCLITests/DeviceCommandTests.swift
 + Tests/XlessCLITests/HeldSecretsTests.swift

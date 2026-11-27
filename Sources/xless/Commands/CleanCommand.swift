@@ -54,7 +54,7 @@ struct CleanCommand: AsyncParsableCommand {
         // What an older xless installed natively, as setup's note sees it: read before anything goes (the record is in the native home).
         // Not what lies in a pack store or the cache, or leads there by a link (`XDG_CONFIG_HOME` of a build is `<cache>/xless/xtool-config/<pack>`,
         // whose swift-sdks is a link into the pack): those are packs and exports, not an older install.
-        let real = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path }
+        let real = Self.real
         let guarded = [XcodeStore(env: env).root, layout.root.appendingPathComponent("xcodes"), cacheRoot].map(real)
         var skipped: [String] = []
         // Nor what lies in a pack of any store: one that an earlier XLESS_XCODES named is not among those.
@@ -382,6 +382,10 @@ struct CleanCommand: AsyncParsableCommand {
         try PackPlan.removeTree(root)
     }
 
+    /// The path clean compares: links resolved, and on a case-insensitive volume of a Mac in the case it has on disk (Foundation
+    /// asks the file system, as realpath does), so that XLESS_XCODES=~/.CACHE/xless/XCODES is found inside ~/.cache.
+    static func real(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
+
     /// The pack that holds the real path `path` (it, or a directory above it, has a `pack.json`), or nil.
     private static func pack(holding path: String) -> String? {
         var dir = URL(fileURLWithPath: path)
@@ -421,7 +425,7 @@ struct CleanCommand: AsyncParsableCommand {
 
     /// What `removeCache` removes, each a whole tree (or a link): only `root` itself when nothing in it is kept.
     static func cacheRemovals(_ root: URL, keeping: [String], through: [URL]) -> [URL] {
-        let real = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path }
+        let real = Self.real
         // Each link on the way to a kept path, as the real path of the directory it is in and its name.
         var links: Set<String> = []
         for given in through {
@@ -513,7 +517,7 @@ struct CleanCommand: AsyncParsableCommand {
             ? "set XLESS_NATIVE_HOME to the native home (an absolute path of a directory that only xless setup filled), or unset it"
             : "move what is in \(root.path) away, or remove it yourself: xless removes only a directory that holds nothing but what its setup makes"
         if let given, !given.hasPrefix("/") { return ("the native home \(given) is a relative path, which would name another directory from every other one", fix) }
-        let real = { (u: URL) in u.resolvingSymlinksInPath().standardizedFileURL.path }
+        let real = Self.real
         let path = real(root)
         if path == "/" { return ("the native home is /", fix) }
         for (what, url) in holds {
