@@ -568,7 +568,8 @@ extra=(XLESS_NATIVE_HOME="$t/oldroot")
 run --old --yes
 [[ $code == 0 && -d "$t/oldroot/toolchains" && -f "$t/oldroot/swift-toolchain.json" && -d "$t/home/.swiftpm/swift-sdks/darwin.artifactbundle" ]] || fail "--old with an unsound root removed the older install: $code $(cat "$t/err")"
 grep -q '^leaving the older native install: the native home .* holds what xless did not put there (notes.txt)' "$t/out" || fail "--old does not say why: $(cat "$t/out")"
-grep -qx 'image rm xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0-tauri xless:9.8.0-arm64 xless:9.8.0-arm64-react-native' "$log" || grep -q '^image rm' "$log" || fail "--old did not go on with the images: $(removed)"
+grep -q '^no older native install' "$t/out" && fail "--old says both that it leaves the older install and that there is none: $(cat "$t/out")"
+grep -q '^image rm' "$log" || fail "--old did not go on with the images: $(removed)"
 extra=()
 # <home>/xcodes a link: the listing says the link goes and the packs behind it do not
 nhl="$t/nh-link"; rm -rf "$nhl" "$t/behind"; mkdir -p "$nhl/bin" "$t/behind/26.2-17C52-arm64"; ln -s x "$nhl/bin/xtool"; ln -s "$t/behind" "$nhl/xcodes"; echo "$pack_json" > "$t/behind/26.2-17C52-arm64/pack.json"

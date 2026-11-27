@@ -85,7 +85,7 @@ struct CleanCommand: AsyncParsableCommand {
         let rootEmpty = ((try? fm.contentsOfDirectory(atPath: layout.root.path)) ?? ["-"]).isEmpty
         if let rootProblem {
             guard !doNative else { throw XlessError(.sdk, rootProblem.cause, fix: rootProblem.fix) }
-            if listOnly || old { say("\(old ? "leaving the older native install" : "not listing the native home"): \(rootProblem.cause)") }
+            if old ? !olderInstall.isEmpty : listOnly { say("\(old ? "leaving the older native install" : "not listing the native home"): \(rootProblem.cause)") }
         }
         var removing = !listOnly && !dryRun
 
@@ -206,7 +206,8 @@ struct CleanCommand: AsyncParsableCommand {
             say("\(removing && !mustAsk ? "then removing" : "and") the untagged older builds (docker image prune --filter label=\(CleanPlan.imageLabel))")
         }
         if old {
-            if oldNative.isEmpty { say("no older native install") }
+            // (one that is left is said above, with why)
+            if olderInstall.isEmpty { say("no older native install") }
             for p in oldNative { say("\(verb) the older native install's \(p.path) (\(Self.size(of: p)))") }
         }
         if listOnly || doVolumes {
