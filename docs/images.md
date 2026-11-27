@@ -106,7 +106,10 @@ have not been tried on a real machine yet.
 older variables still override single parts: `XLESS_TOOLCHAIN_META` (the SDK's metadata), `XLESS_SWIFT_TOOLCHAIN` (the
 toolchain record), and an SDK installed under `XDG_CONFIG_HOME` (only together with `XLESS_TOOLCHAIN_META` when a pack is
 found). With no pack, a command that needs one stops with the usage exit code (2) and the `xless setup` command that
-prepares it; so does one whose pack was prepared by another recipe (it is stale).
+prepares it; so does one whose pack was prepared by another recipe (it is stale). `xless build` of an iOS app runs
+`xtool dev build` with `XDG_CONFIG_HOME` set to a directory of its own (`~/.cache/xless/xtool-config/<pack>`, which links to
+the pack's SDK, so nothing writes into the pack): your own SwiftPM configuration (`$XDG_CONFIG_HOME/swiftpm`, else
+`~/.swiftpm`), such as its mirrors or registries, is not read by that build.
 
 ## Preparing a pack
 
