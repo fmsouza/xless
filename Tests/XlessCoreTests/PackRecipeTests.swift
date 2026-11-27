@@ -215,3 +215,12 @@ func swiftBuildHashIgnoresTheFixture(file: String) throws {
     #expect(throws: XlessError.self) { try digest(.sdk, t, share) }
     #expect(throws: XlessError.self) { try digest(.swiftBuild, t, share) }
 }
+
+// The fit's mode is not in the swift-build hash, though pack-swift-build.sh strips by it: it changes only with SWIFT_VERSION,
+// and the repository's SWB_TAG is the tag of SWIFT_VERSION, so a new SWIFT_VERSION moves the swift-build hash too (PackPlan).
+@Test func theRepositorysSwiftBuildTagIsThatOfItsSwift() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let table = KnownXcodes.parseEnv(try String(contentsOf: root.appendingPathComponent("versions.env"), encoding: .utf8))
+    let swift = try #require(table["SWIFT_VERSION"])
+    #expect(table["SWB_TAG"] == "swift-\(swift)-RELEASE")
+}

@@ -16,6 +16,12 @@ import XlessCore
 /// download keeps a current `swift-build` (the fit edits the clang drivers, `ld64.lld` and the clang resource directory,
 /// never `usr/lib/swift`, which Swift Build runs on); a new toolchain changes both hashes and prepares both.
 ///
+/// Swift Build is compiled by that fitted toolchain, not by the image's own Swift: the fit changes only what Darwin targets
+/// compile and link with (the clang driver adds its definitions for Darwin targets alone), so the Linux build of Swift Build
+/// is what the unfitted toolchain would make. The fit's `mode` (`PackRecipe.mode`: own or separate Swift) is in the `sdk`
+/// hash and not in the `swift-build` one, though scripts/pack-swift-build.sh strips by it: the mode changes only when
+/// `SWIFT_VERSION` does, and `SWB_TAG` (in the `swift-build` hash) is moved with `SWIFT_VERSION`, so that hash changes too.
+///
 /// Seeded files are hard links to the pack in use: no step after the seeding writes into a seeded file. A stale part is
 /// never seeded, so the download, the SDK install and the fit write fresh files; `pack.json` is replaced by a rename.
 public enum PackPlan {
