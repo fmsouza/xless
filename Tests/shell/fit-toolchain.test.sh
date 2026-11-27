@@ -150,6 +150,14 @@ toolchain; sdk; rm "$b/xcode-rd/lib/darwin/libclang_rt.ios.a"
 sh "$repo/scripts/fit-toolchain.sh" "$pack" separate "$repo/docker/toolchain" >"$t/out" 2>&1 && fail "a resource directory without libclang_rt.ios.a was fitted: $(cat "$t/out")"
 grep -q 'libclang_rt.ios.a' "$t/out" || fail "missing runtime refusal: $(cat "$t/out")"
 [[ ! -e "$pack/swift-toolchain.json" ]] || fail "a refused fit recorded the toolchain"
+# a toolchain without Swift's bridging module (either file of it): refused, and named; nothing recorded.
+for gone in bridging bridging.modulemap; do
+  pack="$t/no-$gone/pack"
+  toolchain; sdk; rm "$pack/toolchain/usr/include/swift/$gone"
+  sh "$repo/scripts/fit-toolchain.sh" "$pack" separate "$repo/docker/toolchain" >"$t/out" 2>&1 && fail "a toolchain without $gone was fitted: $(cat "$t/out")"
+  grep -q 'no swift/bridging in' "$t/out" || fail "missing $gone refusal: $(cat "$t/out")"
+  [[ ! -e "$pack/swift-toolchain.json" ]] || fail "a refused fit recorded the toolchain"
+done
 pack="$other"; b="$pack/config/swiftpm/swift-sdks/darwin.artifactbundle"
 sh "$repo/scripts/fit-toolchain.sh" "$pack" both "$repo/docker/toolchain" 2>/dev/null && fail "mode both accepted"
 echo '{"xcodeBuild":"99Z999"}' > "$pack/toolchain-meta.json"

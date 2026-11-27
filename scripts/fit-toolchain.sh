@@ -7,9 +7,9 @@
 # The pack: toolchain/ (usr/bin/swiftc …), config/swiftpm/swift-sdks/darwin.artifactbundle (the SDK, as `xtool sdk install`
 # leaves it: relative links only), toolchain-meta.json (xcodeBuild); it gets include/ and, last, swift-toolchain.json
 # ({"version", "root": "toolchain", "clangFlags"}; root is relative to the record's directory).
-# own: the toolchain is the release the image runs as its own Swift (SWIFT_VERSION): the SDK keeps the Xcode's clang
-#   resource directory. separate: any other release: the SDK's resource directory becomes the toolchain's own, with the
-#   Xcode's Darwin runtimes beside its headers, and its ld64.lld runs the SDK's.
+# own: the toolchain is the release versions.env names as xless's own Swift (SWIFT_VERSION, PackRecipe.mode): the SDK keeps
+#   the Xcode's clang resource directory. separate: any other release: the SDK's resource directory becomes the toolchain's
+#   own, with the Xcode's Darwin runtimes beside its headers, and its ld64.lld runs the SDK's.
 # Then, in both, the clang driver is wrapped when it lacks the Apple clang defaults the Xcode's fixture records, and the
 # flags it adds go to the record and to the SDK's toolsets. Every link made has a relative target, and the wrappers find
 # their targets from their own place. Safe to re-run (after the SDK was installed again, or the pack moved): the
@@ -117,7 +117,7 @@ chk darwin "$fixture" "$bin/$real" $flags
 # Headers Apple's clang finds in its toolchain's usr/include and the open-source one does not: Swift's C++ interop header
 # <swift/bridging> as a module (SwiftBridging); xless adds <pack>/include to every compile with -idirafter.
 inc="$root/usr/include/swift"
-[ -f "$inc/bridging" ] && [ -f "$inc/bridging.modulemap" ] || die "no swift/bridging in $inc"
+if [ ! -f "$inc/bridging" ] || [ ! -f "$inc/bridging.modulemap" ]; then die "no swift/bridging in $inc"; fi
 mkdir -p "$pack/include/swift"
 cp "$inc/bridging" "$inc/bridging.modulemap" "$pack/include/swift/"
 echo 'extern module SwiftBridging "swift/bridging.modulemap"' > "$pack/include/module.modulemap"
