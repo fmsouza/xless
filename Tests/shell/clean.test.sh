@@ -405,6 +405,23 @@ run --cache --yes
 [[ $code == 0 && -f "$t/home/keep-me" && -f "$cache/packs/26.2-17C52-arm64/pack.json" && ! -L "$cache/x" && ! -e "$cache/sdk" ]] \
   || fail "--cache and a link in it to the home: $code $(ls -la "$t/home" "$cache" 2>&1) $(cat "$t/err")"
 rm -rf "$cache" "$t/home/keep-me"
+# ... and with --packs, what a running setup holds there (its <name>.partial, its lock) is said to be left, and is: the
+# store and those two stay, the rest of the cache and the packs go.
+mkcache; mkdir -p "$cache/xcodes/26.2-17C52-arm64" "$cache/xcodes/27.0-27A266a-arm64.partial/toolchain"
+echo "$pack_json" > "$cache/xcodes/26.2-17C52-arm64/pack.json"; echo x > "$cache/xcodes/27.0-27A266a-arm64.partial/toolchain/f"
+python3 -I -c 'import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644); fcntl.flock(fd, fcntl.LOCK_EX); print("held", flush=True); time.sleep(120)' \
+  "$cache/xcodes/27.0-27A266a-arm64.lock" > "$t/held" &
+holder=$!
+for _ in $(seq 100); do [[ -s "$t/held" ]] && break; sleep 0.1; done
+extra=(XLESS_XCODES="$cache/xcodes")
+run --cache --packs --yes
+kill "$holder"; wait "$holder" 2>/dev/null || true
+grep -q "^leaving .*27.0-27A266a-arm64.partial.*: an xless setup of 27.0-27A266a-arm64 is running" "$t/out" || fail "a running setup's leftovers not said to be left: $(cat "$t/out")"
+[[ $code == 0 && -f "$cache/xcodes/27.0-27A266a-arm64.partial/toolchain/f" && -e "$cache/xcodes/27.0-27A266a-arm64.lock" \
+   && ! -e "$cache/xcodes/26.2-17C52-arm64" && ! -e "$cache/sdk" && ! -e "$cache/work" ]] \
+  || fail "--cache --packs removed what a running setup holds: $code $(ls -R "$cache" 2>&1) $(cat "$t/err")"
+rm -rf "$cache"
 extra=(XLESS_XCODES="$store")
 # ... and --old leaves it whole.
 mkdir -p "$store/26.2-17C52-arm64"; echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; extra=(XLESS_XCODES="$store")

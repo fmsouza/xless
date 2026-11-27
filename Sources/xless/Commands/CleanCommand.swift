@@ -291,6 +291,9 @@ struct CleanCommand: AsyncParsableCommand {
                 failures.append("the untagged older builds were not pruned")
             }
         }
+        // What is said to be left of the leftovers (a running setup's, or those whose lock cannot be taken) stays, in a store in
+        // the cache too.
+        var leftLeftovers: [URL] = []
         // The packs of a store of its own: each is looked at again right before it goes (a run may have started since the question).
         if doPacks {
             for p in removableOwn {
@@ -305,8 +308,10 @@ struct CleanCommand: AsyncParsableCommand {
                 guard let dir = mine.first?.deletingLastPathComponent() else { continue }
                 let lock: PackLock
                 do { lock = try PackLock(store: XcodeStore(root: dir), name: name, wait: false) } catch is PackLock.Busy {
+                    leftLeftovers += mine + [PackLock.file(store: XcodeStore(root: dir), name: name)]
                     say("leaving \(mine.map(\.path).joined(separator: ", ")): an xless setup of \(name) is running"); continue
                 } catch {
+                    leftLeftovers += mine + [PackLock.file(store: XcodeStore(root: dir), name: name)]
                     failures.append("\(mine.map(\.path).joined(separator: ", ")) \(mine.count == 1 ? "was" : "were") not removed (\(Self.firstLine(error)))"); continue
                 }
                 withExtendedLifetime(lock) {
@@ -318,7 +323,7 @@ struct CleanCommand: AsyncParsableCommand {
         }
         if doCache && cacheExists {
             // A store kept inside the cache stays, and so do the directories that lead to it.
-            let kept = keptInCache().map(real)
+            let kept = keptInCache().map(real) + leftLeftovers.map(real)
             do { try Self.removeTree(cacheRoot, keeping: kept) } catch {
                 // Work copies built in a container as root belong to root.
                 failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
