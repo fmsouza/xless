@@ -46,8 +46,8 @@ from Apple ([apple-requirements.md](apple-requirements.md)). The supported relea
   the Xcode the project pins (`xcode:`), read-only, and without a pin that of the newest Xcode there is one of.
 - **`xless run`** runs a build, natively or, with `--docker`, in containers of those images (`xless docker` is `xless run --docker`).
   With a project directory (an `xless.yml` project) it runs `xless ship` in one process or container (natively on a Mac or in
-  WSL, in two processes when it both builds and signs; with `--docker` and an image of the project's own that is not the xless image itself, in two containers:
-  [security.md](security.md#the-build-and-your-secrets)). With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs three containers,
+  WSL, in two processes when it both builds and signs; with `--docker` and an image of the project's own that is not the xless image itself, in two containers when it both builds and signs:
+  [security.md](security.md#the-build-and-your-secrets)). With `--config <overlay.yml>` (a Tauri, plain Cargo or React Native app) it runs a container for each of its three steps that the run has,
   so that the app's own build code never runs next to a signing key ([signing-and-testflight.md](signing-and-testflight.md#the-three-step-split)).
   The options after the project or overlay go to `xless ship`, for example `--to finalize` or `--from sign`.
 

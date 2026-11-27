@@ -188,8 +188,8 @@ secret's file that your user can read is there for its code (on a Mac the sandbo
 [security.md](security.md#the-build-and-your-secrets).
 
 `--from` and `--to` choose which steps run, and each step needs only its own secrets: `--build-number <n> --to
-finalize` needs none. Secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are written
-once, before step 1, one directory per step, each mounted into its own step only. The overlay's folder and the app
+finalize` needs none. With `--docker`, secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are
+written once, before step 1, one directory per step, each mounted into its own step only. The overlay's folder and the app
 source are mounted into the build container, so a run refuses to start when either holds a secret file (or `testflight.env`). Details: [tauri.md](tauri.md#shipping) and
 [react-native.md](react-native.md#shipping-three-containers).
 

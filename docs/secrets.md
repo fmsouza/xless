@@ -114,12 +114,14 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   `~/.cache/xless/secrets/<random>/` (under your home directory, which Colima and Docker Desktop share with their VM)
   for the length of the run. The run does this with `xless secrets materialize` (not listed in `--help`).
 - **The TestFlight demo account's password** (a run that uploads with `testflight.external.review.demoAccount` in
-  [xless.yml](xless-yml.md#testflight) or the overlay) is handed to the container that uploads only: step 3, the project's
-  one container, or the macOS App-Store ship; never to step 1 or to a build's container of its own. The project's one
+  [xless.yml](xless-yml.md#testflight) or the overlay) is handed to the container that uploads only: an overlay's step 3,
+  the container that signs and uploads for a project whose build has an image of its own, the project's one container
+  otherwise, or the macOS App-Store ship; never to step 1 or to a build's container of its own. The project's one
   container builds too: the build's tools start there without the variable, but the file is in their container, and
   their code can read it ([security.md](security.md#a-build-that-means-harm)). Natively no step is handed a file: the
   xless that uploads reads the variable, its file or the store itself, the build's tools start without the variable, and
-  a `NAME_FILE` that your user can read, the build's code can read. Its secret is `passwordSecret`
+  a `NAME_FILE` that your user can read, the build's code can read (but for an overlay app's build on a Mac, whose sandbox
+  opens no home directory: [security.md](security.md#an-overlays-build-on-a-mac)). Its secret is `passwordSecret`
   (`XLESS_DEMO_PASSWORD` by default), a name of your own if you like (`NAME@<TEAM_ID>` too; not a key's or token's,
   nor a variable the system or xless uses, such as `PATH`, `HOME`, `ENV` or `XLESS_*`); the xless on your machine
   reads it from the configuration (`xless secrets named-by`, not listed in `--help`). `NAME_FILE` wins, mounted
