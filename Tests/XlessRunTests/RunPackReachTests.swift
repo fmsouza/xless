@@ -86,6 +86,16 @@ import XlessImages
         #expect(other.contains("the volume xless-xcode-99.0-99Z99-arm64, which"), "\(other)")
     }
 
+    /// Refused before anything is prepared: a stale pack is not prepared again (nor a kit built) for a run that cannot start.
+    @Test func theReachIsRefusedBeforeAStalePackIsPrepared() throws {
+        home.packs.change("xless-xcode-27.0-27A266a-arm64") { $0.parts["swift-build"] = String(repeating: "0", count: 64) }
+        try home.export("27.0", "27A266a")
+        try home.write("ov/app.yml", "type: react-native\nsource: ../src\nteamID: ABCDE12345\nxcode: \"27.0\"\n")
+        let last = try refused(["--config", home.overlay], ["XLESS_RN_WORK_VOLUME": "xless-xcode-26.2-17C52-arm64"])
+        #expect(last.contains("the volume xless-xcode-26.2-17C52-arm64, which"), "\(last)")
+        #expect(home.packs.prepared.isEmpty)
+    }
+
     /// The store named through a link to the project: compared as files, it is in the project all the same.
     @Test func aLinkDoesNotHideTheOverlap() throws {
         try directoryStore("\(home.project)/xcodes")

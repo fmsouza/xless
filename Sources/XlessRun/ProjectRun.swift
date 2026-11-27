@@ -334,9 +334,9 @@ public final class ProjectRun {
             try prepareDocker()
             try mountFiles(platform: .ios)
             split = try RunSpan.overlay(request)
-            images = try chooseImages(top, builds: split.from <= .finalize, other: signs)
             // (the project is the one writable mount of its containers)
-            try refuseWritableReach(of: images.pack, in: work)
+            try refuseWritableReach(in: work)
+            images = try chooseImages(top, builds: split.from <= .finalize, other: signs)
             if images.areTwo { try refuseSecretsInBuild(project) }
         } else { try unlockStore(builds: RunSpan.overlay(request).from <= .finalize) }
 

@@ -190,10 +190,10 @@ extension ProjectRun {
             steps.signCaches = ["--mount", RunText.bind("\(cache)/work", "/cache/work")]
         }
         steps.signCaches += origin(overlay.path)
+        // (every mount of the steps' containers: the build's caches and work volume are writable, the sign step's work copy too)
+        try refuseWritableReach(in: steps.mounts + steps.buildCaches + steps.signCaches)
         // A simulator build is step 2 only.
         steps.images = try chooseImages(top, kit: Kit(overlayType: top["type"]), builds: overlay.span.from <= .finalize, other: next || overlay.span.to >= .sign)
-        // (every mount of the steps' containers: the build's caches and work volume are writable, the sign step's work copy too)
-        try refuseWritableReach(of: steps.images.pack, in: steps.mounts + steps.buildCaches + steps.signCaches)
         return steps
     }
 

@@ -42,9 +42,11 @@ extension ProjectRun {
 
     /// No container of the run can write the pack through another of its mounts: of the mounts that `words` (docker run options
     /// of the run's containers) make writable, none is a pack volume (whatever the store), and none holds a directory store or is
-    /// in it, compared as files (links followed, `RunFiles.directory(_:isIn:)`). The pack's own mount is read-only.
-    func refuseWritableReach(of pack: RunPack?, in words: [String]) throws {
-        guard let pack else { return }
+    /// in it, compared as files (links followed, `RunFiles.directory(_:isIn:)`). The pack's own mount is read-only. It runs
+    /// before the pack is chosen, so that a run that cannot start neither prepares a pack nor builds a kit: the store is where
+    /// the run takes its pack from.
+    func refuseWritableReach(in words: [String]) throws {
+        let store = PackStore(env: environment)
         for mount in RunPack.writableMounts(words) {
             switch mount.kind {
             case .volume:
@@ -53,7 +55,7 @@ extension ProjectRun {
                 throw RunStop.usage("the volume \(mount.source), which a container of this run would mount writable at \(mount.target), is a pack volume "
                     + "(its name starts with \(PackVolumes.prefix)), and no container of a run may write a pack: the build could change what the steps after it read; \(fix)")
             case .bind:
-                guard case let .directory(dir) = pack.store, let relation = try overlap(mount.source, store: dir.path) else { continue }
+                guard case let .directory(dir) = store, let relation = try overlap(mount.source, store: dir.path) else { continue }
                 throw RunStop.usage("XLESS_XCODES (\(dir.path)), the store of the Xcode packs, and \(mount.source), which a container of this run would mount "
                     + "writable at \(mount.target), overlap (\(relation)): the build could change the pack that the steps after it read. "
                     + "Keep the store and \(mount.source) apart: set XLESS_XCODES to a directory outside it, beside it for one")
