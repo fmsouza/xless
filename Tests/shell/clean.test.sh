@@ -40,6 +40,8 @@ case "$1 $2" in
     [[ ! -e "$file" ]] || { cat "$file"; exit 0; }
     labels='{}'; case "$ref" in xless:local-arm64-xcode27.0*) labels='{"dev.xless.sdk":"27A266a"}' ;; esac
     printf '{"Id":"sha256:%s","Architecture":"arm64","Config":{"Labels":%s},"RootFS":{"Layers":[]}}\n' "$ref" "$labels" ;;
+  # (its contexts: STUB_CONTEXTS; none listed, so nothing checked, when it is not set)
+  "context ls") printf '%s\n' ${STUB_CONTEXTS:-} ;;
   "volume ls") printf '%s\n' xless-cargo xless-rn-work-ov-12345678 pgdata xless-xcode-26.2-17C52-arm64 xless-xcode-27.0-27A266a-arm64 xless-xcode-backup ;;
   # (the containers that use a pack volume: those named in PACK_IN_USE)
   # (docker cannot be asked: PS_FAIL; the first PSQ_FREE asks of `ps -q` find nothing running, the later ones a container with PSQ_MOUNT mounted)
@@ -276,6 +278,14 @@ extra=(XDG_CONFIG_HOME="$t/xdg")
 run --old --yes
 [[ ! -e "$t/xdg/swiftpm/swift-sdks/darwin.artifactbundle" && -d "$t/xdg/swiftpm/swift-sdks/other" && ! -e "$t/xdg/xless/toolchain-meta.json" ]] || fail "--old with XDG_CONFIG_HOME"
 extra=(); rm -rf "$t/xdg" "$nh"
+
+# A DOCKER_CONTEXT that docker does not have stops clean before anything (exit 2), as it stops every xless command.
+mkcache; extra=(DOCKER_CONTEXT=gone STUB_CONTEXTS="default colima")
+run --all --yes
+[[ $code == 2 && -d "$cache" ]] || fail "clean with a context docker lacks: $code $(cat "$t/err")"
+grep -qF "DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: default, colima" "$t/err" || fail "its message: $(cat "$t/err")"
+[[ "$(cat "$log")" == "context ls --format {{.Name}}" ]] || fail "clean asked docker more than its contexts: $(cat "$log")"
+extra=()
 
 # --cache alone needs no Docker; --images with a Docker that doesn't answer fails (exit 11) and removes nothing.
 mkcache; extra=(DOCKER_DOWN=1)
