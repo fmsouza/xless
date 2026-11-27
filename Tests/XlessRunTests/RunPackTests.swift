@@ -235,6 +235,23 @@ import XlessImages
         #expect(has(step.words, ["--mount", "type=bind,src=\(store)/26.2-17C52-arm64,dst=/xcodes/26.2-17C52-arm64,readonly", "-e", "XLESS_XCODE=/xcodes/26.2-17C52-arm64"]))
     }
 
+    /// A directory store that does not tell names apart by case (a Mac's disk) is refused on the host, by its path, before the
+    /// setup container would refuse it as /xcodes: nothing is prepared, and the fix keeps the packs in volumes.
+    @Test func aCaseInsensitiveDirectoryStoreIsRefusedOnTheHost() throws {
+        let store = "\(home.root)/xcodes"
+        try home.packs.write(home.packs.current("26.2", "17C52", parts: [.sdk]), in: store)
+        try home.export("26.2", "17C52")
+        try home.write("proj/xless.yml", "name: App\nxcode: \"26.2\"\n")
+        let host = FakeRunHost(answer: home.answer())
+        let code = try home.run([home.project, "--to", "finalize"], docker: true, host: host, environment: home.files().merging(["XLESS_XCODES": store]) { $1 },
+                                storeDistinguishesCase: { _ in false })
+        #expect(code == 2, "\(host.lines)")
+        #expect(home.packs.prepared.isEmpty)
+        let last = try #require(host.lines.last)
+        #expect(last.contains("it cannot be prepared into \(store): the store of Xcode packs \(store) is on a file system that does not tell `Endian.h` from `endian.h`"), "\(last)")
+        #expect(last.hasSuffix("unset XLESS_XCODES, so that the packs are Docker volumes, or set it to a directory on a case-sensitive file system (on a Mac: a case-sensitive APFS volume)"))
+    }
+
     /// Spec goal 4: a new xless whose recipes are the same prepares nothing. The images are the new one's; the packs are the ones there.
     @Test func newXlessVersionOverACurrentPackPreparesNothing() throws {
         let newer = try RunHome(version: "0.15.0")

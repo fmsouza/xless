@@ -1,7 +1,9 @@
 import ArgumentParser
 import Foundation
 import XlessCore
+import XlessImages
 import XlessRun
+import XlessSDK
 
 /// `xless run`: a project's build, sign and upload, natively (what `xless setup` installed) or, with `--docker`, in the local
 /// images (`xless setup --docker`).
@@ -90,7 +92,8 @@ enum ProjectRunner {
                                  session: XlessSession.agent, unlocked: !(env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty,
                                  prepareMac: isScript(env) ? nil : MacNative.prepare,
                                  // (scripts/testflight.sh's run is as it always was: its stages say what they lack)
-                                 overlayLacks: isScript(env) ? nil : overlayLacks)
+                                 overlayLacks: isScript(env) ? nil : overlayLacks,
+                                 storeDistinguishesCase: { try PackStore.distinguishesCase($0) })
         let code = try ProjectRun(arguments, context: context, host: PosixRunHost()).run()
         if code != 0 { throw ExitCode(code) }
     }

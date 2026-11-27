@@ -297,6 +297,12 @@ private struct PackChoice {
         } catch let problem as ImageProblem {
             throw RunStop.usage("\(problem)")
         }
+        // A directory store is asked here, where its path is: the setup container would refuse it as /xcodes.
+        if !run.dryRun, case let .directory(dir) = store, let distinguishes = run.context.storeDistinguishesCase {
+            do { try PackStore.requireCaseSensitive(XcodeStore(root: dir), docker: true, distinguishes: distinguishes) } catch let e as XlessError {
+                throw RunStop.usage("\(pinned)\(why), and it cannot be prepared into \(dir.path): \(e.cause); \(e.fix)")
+            }
+        }
         // (the image is here, or the run would have stopped: no step builds it)
         let steps = plan.steps.filter { $0.argv.first == "docker" }
         // Not under a running build that has it, of another run or a setup (this run's own containers start after): asked once,

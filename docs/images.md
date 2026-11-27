@@ -93,8 +93,8 @@ builds of one version have a pack (a beta and the release), the one that comes l
 (`XCODE_RELEASES`) is used, and the run says which.
 
 A directory store is on the host's file system, and the SDK has headers whose names differ only in case (`Endian.h`,
-`endian.h`): it must be on a case-sensitive file system, and `xless setup` refuses one that is not before it writes
-anything. On a Mac, keep the default volumes: a Mac's disk is case-insensitive unless you made a volume that is not, and the
+`endian.h`): it must be on a case-sensitive file system, and `xless setup`, or a run that would prepare a pack into it,
+refuses one that is not before it writes anything. On a Mac, keep the default volumes: a Mac's disk is case-insensitive unless you made a volume that is not, and the
 Docker volumes are on the virtual machine's own disk. A directory store is for a Linux host that wants the packs on a disk
 of its own, or shares them between `--docker` and a native xless; then run a native `xless setup` only while no `xless run
 --docker` builds, as a native setup does not see the containers that use a pack
