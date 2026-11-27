@@ -90,17 +90,25 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
 }
 
 @Test func xdgConfigHomeIsTheSDKOverrideOnlyWhenItHoldsAnSDK() throws {
-    let store = try tempDir(), xdg = try tempDir("xcode-env-xdg")
+    let store = try tempDir(), xdg = try tempDir("xcode-env-xdg"), meta = try tempDir().appendingPathComponent("meta.json")
     let root = try makePack(in: store)
+    let packSDK = root.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle").path
     // Set for other reasons (very common on a host): the pack's SDK.
     let x = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path]))
-    #expect(x.sdkBundle.path == root.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle").path)
-    // Holding an installed SDK: that one.
+    #expect(x.sdkBundle.path == packSDK)
+    // Holding an SDK (left by the native setup of before the packs) beside a found pack, alone: still the pack's, never
+    // that SDK with the pack's metadata and toolchain (two Xcodes).
     let bundle = xdg.appendingPathComponent("swiftpm/swift-sdks/darwin.artifactbundle")
     try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
     let y = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path]))
-    #expect(y.sdkBundle.path == bundle.path && y.pack?.root.path == root.path)
+    #expect(y.sdkBundle.path == packSDK && y.pack?.root.path == root.path)
     #expect(y.meta.path == root.appendingPathComponent("toolchain-meta.json").path)
+    // With its metadata (an explicit override, as the images give): that SDK and that metadata.
+    let z = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path, "XLESS_TOOLCHAIN_META": meta.path]))
+    #expect(z.sdkBundle.path == bundle.path && z.meta.path == meta.path && z.pack?.root.path == root.path)
+    // No pack found: the SDK there is used, as before the packs.
+    let none = try XcodeEnvironment.current(env: try isolated(["XDG_CONFIG_HOME": xdg.path]))
+    #expect(none.pack == nil && none.sdkBundle.path == bundle.path)
 }
 
 @Test func overridesAloneNeedNoPack() throws {
@@ -269,10 +277,15 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let store = try tempDir(), config = try tempDir("xcode-env-config"), cache = try tempDir("xcode-env-cache")
     try makePack(in: store)
     try fm.createDirectory(at: config.appendingPathComponent("swiftpm/swift-sdks/darwin.artifactbundle"), withIntermediateDirectories: true)
-    let env = try isolated(store: store, ["XDG_CONFIG_HOME": config.path, "XDG_CACHE_HOME": cache.path])
+    let env = try isolated(store: store, ["XDG_CONFIG_HOME": config.path, "XDG_CACHE_HOME": cache.path, "XLESS_TOOLCHAIN_META": "/m.json"])
     let tools = try XcodeEnvironment.current(env: env).toolEnvironment(env)
     #expect(tools["XDG_CONFIG_HOME"] == config.path)
     #expect(!fm.fileExists(atPath: cache.appendingPathComponent("xless").path))
+    // Without the metadata that SDK is a leftover beside the pack: xtool gets the pack's, through the scratch configuration.
+    var leftover = env
+    leftover["XLESS_TOOLCHAIN_META"] = nil
+    let pack = try XcodeEnvironment.current(env: leftover)
+    #expect(try pack.toolEnvironment(leftover)["XDG_CONFIG_HOME"]?.hasPrefix(cache.appendingPathComponent("xless/xtool-config").path) == true)
 }
 
 @Test func aMissingToolchainOverrideIsAnErrorOfItsOwn() throws {

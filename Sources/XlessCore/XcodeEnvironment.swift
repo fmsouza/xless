@@ -7,7 +7,10 @@ import Foundation
 ///
 /// The overrides win part by part:
 /// - the SDK: an SDK installed under `XDG_CONFIG_HOME` (`DarwinSDKLocator`). The variable alone is no override (a host
-///   often sets it for other reasons): only when an SDK bundle is there;
+///   often sets it for other reasons): only when an SDK bundle is there. Beside a pack that is found, only with
+///   `XLESS_TOOLCHAIN_META` set as well (an explicit override of the SDK with its metadata, as the images and the test
+///   fixtures give): an SDK left there by the native setup of before the packs never pairs with another Xcode's
+///   metadata and toolchain;
 /// - the metadata: `XLESS_TOOLCHAIN_META`;
 /// - the toolchain record: `XLESS_SWIFT_TOOLCHAIN`.
 /// With all three set no pack is needed (`pack` is nil when none fits). A machine whose store has no pack at all, and no
@@ -112,6 +115,7 @@ public struct XcodeEnvironment: Sendable {
 
     /// The Xcode's parts in `env`. Throws `XcodeProblem` when no pack fits (missing, of another version or architecture,
     /// stale, or without a part in `needs`) and the overrides do not stand in for it, or when there is nothing at all.
+    /// Beside a found pack, an SDK under `XDG_CONFIG_HOME` counts only with `XLESS_TOOLCHAIN_META` (see the type).
     public static func current(env: [String: String] = ProcessInfo.processInfo.environment,
                                needs: Set<XcodeResolver.Need> = [.sdk]) throws -> XcodeEnvironment {
         if let found = try lookup(env: env, needs: needs) { return found }
@@ -120,7 +124,8 @@ public struct XcodeEnvironment: Sendable {
     }
 
     /// `current`, or nil when this machine has no Xcode at all: no pack in the store, no `XLESS_XCODE`, no override and
-    /// nothing of before the packs. A pack that does not fit still throws.
+    /// nothing of before the packs. A pack that does not fit still throws. With a pack found, its SDK wins over one under
+    /// `XDG_CONFIG_HOME` unless `XLESS_TOOLCHAIN_META` is set too; with none found, an SDK there is used as before.
     public static func lookup(env: [String: String] = ProcessInfo.processInfo.environment,
                               needs: Set<XcodeResolver.Need> = [.sdk]) throws -> XcodeEnvironment? {
         let fm = FileManager.default
@@ -141,7 +146,7 @@ public struct XcodeEnvironment: Sendable {
             do {
                 let pack = try resolve(env, needs: needs)
                 return XcodeEnvironment(
-                    pack: pack, sdkBundle: sdkOverride ?? pack.sdkBundle, meta: metaOverride ?? pack.meta,
+                    pack: pack, sdkBundle: (metaOverride != nil ? sdkOverride : nil) ?? pack.sdkBundle, meta: metaOverride ?? pack.meta,
                     record: recordOverride ?? (fm.fileExists(atPath: pack.record.path) ? pack.record : nil), recordIsOverride: recordOverride != nil,
                     include: fm.fileExists(atPath: pack.include.path) ? pack.include : nil,
                     swbuild: pack.has(.swiftBuild) ? pack.swiftBuild.appendingPathComponent("swbuild") : which("swbuild", path: path))
