@@ -27,7 +27,8 @@ struct CleanCommand: AsyncParsableCommand {
         --cache removes $XDG_CACHE_HOME/xless (default ~/.cache/xless): the exported SDKs that packs are prepared from (your only \
         copy without the .xip), Tauri work copies and downloads. --native removes the native install: $XLESS_NATIVE_HOME (default \
         ~/.local/share/xless-native: xtool, rcodesign and its xcodes directory, where the native packs are) and an older \
-        install's SDK and toolchain-meta.json. --all does the five. The xless install itself (~/.local/bin/xless and \
+        install's SDK and toolchain-meta.json, only when that home holds nothing but what xless's setup makes, and asks (--yes \
+        answers). --all does the five. The xless install itself (~/.local/bin/xless and \
         ~/.local/share/xless) and Docker's build cache, which other projects share (docker builder prune), are left alone.
         """)
 
@@ -36,9 +37,9 @@ struct CleanCommand: AsyncParsableCommand {
     @Flag(help: "Remove the Docker volumes xless docker creates (Rust toolchains, React Native work copies and caches), not the Xcode packs.") var volumes = false
     @Flag(help: "Remove the Xcode packs: the pack volumes (xless-xcode-<version>-<build>-<arch>) and the packs of a store of your own (XLESS_XCODES). Asks first.") var packs = false
     @Flag(help: "Remove the cache directory ($XDG_CACHE_HOME/xless, default ~/.cache/xless), with the SDK exports in it.") var cache = false
-    @Flag(help: "Remove the native install: its home with the tools and the Xcode packs of its store (xcodes), and an older install's SDK and metadata.") var native = false
+    @Flag(help: "Remove the native install: its home with the tools and the Xcode packs of its store (xcodes), and an older install's SDK and metadata. Asks first.") var native = false
     @Flag(help: "--images, --volumes, --packs, --cache and --native.") var all = false
-    @Flag(help: "Do not ask (when removing packs, or with --old).") var yes = false
+    @Flag(help: "Do not ask (when removing packs or the native install, or with --old).") var yes = false
     @Flag(help: "Print what would be removed, and remove nothing.") var dryRun = false
 
     func run() async throws {
