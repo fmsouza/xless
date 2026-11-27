@@ -14,8 +14,8 @@
 # (host build) reads them and the reference's recorded catalogs with `xcrun assetutil --info` (Opaque, colour space,
 # pixel size, … per rendition; docs/research/parity-known-gaps.md, "Asset catalog comparison"). Elsewhere it is skipped.
 # Variables: ARCH (arm64 or amd64; default the host's: ARCH=amd64 on an arm64 Mac runs the amd64 chain under emulation),
-#   XCODE (default versions.env's XCODE_VERSION): the Xcode whose pack the container gets, read-only, as xless run gives it
-#   (its volume xless-xcode-<XCODE>-<build>-<arch>, or its directory in XLESS_XCODES), e.g. XCODE=26.2;
+#   XLESS_XCODE_PIN (default versions.env's XCODE_VERSION): the Xcode whose pack the container gets, read-only, as xless run gives it
+#   (its volume xless-xcode-<XLESS_XCODE_PIN>-<build>-<arch>, or its directory in XLESS_XCODES), e.g. XLESS_XCODE_PIN=26.2;
 #   XLESS_IMAGE (default xless:<this checkout's tag>-<arch>-tauri, which xless setup --docker --with tauri builds),
 #   DOCKER_CONTEXT (default colima-xless if it exists).
 # The repository is mounted read-only; the work copy lives in the xless-work volume, Rust toolchains in xless-rustup and
@@ -31,7 +31,8 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's work copy and Rust toolchains stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-xcode="${XCODE:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}"   # the Xcode whose pack builds (XCODE=26.2: that pin's)
+xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}"   # the Xcode whose pack builds (XLESS_XCODE_PIN=26.2: that pin's; not XCODE, the Xcode.app the Makefile exports for make images)
+[[ "$xcode" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "test-tauri-linux: XLESS_XCODE_PIN must be an Xcode version such as 26.2, not $xcode" >&2; exit 2; }
 image="${XLESS_IMAGE:-xless:$("$root/scripts/docker-images.sh" tag --arch "$arch")-$arch-tauri}"   # xless setup --docker --with tauri builds it
 platform=ios
 while [[ $# -gt 0 ]]; do
