@@ -627,11 +627,12 @@ struct SetupCommand: AsyncParsableCommand {
             guard FileManager.default.fileExists(atPath: bin.path) else {
                 throw XlessError(.sdk, "\(key)=\(p) does not exist", fix: "point \(key) at a Linux \(a) xless binary")
             }
+        } else if tag.wholeMatch(of: /[0-9a-f]{12}(-dirty)?/) != nil {
+            // A checkout's image is named by its commit: the xless in it is compiled from that checkout, as the image is built
+            // (also on Linux, where the running xless need not be that commit's, e.g. a release with XLESS_SHARE at a checkout).
+            return nil
         } else if Self.isLinux && a == host {
             bin = exe
-        } else if tag.wholeMatch(of: /[0-9a-f]{12}(-dirty)?/) != nil {
-            // A checkout's image is named by its commit: the xless in it is compiled from that checkout, as the image is built.
-            return nil
         } else if dryRun {
             let name = XlessRelease.tarballName(version: XlessVersion.current, dockerArch: a)
             say("(the \(a) xless would come from \(XlessRelease.url(version: XlessVersion.current, file: name).absoluteString))")
