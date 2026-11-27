@@ -114,8 +114,9 @@ public struct XcodeEnvironment: Sendable {
             if rename(fresh.path, link.path) != 0 {
                 // A directory is there (rename does not replace one): removed, unless another build already did.
                 do { try fm.removeItem(at: link) } catch where !fm.fileExists(atPath: link.path) || linked() {}
-                if !linked(), rename(fresh.path, link.path) != 0, !linked() {
-                    throw XlessError(.build, "cannot link \(link.path): \(String(cString: strerror(errno)))", fix: "remove \(link.path)")
+                // errno is taken at once: `linked()` reads the link, which may set it again
+                if !linked(), case let failed = rename(fresh.path, link.path) != 0 ? errno : 0, failed != 0, !linked() {
+                    throw XlessError(.build, "cannot link \(link.path): \(String(cString: strerror(failed)))", fix: "remove \(link.path)")
                 }
             }
         } catch {
