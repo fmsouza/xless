@@ -202,12 +202,18 @@ public struct PackUsers {
             guard listed.code == 0 else { throw problem("docker ps --filter volume=\(volume)") }
             return rows(listed.output, excludingRun: excludingRun) { _ in true }
         case let .directory(dir):
-            let ids = docker(["ps", "-q"])
-            guard ids.code == 0 else { throw problem("docker ps -q") }
-            let running = ids.output.split(whereSeparator: \.isWhitespace).map(String.init)
-            if running.isEmpty { return [] }
             let format = "{{.Name}}\t{{.Config.Image}}\t{{index .Config.Labels \"\(Self.runLabel)\"}}\t{{json .Mounts}}\t{{index .Config.Labels \"\(Self.setupLabel)\"}}"
-            let inspected = docker(["inspect", "--format", format] + running)
+            // A container that ends between the two questions makes inspect fail for it: the running ones are asked again
+            // (three times at most; a docker whose inspect keeps failing is said to fail).
+            var inspected: (code: Int32, output: String) = (1, "")
+            for _ in 0..<3 {
+                let ids = docker(["ps", "-q"])
+                guard ids.code == 0 else { throw problem("docker ps -q") }
+                let running = ids.output.split(whereSeparator: \.isWhitespace).map(String.init)
+                if running.isEmpty { return [] }
+                inspected = docker(["inspect", "--format", format] + running)
+                if inspected.code == 0 { break }
+            }
             guard inspected.code == 0 else { throw problem("docker inspect") }
             // (as files: a link in either path, /var on a Mac for one, does not hide that they are the same)
             let root = Self.real(dir.path)

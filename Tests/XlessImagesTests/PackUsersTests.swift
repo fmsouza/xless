@@ -48,6 +48,31 @@ import Testing
         #expect(fake.asked.count == 2 && fake.asked[1].prefix(2) == ["inspect", "--format"] && fake.asked[1].suffix(5) == ["a1", "b2", "c3", "d4", "e5"])
     }
 
+    /// A container that ends between `ps` and `inspect` (docker inspect then fails for it) is no reason to stop: the running ones
+    /// are asked again. A docker whose inspect keeps failing is still said to fail.
+    @Test func aContainerThatEndsBetweenTheTwoQuestionsIsAskedAgain() throws {
+        final class Ending: @unchecked Sendable {
+            var asked: [[String]] = []
+            var inspects = 0, failing = 1
+            func answer(_ words: [String]) -> (code: Int32, output: String) {
+                asked.append(words)
+                if words.first == "inspect" {
+                    inspects += 1
+                    // the first time a1 has ended: docker prints b2 and fails for a1
+                    let b2 = "/b2\timg\t<no value>\t[{\"Type\":\"bind\",\"Source\":\"/data/xcodes/26.2-17C52-arm64\"}]\n"
+                    return inspects <= failing ? (1, b2) : (0, b2)
+                }
+                return (0, inspects == 0 ? "a1\nb2\n" : "b2\n")
+            }
+        }
+        let store = PackStore.directory(URL(fileURLWithPath: "/data/xcodes"))
+        let ending = Ending()
+        #expect(try PackUsers { ending.answer($0) }.of(store, xcode: "26.2", build: "17C52", arch: "arm64") == ["b2 (img)"])
+        #expect(ending.asked.map { $0.first ?? "" } == ["ps", "inspect", "ps", "inspect"] && ending.asked[3].last == "b2")
+        let broken = Ending(); broken.failing = 99
+        #expect(throws: ImageProblem.self) { try PackUsers { broken.answer($0) }.of(store, xcode: "26.2", build: "17C52", arch: "arm64") }
+    }
+
     /// Compared as files: a store named through a link is the directory a container mounts by its real path, and the other
     /// way round.
     @Test func aDirectoryStoreIsComparedByRealPaths() throws {
