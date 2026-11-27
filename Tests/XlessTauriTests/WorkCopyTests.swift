@@ -304,3 +304,12 @@ private func realGit() throws -> String {
 @Test func noPackIsAnIdentityToo() {
     #expect(PackOutputs.identity(env: ["HOME": tmp().path, "PATH": "/usr/bin:/bin"]) == "(no pack)")
 }
+
+/// A pack that cannot be read is not taken for none: the identity, which the log names when outputs are removed, says why.
+@Test func aPackThatCannotBeReadSaysWhy() throws {
+    let env = ["HOME": tmp().path, "PATH": "/usr/bin:/bin", "XLESS_XCODE": "/nonexistent/26.2-17C52-arm64"]
+    var problem: Error?
+    do { _ = try XcodeEnvironment.lookup(env: env) } catch { problem = error }
+    let found = try #require(problem)
+    #expect(PackOutputs.identity(env: env) == "(no pack: \(found))")
+}

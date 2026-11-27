@@ -135,10 +135,13 @@ public enum PackOutputs {
     /// copy tell apart; else the pack in `env`.
     public static func identity(env: [String: String], xcode: Bool) -> String { xcode ? "(xcode)" : identity(env: env) }
 
-    /// The pack in `env` (`XcodePack.identity`), or "(no pack)" (an image's own SDK, or none).
+    /// The pack in `env` (`XcodePack.identity`), or "(no pack)" (an image's own SDK, or none); one that cannot be read is
+    /// "(no pack: <why>)", which the log of removed outputs names (the build then stops, with that problem).
     public static func identity(env: [String: String]) -> String {
-        guard let found = try? XcodeEnvironment.lookup(env: env), let pack = found.pack else { return "(no pack)" }
-        return pack.identity
+        do {
+            guard let pack = try XcodeEnvironment.lookup(env: env)?.pack else { return "(no pack)" }
+            return pack.identity
+        } catch { return "(no pack: \(error))" }
     }
 
     /// Where the work copy records the pack its outputs were built with.
