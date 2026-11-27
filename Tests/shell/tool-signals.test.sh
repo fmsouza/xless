@@ -40,6 +40,14 @@ else
 fi
 """)
 os.chmod(t + "/bin/docker", 0o755)
+# It reads the tag of this xless with git first (`git rev-parse` in its share): a git that answers at once, not a checkout, and
+# that is the quick first tool too when it comes first, so "not the first" holds whatever clean starts first.
+with open(t + "/bin/git", "w") as f:
+    f.write(f"""#!/bin/sh
+rm -f {t}/quick
+exit 128
+""")
+os.chmod(t + "/bin/git", 0o755)
 failures = 0
 
 def check(ok, what, detail=""):
