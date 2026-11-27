@@ -422,9 +422,10 @@ private func git(_ dir: URL, _ args: String...) throws {
     #expect(with262 != toolchain && ReactNativeBuilder.toolchainIdentity(sdk262, tools: tools) != with262)
     // The pack: its build and the recipe hash of each part; not where it is mounted.
     func pack(_ place: String, _ parts: [String: String]) throws -> ReactNativeBuildContext {
-        let root = try tmp(place).appendingPathComponent("26.2-17C52-arm64")
+        let arch = XcodeEnvironment.hostArch   // (a pack of another arch is no pack here)
+        let root = try tmp(place).appendingPathComponent("26.2-17C52-\(arch)")
         try write(root.appendingPathComponent("toolchain-meta.json"), "{\"xcodeVersion\": \"2620\"}")
-        try PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: "arm64", swift: "6.2.3", mode: .separate, parts: parts)
+        try PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: arch, swift: "6.2.3", mode: .separate, parts: parts)
             .write(to: root.appendingPathComponent("pack.json"))
         var c = try ctx(o)
         c.env["XLESS_XCODE"] = root.path
@@ -432,6 +433,7 @@ private func git(_ dir: URL, _ args: String...) throws {
         for name in ["XLESS_TOOLCHAIN_META", "XLESS_SWIFT_TOOLCHAIN", "XLESS_XCODES"] { c.env[name] = nil }
         return c
     }
+    #expect(try XcodeEnvironment.current(env: pack("a", ["sdk": "s1", "swift-build": "b1"]).env).pack != nil)   // (else every identity below is "(no pack)")
     let packed = ReactNativeBuilder.toolchainIdentity(try pack("a", ["sdk": "s1", "swift-build": "b1"]), tools: tools)
     #expect(ReactNativeBuilder.toolchainIdentity(try pack("b", ["sdk": "s1", "swift-build": "b1"]), tools: tools) == packed)   // elsewhere
     #expect(ReactNativeBuilder.toolchainIdentity(try pack("c", ["sdk": "s1", "swift-build": "b2"]), tools: tools) != packed)   // another Swift Build
