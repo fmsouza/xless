@@ -19,6 +19,18 @@ import XlessCore
 /// Seeded files are hard links to the pack in use: no step after the seeding writes into a seeded file. A stale part is
 /// never seeded, so the download, the SDK install and the fit write fresh files; `pack.json` is replaced by a rename.
 public enum PackPlan {
+    static let toolchainEstimate = "~2 min; a ~1.1 GB download, ~4 GB unpacked"
+    static let sdkEstimate = "~1 min; ~3 GB on disk"
+    static let swiftBuildEstimate = "~10 min; ~1 GB of sources and objects in a temporary directory"
+
+    /// How long preparing `part` again takes, and what it needs, from its steps' estimates.
+    public static func estimate(of part: PackPart) -> String {
+        switch part {
+        case .sdk: "~3 min: the Swift toolchain (\(toolchainEstimate)) and the Darwin SDK (\(sdkEstimate))"
+        case .swiftBuild: "\(swiftBuildEstimate.replacingOccurrences(of: "; ", with: ": Swift Build compiled, "))"
+        }
+    }
+
     /// What this machine can prepare: Swift Build only where it can be used and compiled.
     public struct Abilities: Equatable, Sendable {
         public var swiftBuild: Bool
@@ -110,11 +122,11 @@ public enum PackPlan {
             let download = NativeDownload(kind: .swiftToolchain, url: url, sha256: try pin("\(key)_SHA256_\(a)"), final: pack.toolchain)
             steps.append(SetupStep(title: "download the Swift \(swift) toolchain (Xcode \(xcode.shortVersion)'s Swift, Ruling R10) into \(pack.toolchain.path)",
                                    argv: ["curl", "-fsSL", "-o", download.partial.path + ".download", url.absoluteString],
-                                   estimate: "~2 min; a ~1.1 GB download, ~4 GB unpacked", action: .download(download)))
+                                   estimate: Self.toolchainEstimate, action: .download(download)))
             let xtoolSDK = export.appendingPathComponent("\(arch)/darwin.xtoolsdk")
             steps.append(SetupStep(title: "install the Darwin SDK for xtool and SwiftPM into \(pack.configHome.path)",
                                    argv: sdkArgv(xtoolSDK: xtoolSDK, config: pack.configHome, toolchain: pack.toolchain),
-                                   estimate: "~1 min; ~3 GB on disk",
+                                   estimate: Self.sdkEstimate,
                                    action: .packSDK(xtoolSDK: xtoolSDK, config: pack.configHome, toolchain: pack.toolchain)))
             steps.append(SetupStep(title: "toolchain-meta.json of Xcode \(xcode.shortVersion) (\(xcode.build)) into the pack",
                                    argv: ["cp", export.appendingPathComponent("toolchain-meta.json").path, pack.meta.path], estimate: "seconds"))
@@ -128,7 +140,7 @@ public enum PackPlan {
             let pins = table.keys.filter { $0.hasPrefix("SWB_") }.sorted().map { "\($0)=\(table[$0] ?? "")" }
             steps.append(SetupStep(title: "compile Swift Build \(table["SWB_TAG"] ?? "") with the pack's Swift \(swift) into \(pack.swiftBuild.path)",
                                    argv: ["env"] + pins + [script("pack-swift-build", share), staging.path, arch, mode.rawValue],
-                                   estimate: "~10 min; ~1 GB of sources and objects in a temporary directory"))
+                                   estimate: Self.swiftBuildEstimate))
             steps.append(part(.swiftBuild, hash: swiftBuildHash, staging: staging))
         }
         if abilities.swiftBuild {

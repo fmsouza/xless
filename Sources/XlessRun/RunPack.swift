@@ -209,12 +209,13 @@ private struct PackChoice {
     /// Why `pack` is not the current pack of this xless; empty: it is. A pack of an Xcode this xless has no recipe for (versions.env
     /// maps it to no Swift toolchain) cannot be checked: that is said, and it is used as it is. A recipe input that cannot be read
     /// (a share that lacks a file or a versions.env entry) stops the run: whether a pack is current cannot be told then.
-    private func staleness(_ pack: XcodePack) throws -> [String] {
+    /// `parts`: those a preparation makes again (all, for a pack of another format, build or architecture).
+    private func staleness(_ pack: XcodePack) throws -> (reasons: [String], parts: [PackPart]) {
         let m = pack.manifest
         guard !(table["XCODE_SWIFT_\(m.build)"] ?? "").isEmpty else {
             run.host.say("==> note: the pack \(pack.name) in \(place(of: pack.name)) is of Xcode \(m.xcode) (\(m.build)), which this xless has no recipe for "
                 + "(versions.env maps it to no Swift toolchain, XCODE_SWIFT_\(m.build)): it is used as it is, and whether it is current is not checked")
-            return []
+            return ([], [])
         }
         var expected: [String: String] = [:]
         do {
@@ -225,20 +226,28 @@ private struct PackChoice {
         let check = SetupStep.PackCheck(volume: PackVolumes.name(xcode: m.xcode, build: m.build, arch: m.arch), pack: pack.name, arch: arch,
                                         image: image.name, build: m.build, expected: expected)
         let reasons = SetupPlan.staleness(m, check: check)
-        guard reasons.isEmpty, case .directory = store else { return reasons }
-        return SetupPlan.lacking(pack.root, existing: { FileManager.default.fileExists(atPath: $0.path) })
+        guard reasons.isEmpty else {
+            let whole = m.format != PackRecipe.format || m.build != check.build || m.arch != check.arch
+            return (reasons, PackPart.allCases.filter { whole || m.parts[$0.rawValue] != expected[$0.rawValue] })
+        }
+        guard case .directory = store else { return ([], []) }
+        let exists = { (url: URL) in FileManager.default.fileExists(atPath: url.path) }
+        return (SetupPlan.lacking(pack.root, existing: exists),
+                PackPart.allCases.filter { part in PackPlan.entries(of: part).contains { !exists(pack.root.appendingPathComponent($0)) } })
     }
 
     func choose() throws -> RunPack {
         let here = try packs()
         let chosen = try? XcodeResolver.choose(here, pin: run.xcodePin, arch: arch, order: order)
         let why: String
+        var parts = PackPart.allCases
         if let chosen {
             // A volume not read (a dry run) is said to be read when the run starts.
             guard reads || store != .volumes else { return RunPack(chosen.manifest, store: store) }
-            let reasons = try staleness(chosen)
-            if reasons.isEmpty { return RunPack(chosen.manifest, store: store) }
-            why = "the pack \(chosen.name) in \(place(of: chosen.name)) is not current (\(reasons.joined(separator: "; ")))"
+            let stale = try staleness(chosen)
+            if stale.reasons.isEmpty { return RunPack(chosen.manifest, store: store) }
+            why = "the pack \(chosen.name) in \(place(of: chosen.name)) is not current (\(stale.reasons.joined(separator: "; ")))"
+            parts = stale.parts
         } else {
             why = "there is no pack of \(wanted) for \(arch) in \(place)"
         }
@@ -260,13 +269,14 @@ private struct PackChoice {
             let name = chosen?.manifest ?? candidates.first.map { PackManifest(format: PackRecipe.format, xcode: XcodeVersion.canonical($0.shortVersion), build: $0.build, arch: arch, swift: "", mode: .own, parts: [:]) }
             return RunPack(name ?? PackManifest(format: PackRecipe.format, xcode: version ?? "<version>", build: "<build>", arch: arch, swift: "", mode: .own, parts: [:]), store: store)
         }
-        return try prepare(export.xcode, from: export.dir, cacheRoot: cacheRoot, why: why)
+        return try prepare(export.xcode, from: export.dir, cacheRoot: cacheRoot, why: why, parts: parts)
     }
 
     /// The steps of `xless setup --docker --sdk <export>` for this pack (`SetupPlan`: its volume when there is none, then the
     /// container of `PackSetup`, which prepares what is not current), each in the run's own way: shown by a dry run, else run with
     /// the run's label (a stopped run removes it) and nothing secret in docker's environment. Then the pack is read again.
-    private func prepare(_ xcode: KnownXcode, from export: URL, cacheRoot: URL, why: String) throws -> RunPack {
+    /// `parts`: what of it is not current, which the estimate names (the image's setup decides what it prepares).
+    private func prepare(_ xcode: KnownXcode, from export: URL, cacheRoot: URL, why: String, parts: [PackPart]) throws -> RunPack {
         let version = XcodeVersion.canonical(xcode.shortVersion)
         let name = XcodePack.name(xcode: version, build: xcode.build, arch: arch)
         let plan: SetupPlan.Docker
@@ -284,9 +294,9 @@ private struct PackChoice {
         }
         // (the image is here, or the run would have stopped: no step builds it)
         let steps = plan.steps.filter { $0.argv.first == "docker" }
-        let estimate = steps.last?.estimate ?? "seconds"
+        let what = (parts.isEmpty ? PackPart.allCases : parts).map { "its \($0.rawValue) part (\(PackPlan.estimate(of: $0)))" }.joined(separator: " and ")
         run.host.say("==> \(run.dryRun ? "would prepare" : "preparing") the pack \(name) of Xcode \(version) (\(xcode.build)) first (\(why)): "
-            + "what of it is not current, from the SDK export \(export.path); \(estimate)")
+            + "\(what), from the SDK export \(export.path)")
         for (n, s) in steps.enumerated() {
             // (not under a running build that has it, of another run or a setup; this run's own containers start after)
             if !run.dryRun, case let .packRun(job) = s.action, let target = job.writes {
@@ -310,7 +320,7 @@ private struct PackChoice {
         guard let pack = try packs().first(where: { $0.name == name }) else {
             throw RunStop.usage("the pack \(name) is not in \(place(of: name)) after it was prepared; xless setup --docker --sdk \(export.path) prepares it, and says why it cannot")
         }
-        let reasons = try staleness(pack)
+        let reasons = try staleness(pack).reasons
         guard reasons.isEmpty else {
             throw RunStop.usage("the pack \(name) is still not current after it was prepared (\(reasons.joined(separator: "; "))); xless setup --docker --sdk \(export.path) prepares it, and says why it cannot")
         }

@@ -156,7 +156,7 @@ import XlessImages
         let materialize = try #require(host.allSteps.firstIndex { $0.words.contains("materialize") && !$0.words.contains("--check") })
         #expect(host.allSteps.firstIndex(of: runs[setup])! < materialize)
         // it said what, why, and how long
-        #expect(host.lines.contains { $0.hasPrefix("==> preparing the pack 27.0-27A266a-arm64 of Xcode 27.0 (27A266a) first (the pack 27.0-27A266a-arm64 in the volume \(volume) is not current (its swift-build part was prepared by another recipe (000000000000, this xless's is ") && $0.contains("from the SDK export \(home.exports)/xcode27.0-27A266a; ~6 min") }, "\(host.lines)")
+        #expect(host.lines.contains { $0.hasPrefix("==> preparing the pack 27.0-27A266a-arm64 of Xcode 27.0 (27A266a) first (the pack 27.0-27A266a-arm64 in the volume \(volume) is not current (its swift-build part was prepared by another recipe (000000000000, this xless's is ") && $0.hasSuffix("): its swift-build part (~10 min: Swift Build compiled, ~1 GB of sources and objects in a temporary directory), from the SDK export \(home.exports)/xcode27.0-27A266a") }, "\(host.lines)")
         #expect(host.lines.contains("==> the pack 27.0-27A266a-arm64 is current"))
         for step in runs where step.isContainer { #expect(has(step.words, Self.pack270)) }
         // once current, a run prepares nothing
@@ -227,7 +227,7 @@ import XlessImages
         let (host, code) = try run([home.project, "--to", "finalize"], ["XLESS_XCODES": store])
         #expect(code == 0, "\(host.lines)")
         #expect(home.packs.prepared == ["type=bind,src=\(store),dst=/xcodes"], "the store, writable, in the setup container alone")
-        #expect(host.lines.contains { $0.contains("is not current (it has no swift-build part)") })
+        #expect(host.lines.contains { $0.contains("is not current (it has no swift-build part)): its swift-build part (~10 min: Swift Build compiled") && !$0.contains("its sdk part") })
         let pack = try #require(try XcodePack.open(URL(fileURLWithPath: "\(store)/26.2-17C52-arm64")))
         #expect(pack.has(.swiftBuild))
         let step = try #require(host.allSteps.first { $0.isContainer })
@@ -280,7 +280,8 @@ import XlessImages
         try home.export("26.2", "17C52")
         let (prepares, preparesCode) = try run(["--config", home.overlay, "--dry-run"])
         #expect(preparesCode == 0 && prepares.allSteps.allSatisfy { !$0.isDockerRun })
-        #expect(prepares.lines.contains { $0.hasPrefix("==> would prepare the pack 26.2-17C52-arm64 of Xcode 26.2 (17C52) first (there is no pack of Xcode 26.2 for arm64 in ") })
+        #expect(prepares.lines.contains { $0.hasPrefix("==> would prepare the pack 26.2-17C52-arm64 of Xcode 26.2 (17C52) first (there is no pack of Xcode 26.2 for arm64 in ")
+            && $0.contains("): its sdk part (~3 min: the Swift toolchain (~2 min; a ~1.1 GB download, ~4 GB unpacked) and the Darwin SDK (~1 min; ~3 GB on disk)) and its swift-build part (~10 min: ") })
         #expect(prepares.output.contains("docker volume create --label org.xless.pack=true xless-xcode-26.2-17C52-arm64 "), "\(prepares.output)")
         #expect(prepares.output.contains { $0.contains(" xless setup --sdk /cache/xless/sdk/xcode26.2-17C52") && $0.contains("type=volume,src=xless-xcode-26.2-17C52-arm64,dst=/xcodes ") })
         #expect(home.packs.manifest("xless-xcode-26.2-17C52-arm64") == nil && home.packs.prepared.isEmpty)
