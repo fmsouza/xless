@@ -442,9 +442,15 @@ F
       -e "s/^SWIFT_TOOLCHAIN_6_2_3_SHA256_$A=.*/SWIFT_TOOLCHAIN_6_2_3_SHA256_$A=$tsum/" "$repo/versions.env" > "$ps/versions.env"
   grep -q "$tsum" "$ps/versions.env" || fail "could not register the fake toolchain"
   printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done\necho "$out" >> "$CURL_LOG"; cp "$FAKE_TARBALL" "$out"\n' > "$fake/curl"
-  printf '#!/bin/sh\n[ "$1 $2" = "sdk install" ] || exit 2\nmkdir -p "$XDG_CONFIG_HOME/swiftpm/swift-sdks/darwin.artifactbundle"\n' > "$t/native/bin/xtool"
-  printf '#!/bin/sh\n' > "$t/native/bin/rcodesign"
-  chmod +x "$fake/curl" "$t/native/bin/xtool" "$t/native/bin/rcodesign"
+  # installed as xless setup installs them: in tools/<tool>-<pinned version>, linked from bin/ (a link to another version, or
+  # none, is installed again)
+  xt="$t/native/tools/xtool-$(sed -n 's/^XTOOL_VERSION=//p' "$repo/versions.env")"
+  rc="$t/native/tools/rcodesign-$(sed -n 's/^RCODESIGN_VERSION=//p' "$repo/versions.env")"
+  mkdir -p "$xt" "$rc"
+  printf '#!/bin/sh\n[ "$1 $2" = "sdk install" ] || exit 2\nmkdir -p "$XDG_CONFIG_HOME/swiftpm/swift-sdks/darwin.artifactbundle"\n' > "$xt/AppRun"
+  printf '#!/bin/sh\n' > "$rc/rcodesign"
+  chmod +x "$fake/curl" "$xt/AppRun" "$rc/rcodesign"
+  ln -s "$xt/AppRun" "$t/native/bin/xtool"; ln -s "$rc/rcodesign" "$t/native/bin/rcodesign"
   export_meta "$t/x27" 27A266a "$host"
   export_meta "$t/x26" 17C52 "$host"
   st="$t/store" n27="27.0-27A266a-$host" n26="26.2-17C52-$host"
