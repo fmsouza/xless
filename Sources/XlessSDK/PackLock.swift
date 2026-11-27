@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessImages
 
 /// An exclusive lock on one pack's preparation: `<store>/<name>.lock`, flock(2). Released when the value goes away (and
 /// by the system when the process ends, however it ends). The lock file stays: removing it would let a third setup lock a
@@ -46,8 +47,8 @@ public final class PackLock {
     public static func file(store: XcodeStore, name: String) -> URL { store.root.appendingPathComponent("\(name).lock") }
 }
 
-/// What a store must be for a pack to be prepared in it.
-public enum PackStore {
+/// What a store must be for a pack to be prepared in it (a store of the host: `XcodeStore`).
+extension PackStore {
     /// Whether names that differ only in case are two names in `directory` (it must exist): a file is made there, its other
     /// spelling looked for, and the file removed.
     public static func distinguishesCase(_ directory: URL) throws -> Bool {

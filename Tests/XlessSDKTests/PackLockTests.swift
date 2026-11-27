@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import XlessSDK
 @testable import XlessCore
+import XlessImages
 
 private var fm: FileManager { FileManager.default }
 
