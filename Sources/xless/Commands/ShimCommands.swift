@@ -198,6 +198,8 @@ struct XcrunShimCommand: ParsableCommand {
         let action: XcrunShim.Action
         do { action = try XcrunShim.resolve(args, sdk: try DarwinSDK(), which: which, shim: shim, lipoArchs: lipoArchs) }
         catch let e as XcrunShim.Unsupported { FileHandle.standardError.write(Data("\(e)\n".utf8)); Foundation.exit(70) }
+        // no SDK to answer with (a pack that cannot be used): xcrun's own form, and its status
+        catch let problem as XcodeProblem { FileHandle.standardError.write(Data("xcrun: error: \(problem)\n".utf8)); Foundation.exit(1) }
         switch action {
         case .output(let text):
             print(text, terminator: "")

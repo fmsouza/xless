@@ -146,4 +146,12 @@ if command -v zip >/dev/null; then
   mkfifo "$ios/signed/App.app/pipe"
   expect 16 "error: [package] pipe in App.app is neither a file" package --platform ios --project "$pkg"
 fi
+
+# The xcrun shim beside a pack that cannot be used: xcrun's own form of error (exit 1), with the pack's fix.
+case "$(uname -m)" in arm64|aarch64) pa=arm64 ;; *) pa=amd64 ;; esac
+mkdir -p "$t/xcodes/99.0-99Z99-$pa"
+printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{}}' "$pa" > "$t/xcodes/99.0-99Z99-$pa/pack.json"
+code=0; "${base[@]}" XLESS_XCODES="$t/xcodes" "$x" shim xcrun --show-sdk-path >/dev/null 2>"$t/err" || code=$?
+[[ $code == 1 && "$(cat "$t/err")" == "xcrun: error: the pack 99.0-99Z99-$pa has no Darwin SDK; xless setup --sdk "* ]] \
+  || fail "the xcrun shim beside a pack that cannot be used: exit $code: $(cat "$t/err")"
 echo PASS
