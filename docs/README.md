@@ -84,6 +84,7 @@ Measurements and decisions behind the code, in [research/](research/):
 - [The Mac App Store `.pkg` from Linux](research/mas-pkg.md)
 - [Parity known gaps](research/parity-known-gaps.md) between Xcode builds and xless builds
 - [Asset and storyboard tools by Xcode version](research/xcode-tools-by-version.md)
+- [Moving an Xcode pack and using it read-only](research/xcode-pack-relocation.md)
 - [ibtool's invocation](research/ib-invocation.md) and [the NIB encoding](research/nib-encoding.md)
 - [The React Native iOS contract](research/react-native-ios-contract.md) and [the Tauri iOS contract](research/tauri-ios-contract.md)
 - [What M7 has not verified against a real Apple account](research/m7-live-checklist.md), and where #105 checks it

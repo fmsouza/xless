@@ -4,11 +4,11 @@
 
 **Relocatable.** An SDK installed with `xtool sdk install` holds no absolute path at all: not in any file, not in any
 symlink. Moved to another directory and mounted read-only, SwiftPM and Swift Build still found it and the compile phase
-ran against it. Tasks proceed as written; no "same path everywhere" rule is needed. **End-to-end build not shown; link
+ran against it. No "same path everywhere" rule is needed. **End-to-end build not shown; link
 step unmeasured** (the one phase that reads the SDK's `.tbd` stubs and `ld64.lld` from the read-only mount never ran).
 Measured with Swift 6.4 in a Linux container; native macOS not measured.
 
-- **Which switch the tools get (Task 6): `--swift-sdks-path <pack>/swiftpm/swift-sdks`, with the user's own (or a
+- **Which switch the tools get: `--swift-sdks-path <pack>/swiftpm/swift-sdks`, with the user's own (or a
   scratch) writable `XDG_CONFIG_HOME` left alone.** Both ways find the SDK. With `XDG_CONFIG_HOME=<pack>/config` SwiftPM
   and Swift Build also want to create `swiftpm/configuration`, `swiftpm/security`, `swiftpm/swift-sdks/configuration`
   and a `swiftpm/cache` link under it: on a read-only pack they print warnings ("not accessible or not writable,
@@ -29,7 +29,7 @@ Measured with Swift 6.4 in a Linux container; native macOS not measured.
 `scripts/spikes/pack-relocation.sh <export dir> <arch>`, run on a macOS arm64 host (Docker 29.5.2 through colima, no
 `colima-xless` context) in a privileged `linux/arm64` container of `xless:local-arm64-setup` (Swift 6.4, xtool 1.21.0, as
 root; strace added with apt). The export is Xcode 26.2 (17C52), `~/.cache/xless/sdk/xcode26.2-17C52/arm64/darwin.xtoolsdk`
-(3.0 GB) made with `docs/images.md` steps 1 to 3 from `Xcode_26.2_Universal.xip`.
+(3.0 GB) exported from `Xcode_26.2_Universal.xip` by xless's SDK export.
 
 1. `XDG_CONFIG_HOME=/tmp/p1/config xtool sdk install /export/darwin.xtoolsdk` (straced).
 2. (a) `grep -rIl /tmp/p1 /tmp/p1/config`, the same without `-I` (binary files), and
@@ -75,8 +75,7 @@ trees under `/tmp/p2` among about 23,500 `SDKs/` lines in the log, failed opens 
 `clang -r ... --ld-path=<bundle>/toolset/bin/ld64.lld` fails ("`HelloShip.o: No such file or directory`", "linker command
 failed"). The control fails at the same step with the same message, so this is not about relocation. Probably (not investigated) the plain image
 lacks the pieces xless's build adds (the `xless-ld64` linker shim and the toolchain pins of Ruling R10, which are in
-`docker/Dockerfile`'s later stages, not in the tools image). Everything here was measured with Swift 6.4; re-check with 6.2.3 (the Xcode 26.2 app Swift, not downloaded)
-when Task 6 lands.
+`docker/Dockerfile`'s later stages, not in the tools image). Everything here was measured with Swift 6.4, not with 6.2.3 (the Swift of the Xcode 26.2 app, not downloaded).
 
 | Run | SDK found | Compile phase against the moved read-only SDK | Link |
 |---|---|---|---|
@@ -103,10 +102,10 @@ The decisive data for choosing S is the first-command-line column, whose strace 
 The evidence on the final command line is the warnings alone: X also performs 0 writes there. The choice of S stands: it
 leaves nothing for a read-only pack to refuse and avoids the warnings.
 
-## What this changes in the plan
+## What follows from it
 
-- Task 5's relocation test stays "move it, it still works"; no "same path" variant.
-- Task 6 gives the tools `--swift-sdks-path <pack>/swiftpm/swift-sdks` and a writable `XDG_CONFIG_HOME` (a Linux-container finding; native macOS not measured); never `XDG_CONFIG_HOME=<pack>/config`.
+- A test of a pack's relocation moves it and checks that it still works; no "same path" variant.
+- The tools get `--swift-sdks-path <pack>/swiftpm/swift-sdks` and a writable `XDG_CONFIG_HOME` (a Linux-container finding; native macOS not measured); never `XDG_CONFIG_HOME=<pack>/config`.
 - `xtool sdk install` runs only when the pack is made, into a writable directory.
 - Not measured: the link step (needs the xless image's linker shim), Swift 6.2.3, and an x86_64 pack (the structure, with no absolute
   path, is by design the same). The raw strace and build logs of the last run are in `~/.cache/xless/spike-out/`.
