@@ -136,7 +136,7 @@ natively, this machine's only):
 | Where | Asked for | Why | Set by |
 |---|---|---|---|
 | The cache: `$XDG_CACHE_HOME/xless`, else `~/.cache/xless` | 17 GB, only when this run exports the SDK | xtool unpacks the `.xip` into the SDK export there (measured peak about 15 GB); about 3.5 GB stays | `XLESS_SETUP_CACHE_GB` |
-| The native home: `$XLESS_NATIVE_HOME`, else `~/.local/share/xless-native` (native only) | 10 GB, unless nothing is left to install | the Swift toolchain (about 4 GB unpacked, from a 1.1 GB download), xtool, rcodesign and the installed SDK (about 3.5 GB) | `XLESS_SETUP_NATIVE_GB` |
+| The store of Xcode packs: `$XLESS_XCODES`, else `~/.local/share/xless-native/xcodes` (native only) | 10 GB, only when this run prepares a pack | the pack's Swift toolchain (about 4 GB unpacked, from a 1.1 GB download) and its installed SDK (about 3.5 GB) | `XLESS_SETUP_NATIVE_GB` |
 | Docker's data root (`docker info`, `/var/lib/docker` by default; checked on Linux, with `--docker` only) | 30 GB | the image, both kits and their build cache (measured about 25 GB for a first setup; the image is 13 GB, the kits 0.3 and 0.7 GB) | `XLESS_SETUP_DOCKER_GB` |
 
 The figures are decimal GB (10^9 bytes), from `versions.env`, measured on first runs from the Xcode 26.2, 26.6 and 27.0

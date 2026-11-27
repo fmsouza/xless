@@ -44,13 +44,15 @@ private let table = ["XLESS_SETUP_CACHE_GB": "17", "XLESS_SETUP_DOCKER_GB": "40"
     #expect(env["XLESS_SETUP_DISK_GB"] == nil)
 }
 
-@Test func aNativeSetupAsksForTheCacheOnlyWhenItExports() {
+@Test func aNativeSetupAsksForTheCacheOnlyWhenItExportsAndForTheStoreOnlyWhenItPreparesAPack() {
     let t = table.merging(["XLESS_SETUP_NATIVE_GB": "10"]) { $1 }
-    let n = SetupDisk.nativeNeeds(exporting: true, env: [:], table: t)
+    let n = SetupDisk.nativeNeeds(exporting: true, preparing: true, env: [:], table: t)
     #expect(n.cache.totalGB == 17)
-    #expect(n.native == SetupDisk.Need(key: "XLESS_SETUP_NATIVE_GB", perArchGB: 10, archs: 1))
-    #expect(SetupDisk.nativeNeeds(exporting: false, env: ["XLESS_SETUP_NATIVE_GB": "3"], table: t).cache.totalGB == 0)
-    #expect(SetupDisk.nativeNeeds(exporting: false, env: ["XLESS_SETUP_NATIVE_GB": "3"], table: t).native.totalGB == 3)
+    #expect(n.store == SetupDisk.Need(key: "XLESS_SETUP_NATIVE_GB", perArchGB: 10, archs: 1))
+    #expect(SetupDisk.nativeNeeds(exporting: false, preparing: true, env: ["XLESS_SETUP_NATIVE_GB": "3"], table: t).cache.totalGB == 0)
+    #expect(SetupDisk.nativeNeeds(exporting: false, preparing: true, env: ["XLESS_SETUP_NATIVE_GB": "3"], table: t).store.totalGB == 3)
+    // The pack is current: the store needs no room.
+    #expect(SetupDisk.nativeNeeds(exporting: false, preparing: false, env: [:], table: t).store.totalGB == 0)
 }
 
 @Test func theRefusalNamesThePathAndBothFigures() {

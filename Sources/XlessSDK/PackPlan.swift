@@ -278,6 +278,23 @@ public enum PackPlan {
         if hadOne { try? removeTree(old) }
     }
 
+    /// The pack a setup left at `<final>.old` with no `final` (stopped between the two renames of `commit`), renamed back
+    /// to `final`. Returns whether it did. Called under the pack's lock (`PackLock`), by setup alone: a build never renames.
+    public static func recover(_ final: URL) throws -> Bool {
+        let fm = FileManager.default
+        let old = final.deletingLastPathComponent().appendingPathComponent(final.lastPathComponent + ".old")
+        guard !fm.fileExists(atPath: final.path), (try? fm.destinationOfSymbolicLink(atPath: final.path)) == nil,
+              fm.fileExists(atPath: old.appendingPathComponent("pack.json").path) else { return false }
+        try move(old, to: final)
+        return true
+    }
+
+    /// A staging directory a failed setup leaves (`<name>.partial`): removed, so nothing half-prepared stays beside the pack.
+    public static func discard(staging: URL) throws {
+        guard FileManager.default.fileExists(atPath: staging.path) || (try? FileManager.default.destinationOfSymbolicLink(atPath: staging.path)) != nil else { return }
+        try removeTree(staging)
+    }
+
     /// Removes `url`, its directories made writable first (a directory without write permission keeps its entries). Files
     /// are left as they are: they may be hard links of the pack in use.
     static func removeTree(_ url: URL) throws {

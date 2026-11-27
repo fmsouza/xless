@@ -14,8 +14,9 @@ import Foundation
 /// - the metadata: `XLESS_TOOLCHAIN_META`;
 /// - the toolchain record: `XLESS_SWIFT_TOOLCHAIN`.
 /// With all three set no pack is needed (`pack` is nil when none fits). A machine whose store has no pack at all, and no
-/// `XLESS_XCODE`, is read where the images and the native setup kept the parts before the packs (`legacyLocations`);
-/// when there is nothing there either, the resolver's problem names the setup.
+/// `XLESS_XCODE`, is read where the images kept the parts before the packs (`legacyImageLocations`); when there is
+/// nothing there either, the resolver's problem names the setup. A pack a setup left aside while replacing it
+/// (`<name>.old`) is no pack here: setup puts it back (`PackPlan.recover`), a build never renames anything.
 ///
 /// A Mac building with its own Xcode reads none of this (`MacNative`, `DarwinSDK(xcode:)`).
 public struct XcodeEnvironment: Sendable {
@@ -132,8 +133,8 @@ public struct XcodeEnvironment: Sendable {
     }
 
     /// `current`, or nil when this machine has no Xcode at all: no pack in the store, no `XLESS_XCODE`, no override and
-    /// nothing of before the packs. A pack that does not fit still throws. With a pack found, its SDK wins over one under
-    /// `XDG_CONFIG_HOME` unless `XLESS_TOOLCHAIN_META` is set too; with none found, an SDK there is used as before.
+    /// nothing of an image of before the packs. A pack that does not fit still throws. With a pack found, its SDK wins over
+    /// one under `XDG_CONFIG_HOME` unless `XLESS_TOOLCHAIN_META` is set too.
     public static func lookup(env: [String: String] = ProcessInfo.processInfo.environment,
                               needs: Set<XcodeResolver.Need> = [.sdk]) throws -> XcodeEnvironment? {
         let fm = FileManager.default
@@ -162,7 +163,7 @@ public struct XcodeEnvironment: Sendable {
                 _ = problem // every part is overridden: the pack is not needed
             }
         }
-        let legacy = legacyLocations(env)
+        let legacy = legacyImageLocations(env)
         if storeIsEmpty, !legacy.present, !anyOverride { return nil }
         return XcodeEnvironment(pack: nil, sdkBundle: sdkOverride ?? legacy.sdkBundle, meta: metaOverride ?? legacy.meta,
                                 record: recordOverride ?? legacy.record, recordIsOverride: recordOverride != nil,
@@ -177,18 +178,19 @@ public struct XcodeEnvironment: Sendable {
 
     // MARK: -
 
-    // LEGACY: where the parts were before the packs, read only when the store holds no pack. Task 8 deletes the native
-    // half (the SDK under XDG_CONFIG_HOME or ~/.swiftpm, the metadata under ~/.config/xless, `NativeLayout.record`),
-    // Task 9 the image half (the files under /opt/xless, XLESS_TOOLCHAIN_INCLUDE).
-    private static func legacyLocations(_ env: [String: String]) -> (sdkBundle: URL, meta: URL, record: URL?, include: URL?, present: Bool) {
+    // LEGACY: where an image of before the packs keeps the parts, read only when the store holds no pack: the files under
+    // /opt/xless and XLESS_TOOLCHAIN_INCLUDE. Task 9 deletes it. (The native half, the old native layout, is gone: the SDK
+    // under ~/.swiftpm, the metadata under ~/.config/xless and `NativeLayout.record` are never read; setup reports them.)
+    private static func legacyImageLocations(_ env: [String: String]) -> (sdkBundle: URL, meta: URL, record: URL?, include: URL?, present: Bool) {
         let fm = FileManager.default
-        let imageMeta = "/opt/xless/toolchain-meta.json", imageRecord = "/opt/xless/swift-toolchain.json"
-        let sdkBundle = DarwinSDKLocator.bundle(env: env)
-        let meta = fm.fileExists(atPath: imageMeta) ? URL(fileURLWithPath: imageMeta) : ToolchainMeta.defaultLocation(env: env)
-        let record = fm.fileExists(atPath: imageRecord) ? URL(fileURLWithPath: imageRecord) : NativeLayout(env: env).record
+        let image = URL(fileURLWithPath: "/opt/xless")
+        // The image's XDG_CONFIG_HOME (/opt/xless/config), else where it would be; never ~/.swiftpm.
+        let sdkBundle = value(env, "XDG_CONFIG_HOME") != nil ? DarwinSDKLocator.bundle(env: env)
+            : image.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle")
+        let meta = image.appendingPathComponent("toolchain-meta.json"), record = image.appendingPathComponent("swift-toolchain.json")
         let include = value(env, "XLESS_TOOLCHAIN_INCLUDE").map { URL(fileURLWithPath: $0) }
         let hasRecord = fm.fileExists(atPath: record.path)
-        let present = fm.fileExists(atPath: sdkBundle.path) || fm.fileExists(atPath: meta.path) || hasRecord || include != nil
+        let present = fm.fileExists(atPath: meta.path) || hasRecord || include != nil
         return (sdkBundle, meta, hasRecord ? record : nil, include, present)
     }
 

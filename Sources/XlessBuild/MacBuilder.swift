@@ -82,7 +82,7 @@ public enum MacBuilder {
         let sdk = xcode.sdkBundle
         let toolset = sdk.appendingPathComponent("toolset-swb.json")
         guard FileManager.default.fileExists(atPath: toolset.path) else {
-            throw XlessError(.build, "Darwin SDK not installed at \(sdk.path)", fix: "use the xless SDK image or run `xless sdk install`")
+            throw XlessError(.build, "Darwin SDK not installed at \(sdk.path)", fix: "use the xless SDK image or run `xless setup`")
         }
         let lock = try BuildLock(project: project, note: note)
         defer { lock.release() }

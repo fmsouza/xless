@@ -275,7 +275,7 @@ public enum SwiftPackages {
                              run: Runner = { try Shell.run($0, $1, env: $2, stage: .build, passthrough: true) }) throws -> URL {
         let toolset = sdk.bundle.appendingPathComponent("toolset-swb.json")
         guard FileManager.default.fileExists(atPath: toolset.path) else {
-            throw XlessError(.build, "Darwin SDK not installed at \(sdk.bundle.path)", fix: "use the xless SDK image or run `xless sdk install`")
+            throw XlessError(.build, "Darwin SDK not installed at \(sdk.bundle.path)", fix: "use the xless SDK image or run `xless setup`")
         }
         let own = swift.flatMap { $0.isEngine ? nil : $0 }
         let buildDir = aggregateDir.appendingPathComponent(own.map { ".build-swift-\($0.version)" } ?? ".build", isDirectory: true)

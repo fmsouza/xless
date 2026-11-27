@@ -27,7 +27,8 @@ Apple targets, Swift Build, the Xcode tool shims), so on Linux `xless run` refus
 
   (On a release newer than Ubuntu 22.04, use its versions of `libgcc-*-dev` and `libstdc++-*-dev`.)
 - Free space: `XLESS_SETUP_CACHE_GB` (17 GB) under the cache while the SDK is exported, and `XLESS_SETUP_NATIVE_GB`
-  (10 GB) under the native home. An environment variable of the same name overrides each figure.
+  (10 GB) under the store of Xcode packs while a pack is prepared. An environment variable of the same name overrides
+  each figure.
 - The `.xip` only until the SDK is exported. After that, `xless setup` with no `--xcode` installs from the export in
   `~/.cache/xless/sdk/`, and `--sdk <dir>` names one kept elsewhere
   ([troubleshooting.md](troubleshooting.md#without-the-xip)).
@@ -37,11 +38,8 @@ Apple targets, Swift Build, the Xcode tool shims), so on Linux `xless run` refus
 | What | Where |
 |---|---|
 | xtool and rcodesign, at the versions pinned in `versions.env`, each checked against its sha256 | `~/.local/share/xless-native/tools/`, linked from `…/bin/` |
-| The open-source Swift toolchain of the Xcode's Swift (Ruling R10; [which one](xcode-versions.md#the-versions)), checked against its sha256 | `~/.local/share/xless-native/toolchains/swift-<version>/` |
-| The toolchain record (which Swift compiles app code, and the clang flags it needs) | `~/.local/share/xless-native/swift-toolchain.json` |
 | The Darwin SDK exported from the `.xip` by that xtool | `~/.cache/xless/sdk/xcode<version>-<build>/<arch>/` (shared with `--docker`) |
-| The SDK, installed for xtool and SwiftPM | `$XDG_CONFIG_HOME/swiftpm/swift-sdks/` if set, else `~/.swiftpm/swift-sdks/` |
-| Its toolchain metadata | `$XLESS_TOOLCHAIN_META`, else `$XDG_CONFIG_HOME/xless/toolchain-meta.json` (default `~/.config/xless/`) |
+| The Xcode pack, one per Xcode (several side by side): the open-source Swift toolchain of the Xcode's Swift (Ruling R10; [which one](xcode-versions.md#the-versions)), checked against its sha256, in `toolchain/`; the SDK installed for xtool and SwiftPM in `config/`; its `toolchain-meta.json`; the toolchain record `swift-toolchain.json`; and `pack.json` | `$XLESS_XCODES/<version>-<build>-<arch>/`, default `~/.local/share/xless-native/xcodes/` (on a case-sensitive file system) |
 
 The native home is `$XLESS_NATIVE_HOME` when set, else `$XDG_DATA_HOME/xless-native`, else
 `~/.local/share/xless-native`. It is apart from `~/.local/share/xless` (the release's files, which the installer
@@ -50,7 +48,7 @@ replaces on every upgrade), so upgrading xless keeps the native install.
 xless puts the native toolchain and tools first on its own `PATH` when it starts, so they win over any other `swift`
 (swiftly's, your distribution's) for everything it runs, and nothing is added to your shell's startup files.
 
-The Swift toolchain is fitted to the SDK the way the images fit theirs (`scripts/native-toolchain.sh`, with the same
+The Swift toolchain is fitted to the SDK the way the images fit theirs (`scripts/fit-toolchain.sh`, with the same
 files as `docker/Dockerfile`): its `clang` and `clang++` become a small driver that adds, for Darwin targets only,
 the `TARGET_OS_*` definitions Apple's clang has and the open-source one lacks, and the SDK's toolsets get the same
 flags. For Xcode 26.2 (Swift 6.2.3) the SDK also uses that toolchain's clang headers with the Xcode's runtime
@@ -139,12 +137,13 @@ XLESS_BUILD_READ=~/projects/shared-package xless run --config ~/ci/my-app.overla
 - The work copy is `~/.cache/xless/work/<overlay name>`, the one that `--docker` uses for Tauri and Cargo apps (React Native's is in a
   volume there). Going from one to the other installs the JavaScript packages again.
 
-## One Xcode at a time
+## Several Xcodes
 
-(Linux.) The native install holds one Xcode's SDK and Swift. `xless setup` with another Xcode replaces them; with the same Xcode
-it does nothing (`--reexport` exports the SDK again). A project that pins another Xcode with `xcode:` is refused at
-`build` with the setup command that fixes it. To keep several Xcodes side by side, use the images
-(`xless setup --docker`), which are tagged per Xcode.
+(Linux.) Each Xcode gets a pack of its own in the store, and `xless setup` with another Xcode adds its pack beside the
+others; with the same Xcode it does nothing when the pack is current (`--reexport` exports the SDK again). A project
+pins one with `xcode:`; without a pin a build uses the newest. A pack is prepared beside its place and put there whole,
+so a failed setup leaves the pack that was there, and a second setup of the same pack waits for the first. An Xcode
+installed natively by an xless of before the packs is not used: setup says so and prepares the pack.
 
 ## Running it
 

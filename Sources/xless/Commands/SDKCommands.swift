@@ -116,33 +116,34 @@ struct SDKExportCommand: AsyncParsableCommand {
 #endif
 
 struct SDKInstallCommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "install", abstract: "Install the Darwin SDK + toolchain metadata on this machine.")
+    static let configuration = CommandConfiguration(
+        commandName: "install", abstract: "Copy the Darwin SDK and its toolchain metadata out of an xless SDK image (--image).",
+        discussion: """
+        A native setup no longer installs an SDK on its own: `xless setup --sdk <export>` prepares an Xcode pack from an SDK \
+        export (the directory that holds <arch>/darwin.xtoolsdk and toolchain-meta.json), with the Swift toolchain fitted to it.
+        """)
 
-    @Option(help: "darwin.xtoolsdk produced by `xless sdk export` for this machine's architecture.") var xtoolsdk: String?
-    @Option(help: "toolchain-meta.json from the same export.") var meta: String?
-    @Option(help: "Copy both from an xless SDK image instead (needs docker).") var image: String?
+    @Option(help: ArgumentHelp("No longer supported: xless setup --sdk <export> prepares an Xcode pack from the export.", visibility: .hidden)) var xtoolsdk: String?
+    @Option(help: ArgumentHelp("No longer supported: see --xtoolsdk.", visibility: .hidden)) var meta: String?
+    @Option(help: "Copy both from an xless SDK image (needs docker).") var image: String?
 
     func run() async throws {
-        let installed: (sdk: URL, meta: URL)
-        if let image {
-            guard xtoolsdk == nil, meta == nil else {
-                throw XlessError(.sdk, "--image cannot be combined with --xtoolsdk/--meta", fix: "pass either --image, or --xtoolsdk with --meta")
-            }
-            installed = try SDKInstaller.install { sdkStage, metaStage in
-                let cid = try Shell.docker(["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                defer { _ = try? Shell.docker(["rm", cid], stage: .sdk) }
-                try Shell.docker(["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
-                try Shell.docker(["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
-                return sdkStage
-            }
-        } else {
-            guard let xtoolsdk, let meta else {
-                throw XlessError(.sdk, "pass --xtoolsdk and --meta, or --image", fix: "see docs/native-install.md")
-            }
-            for (name, path) in [("--xtoolsdk", xtoolsdk), ("--meta", meta)] where !FileManager.default.fileExists(atPath: path) {
-                throw XlessError(.sdk, "\(name) \(path) does not exist", fix: "pass the files produced by `xless sdk export`")
-            }
-            installed = try SDKInstaller.install(xtoolsdk: URL(fileURLWithPath: xtoolsdk), meta: URL(fileURLWithPath: meta))
+        guard let image else {
+            // The SDK and metadata it wrote (under the configuration directory) are read by nothing any more.
+            let export = xtoolsdk.map { URL(fileURLWithPath: $0).standardizedFileURL.deletingLastPathComponent().deletingLastPathComponent().path }
+                ?? meta.map { URL(fileURLWithPath: $0).standardizedFileURL.deletingLastPathComponent().path }
+            throw XlessError(.sdk, "xless sdk install no longer installs an SDK export: builds read the Xcode from an Xcode pack, which xless setup prepares",
+                             fix: "xless setup --sdk \(export.map(ShellWord.quoted) ?? "<the export directory, holding <arch>/darwin.xtoolsdk and toolchain-meta.json>")")
+        }
+        guard xtoolsdk == nil, meta == nil else {
+            throw XlessError(.sdk, "--image cannot be combined with --xtoolsdk/--meta", fix: "pass --image alone")
+        }
+        let installed = try SDKInstaller.install { sdkStage, metaStage in
+            let cid = try Shell.docker(["create", image], stage: .sdk).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            defer { _ = try? Shell.docker(["rm", cid], stage: .sdk) }
+            try Shell.docker(["cp", "\(cid):/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle", sdkStage.path], stage: .sdk)
+            try Shell.docker(["cp", "\(cid):/opt/xless/toolchain-meta.json", metaStage.path], stage: .sdk)
+            return sdkStage
         }
         print("SDK at \(installed.sdk.path); metadata at \(installed.meta.path)")
     }

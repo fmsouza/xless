@@ -106,7 +106,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     // With its metadata (an explicit override, as the images give): that SDK and that metadata.
     let z = try XcodeEnvironment.current(env: try isolated(store: store, ["XDG_CONFIG_HOME": xdg.path, "XLESS_TOOLCHAIN_META": meta.path]))
     #expect(z.sdkBundle.path == bundle.path && z.meta.path == meta.path && z.pack?.root.path == root.path)
-    // No pack found: the SDK there is used, as before the packs.
+    // No pack found: the SDK there is the override it names.
     let none = try XcodeEnvironment.current(env: try isolated(["XDG_CONFIG_HOME": xdg.path]))
     #expect(none.pack == nil && none.sdkBundle.path == bundle.path)
 }
@@ -205,7 +205,7 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     #expect(e?.cause.contains("has no Swift Build") == true)
 }
 
-@Test func theLegacyInstallIsUsedOnlyWithoutAPack() throws {
+@Test func theNativeInstallOfBeforeThePacksIsNeverRead() throws {
     // A native install of before the packs: the SDK under ~/.swiftpm, the metadata under ~/.config/xless, the record in NativeLayout.
     let env = try isolated()
     let home = URL(fileURLWithPath: env["HOME"]!)
@@ -213,20 +213,34 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
     try write("{}", to: home.appendingPathComponent(".config/xless/toolchain-meta.json"))
     try write(#"{"version":"6.4.0","root":"/n/toolchains/swift-6.4.0"}"#, to: NativeLayout(env: env).record)
-    let x = try XcodeEnvironment.current(env: env)
-    #expect(x.pack == nil && x.sdkBundle.path == bundle.path)
-    #expect(x.meta.path == home.appendingPathComponent(".config/xless/toolchain-meta.json").path)
-    #expect(x.toolchain == SwiftToolchain(version: "6.4.0", root: "/n/toolchains/swift-6.4.0"))
-    #expect(try x.toolEnvironment(env) == env.merging(["PATH": "/n/toolchains/swift-6.4.0/usr/bin:/usr/bin:/bin"]) { $1 })
-    // With a pack, nothing of it is read.
+    // No pack: no Xcode at all, and the problem names the setup (which reports that install).
+    #expect(try XcodeEnvironment.lookup(env: env) == nil)
+    #expect(try XcodeEnvironment.toolchain(env: env) == nil)
+    let e = problem { try XcodeEnvironment.current(env: env) }
+    #expect(e?.cause.contains("there is no pack for any Xcode") == true && e?.fix.hasPrefix("xless setup --xcode") == true)
+    // With a pack, the pack's parts.
     let store = URL(fileURLWithPath: env["XLESS_XCODES"]!)
     let root = try makePack(in: store)
     let y = try XcodeEnvironment.current(env: env)
     #expect(y.pack?.root.path == root.path && y.sdkBundle.path.hasPrefix(root.path) && y.meta.path.hasPrefix(root.path))
     #expect(y.toolchain?.root.hasPrefix(root.path) == true)
-    // A store whose packs do not fit is the answer, not the legacy install.
-    let e = problem { try XcodeEnvironment.current(env: env.merging([XcodeEnvironment.pinVariable: "27.0"]) { $1 }) }
-    #expect(e?.cause.contains("no pack for Xcode 27.0") == true)
+    // A store whose packs do not fit is the answer.
+    let f = problem { try XcodeEnvironment.current(env: env.merging([XcodeEnvironment.pinVariable: "27.0"]) { $1 }) }
+    #expect(f?.cause.contains("no pack for Xcode 27.0") == true)
+}
+
+@Test func aPackLeftAsideByAStoppedSetupIsNoPackAndABuildLeavesItThere() throws {
+    // A setup stopped between its two renames: the pack is at <name>.old and nothing is in its place.
+    let store = try tempDir()
+    let root = try makePack(in: store)
+    let aside = store.appendingPathComponent(root.lastPathComponent + ".old")
+    try fm.moveItem(at: root, to: aside)
+    let env = try isolated(store: store)
+    let e = problem { try XcodeEnvironment.current(env: env) }
+    #expect(e?.cause.contains("there is no pack for any Xcode") == true && e?.fix.hasPrefix("xless setup --xcode") == true)
+    #expect(try XcodeEnvironment.lookup(env: env) == nil)
+    // Nothing was renamed: setup puts it back.
+    #expect(fm.fileExists(atPath: aside.appendingPathComponent("pack.json").path) && !fm.fileExists(atPath: root.path))
 }
 
 @Test func aStalePackIsRefused() throws {

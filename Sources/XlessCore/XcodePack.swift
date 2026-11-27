@@ -30,10 +30,10 @@ public struct PackManifest: Codable, Equatable, Sendable {
 
     public static func load(from url: URL) throws -> PackManifest {
         guard let data = try? Data(contentsOf: url) else {
-            throw XlessError(.sdk, "pack manifest not found at \(url.path)", fix: "run `xless sdk install` to prepare the pack again")
+            throw XlessError(.sdk, "pack manifest not found at \(url.path)", fix: "run `xless setup` to prepare the pack again")
         }
         do { return try JSONDecoder().decode(PackManifest.self, from: data) } catch {
-            throw XlessError(.sdk, "pack manifest at \(url.path) is invalid: \(error)", fix: "remove that pack and run `xless sdk install` again")
+            throw XlessError(.sdk, "pack manifest at \(url.path) is invalid: \(error)", fix: "remove that pack and run `xless setup` again")
         }
     }
 

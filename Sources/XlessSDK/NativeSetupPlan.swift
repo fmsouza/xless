@@ -21,20 +21,14 @@ public struct NativeDownload: Equatable, Sendable {
     public var partial: URL { final.deletingLastPathComponent().appendingPathComponent(final.lastPathComponent + ".partial") }
 }
 
-/// `xless setup` without `--docker` (Linux): installs into `NativeLayout` what the images carry, with no Docker and no
-/// sudo. In order: xtool and rcodesign (versions.env's pins), the open-source Swift toolchain the Xcode's Swift maps to
-/// (`XCODE_SWIFT_<build>`, Ruling R10), the Darwin SDK exported by that xtool into the cache the Docker path uses too,
-/// its toolchain-meta.json, the SDK installed for xtool/SwiftPM (`xless sdk install`), and last the image's toolchain
-/// fix-ups (scripts/native-toolchain.sh), which write the toolchain record. A tool already installed is skipped; the SDK
-/// install and the fix-ups are skipped only when the install already holds this Xcode with this toolchain.
+/// `xless setup` without `--docker` (Linux): what the images carry, with no Docker and no sudo. In order: xtool and
+/// rcodesign (versions.env's pins) into `NativeLayout`, the Darwin SDK exported by that xtool into the cache the Docker
+/// path uses too, its toolchain-meta.json, and then the Xcode pack of that Xcode in the store (`PackPlan`): the
+/// open-source Swift toolchain the Xcode's Swift maps to (`XCODE_SWIFT_<build>`, Ruling R10), the SDK installed for xtool
+/// and SwiftPM, the metadata and the fit (scripts/fit-toolchain.sh), and Swift Build where this machine can use it. A tool
+/// already installed is skipped; a pack part is prepared only when it is not current, and every other pack of the store
+/// is left as it is (several Xcodes side by side).
 public enum NativeSetupPlan {
-    /// The current native install, from its toolchain-meta.json and toolchain record.
-    public struct Installed: Equatable, Sendable {
-        public let xcodeBuild: String
-        public let swiftVersion: String
-        public init(xcodeBuild: String, swiftVersion: String) { self.xcodeBuild = xcodeBuild; self.swiftVersion = swiftVersion }
-    }
-
     /// The host commands a native setup and a native build run (cpio: the macOS lane's .pkg payload; xless writes the XAR itself; Swift's own
     /// libraries are checked by running swiftc).
     public static let requiredCommands = ["curl", "tar", "gzip", "unzip", "zip", "git", "python3", "cpio"]
@@ -75,26 +69,22 @@ public enum NativeSetupPlan {
                               sha256: try pin("RCODESIGN_SHA256_\(mac ? "DARWIN_" : "")\(a)", table: table, arch: arch), final: layout.rcodesign(version: version))
     }
 
-    /// `sdkBundle` and `metaDest`: where the SDK install puts them (`DarwinSDKLocator.bundle()`,
-    /// `ToolchainMeta.defaultLocation()`), which the fix-ups edit and read.
+    /// `store`: where the pack goes (`XcodeStore`); the pack there now, if any, is read to tell which of its parts are current.
+    /// `abilities`: what this machine can prepare (`PackPlan.abilities`). `existing`: whether a file is there.
     public static func make(source: XcodeSource.Identified, arch: String, share: URL, cacheRoot: URL, layout: NativeLayout,
-                            sdkBundle: URL, metaDest: URL, table: [String: String], reexport: Bool, installed: Installed?,
+                            store: XcodeStore, table: [String: String], reexport: Bool, abilities: PackPlan.Abilities,
                             existing: (URL) -> Bool) throws -> [SetupStep] {
         let x = source.xcode, a = tableArch(arch), lower = a.lowercased()
         func pin(_ key: String) throws -> String { try Self.pin(key, table: table, arch: arch) }
-        let swift = try swiftVersion(for: x, table: table)
-        let swiftKey = "SWIFT_TOOLCHAIN_\(swift.replacingOccurrences(of: ".", with: "_"))"
+        _ = try swiftVersion(for: x, table: table)
         let xtoolV = try pin("XTOOL_VERSION"), rcV = try pin("RCODESIGN_VERSION")
         let downloads = [
             ("xtool \(xtoolV)", NativeDownload(kind: .appImage, url: URL(string: "https://github.com/xtool-org/xtool/releases/download/\(xtoolV)/xtool-\(lower).AppImage")!,
                                               sha256: try pin("XTOOL_SHA256_\(a)"), final: layout.xtool(version: xtoolV)), layout.bin.appendingPathComponent("xtool"), "~10 s"),
             ("rcodesign \(rcV)", try rcodesign(arch: arch, mac: false, table: table, layout: layout), layout.bin.appendingPathComponent("rcodesign"), "seconds"),
-            ("the Swift \(swift) toolchain (Xcode \(x.shortVersion)'s Swift, Ruling R10)",
-             NativeDownload(kind: .swiftToolchain, url: URL(string: try pin("\(swiftKey)_URL_\(a)"))!, sha256: try pin("\(swiftKey)_SHA256_\(a)"),
-                            final: layout.toolchain(version: swift)), layout.toolchain(version: swift).appendingPathComponent("usr/bin/swiftc"), "~2 min; a ~1.1 GB download, ~4 GB unpacked"),
         ]
         var steps: [SetupStep] = []
-        // Installed when its marker is there: a tool's link in bin/ (which a run stopped after the move lacks), the toolchain's swiftc.
+        // Installed when its marker is there: a tool's link in bin/ (which a run stopped after the move lacks).
         for (what, d, marker, estimate) in downloads where !existing(marker) {
             steps.append(SetupStep(title: "install \(what) into \(d.final.path)",
                                    argv: ["curl", "-fsSL", "-o", d.partial.path + ".download", d.url.absoluteString],
@@ -118,20 +108,10 @@ public enum NativeSetupPlan {
                                    argv: ["xless", "sdk", "meta", "--from-xtoolsdk", xtoolSDK.path, "--xcode-build", x.build, "--out", meta.path],
                                    estimate: "seconds", action: .meta(xtoolSDK: xtoolSDK, out: meta)))
         }
-        let current = installed.map { $0.xcodeBuild == x.build && DottedVersion($0.swiftVersion) == DottedVersion(swift) } ?? false
-        if !steps.isEmpty || !current || !existing(layout.record) {
-            steps.append(SetupStep(title: "install the SDK and toolchain-meta.json for xtool and SwiftPM",
-                                   argv: ["xless", "sdk", "install", "--xtoolsdk", xtoolSDK.path, "--meta", meta.path],
-                                   estimate: "~1 min", action: .sdkInstall(xtoolSDK: xtoolSDK, meta: meta, toolchain: layout.toolchain(version: swift))))
-            // The image's own Swift (SWIFT_VERSION) keeps the Xcode's clang resource directory; another release gets
-            // its own, with the Xcode's runtimes (docker/Dockerfile's two cases).
-            let mode = swift == table["SWIFT_VERSION"] ? "own" : "separate"
-            steps.append(SetupStep(title: "fit the Swift \(swift) toolchain to the SDK and record it in \(layout.record.path)",
-                                   argv: [share.appendingPathComponent("scripts/native-toolchain.sh").path, layout.toolchain(version: swift).path, mode,
-                                          sdkBundle.path, metaDest.path, share.appendingPathComponent("docker/toolchain").path,
-                                          layout.record.path],
-                                   estimate: "seconds"))
-        }
-        return steps
+        let place = store.directory(xcode: XcodeVersion.canonical(x.shortVersion), build: x.build, arch: arch)
+        // A pack.json that cannot be read is no pack: it is prepared whole.
+        let current = (try? XcodePack.open(place)) ?? nil
+        return steps + (try PackPlan.make(xcode: x, arch: arch, export: sdkDir, store: store, share: share, table: table,
+                                          abilities: abilities, current: current, existing: existing))
     }
 }

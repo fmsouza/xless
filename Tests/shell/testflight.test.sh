@@ -81,10 +81,17 @@ out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto d
 printf '{}' > "$t/meta.json"
 out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_TOOLCHAIN_META="$t/meta.json" "$S" "$t/proj" 2>/dev/null) || fail "auto native dry run failed"
 [[ "$out" == "xless ship --platform ios "* ]] || fail "auto with a toolchain-meta does not run native: $out"
+# An Xcode pack in the store: natively. (Its build is in no table, so no recipe of this xless makes it stale.)
+case "$(uname -m)" in arm64|aarch64) pa=arm64 ;; *) pa=amd64 ;; esac
+pk="$t/xcodes/99.0-99Z99-$pa"; mkdir -p "$pk"; printf '{}' > "$pk/toolchain-meta.json"
+printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{"sdk":"h"}}' "$pa" > "$pk/pack.json"
+out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_XCODES="$t/xcodes" "$S" "$t/proj" 2>/dev/null) || fail "auto native (a pack) failed"
+[[ "$out" == "xless ship --platform ios "* ]] || fail "a pack in the store is ignored: $out"
+# The metadata a native setup of before the packs left (~/.config/xless) is not read: in the images.
 mkdir -p "$t/home/.config/xless"; printf '{}' > "$t/home/.config/xless/toolchain-meta.json"
-out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto native (default meta) failed"
-[[ "$out" == "xless ship --platform ios "* ]] || fail "default toolchain-meta path ignored: $out"
-rm -rf "$t/home/.config"
+out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto beside an older native install failed"
+[[ "$out" == *"docker "* ]] || fail "the metadata of a native install of before the packs is read: $out"
+rm -rf "$t/home/.config" "$t/xcodes"
 
 # with ASC_KEY_P8_FILE set, each missing ID is a usage error (exit 2) naming the variable; IDs without the key file too
 # (the App Store Connect key and its IDs come from one place). A missing key file means the secret store

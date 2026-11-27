@@ -5,8 +5,9 @@ import XlessImages
 import XlessSDK
 
 /// `xless setup`: on a Mac, by default, a check of the Xcode that is installed there, which a native build uses (nothing is
-/// downloaded or changed); on Linux, by default, a native install of what the images carry (`NativeSetupPlan`: xtool, rcodesign,
-/// the Xcode's open-source Swift, the Darwin SDK exported from the Xcode), with no Docker and no sudo. With `--docker`,
+/// downloaded or changed); on Linux, by default, a native install of what the images carry (`NativeSetupPlan`: xtool and
+/// rcodesign, and the Xcode pack of the Xcode, with its open-source Swift and the Darwin SDK exported from it), with no
+/// Docker and no sudo. With `--docker`,
 /// the image xless:local-<arch>-xcode<version> from an Xcode .xip or Xcode.app, with Docker and nothing else: no Mac, no Apple
 /// binary executed (xtool reads the Xcode in a container), no checkout. `--with` adds the kits: what Tauri, Cargo, React Native
 /// and Expo apps need on top of it, which `xless run --docker` otherwise builds when it needs them.
@@ -28,12 +29,16 @@ struct SetupCommand: AsyncParsableCommand {
         cache's export when exactly one holds the architectures it sets up. Nothing is exported then, so the cache's \
         free-space check is skipped.
 
-        Native (the default, Linux only): xtool, rcodesign and the open-source Swift toolchain of that Xcode's Swift are \
-        downloaded (each checked against versions.env's sha256) into $XLESS_NATIVE_HOME (default \
-        $XDG_DATA_HOME/xless-native, else ~/.local/share/xless-native), the SDK is installed for xtool and SwiftPM, and the \
-        toolchain is fitted to it. No Docker and no sudo; the host commands it needs (\(NativeSetupPlan.requiredCommands.joined(separator: ", "))) \
-        are checked first, and free space: XLESS_SETUP_CACHE_GB under the cache (only when the SDK is exported) and \
-        XLESS_SETUP_NATIVE_GB under the native home. One Xcode at a time: the last setup wins.
+        Native (the default, Linux only): xtool and rcodesign are downloaded (each checked against versions.env's sha256) into \
+        $XLESS_NATIVE_HOME (default $XDG_DATA_HOME/xless-native, else ~/.local/share/xless-native), and the Xcode pack of \
+        that Xcode is prepared in the store, $XLESS_XCODES (default the native home's xcodes/): the open-source Swift \
+        toolchain of that Xcode's Swift, the SDK installed for xtool and SwiftPM, the toolchain fitted to it. Several Xcodes \
+        live side by side, one pack each; a project's xcode: picks one, else the newest is used. A pack is prepared beside \
+        its place and put there whole, so a failed setup leaves the pack that was there; a second setup of the same pack \
+        waits for the first. The store must be on a case-sensitive file system. No Docker and no sudo; the host commands it \
+        needs (\(NativeSetupPlan.requiredCommands.joined(separator: ", "))) are checked first, and free space: \
+        XLESS_SETUP_CACHE_GB under the cache (only when the SDK is exported) and XLESS_SETUP_NATIVE_GB under the store (only \
+        when a pack is prepared).
 
         --docker: the image xless:local-<arch>-xcode<version>, one per Xcode and architecture. --with adds the kits on top of \
         it: tauri (Tauri and Cargo apps) and react-native (React Native and Expo apps), comma separated; xless run --docker builds \
@@ -163,57 +168,91 @@ struct SetupCommand: AsyncParsableCommand {
 
     private func nativeSetup(source: XcodeSource.Identified, env: [String: String], share: URL, table: [String: String], cacheRoot: URL) throws {
         let fm = FileManager.default
-        let x = source.xcode, layout = NativeLayout(env: env)
-        let sdkBundle = DarwinSDKLocator.bundle(env: env), metaDest = ToolchainMeta.defaultLocation(env: env)
-        let installed: NativeSetupPlan.Installed? = {
-            guard fm.fileExists(atPath: sdkBundle.path), let meta = try? ToolchainMeta.load(from: metaDest),
-                  let data = fm.contents(atPath: layout.record.path), let swift = try? JSONDecoder().decode(SwiftToolchain.self, from: data)
-            else { return nil }
-            return .init(xcodeBuild: meta.xcodeBuild, swiftVersion: swift.version)
-        }()
-        let steps = try NativeSetupPlan.make(source: source, arch: Self.hostArch, share: share, cacheRoot: cacheRoot, layout: layout,
-                                             sdkBundle: sdkBundle, metaDest: metaDest, table: table, reexport: reexport,
-                                             installed: installed, existing: { fm.fileExists(atPath: $0.path) })
-        let exporting = steps.contains { if case .export = $0.action { true } else { false } }
-        let need = SetupDisk.nativeNeeds(exporting: exporting, env: env, table: table)
+        let x = source.xcode, layout = NativeLayout(env: env), store = XcodeStore(env: env), arch = Self.hostArch
+        let version = XcodeVersion.canonical(x.shortVersion)
+        let name = XcodePack.name(xcode: version, build: x.build, arch: arch)
+        let abilities = PackPlan.abilities(env: env)
+        func plan() throws -> [SetupStep] {
+            try NativeSetupPlan.make(source: source, arch: arch, share: share, cacheRoot: cacheRoot, layout: layout, store: store,
+                                     table: table, reexport: reexport, abilities: abilities, existing: { fm.fileExists(atPath: $0.path) })
+        }
+        var steps = try plan()
+        let need = Self.nativeNeeds(steps, env: env, table: table)
         let missing = NativeSetupPlan.requiredCommands.filter { Self.which($0, path: env["PATH"]) == nil }
 
-        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(Self.origin(source)), natively for \(Self.hostArch) into \(layout.root.path); SDK in \(SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot).path)")
+        say("==> Xcode \(version) (\(x.build)) from \(Self.origin(source)), natively for \(arch): the pack \(name) in \(store.root.path); "
+            + "tools in \(layout.root.path); SDK export in \(SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot).path)")
         if dryRun {
             say("dry run: the plan, nothing runs")
             if !missing.isEmpty { say("missing commands: \(missing.joined(separator: ", ")) (\(NativeSetupPlan.aptLine))") }
-            say("disk: the check asks for about \(need.cache.spoken) free under \(cacheRoot.path) (\(need.cache.key)) and \(need.native.spoken) under \(layout.root.path) (\(need.native.key))")
+            say("disk: the check asks for about \(need.cache.spoken) free under \(cacheRoot.path) (\(need.cache.key)) and \(need.store.spoken) under \(store.root.path) (\(need.store.key))")
             for (n, s) in steps.enumerated() {
                 say("[\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
                 say("    " + s.argv.map(ShellWord.quoted).joined(separator: " "))
             }
-            if steps.isEmpty { say("nothing to do: Xcode \(x.shortVersion) is installed") }
+            if steps.isEmpty { say("nothing to do: the pack \(name) is current") }
             return
         }
         guard missing.isEmpty else {
             throw XlessError(.sdk, "a native setup needs \(missing.joined(separator: ", ")), which \(missing.count == 1 ? "is" : "are") not on PATH",
                              fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build the images instead: xless setup --docker\(sourceArgs)")
         }
-        if need.cache.totalGB > 0 {
-            try Self.checkFree(cacheRoot, need: need.cache, what: "the cache (the SDK export, which expands the .xip there)",
-                               fix: "free some space, or set XDG_CACHE_HOME to a directory on a larger disk")
+        // Before anything is written into the store: the SDK has headers whose names differ only in case.
+        try PackStore.requireCaseSensitive(store)
+        // A second setup of this pack waits for the first, then finds what it left.
+        let lock: PackLock
+        do { lock = try PackLock(store: store, name: name, wait: false) } catch is PackLock.Busy {
+            say("==> waiting for another xless setup, which is preparing the pack \(name) (it holds \(PackLock.file(store: store, name: name).path))")
+            lock = try PackLock(store: store, name: name, wait: true)
         }
-        if !steps.isEmpty {
-            try Self.checkFree(layout.root, need: need.native, what: "the native install (the Swift toolchain, xtool, rcodesign and the SDK)",
-                               fix: "free some space, or set XLESS_NATIVE_HOME to a directory on a larger disk")
-        }
+        try withExtendedLifetime(lock) {
+            for back in try PackStore.recoverAll(store, holding: name) {
+                say("==> the pack \(back) is back in place: a setup had stopped while it replaced it")
+            }
+            // An Xcode installed natively by an xless of before the packs: its SDK and toolchain record, and no pack.
+            let old = DarwinSDKLocator.bundle(env: env)
+            let olderInstall = store.packs().isEmpty && fm.fileExists(atPath: old.path) && fm.fileExists(atPath: layout.record.path)
+            if olderInstall {
+                say("note: the Xcode that an older xless installed natively (the SDK in \(old.deletingLastPathComponent().path), the Swift toolchain under \(layout.toolchains.path)) is not used any more: this setup prepares an Xcode pack instead")
+            }
+            steps = try plan() // what the setup that held the lock left changes it
+            let need = Self.nativeNeeds(steps, env: env, table: table)
+            if need.cache.totalGB > 0 {
+                try Self.checkFree(cacheRoot, need: need.cache, what: "the cache (the SDK export, which expands the .xip there)",
+                                   fix: "free some space, or set XDG_CACHE_HOME to a directory on a larger disk")
+            }
+            if need.store.totalGB > 0 {
+                try Self.checkFree(store.root, need: need.store, what: "the Xcode pack (the Swift toolchain and the SDK)",
+                                   fix: "free some space, or set XLESS_XCODES to a directory on a larger disk")
+            }
 
-        say("    (\(SetupPlan.estimateNote))")
-        let start = Date()
-        for (n, s) in steps.enumerated() {
-            say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
-            let t0 = Date()
-            try execute(s, xcode: x, layout: layout)
-            say("    done in \(Self.minutes(since: t0))")
+            if !steps.isEmpty { say("    (\(SetupPlan.estimateNote))") }
+            let start = Date()
+            let staging = PackPlan.staging(of: store.directory(xcode: version, build: x.build, arch: arch))
+            do {
+                for (n, s) in steps.enumerated() {
+                    say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
+                    let t0 = Date()
+                    try execute(s, xcode: x, layout: layout)
+                    say("    done in \(Self.minutes(since: t0))")
+                }
+            } catch {
+                // Nothing half-prepared stays beside the pack, which is as it was.
+                try? PackPlan.discard(staging: staging)
+                throw error
+            }
+            if steps.isEmpty { say("==> nothing to do: the pack \(name) of Xcode \(version) (\(x.build)) is current" + (source.kind == .export ? "" : " (--reexport exports the SDK again)")) }
+            else { say("==> done in \(Self.minutes(since: start)): the pack \(name) of Xcode \(version) (\(x.build)), in \(store.root.path) (pin it with xcode: \"\(version)\")") }
+            if olderInstall { say("note: what the older xless installed is not used: xless clean --old removes it") }
         }
-        if steps.isEmpty { say("==> nothing to do: Xcode \(x.shortVersion) (\(x.build)) is installed natively" + (source.kind == .export ? "" : " (--reexport exports the SDK again)")) }
-        else { say("==> done in \(Self.minutes(since: start)): Xcode \(x.shortVersion) (\(x.build))'s SDK and its Swift are installed natively") }
         say("next: xless run <project-dir> --build-number 1 --to finalize")
+    }
+
+    /// What a native plan needs on disk: the cache when it exports, the store when it prepares a pack.
+    private static func nativeNeeds(_ steps: [SetupStep], env: [String: String], table: [String: String]) -> (cache: SetupDisk.Need, store: SetupDisk.Need) {
+        let exporting = steps.contains { if case .export = $0.action { true } else { false } }
+        let preparing = steps.contains { if case .packBegin = $0.action { true } else { false } }
+        return SetupDisk.nativeNeeds(exporting: exporting, preparing: preparing, env: env, table: table)
     }
 
     // MARK: - Docker
@@ -367,14 +406,6 @@ struct SetupCommand: AsyncParsableCommand {
             try meta.write(to: out)
         case let .download(d):
             try Self.install(d, layout: layout ?? NativeLayout())
-        case let .sdkInstall(xtoolSDK, meta, toolchain):
-            let layout = layout ?? NativeLayout()
-            // The record says the toolchain is fitted to the installed SDK: gone until the fit-up after this rewrites it,
-            // so a run stopped in between plans the fit-up again.
-            if FileManager.default.fileExists(atPath: layout.record.path) { try FileManager.default.removeItem(at: layout.record) }
-            let xtool = layout.bin.appendingPathComponent("xtool").path
-            let at = try SDKInstaller.install(xtoolsdk: xtoolSDK, meta: meta, xtool: xtool, toolchain: toolchain)
-            say("    SDK at \(at.sdk.path); metadata at \(at.meta.path)")
         case let .packBegin(staging, from, manifest):
             try PackPlan.begin(staging: staging, from: from, manifest: manifest)
         case let .packSDK(xtoolSDK, config, toolchain):

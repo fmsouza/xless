@@ -1,14 +1,15 @@
 import Foundation
 
-/// Where `xless setup` (native, the default on Linux) installs what the images otherwise carry: the pinned xtool and
-/// rcodesign, the open-source Swift toolchain of the SDK's Xcode (Ruling R10) and that toolchain's record. Its root is
-/// `$XLESS_NATIVE_HOME`, else `$XDG_DATA_HOME/xless-native`, else `~/.local/share/xless-native` (not
-/// `~/.local/share/xless`, which install.sh replaces on every upgrade). The SDK and its metadata stay where
-/// `xless sdk install` puts them (`DarwinSDKLocator`, `ToolchainMeta.defaultLocation`). Its `xcodes` directory is the
-/// default store of Xcode packs (`XcodeStore`), which `XcodeEnvironment` reads before any of this.
+/// Where `xless setup` (native, the default on Linux) installs the tools the images otherwise carry: the pinned xtool and
+/// rcodesign. Its root is `$XLESS_NATIVE_HOME`, else `$XDG_DATA_HOME/xless-native`, else `~/.local/share/xless-native` (not
+/// `~/.local/share/xless`, which install.sh replaces on every upgrade). Its `xcodes` directory is the default store of
+/// Xcode packs (`XcodeStore`), which hold everything that depends on an Xcode: its Swift toolchain, the SDK, the record.
 ///
-///     toolchains/swift-<version>/usr/bin/…   tools/xtool-<version>/AppRun   tools/rcodesign-<version>/rcodesign
-///     bin/xtool, bin/rcodesign (links)       swift-toolchain.json (written last: a `SwiftToolchain` record)
+///     tools/xtool-<version>/AppRun   tools/rcodesign-<version>/rcodesign   bin/xtool, bin/rcodesign (links)   xcodes/
+///
+/// An xless of before the packs also put here `toolchains/swift-<version>/` and `swift-toolchain.json`, with the SDK and
+/// its metadata where `xless sdk install` put them (`DarwinSDKLocator`, `ToolchainMeta.defaultLocation`): nothing reads
+/// them any more; `toolchains`, `toolchain(version:)` and `record` name them for setup's note and for `xless clean`.
 public struct NativeLayout: Sendable, Equatable {
     public let root: URL
 
@@ -23,7 +24,7 @@ public struct NativeLayout: Sendable, Equatable {
     public var bin: URL { root.appendingPathComponent("bin") }
     public var tools: URL { root.appendingPathComponent("tools") }
     public var toolchains: URL { root.appendingPathComponent("toolchains") }
-    /// The native `SwiftToolchain` record (`XLESS_SWIFT_TOOLCHAIN`'s format).
+    /// The `SwiftToolchain` record of a native install of before the packs (no longer written or read).
     public var record: URL { root.appendingPathComponent("swift-toolchain.json") }
 
     public func toolchain(version: String) -> URL { toolchains.appendingPathComponent("swift-\(version)") }
@@ -52,8 +53,7 @@ public struct NativeLayout: Sendable, Equatable {
     }
 
     /// The PATH a native xless runs with: the Xcode's Swift toolchain (`XcodeEnvironment.toolchain`: its pack's, by the pin
-    /// in `env`, else a native install's of before the packs) and then `bin` first, without another pack's or native
-    /// toolchain's `usr/bin`. nil: PATH stays as it is, on a host that is not Linux (`linux`), with `XLESS_SWIFT_TOOLCHAIN`
+    /// in `env`) and then `bin` first, without another pack's `usr/bin` (nor that of a native install of before the packs). nil: PATH stays as it is, on a host that is not Linux (`linux`), with `XLESS_SWIFT_TOOLCHAIN`
     /// set (an image's), without a toolchain, and when it already is that.
     public static func activatedPath(env: [String: String], linux: Bool = isLinuxHost) -> String? {
         guard linux, (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty, let toolchain = (try? XcodeEnvironment.lookup(env: env))??.toolchain else { return nil }

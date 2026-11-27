@@ -256,14 +256,19 @@ if [[ "$(uname)" != Linux ]]; then
   fi
   [[ ! -s "$log" ]] || fail "xless setup on a Mac called docker: $(cat "$log")"
 else
+  # The pack's recipe hashes the fit's script.
+  mkdir -p "$share/scripts" && cp "$repo/scripts/fit-toolchain.sh" "$share/scripts/"
   extra=(XLESS_NATIVE_HOME="$t/native")
   run ok --xcode "$xip" --dry-run
   [[ $code == 0 ]] || fail "native --dry-run exits $code: $(cat "$t/err")"
-  for want in "natively for $host into $t/native" "xtool-$dl.AppImage" "apple-codesign-" "$t/native/toolchains/swift-6.4.0" \
-              "$t/native/bin/xtool sdk build" "xless sdk install --xtoolsdk" "scripts/native-toolchain.sh $t/native/toolchains/swift-6.4.0 own" \
-              "(XLESS_SETUP_NATIVE_GB)"; do
+  pk="$t/native/xcodes/27.0-27A266a-$host"
+  for want in "natively for $host: the pack 27.0-27A266a-$host in $t/native/xcodes; tools in $t/native" "xtool-$dl.AppImage" "apple-codesign-" \
+              "$t/native/bin/xtool sdk build" "-o $pk.partial/toolchain.partial.download" "exec xtool sdk install" \
+              "scripts/fit-toolchain.sh $pk.partial own" "put the pack in place: $pk" "under $t/native/xcodes (XLESS_SETUP_NATIVE_GB)"; do
     grep -qF -- "$want" "$t/out" || fail "the native plan lacks '$want': $(cat "$t/out")"
   done
+  # Nothing of the native install of before the packs, and no Swift Build on a host without the shims.
+  grep -q 'toolchains/swift-\|xless sdk install\|native-toolchain\|pack-swift-build\|pack-check' "$t/out" && fail "the native plan: $(cat "$t/out")"
   [[ ! -s "$log" ]] || fail "a native setup called docker: $(cat "$log")"
   [[ ! -e "$t/native" ]] || fail "--dry-run wrote $t/native"
   # A host without python3 (and the rest): refused before anything runs, every missing command and the apt line named.
@@ -279,8 +284,9 @@ else
   if [[ -z "$(for c in curl tar gzip unzip zip git python3; do command -v "$c" >/dev/null || echo "$c"; done)" ]]; then
     run ok --xcode "$xip"
     [[ $code == 11 ]] || fail "a full native home exits $code, want 11: $(cat "$t/err")"
-    grep -q 'for the native install' "$t/err" && grep -q 'set XLESS_SETUP_NATIVE_GB' "$t/err" || fail "native disk refusal: $(cat "$t/err")"
+    grep -q "GB free under $t/native/xcodes for the Xcode pack" "$t/err" && grep -q 'set XLESS_SETUP_NATIVE_GB' "$t/err" || fail "native disk refusal: $(cat "$t/err")"
     [[ ! -e "$t/native/tools" ]] || fail "a refused setup installed tools"
+    [[ -z "$(find "$t/native/xcodes" -mindepth 1 ! -name '*.lock')" ]] || fail "a refused setup wrote into the store: $(ls -A "$t/native/xcodes")"
   fi
   extra=()
 fi
@@ -343,10 +349,120 @@ if [[ "$(uname)" == Linux ]]; then
   run ok --dry-run
   [[ $code == 0 ]] || fail "native from the cache's export exits $code: $(cat "$t/err")"
   grep -q 'sdk build' "$t/out" && fail "the native plan exports from an export: $(cat "$t/out")"
-  grep -qF "xless sdk install --xtoolsdk $cached/$host/darwin.xtoolsdk --meta $cached/toolchain-meta.json" "$t/out" \
-    || fail "the native plan does not install the export: $(cat "$t/out")"
+  grep -F "exec xtool sdk install" "$t/out" | grep -qF "$cached/$host/darwin.xtoolsdk" \
+    && grep -qF "cp $cached/toolchain-meta.json $t/native/xcodes/27.0-27A266a-$host.partial/toolchain-meta.json" "$t/out" \
+    || fail "the native plan does not install the export into the pack: $(cat "$t/out")"
   grep -q 'about 0 GB free under .* (XLESS_SETUP_CACHE_GB)' "$t/out" || fail "the native cache check still asks for room: $(cat "$t/out")"
   [[ ! -s "$log" ]] || fail "a native setup called docker: $(cat "$log")"
   extra=()
+fi
+if [[ "$(uname)" == Linux ]]; then
+  # A native setup for real, against fakes (nothing is downloaded, no Apple file): curl serves a fake toolchain tarball
+  # registered by its sha256 in a copy of the share, xtool and rcodesign are fakes already installed, the fit is a fake
+  # that writes what fit-toolchain.sh leaves (or fails), and the export is a fake one.
+  ps="$t/pshare" fake="$t/fake"
+  mkdir -p "$ps" "$fake" "$t/tc/swift/usr/bin" "$t/native/bin"
+  cp -R "$repo/docker" "$repo/scripts" "$ps/"
+  cat > "$ps/scripts/fit-toolchain.sh" <<'F'
+#!/bin/sh
+[ -z "${FIT_FAIL:-}" ] || { echo "fit-toolchain: failing as asked" >&2; exit 1; }
+mkdir -p "$1/include/swift"
+printf '{"version":"6.4.0","root":"toolchain"}\n' > "$1/swift-toolchain.json"
+F
+  printf '#!/bin/sh\necho "Swift version 6.4.0 (swift-6.4.0-RELEASE)"\n' > "$t/tc/swift/usr/bin/swiftc"
+  chmod +x "$ps/scripts/fit-toolchain.sh" "$t/tc/swift/usr/bin/swiftc"
+  tar -czf "$t/tc.tar.gz" -C "$t/tc" swift
+  tsum="$(sha256sum "$t/tc.tar.gz" | cut -d' ' -f1)"
+  A="$(echo "$dl" | tr '[:lower:]' '[:upper:]')"
+  sed -e "s/^SWIFT_TOOLCHAIN_6_4_0_SHA256_$A=.*/SWIFT_TOOLCHAIN_6_4_0_SHA256_$A=$tsum/" \
+      -e "s/^SWIFT_TOOLCHAIN_6_2_3_SHA256_$A=.*/SWIFT_TOOLCHAIN_6_2_3_SHA256_$A=$tsum/" "$repo/versions.env" > "$ps/versions.env"
+  grep -q "$tsum" "$ps/versions.env" || fail "could not register the fake toolchain"
+  printf '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && { out=$2; shift; }; shift; done\necho "$out" >> "$CURL_LOG"; cp "$FAKE_TARBALL" "$out"\n' > "$fake/curl"
+  printf '#!/bin/sh\n[ "$1 $2" = "sdk install" ] || exit 2\nmkdir -p "$XDG_CONFIG_HOME/swiftpm/swift-sdks/darwin.artifactbundle"\n' > "$t/native/bin/xtool"
+  printf '#!/bin/sh\n' > "$t/native/bin/rcodesign"
+  chmod +x "$fake/curl" "$t/native/bin/xtool" "$t/native/bin/rcodesign"
+  export_meta "$t/x27" 27A266a "$host"
+  export_meta "$t/x26" 17C52 "$host"
+  st="$t/store" n27="27.0-27A266a-$host" n26="26.2-17C52-$host"
+  curls="$t/curl.log"
+  native() {   # ARGS…: xless setup natively, against the fakes, into $st
+    : > "$curls"
+    extra=(XLESS_NATIVE_HOME="$t/native" XLESS_XCODES="$st" XLESS_SETUP_CACHE_GB=0 XLESS_SETUP_NATIVE_GB=0
+           FAKE_TARBALL="$t/tc.tar.gz" CURL_LOG="$curls" ${more[@]+"${more[@]}"})
+    share="$ps" path="$fake:$t/bin:/usr/bin:/bin" run ok "$@"
+    extra=()
+  }
+  parts() { python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1]))["parts"])))' "$1/pack.json"; }
+  stale() { python3 -c 'import json, sys; p = sys.argv[1] + "/pack.json"; m = json.load(open(p)); m["parts"]["sdk"] = "stale"; json.dump(m, open(p, "w"))' "$1"; }
+
+  # A bare host (no shims): the pack holds the sdk part alone, and nothing is left beside it.
+  more=()
+  native --sdk "$t/x27"
+  [[ $code == 0 ]] || fail "a native setup exits $code: $(cat "$t/out" "$t/err")"
+  [[ "$(parts "$st/$n27")" == sdk ]] || fail "the pack's parts: $(cat "$st/$n27/pack.json")"
+  for f in toolchain/usr/bin/swiftc config/swiftpm/swift-sdks/darwin.artifactbundle toolchain-meta.json swift-toolchain.json include; do
+    [[ -e "$st/$n27/$f" ]] || fail "the pack lacks $f"
+  done
+  [[ "$(ls -A "$st")" == "$n27"$'\n'"$n27.lock" ]] || fail "the store holds: $(ls -A "$st")"
+  [[ ! -e "$t/native/toolchains" ]] || fail "a toolchain was installed under the native home"
+  grep -q "^==> done in .*: the pack $n27 of Xcode 27.0 (27A266a), in $st" "$t/out" || fail "done: $(cat "$t/out")"
+  # Again: nothing to do, nothing downloaded.
+  native --sdk "$t/x27"
+  [[ $code == 0 ]] && grep -q "^==> nothing to do: the pack $n27 of Xcode 27.0 (27A266a) is current" "$t/out" && [[ ! -s "$curls" ]] \
+    || fail "a second setup: $code $(cat "$t/out" "$t/err")"
+
+  # A second setup of the same pack waits for the one that holds its lock, says so, then finds nothing to do.
+  if command -v flock >/dev/null; then
+    rm -f "$t/held"
+    flock "$st/$n27.lock" sh -c "touch '$t/held'; sleep 3" &
+    holder=$!
+    for _ in $(seq 50); do [[ -e "$t/held" ]] && break; sleep 0.1; done
+    native --sdk "$t/x27"
+    wait "$holder"
+    [[ $code == 0 ]] && grep -q "^==> waiting for another xless setup, which is preparing the pack $n27 (it holds $st/$n27.lock)" "$t/out" \
+      && grep -q "^==> nothing to do" "$t/out" || fail "a setup behind another: $code $(cat "$t/out" "$t/err")"
+  else
+    echo "note: no flock(1): the waiting setup is not tested here (PackLockTests is)"
+  fi
+
+  # A failing fit leaves the earlier pack as it was, and nothing beside it.
+  stale "$st/$n27"; cp "$st/$n27/pack.json" "$t/before.json"
+  more=(FIT_FAIL=1)
+  native --sdk "$t/x27"
+  [[ $code != 0 ]] && grep -q 'fit-toolchain: failing as asked' "$t/out" "$t/err" || fail "a failing fit: $code $(cat "$t/out" "$t/err")"
+  cmp -s "$t/before.json" "$st/$n27/pack.json" || fail "a failing fit changed the pack: $(cat "$st/$n27/pack.json")"
+  [[ ! -e "$st/$n27.partial" && ! -e "$st/$n27.old" ]] || fail "a failing fit left: $(ls -A "$st")"
+
+  # A setup stopped between the two renames of its commit left the pack aside: the next one puts it back first.
+  mv "$st/$n27" "$st/$n27.old"
+  native --sdk "$t/x27"
+  grep -q "^==> the pack $n27 is back in place: a setup had stopped while it replaced it" "$t/out" || fail "not put back: $(cat "$t/out" "$t/err")"
+  cmp -s "$t/before.json" "$st/$n27/pack.json" && [[ ! -e "$st/$n27.old" && ! -e "$st/$n27.partial" ]] || fail "put back: $(ls -A "$st")"
+
+  # A leftover staging directory of an earlier run is removed first, never reused.
+  mkdir -p "$st/$n27.partial/toolchain"; echo junk > "$st/$n27.partial/junk"; cp "$t/before.json" "$st/$n27.partial/pack.json"
+  more=()
+  native --sdk "$t/x27"
+  [[ $code == 0 && ! -e "$st/$n27/junk" && ! -e "$st/$n27.partial" ]] || fail "a leftover .partial: $code $(cat "$t/out" "$t/err") $(ls -A "$st/$n27")"
+  [[ "$(parts "$st/$n27")" == sdk ]] && ! grep -q stale "$st/$n27/pack.json" || fail "the pack after a leftover: $(cat "$st/$n27/pack.json")"
+
+  # Several Xcodes: a second Xcode's setup adds its pack and touches no other.
+  cp "$st/$n27/pack.json" "$t/27.json"; ino="$(stat -c %i "$st/$n27/toolchain-meta.json")"
+  native --sdk "$t/x26"
+  [[ $code == 0 && -f "$st/$n26/pack.json" ]] || fail "a second Xcode: $code $(cat "$t/out" "$t/err")"
+  grep -q "scripts/fit-toolchain.sh $st/$n26.partial separate" "$t/out" || grep -q "separate" "$st/$n26/pack.json" || fail "26.2 is not separate: $(cat "$st/$n26/pack.json")"
+  cmp -s "$t/27.json" "$st/$n27/pack.json" && [[ "$(stat -c %i "$st/$n27/toolchain-meta.json")" == "$ino" ]] || fail "the 27.0 pack was touched"
+
+  # An Xcode installed natively by an xless of before the packs (its SDK and toolchain record, no pack): reported, not
+  # used, and the pack prepared from the export; then the command that removes it.
+  mkdir -p "$t/home/.swiftpm/swift-sdks/darwin.artifactbundle"; echo '{}' > "$t/native/swift-toolchain.json"
+  st="$t/store2"
+  native --sdk "$t/x27"
+  [[ $code == 0 ]] || fail "over an older install: $code $(cat "$t/out" "$t/err")"
+  grep -q "^note: the Xcode that an older xless installed natively (the SDK in $t/home/.swiftpm/swift-sdks, the Swift toolchain under $t/native/toolchains) is not used any more" "$t/out" \
+    && grep -q "xless clean --old removes it" "$t/out" && [[ -f "$st/$n27/pack.json" ]] || fail "an older install: $(cat "$t/out")"
+  native --sdk "$t/x27"
+  grep -q 'older xless' "$t/out" && fail "an older install is reported beside a pack: $(cat "$t/out")"
+  st="$t/store"; more=()
 fi
 echo "setup.test.sh: ok"

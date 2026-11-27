@@ -7,9 +7,7 @@ public struct SetupStep: Equatable, Sendable {
     /// How the command runs the step. `run`: the argv, as is. `export`: the argv writes into `partial`, a fresh empty
     /// directory, which replaces `final` only once it holds `darwin.xtoolsdk` (an interrupted export never counts as one).
     /// `meta`: toolchain-meta.json is written in-process from the export; the argv is the equivalent `xless sdk meta`.
-    /// Native setup only: `download`, a pinned tool fetched, checked and unpacked in-process (the argv is its curl);
-    /// `sdkInstall`, the SDK installed in-process with `toolchain` (the Swift toolchain the setup installs) first on xtool's PATH (the
-    /// argv is the equivalent `xless sdk install`).
+    /// Native setup only: `download`, a pinned tool or toolchain fetched, checked and unpacked in-process (the argv is its curl).
     /// Docker setup only: `kit`, the image of a kit on that Xcode's, built unless it is there already; `tidy`, the argv, whose
     /// failure is none of the setup's.
     /// An Xcode pack (`PackPlan`), each in-process, the argv the equivalent command: `packBegin`, the staging directory made
@@ -23,7 +21,6 @@ public struct SetupStep: Equatable, Sendable {
         case export(partial: URL, final: URL)
         case meta(xtoolSDK: URL, out: URL)
         case download(NativeDownload)
-        case sdkInstall(xtoolSDK: URL, meta: URL, toolchain: URL)
         case kit(Kit, arch: String, xcode: String)
         case tidy
         case packBegin(staging: URL, from: URL?, manifest: PackManifest)
