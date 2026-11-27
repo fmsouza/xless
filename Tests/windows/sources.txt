@@ -480,6 +480,7 @@
 - Tests/XlessCLITests/LiveCheckTests.swift
 + Tests/XlessCLITests/LockCommandTests.swift
 - Tests/XlessCLITests/NativeOverlayTests.swift
+- Tests/XlessCLITests/NativeToolsInstallTests.swift
 - Tests/XlessCLITests/NextCommandTests.swift
 + Tests/XlessCLITests/OneUnlockTests.swift
 + Tests/XlessCLITests/ProductCommandTests.swift

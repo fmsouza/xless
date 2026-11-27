@@ -146,7 +146,8 @@ XLESS_BUILD_READ=~/projects/shared-package xless run --config ~/ci/my-app.overla
 (Linux.) Each Xcode gets a pack of its own in the store, and `xless setup` with another Xcode adds its pack beside the
 others; with the same Xcode it does nothing when the pack is current (`--reexport` exports the SDK again). A project
 pins one with `xcode:`; without a pin a build uses the newest. A pack is prepared beside its place and put there whole,
-so a failed setup leaves the pack that was there, and a second setup of the same pack waits for the first. An Xcode
+so a failed setup leaves the pack that was there, and a second setup of the same pack waits for the first. Setups of
+two Xcodes run side by side, but install xtool and rcodesign one after the other (`tools.lock` in the native home). An Xcode
 installed natively by an xless of before the packs is not used: setup says so and prepares the pack, and `xless clean
 --old` removes the old install.
 

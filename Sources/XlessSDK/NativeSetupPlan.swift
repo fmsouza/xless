@@ -19,6 +19,15 @@ public struct NativeDownload: Equatable, Sendable {
     }
 
     public var partial: URL { final.deletingLastPathComponent().appendingPathComponent(final.lastPathComponent + ".partial") }
+
+    /// The link in the native `bin/` that installs a tool, and what in `final` it leads to; nil for a toolchain.
+    public var link: (name: String, target: String)? {
+        switch kind {
+        case .appImage: ("xtool", "AppRun")
+        case .rcodesign: ("rcodesign", "rcodesign")
+        case .swiftToolchain: nil
+        }
+    }
 }
 
 /// `xless setup` without `--docker` (Linux): what the images carry, with no Docker and no sudo. In order: xtool and

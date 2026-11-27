@@ -485,7 +485,20 @@ struct SetupCommand: AsyncParsableCommand {
 
     /// A native download: fetched next to its `.partial` directory (both removed first: a leftover is never reused),
     /// checked against its pin, unpacked into `.partial`, then renamed into place and linked into the native `bin/`.
-    static func install(_ d: NativeDownload, layout: NativeLayout) throws {
+    /// A tool (xtool, rcodesign) goes into the native home every Xcode's setup shares, under its lock (`PackLock(tools:)`):
+    /// one that a setup of another Xcode installed while this one waited is left as it is. `wait`: false, a test's.
+    static func install(_ d: NativeDownload, layout: NativeLayout, wait: Bool = true) throws {
+        guard let link = d.link else { return try unpack(d, layout: layout) }
+        let lock = try PackLock(tools: layout, wait: wait)
+        try withExtendedLifetime(lock) {
+            let at = layout.bin.appendingPathComponent(link.name)
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: at.path)) == d.final.appendingPathComponent(link.target).path,
+               FileManager.default.fileExists(atPath: at.path) { return }
+            try unpack(d, layout: layout)
+        }
+    }
+
+    private static func unpack(_ d: NativeDownload, layout: NativeLayout) throws {
         let fm = FileManager.default
         let partial = d.partial, file = URL(fileURLWithPath: partial.path + ".download")
         for u in [partial, file] where fm.fileExists(atPath: u.path) { try fm.removeItem(at: u) }
@@ -501,14 +514,13 @@ struct SetupCommand: AsyncParsableCommand {
             throw XlessError(.sdk, "\(d.url.absoluteString) has sha256 \(sum), not versions.env's \(d.sha256): nothing was installed",
                              fix: "run xless setup again; if it persists, report it (the download changed upstream)")
         }
-        let staged: URL, link: (name: String, target: String)?
+        let staged: URL, link = d.link
         switch d.kind {
         case .appImage:
             // The AppImage's own runtime extracts it (no FUSE needed) into squashfs-root under its working directory.
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
             try Shell.run(file.path, ["--appimage-extract"], cwd: partial, stage: .sdk)
             staged = partial.appendingPathComponent("squashfs-root")
-            link = ("xtool", "AppRun")
         case .rcodesign:
             try Shell.run("tar", ["-xzf", file.path, "-C", partial.path], stage: .sdk)
             let found = fm.enumerator(at: partial, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL }
@@ -518,11 +530,9 @@ struct SetupCommand: AsyncParsableCommand {
             try fm.createDirectory(at: staged, withIntermediateDirectories: true)
             try fm.moveItem(at: found, to: staged.appendingPathComponent("rcodesign"))
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: staged.appendingPathComponent("rcodesign").path)
-            link = ("rcodesign", "rcodesign")
         case .swiftToolchain:
             try Shell.run("tar", ["-xzf", file.path, "-C", partial.path, "--strip-components=1"], stage: .sdk)
             staged = partial
-            link = nil
             // swift.org's toolchains link against the host's libraries: a missing one is named here, not mid-build.
             do { try Shell.run(partial.appendingPathComponent("usr/bin/swiftc").path, ["--version"], stage: .sdk) } catch let e as XlessError {
                 throw XlessError(.sdk, "the Swift toolchain does not run on this machine: \(e.cause)",

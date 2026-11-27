@@ -14,17 +14,29 @@ public final class PackLock {
     private let fd: Int32
 
     /// The store's directory is made when missing. `wait`: block until the lock is free; else throw `Busy` at once.
-    public init(store: XcodeStore, name: String, wait: Bool) throws {
-        file = Self.file(store: store, name: name)
-        do { try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true) } catch {
-            throw XlessError(.sdk, "cannot make the store of Xcode packs \(store.root.path): \(error.localizedDescription)",
-                             fix: "make it writable, or set XLESS_XCODES to a writable directory")
+    public convenience init(store: XcodeStore, name: String, wait: Bool) throws {
+        try self.init(file: Self.file(store: store, name: name), what: "the store of Xcode packs", variable: "XLESS_XCODES", wait: wait)
+    }
+
+    /// The lock of the tools a native setup installs (`<native home>/tools.lock`): two setups of different Xcodes, each under
+    /// its own pack's lock, install xtool and rcodesign one after the other.
+    public convenience init(tools layout: NativeLayout, wait: Bool) throws {
+        try self.init(file: layout.root.appendingPathComponent("tools.lock"), what: "the native home", variable: "XLESS_NATIVE_HOME", wait: wait)
+    }
+
+    /// `file`'s directory (`what`, set by `variable`) is made when missing.
+    private init(file: URL, what: String, variable: String, wait: Bool) throws {
+        self.file = file
+        let directory = file.deletingLastPathComponent()
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) } catch {
+            throw XlessError(.sdk, "cannot make \(what) \(directory.path): \(error.localizedDescription)",
+                             fix: "make it writable, or set \(variable) to a writable directory")
         }
         let fd = open(file.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
         guard fd >= 0 else {
             let error = errno
             throw XlessError(.sdk, "cannot open \(file.path): \(String(cString: strerror(error)))",
-                             fix: "check that \(store.root.path) is writable, or set XLESS_XCODES to a writable directory")
+                             fix: "check that \(directory.path) is writable, or set \(variable) to a writable directory")
         }
         while flock(fd, LOCK_EX | (wait ? 0 : LOCK_NB)) != 0 {
             let error = errno
@@ -32,7 +44,7 @@ public final class PackLock {
             close(fd)
             if error == EWOULDBLOCK { throw Busy(file: file) }
             throw XlessError(.sdk, "cannot lock \(file.path): \(String(cString: strerror(error)))",
-                             fix: "set XLESS_XCODES to a directory on a local file system")
+                             fix: "set \(variable) to a directory on a local file system")
         }
         self.fd = fd
     }
