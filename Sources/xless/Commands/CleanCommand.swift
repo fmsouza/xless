@@ -62,10 +62,12 @@ struct CleanCommand: AsyncParsableCommand {
             return false
         }
         for line in skipped { say(line) }
-        // The native install: its home (which holds the store of packs), and the SDK and metadata an older xless's setup installed.
-        let store = XcodeStore(env: env)
-        let storeInHome = store.root.standardizedFileURL.path.hasPrefix(layout.root.standardizedFileURL.path + "/")
-        let storePacks = store.packs()
+        // --native removes its root whole: only one that is what xless made.
+        let rootProblem = Self.rootProblem(layout.root, env: env, home: home)
+        if let rootProblem {
+            guard !doNative else { throw XlessError(.sdk, rootProblem.cause, fix: rootProblem.fix) }
+            say("not listing the native home: \(rootProblem.cause)")
+        }
         var removing = !listOnly && !dryRun
 
         let tag = (try? XlessShare.locate(env: env, executable: Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])))
@@ -107,35 +109,49 @@ struct CleanCommand: AsyncParsableCommand {
         }
 
         // The packs that running containers use stay. A volume: the containers that mount it; a directory store (XLESS_XCODES): those that mount it.
-        var left: [(pack: String, users: [String])] = []
-        func usersOf(_ store: PackStore, _ pack: (xcode: String, build: String, arch: String)) -> [String] {
-            do { return try PackUsers(LocalImages.hereDocker).of(store, xcode: pack.xcode, build: pack.build, arch: pack.arch) } catch {
-                return ["docker did not say which containers run (\(Self.firstLine(error)))"]
-            }
-        }
+        var left: [(pack: String, use: Use)] = []
+        func useOf(volume p: CleanPlan.PackVolume) -> Use { Self.use(.volumes, xcode: p.xcode, build: p.build, arch: p.arch) }
         var removablePackVolumes: [CleanPlan.PackVolume] = []
         for p in packVolumes {
-            let users = usersOf(.volumes, (p.xcode, p.build, p.arch))
-            if users.isEmpty { removablePackVolumes.append(p) } else { left.append((p.name, users)) }
+            let u = useOf(volume: p)
+            if case .free = u { removablePackVolumes.append(p) } else { left.append((p.name, u)) }
         }
-        var removableStorePacks: [XcodePack] = []
-        var homeBlocked = false
-        // The packs of the store: those in the native home go with --native (as the home always did), those of a store of its own (XLESS_XCODES) with --packs.
-        let storeFlag = storeInHome ? doNative : doPacks
-        if storeFlag || listOnly {
-            let dockerStore = PackStore(env: env)
-            for p in storePacks {
-                var users: [String] = []
-                if case .directory = dockerStore { users = usersOf(dockerStore, (p.manifest.xcode, p.manifest.build, p.manifest.arch)) }
-                if users.isEmpty { removableStorePacks.append(p) } else { left.append((p.root.path, users)); if storeInHome { homeBlocked = true } }
-            }
+        // The packs of a native install: those in <native home>/xcodes go with --native (the home goes whole), and so do those of an XLESS_XCODES
+        // inside the home; those of a store of its own (XLESS_XCODES elsewhere) go with --packs. Real paths are compared, and a directory is a pack
+        // only when its name is its manifest's.
+        let homeReal = real(layout.root), homeStore = layout.root.appendingPathComponent("xcodes")
+        let givenStore = (env["XLESS_XCODES"] ?? "").isEmpty ? nil : URL(fileURLWithPath: env["XLESS_XCODES"] ?? "")
+        var nativeStores = [homeStore], ownStore: URL?
+        if let given = givenStore, real(given) != real(homeStore) {
+            if real(given) == homeReal || real(given).hasPrefix(homeReal + "/") { nativeStores.append(given) } else { ownStore = given }
         }
-        // The native home goes whole unless a pack in it is in use; a store of its own (XLESS_XCODES) loses its packs, not the directory.
-        var nativePaths = (homeBlocked ? [] : [layout.root]) + olderInstall.filter { !$0.path.hasPrefix(layout.root.path + "/") }.filter { path in
+        func packsOf(_ dir: URL) -> [XcodePack] { XcodeStore(root: dir).packs().filter { $0.root.lastPathComponent == $0.name } }
+        let nativePacks = (rootProblem == nil && (doNative || listOnly)) ? nativeStores.flatMap(packsOf) : []
+        let ownPacks = (doPacks || listOnly) ? ownStore.map(packsOf) ?? [] : []
+        let dockerDirectory: URL? = { if case let .directory(d) = PackStore(env: env) { return d } else { return nil } }()
+        // Only the packs of the directory that docker mounts can be in use.
+        func useOf(pack p: XcodePack) -> Use {
+            guard let d = dockerDirectory, real(p.root.deletingLastPathComponent()) == real(d) else { return .free }
+            return Self.use(.directory(d), xcode: p.manifest.xcode, build: p.manifest.build, arch: p.manifest.arch)
+        }
+        var removableOwn: [XcodePack] = []
+        for p in ownPacks {
+            let u = useOf(pack: p)
+            if case .free = u { removableOwn.append(p) } else { left.append((p.root.path, u)) }
+        }
+        var blockers: [(pack: String, use: Use)] = []
+        for p in nativePacks {
+            let u = useOf(pack: p)
+            if case .free = u { continue }
+            blockers.append((p.root.path, u))
+        }
+        left += blockers
+        let homeBlocked = !blockers.isEmpty
+        // The native home goes whole, unless a pack in it is in use.
+        var nativePaths = ((homeBlocked || rootProblem != nil) ? [] : [layout.root]) + olderInstall.filter { !$0.path.hasPrefix(layout.root.path + "/") }.filter { path in
             path == DarwinSDKLocator.bundle(env: env) || path == ToolchainMeta.olderLocation(env: env)
         }
         nativePaths = nativePaths.filter { fm.fileExists(atPath: $0.path) }
-        let storeRoots = storeInHome || !doPacks ? [] : removableStorePacks.map(\.root)
         let oldNative = old ? olderInstall : []
         let cacheExists = fm.fileExists(atPath: cacheRoot.path)
         let exports = (try? fm.contentsOfDirectory(atPath: cacheRoot.appendingPathComponent("sdk").path))?.filter { !$0.hasPrefix(".") } ?? []
@@ -144,7 +160,8 @@ struct CleanCommand: AsyncParsableCommand {
             asks && !imageRefs.isEmpty ? (imageRefs.count == 1 ? "this image tag" : "these \(imageRefs.count) image tags") : nil,
             asks && !imageRefs.isEmpty ? "the untagged older builds" : nil,
             !removablePackVolumes.isEmpty ? "\(removablePackVolumes.count) Xcode pack volume\(removablePackVolumes.count == 1 ? "" : "s")" : nil,
-            storeFlag && !removableStorePacks.isEmpty ? "\(removableStorePacks.count) Xcode pack\(removableStorePacks.count == 1 ? "" : "s") of the store" : nil,
+            doNative && !homeBlocked && !nativePacks.isEmpty ? "\(nativePacks.count) Xcode pack\(nativePacks.count == 1 ? "" : "s") of the native install" : nil,
+            doPacks && !removableOwn.isEmpty ? "\(removableOwn.count) Xcode pack\(removableOwn.count == 1 ? "" : "s") of \(ownStore?.path ?? "your store")" : nil,
             !oldNative.isEmpty ? "what an older xless installed natively" : nil,
         ].compactMap { $0 }
         let mustAsk = removing && !questions.isEmpty && !yes
@@ -173,20 +190,30 @@ struct CleanCommand: AsyncParsableCommand {
                 }
             }
         }
-        for (pack, users) in left { say("\(removing ? "leaving" : "would leave") the pack \(pack): in use by \(users.joined(separator: ", "))") }
+        let leave = removing ? "leaving" : "would leave"
+        for (pack, use) in left { say("\(leave) the pack \(pack): \(Self.reason(use).listing)") }
         if listOnly || doCache {
             say(cacheExists ? "\(verb) the cache \(cacheRoot.path) (\(Self.size(of: cacheRoot)))" : "no cache at \(cacheRoot.path)")
             if cacheExists && !exports.isEmpty {
                 say("  it holds \(exports.count) SDK export\(exports.count == 1 ? "" : "s") (\(exports.sorted().joined(separator: ", "))): packs are prepared from them, and without the .xip they are your only copy; only --cache and --all remove them")
             }
         }
+        let again = "  preparing a pack again takes minutes and needs its SDK export (xless setup --sdk <export>) or the Xcode (xless setup --xcode <Xcode.app or .xip>)"
         if listOnly || doNative {
-            if nativePaths.isEmpty { say("no native install") }
+            if nativePaths.isEmpty && !homeBlocked { say("no native install") }
+            if homeBlocked { say("\(leave) the native install's \(layout.root.path): a pack in it is in use") }
             for p in nativePaths { say("\(verb) the native install's \(p.path) (\(Self.size(of: p)))") }
+            for p in nativePacks where !homeBlocked {
+                say("\(verb) the Xcode pack \(p.root.path): Xcode \(p.manifest.xcode) (\(p.manifest.build), \(p.manifest.arch))")
+            }
+            for p in nativePacks where homeBlocked && !blockers.contains(where: { $0.pack == p.root.path }) {
+                say("\(leave) the Xcode pack \(p.root.path): the native install is kept whole while another pack in it is in use")
+            }
+            if !nativePacks.isEmpty && !homeBlocked { say(again) }
         }
-        if listOnly || storeFlag {
-            for p in removableStorePacks { say("\(verb) the Xcode pack \(p.name) of the store \(store.root.path): Xcode \(p.manifest.xcode) (\(p.manifest.build), \(p.manifest.arch))") }
-            if !removableStorePacks.isEmpty { say("  preparing a pack again takes minutes and needs its SDK export (xless setup --sdk <export>) or the Xcode (xless setup --xcode <Xcode.app or .xip>)") }
+        if listOnly || doPacks {
+            for p in removableOwn { say("\(verb) the Xcode pack \(p.root.path): Xcode \(p.manifest.xcode) (\(p.manifest.build), \(p.manifest.arch))") }
+            if !removableOwn.isEmpty { say(again) }
         }
         if listOnly {
             say("nothing removed: pass --images, --old, --volumes, --packs, --cache, --native or --all (--dry-run to see what they would remove)")
@@ -235,24 +262,82 @@ struct CleanCommand: AsyncParsableCommand {
                 failures.append("\(cacheRoot.path) was not fully removed (\(Self.firstLine(error))); files a container wrote as root need: sudo rm -rf '\(cacheRoot.path)'")
             }
         }
-        if doNative || doPacks {
-            for p in (doNative ? nativePaths : []) + storeRoots {
-                guard fm.fileExists(atPath: p.path) else { continue }
+        // The packs of a store of its own: each is looked at again right before it goes (a run may have started since the question).
+        if doPacks {
+            for p in removableOwn {
+                let now = useOf(pack: p)
+                guard case .free = now else { left.append((p.root.path, now)); continue }
+                do { try fm.removeItem(at: p.root) } catch { failures.append("\(p.root.path) was not fully removed (\(Self.firstLine(error)))") }
+            }
+        }
+        if doNative {
+            // The native home goes whole, so every pack in it is looked at again first: if one is in use now, the home stays.
+            var homeKept = false
+            for p in nativePacks where !homeBlocked {
+                let now = useOf(pack: p)
+                if case .free = now { continue }
+                left.append((p.root.path, now)); homeKept = true
+            }
+            for p in nativePaths {
+                guard !(homeKept && p == layout.root), fm.fileExists(atPath: p.path) else { continue }
                 do { try fm.removeItem(at: p) } catch { failures.append("\(p.path) was not fully removed (\(Self.firstLine(error)))") }
             }
         }
         for p in oldNative where fm.fileExists(atPath: p.path) {
             do { try fm.removeItem(at: p) } catch { failures.append("\(p.path) was not fully removed (\(Self.firstLine(error)))") }
         }
-        for (pack, users) in left {
-            let names = users.map { String($0.prefix { $0 != " " }) }
-            failures.append("the pack \(pack) was left: \(users.count == 1 ? "a running container uses" : "running containers use") it (\(users.joined(separator: ", ")))"
-                            + "; stop \(users.count == 1 ? "it" : "them") (docker stop \(names.joined(separator: " ")))")
-        }
+        for (pack, use) in left { failures.append("the pack \(pack) was left: \(Self.reason(use).failure)") }
         if !failures.isEmpty {
             throw XlessError(.sdk, failures.joined(separator: "; "), fix: "see above, then run xless clean again")
         }
         say("done. Docker's build cache is shared with other projects and was left alone; docker builder prune frees it")
+    }
+
+    /// Whether a running container uses a pack.
+    private enum Use {
+        case free
+        case users([String])
+        /// docker could not be asked: the pack is left all the same.
+        case unknown(String)
+    }
+
+    private static func use(_ store: PackStore, xcode: String, build: String, arch: String) -> Use {
+        do {
+            let users = try PackUsers(LocalImages.hereDocker).of(store, xcode: xcode, build: build, arch: arch)
+            return users.isEmpty ? .free : .users(users)
+        } catch { return .unknown(firstLine(error)) }
+    }
+
+    /// What the listing says, and the cause and fix at the end, of a pack that is left.
+    private static func reason(_ use: Use) -> (listing: String, failure: String) {
+        switch use {
+        case .free: return ("", "")
+        case let .users(users):
+            let names = users.map { String($0.prefix { $0 != " " }) }
+            return ("in use by \(users.joined(separator: ", "))",
+                    "\(users.count == 1 ? "a running container uses" : "running containers use") it (\(users.joined(separator: ", "))); stop \(users.count == 1 ? "it" : "them") (docker stop \(names.joined(separator: " ")))")
+        case let .unknown(why):
+            return ("docker could not be asked whether a container uses it (\(why))",
+                    "docker could not be asked whether a container uses it (\(why)); check that it runs (docker ps), then run xless clean again")
+        }
+    }
+
+    /// Why `root` is not a native home that `--native` may remove whole, or nil: it must be absolute, not `/` nor the home directory, and
+    /// (when it exists) hold what xless puts in one (bin, tools, xcodes, or an older install's record).
+    private static func rootProblem(_ root: URL, env: [String: String], home: URL) -> (cause: String, fix: String)? {
+        let fix = "set XLESS_NATIVE_HOME to the native home (an absolute path of the directory xless setup made, which holds bin, tools or xcodes), or unset it"
+        let given = [env["XLESS_NATIVE_HOME"], env["XDG_DATA_HOME"]].compactMap { $0 }.first { !$0.isEmpty }
+        if let given, !given.hasPrefix("/") { return ("the native home \(given) is a relative path, which would name another directory from every other one", fix) }
+        let path = root.resolvingSymlinksInPath().standardizedFileURL.path
+        if path == "/" { return ("the native home is /", fix) }
+        if path == home.resolvingSymlinksInPath().standardizedFileURL.path { return ("the native home \(root.path) is your home directory", fix) }
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: root.path) else { return nil }
+        let markers = ["bin", "tools", "xcodes", "swift-toolchain.json"]
+        if !markers.contains(where: { fm.fileExists(atPath: root.appendingPathComponent($0).path) }) {
+            return ("the native home \(root.path) holds none of what xless puts in one (bin, tools, xcodes), so it is not removed whole", fix)
+        }
+        return nil
     }
 
     /// "a", "a and b", "a, b and c".

@@ -20,6 +20,7 @@ fi
 mkdir -p "$t/bin" "$t/home" "$t/images" "$t/share"
 echo 9.9.9 > "$t/share/VERSION"   # the xless of these tests: its images are xless:9.9.9-<arch>[-<kit>]
 share="$t/share"
+rt="$(cd "$t" && pwd -P)"   # the directories a listing names are real paths (macOS /var is /private/var)
 cat > "$t/bin/docker" <<'D'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$DOCKER_LOG"
@@ -41,7 +42,12 @@ case "$1 $2" in
     printf '{"Id":"sha256:%s","Architecture":"arm64","Config":{"Labels":%s},"RootFS":{"Layers":[]}}\n' "$ref" "$labels" ;;
   "volume ls") printf '%s\n' xless-cargo xless-rn-work-ov-12345678 pgdata xless-xcode-26.2-17C52-arm64 xless-xcode-27.0-27A266a-arm64 xless-xcode-backup ;;
   # (the containers that use a pack volume: those named in PACK_IN_USE)
-  "ps --filter") vol="${3#volume=}"; [[ "${PACK_IN_USE:-}" != *"$vol"* ]] || printf 'builder\txless:9.9.9-arm64\t\n' ;;
+  # (docker cannot be asked: PS_FAIL; the first PSQ_FREE asks of `ps -q` find nothing running, the later ones a container with PSQ_MOUNT mounted)
+  "ps -q") [[ "${PS_FAIL:-0}" != 1 ]] || exit 1
+           n=$(( $(cat "$IMAGES/psq" 2>/dev/null || echo 0) + 1 )); echo $n > "$IMAGES/psq"
+           [[ $n -le ${PSQ_FREE:-999} ]] || echo abc ;;
+  "inspect --format") printf 'builder\txless:9.9.9-arm64\t\t[{"Source":"%s"}]\n' "${PSQ_MOUNT:-/nowhere}" ;;
+  "ps --filter") [[ "${PS_FAIL:-0}" != 1 ]] || exit 1; vol="${3#volume=}"; [[ "${PACK_IN_USE:-}" != *"$vol"* ]] || printf 'builder\txless:9.9.9-arm64\t\n' ;;
 esac
 exit 0
 D
@@ -321,7 +327,7 @@ done
 mknative; echo '{"version":"6.4.0","root":"/x"}' > "$nh/swift-toolchain.json"
 run
 grep -q "^found the native install's $nh" "$t/out" || fail "native not listed: $(cat "$t/out")"
-grep -q "^found the Xcode pack 26.2-17C52-arm64 of the store $nh/xcodes: Xcode 26.2 (17C52, arm64)" "$t/out" || fail "the pack of the store not listed: $(cat "$t/out")"
+grep -q "^found the Xcode pack $rt/home/.local/share/xless-native/xcodes/26.2-17C52-arm64: Xcode 26.2 (17C52, arm64)" "$t/out" || fail "the pack of the store not listed: $(cat "$t/out")"
 [[ -d "$nh" ]] || fail "listing removed the native install"
 run --cache
 [[ -d "$nh" ]] || fail "--cache removed the native install"
@@ -347,11 +353,76 @@ run --native --yes
 [[ $code == 0 && -d "$store/26.2-17C52-arm64" && ! -e "$nh" ]] || fail "--native took the packs of a store of its own: $code $(cat "$t/err")"
 run --packs --yes
 [[ $code == 0 && ! -e "$store/26.2-17C52-arm64" && -f "$store/notes/f" ]] || fail "--packs with XLESS_XCODES: $code $(cat "$t/err")"
-grep -qx 'volume rm xless-xcode-26.2-17C52-arm64 xless-xcode-27.0-27A266a-arm64' "$log" || true
 # ... and --old leaves it whole.
 mkdir -p "$store/26.2-17C52-arm64"; echo "$pack_json" > "$store/26.2-17C52-arm64/pack.json"; extra=(XLESS_XCODES="$store")
 run --old --yes
 [[ -f "$store/26.2-17C52-arm64/pack.json" ]] || fail "--old removed a pack of the store"
+# The packs of the native home and of XLESS_XCODES, in two places: --native lists and asks about those of the home, --packs those of the other
+# store; each only its own; a directory that is no pack of its name (a copy under another name) is neither listed nor removed.
+nh="$t/home/.local/share/xless-native"; store="$t/store3"; rm -rf "$nh" "$store"
+mkpack() { mkdir -p "$1"; echo "$pack_json" > "$1/pack.json"; }   # DIR: a pack of Xcode 26.2 in it
+mkboth() { rm -rf "$nh" "$store"; mkdir -p "$nh/bin"; mkpack "$nh/xcodes/26.2-17C52-arm64"; mkpack "$store/26.2-17C52-arm64"; mkpack "$store/my-backup"; mkpack "$nh/xcodes/copy-of-it"; }
+mkboth; extra=(XLESS_XCODES="$store" DOCKER_DOWN=0)
+run --native --dry-run
+grep -qx "would remove the Xcode pack $rt/home/.local/share/xless-native/xcodes/26.2-17C52-arm64: Xcode 26.2 (17C52, arm64)" "$t/out" || fail "the home's pack is not listed: $(cat "$t/out")"
+grep -q "$store" "$t/out" && fail "--native lists the store of its own: $(cat "$t/out")"
+grep -q 'my-backup\|copy-of-it' "$t/out" && fail "a copy under another name is listed: $(cat "$t/out")"
+grep -q 'preparing a pack again takes minutes' "$t/out" || fail "--native does not say what preparing again needs: $(cat "$t/out")"
+on n --native
+grep -q 'Remove 1 Xcode pack of the native install?' "$t/out" && [[ -d "$nh/xcodes/26.2-17C52-arm64" ]] || fail "--native does not ask about the home's packs: $(cat "$t/out")"
+on none --native
+[[ $code == 11 && -d "$nh/xcodes" ]] || fail "--native without a terminal removed the home's packs: $code"
+run --all --dry-run
+grep -qx "would remove the Xcode pack $rt/home/.local/share/xless-native/xcodes/26.2-17C52-arm64: Xcode 26.2 (17C52, arm64)" "$t/out" && grep -qx "would remove the Xcode pack $rt/store3/26.2-17C52-arm64: Xcode 26.2 (17C52, arm64)" "$t/out" \
+  || fail "--all does not list the packs of both places: $(cat "$t/out")"
+run --packs --yes
+[[ $code == 0 && ! -e "$store/26.2-17C52-arm64" && -d "$store/my-backup" && -d "$nh/xcodes/26.2-17C52-arm64" ]] || fail "--packs: $code $(cat "$t/err")"
+mkboth
+run --native --yes
+[[ $code == 0 && ! -e "$nh" && -d "$store/26.2-17C52-arm64" && -d "$store/my-backup" ]] || fail "--native took more than the home: $code $(cat "$t/err")"
+# A pack in use. docker cannot be asked: the pack is left and the message says so, not that a container uses it.
+mkboth
+extra=(XLESS_XCODES="$store" PS_FAIL=1)
+run --packs --yes
+[[ $code == 11 && -d "$store/26.2-17C52-arm64" ]] || fail "--packs with docker unable to answer: $code"
+grep -q 'docker could not be asked whether a container uses it' "$t/err" && grep -q 'check that it runs (docker ps), then run xless clean again' "$t/err" \
+  && ! grep -q 'docker stop' "$t/err" || fail "the message for docker unable to answer: $(cat "$t/err")"
+extra=(PS_FAIL=1)
+run --packs --yes
+[[ $code == 11 && -z "$(removed)" ]] && grep -q 'docker could not be asked whether a container uses it' "$t/err" || fail "pack volumes with docker unable to answer: $code $(removed)"
+# Looked at again right before it goes: no container the first time, one the second.
+mkboth; rm -f "$t/images/psq"
+extra=(XLESS_XCODES="$store" PSQ_FREE=1 PSQ_MOUNT="$store/26.2-17C52-arm64")
+run --packs --yes
+[[ $code == 11 && -d "$store/26.2-17C52-arm64" && -d "$store/my-backup" ]] || fail "a pack that a container began to use was removed: $code"
+grep -q "the pack $rt/store3/26.2-17C52-arm64 was left: a running container uses it (builder (xless:9.9.9-arm64))" "$t/err" || fail "the pack in use is not named: $(cat "$t/err")"
+# The native home with a pack in use in it: kept whole, and the listing says so (not that its packs are being removed).
+mkboth; mkdir -p "$nh/xcodes/27.0-27A266a-arm64"; echo '{"format":1,"xcode":"27.0","build":"27A266a","arch":"arm64","swift":"6.4","mode":"own","parts":{}}' > "$nh/xcodes/27.0-27A266a-arm64/pack.json"; rm -f "$t/images/psq"
+extra=(XLESS_XCODES="$nh/xcodes" PSQ_FREE=0 PSQ_MOUNT="$nh/xcodes/26.2-17C52-arm64")
+run --native --yes
+[[ $code == 11 && -d "$nh/xcodes/26.2-17C52-arm64" && -d "$nh/xcodes/27.0-27A266a-arm64" && -d "$nh/bin" ]] || fail "--native removed a home with a pack in use: $code"
+grep -q "^leaving the native install's $nh: a pack in it is in use" "$t/out" && grep -q "^leaving the pack $rt/home/.local/share/xless-native/xcodes/26.2-17C52-arm64: in use by builder" "$t/out" \
+  && grep -q "^leaving the Xcode pack $rt/home/.local/share/xless-native/xcodes/27.0-27A266a-arm64: the native install is kept whole" "$t/out" || fail "the listing of a blocked home: $(cat "$t/out")"
+grep -q '^removing the' "$t/out" && fail "the listing says removing: $(cat "$t/out")"
+extra=(); rm -f "$t/images/psq"
+# --native removes a root that is what xless made, and refuses another: a relative one, /, the home directory, a directory with none of its marks.
+mkdir -p "$t/other" "$t/rel"; echo x > "$t/other/file"
+for home_ in "relative" "/" "$t/home" "$t/other"; do
+  extra=(XLESS_NATIVE_HOME="$home_")
+  code=0; (cd "$t/rel" && : > "$log" && env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" DOCKER_LOG="$log" IMAGES="$t/images" XLESS_SHARE="$share" XLESS_NATIVE_HOME="$home_" "$x" clean --native --yes >"$t/out" 2>"$t/err") || code=$?
+  [[ $code == 11 ]] || fail "--native with XLESS_NATIVE_HOME=$home_ exits $code"
+  grep -q 'set XLESS_NATIVE_HOME to the native home' "$t/err" || fail "no fix for XLESS_NATIVE_HOME=$home_: $(cat "$t/err")"
+  case "$home_" in relative) want='is a relative path' ;; /) want='the native home is /' ;; "$t/home") want='is your home directory' ;; *) want='holds none of what xless puts in one' ;; esac
+  grep -q -- "$want" "$t/err" || fail "XLESS_NATIVE_HOME=$home_ says: $(cat "$t/err")"
+  run
+  grep -q '^not listing the native home' "$t/out" || [[ "$home_" == relative ]] || fail "the listing for XLESS_NATIVE_HOME=$home_: $(cat "$t/out")"
+done
+[[ -f "$t/other/file" && -d "$t/home/.cache" ]] || fail "a refused root was touched"
+extra=()
+mkdir -p "$t/ok/bin"; extra=(XLESS_NATIVE_HOME="$t/ok"); run --native --yes
+[[ $code == 0 && ! -e "$t/ok" ]] || fail "--native of a native home: $code $(cat "$t/err")"
+extra=()
+
 # `xless sdk install` (which --image used to serve) says what to run, in every form, so an old script gets the message, not "unknown command".
 for form in "" "--image xless:local-arm64-xcode27.0" "--xtoolsdk $t/x/arm64/darwin.xtoolsdk --meta $t/x/toolchain-meta.json"; do
   code=0; env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" DOCKER_LOG="$log" "$x" sdk install $form >"$t/out" 2>"$t/err" || code=$?
