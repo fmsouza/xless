@@ -6,6 +6,9 @@
 # Runs inside xless:<tag> (mkfs.hfsplus from hfsprogs, dmg + hfsplus from libdmg-hfsplus, rcodesign). Nothing
 # is written into the repo: the input .app is mounted read-only and every output goes to $SPIKE_OUT.
 #
+# A record: it ran in the per-Xcode images of older releases (xless:local-<arch>-xcode<version>, as below). It needs
+# no Xcode, and today's image (xless:<version>-<arch>, docs/images.md) has the same tools, but nothing (no Makefile
+# target, no test) runs it, so it has not been run there. As it was run then:
 #   docker --context colima-xless run --rm \
 #     -v <dir holding the unsigned .app>:/in:ro -v <scratch out dir>:/out \
 #     -v <Developer ID key PEM>:/secrets/devid-key.pem:ro -v <Developer ID cert PEM>:/secrets/devid-cert.pem:ro \

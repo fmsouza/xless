@@ -3,7 +3,11 @@
 # Kept as executable documentation of the Linux build sequence that TauriBuilder (Task 11) automates. It is not
 # part of xless and is not run by CI. Findings: docs/research/tauri-ios-contract.md, "Linux build — spike A".
 #
-# Runs inside xless:<tag>-tauri with the repo mounted read-only. Everything is written under /cache/work:
+# Runs inside xless:<tag>-tauri with the repo mounted read-only. Everything is written under /cache/work.
+#
+# A record: it ran in the per-Xcode Tauri images of older releases (xless:local-<arch>-xcode<version>-tauri), whose SDK
+# and shims were under /opt/xless. Today's images have no SDK, and an Xcode's pack lays it out otherwise (docs/images.md),
+# so it does not run as it is; nothing (no Makefile target, no test) runs it. As it was run then:
 #
 #   docker --context colima-xless run --rm \
 #     -v xless-rustup:/cache/rustup -v xless-cargo:/cache/cargo -v xless-spike:/cache/work \
