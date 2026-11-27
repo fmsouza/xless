@@ -287,9 +287,10 @@ their recipes), so each setup prepared a whole pack:
 
 ## Known limits
 
-- A native `xless setup` on a Linux host can replace a pack in a directory store (`XLESS_XCODES`) while an
-  `xless run --docker` build is reading it: the guard against replacing a pack that containers use covers setups run
-  through Docker only.
+- A native `xless setup` on a Linux host asks docker whether one of xless's containers uses a pack of a directory store
+  (`XLESS_XCODES`) before it replaces it (since 01d7bf2 and 4dbfb3c, covered by unit tests): a container that docker does
+  not report (another daemon or context, or a docker the user cannot reach) or one started by hand without xless's
+  labels is not seen.
 - Rootless Docker and a directory store of packs are covered by unit tests, not exercised for real.
 - A Swift app for macOS built with a pack's toolchain records that toolchain's place in one rpath, as the baked images
   recorded theirs; where the path is longer than the baseline's, the sections of `__TEXT` move with it (the 27.0

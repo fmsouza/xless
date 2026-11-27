@@ -105,14 +105,16 @@ prepared again by itself. With neither `--xcode` nor `--sdk` and no export in th
 says that no pack was prepared. `--dry-run` prints each step and its command.
 
 Measured on an arm64 Mac: preparing a whole pack from the export took 6 min 24 s (Xcode 26.2) and 6 min 55 s (27.0), of
-which compiling Swift Build took 4 min 7 s and 4 min 16 s; preparing the `sdk` part again alone took 1 min 33 s and
-2 min 43 s, most of it downloading and unpacking the Swift toolchain. Exporting the SDK from the `.xip` first took
-3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up to about 15 GB in the cache
-while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
+which compiling Swift Build took 4 min 7 s and 4 min 16 s; preparing the `sdk` part of the 26.2 pack again alone took
+1 min 33 s, and 2 min 43 s in an earlier run, most of it downloading and unpacking the Swift toolchain. Exporting the
+SDK from the `.xip` first took 3 min 6 s more in the one export measured (setup's estimate is about two minutes), and up
+to about 15 GB in the cache while the `.xip` is unpacked (about 3.5 GB stays). Setup prints its estimate with each step.
 
 A pack that running containers use is not replaced under them: setup refuses, names the containers, and says to wait for
 those runs or stop them. A native `xless setup` of a directory store that `--docker` runs mount (`XLESS_XCODES`) asks docker
-the same, right before it replaces the pack.
+too, before its first step and again right before it replaces the pack; it counts xless's own containers alone (a run's and
+a pack setup's, by their labels `xless.run` and `xless.setup`), and goes on where docker does not answer
+([security.md](security.md#the-xcode-packs)).
 
 ## What a run does
 

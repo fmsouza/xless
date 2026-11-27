@@ -824,8 +824,12 @@ Xcode, so what could write it could put code into the next build of another app,
   runs, with exit code 2.
 - **A pack in use is not replaced.** Setup refuses to prepare a pack again while a running container has it mounted, and
   names the containers: they would read files that change under them. On a Linux host that shares a directory store
-  between `--docker` and a native xless, a native `xless setup` asks docker too, right before it replaces the pack; where
-  docker does not answer (not installed, or its daemon not running), no container runs that could use it.
+  between `--docker` and a native xless, a native `xless setup` asks docker too, before its first step and again right
+  before it replaces the pack. It counts xless's own containers that mount the pack, the store or a directory that holds
+  it: a run's (label `xless.run`) and a pack setup's (label `xless.setup`); a container started by hand with the store
+  mounted is not counted. It asks the docker that the `docker` command reaches, as the calling user: where that docker
+  does not answer (not installed, its daemon not running, or a socket this user cannot open), the setup goes on without
+  knowing, and the containers of another daemon or Docker context are not seen.
 - **`pack.json` and the image's labels are consistency checks, not proof of origin.** `pack.json` records the Xcode, the
   architecture and each part's recipe hash; xless compares them with what it would prepare, which finds a pack prepared
   from other files or pins than this xless's (a stale one). Whoever can write the volume or the store (anyone who can use your
