@@ -255,7 +255,7 @@ extension NativeOverlay {
     /// The user's own rustup gets the targets that it lacks: in the sandbox nothing can write there.
     private func prepareRust(_ ctx: Context) throws {
         let targets: [String], directory: URL
-        if let cargo = ctx.cargoBuild { (targets, directory) = (cargo.rustTargets, source) }
+        if let cargo = try ctx.cargoBuild { (targets, directory) = (cargo.rustTargets, source) }
         else if let mac = ctx.tauriMac { (targets, directory) = (TauriMacEnvironment.targets, source.appendingPathComponent(mac.tauriDir)) }
         else if let tauri = ctx.tauri { (targets, directory) = ([TauriEnvironment.target], source.appendingPathComponent(tauri.tauriDir)) }
         else { return }

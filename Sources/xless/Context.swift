@@ -30,7 +30,8 @@ struct Context {
     var reactNative: ResolvedReactNative? = nil
     /// What the stages of an overlay build with on a Mac (`NativeOverlay`); nil elsewhere.
     var native: MacNative? = nil
-    private var sdk: DarwinSDK { native.map { DarwinSDK(xcode: $0.xcode) } ?? DarwinSDK() }
+    /// The Mac's Xcode, else the Xcode pack's SDK (`DarwinSDK(env:)`: a pack that does not fit is its error).
+    private var sdk: DarwinSDK { get throws { try native.map { DarwinSDK(xcode: $0.xcode) } ?? DarwinSDK() } }
 
     /// `--destination simulator` (React Native overlays, and xless.yml projects on a Mac): stages after build are refused.
     var simulator = false
@@ -61,29 +62,29 @@ struct Context {
     var hasPrepare: Bool { isTauri || isReactNative || isCargo }
 
     /// The Tauri stages' view of this context; nil without `--config` or for `--platform macos`.
-    var tauriBuild: TauriBuildContext? {
+    var tauriBuild: TauriBuildContext? { get throws {
         guard let overlay, let sourceRoot, let workRoot, let tauri else { return nil }
-        return TauriBuildContext(overlay: overlay, resolved: tauri, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
-    }
+        return TauriBuildContext(overlay: overlay, resolved: tauri, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: try sdk)
+    } }
 
     /// The macOS Tauri stages' view of this context; nil without `--config … --platform macos`.
-    var tauriMacBuild: TauriMacBuildContext? {
+    var tauriMacBuild: TauriMacBuildContext? { get throws {
         guard let overlay, let sourceRoot, let workRoot, let tauriMac else { return nil }
-        return TauriMacBuildContext(overlay: overlay, resolved: tauriMac, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
-    }
+        return TauriMacBuildContext(overlay: overlay, resolved: tauriMac, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: try sdk)
+    } }
 
     /// The React Native stages' view of this context; nil without a `type: react-native` overlay.
     var reactNativeBuild: ReactNativeBuildContext? {
         guard let rnOverlay, let sourceRoot, let workRoot, let reactNative else { return nil }
         return ReactNativeBuildContext(overlay: rnOverlay, resolved: reactNative, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths,
-                                       destination: simulator ? .iphonesimulator : .iphoneos, xcode: native.map { XcodeBuild(sdk: sdk, meta: $0.meta) })
+                                       destination: simulator ? .iphonesimulator : .iphoneos, xcode: native.map { XcodeBuild(sdk: DarwinSDK(xcode: $0.xcode), meta: $0.meta) })
     }
 
     /// The cargo stages' view of this context; nil without a `type: cargo` overlay.
-    var cargoBuild: CargoBuildContext? {
+    var cargoBuild: CargoBuildContext? { get throws {
         guard let cargo, let cargoResolved, let sourceRoot, let workRoot else { return nil }
-        return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
-    }
+        return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: try sdk)
+    } }
 
     /// `--distribution` (ship): replaces the platform's configured distribution for this run; the config file is
     /// untouched. Applied after validation, so sign/package/upload all see it.

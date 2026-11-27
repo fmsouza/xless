@@ -270,7 +270,7 @@ public enum SwiftPackages {
     /// `<target>.o` (the SDK linker's `-r` writes an `ar` archive), the archives in its products directory are merged into
     /// `lib<aggregate>.a` with `llvm-libtool-darwin -static`; that directory is deleted before the build, so only this
     /// build's archives are merged.
-    public static func build(aggregateDir: URL, minimumIOS: String, sdk: DarwinSDK = DarwinSDK(),
+    public static func build(aggregateDir: URL, minimumIOS: String, sdk: DarwinSDK,
                              env: [String: String] = ProcessInfo.processInfo.environment, swift: SwiftToolchain? = nil,
                              run: Runner = { try Shell.run($0, $1, env: $2, stage: .build, passthrough: true) }) throws -> URL {
         let toolset = sdk.bundle.appendingPathComponent("toolset-swb.json")

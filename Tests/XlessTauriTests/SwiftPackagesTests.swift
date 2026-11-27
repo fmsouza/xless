@@ -482,7 +482,7 @@ func aggregateBuildsAndExportsEverySymbolTheCrateImports() throws {
     let found = try SwiftPackages.discover(metadata: Data(contentsOf: metadata))
     let staged = try SwiftPackages.stage(tauriAPI: found.tauriAPI, plugins: found.plugins, into: out)
     let agg = try SwiftPackages.writeAggregate(minimumIOS: "16.0", plugins: staged, into: out)
-    let lib = try SwiftPackages.build(aggregateDir: agg, minimumIOS: "16.0")
+    let lib = try SwiftPackages.build(aggregateDir: agg, minimumIOS: "16.0", sdk: try DarwinSDK())
     // rustup picks the app's toolchain (rust-toolchain.toml) by walking up from the cargo output dir.
     let cwd = crateLib.deletingLastPathComponent()
     let nm = SwiftPackages.llvmTool("llvm-nm", cwd: cwd), objdump = SwiftPackages.llvmTool("llvm-objdump", cwd: cwd)

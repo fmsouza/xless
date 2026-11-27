@@ -194,7 +194,7 @@ struct XcrunShimCommand: ParsableCommand {
             return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isWhitespace).map(String.init)
         }
         let action: XcrunShim.Action
-        do { action = try XcrunShim.resolve(args, sdk: DarwinSDK(), which: which, shim: shim, lipoArchs: lipoArchs) }
+        do { action = try XcrunShim.resolve(args, sdk: try DarwinSDK(), which: which, shim: shim, lipoArchs: lipoArchs) }
         catch let e as XcrunShim.Unsupported { FileHandle.standardError.write(Data("\(e)\n".utf8)); Foundation.exit(70) }
         switch action {
         case .output(let text):

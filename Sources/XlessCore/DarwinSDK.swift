@@ -5,7 +5,7 @@ import Foundation
 public struct DarwinSDK: Sendable {
     public let bundle: URL
     public let isXcode: Bool
-    /// `DarwinSDK()`: the Xcode's (`XcodeEnvironment`).
+    /// `DarwinSDK(env:)`: the Xcode's (`XcodeEnvironment`).
     public init(bundle: URL) { self.init(bundle: bundle, isXcode: false) }
     init(bundle: URL, isXcode: Bool) { self.bundle = bundle; self.isXcode = isXcode }
 

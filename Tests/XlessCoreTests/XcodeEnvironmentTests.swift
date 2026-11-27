@@ -315,3 +315,16 @@ private func problem(_ body: () throws -> Any) -> XcodeProblem? {
     let nothing = #expect(throws: XlessError.self) { try XcodeToolsProfile.forImage(env: try isolated(), stage: .ib) }
     #expect(nothing?.stage == .ib && nothing?.fix.hasPrefix("xless setup --xcode") == true)
 }
+
+@Test func theDarwinSDKFallsBackOnlyWithoutAnyXcode() throws {
+    // Nothing at all: where a native setup puts it, so that what needs it names a path.
+    let none = try isolated()
+    #expect(try DarwinSDK(env: none).bundle.path == DarwinSDKLocator.bundle(env: none).path)
+    // A pack: its SDK.
+    let store = try tempDir()
+    let root = try makePack(in: store)
+    #expect(try DarwinSDK(env: try isolated(store: store)).bundle.path == root.appendingPathComponent("config/swiftpm/swift-sdks/darwin.artifactbundle").path)
+    // A store with no pack for the pin: that problem, never the fallback.
+    let e = #expect(throws: XcodeProblem.self) { try DarwinSDK(env: try isolated(store: store, [XcodeEnvironment.pinVariable: "27.0"])) }
+    #expect(e?.cause.contains("no pack for Xcode 27.0") == true)
+}

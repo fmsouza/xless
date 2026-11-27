@@ -23,9 +23,9 @@ enum StageRunner {
             try await withStage(.prepare) { _ = try BuildSDKCheck.check(pin: ctx.config.xcode, platform: ctx.platform, file: pinFile(ctx), stage: .prepare) }
         }
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.prepare(ctx: rn).path }
-        if let cargo = ctx.cargoBuild { return try await CargoBuilder.prepare(ctx: cargo).path }
-        if let mac = ctx.tauriMacBuild { return try await TauriBuilder.prepareMac(ctx: mac).path }
-        guard let tauri = ctx.tauriBuild else { return "skipped (not an overlay project)" }
+        if let cargo = try ctx.cargoBuild { return try await CargoBuilder.prepare(ctx: cargo).path }
+        if let mac = try ctx.tauriMacBuild { return try await TauriBuilder.prepareMac(ctx: mac).path }
+        guard let tauri = try ctx.tauriBuild else { return "skipped (not an overlay project)" }
         return try await TauriBuilder.prepare(ctx: tauri).path
     }
 
@@ -45,9 +45,9 @@ enum StageRunner {
         // build that keeps none (xtool, Cargo, Tauri) leaves none for `package` to zip.
         try? FileManager.default.removeItem(at: ctx.paths.dSYMs)
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.build(ctx: rn) }
-        if let cargo = ctx.cargoBuild { return try await CargoBuilder.build(ctx: cargo) }
-        if let mac = ctx.tauriMacBuild { return try await TauriBuilder.buildMac(ctx: mac) }
-        if let tauri = ctx.tauriBuild { return try await TauriBuilder.build(ctx: tauri) }
+        if let cargo = try ctx.cargoBuild { return try await CargoBuilder.build(ctx: cargo) }
+        if let mac = try ctx.tauriMacBuild { return try await TauriBuilder.buildMac(ctx: mac) }
+        if let tauri = try ctx.tauriBuild { return try await TauriBuilder.build(ctx: tauri) }
         return try await withStage(.build) {
             if let mac = try MacNative.here(for: ctx, stage: .build) {
                 if ctx.simulator { return try await mac.buildForSimulator(ctx) }

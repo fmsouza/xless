@@ -13,7 +13,7 @@ public struct TauriBuildContext: Sendable {
     public var env: [String: String]
 
     public init(overlay: TauriOverlay, resolved: ResolvedTauri, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                sdk: DarwinSDK = DarwinSDK(), env: [String: String] = ProcessInfo.processInfo.environment) {
+                sdk: DarwinSDK, env: [String: String] = ProcessInfo.processInfo.environment) {
         self.overlay = overlay; self.resolved = resolved; self.sourceRoot = sourceRoot; self.workRoot = workRoot
         self.paths = paths; self.sdk = sdk; self.env = env
     }
@@ -33,7 +33,7 @@ public struct TauriMacBuildContext: Sendable {
     public var env: [String: String]
 
     public init(overlay: TauriOverlay, resolved: ResolvedTauriMac, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                sdk: DarwinSDK = DarwinSDK(), env: [String: String] = ProcessInfo.processInfo.environment) {
+                sdk: DarwinSDK, env: [String: String] = ProcessInfo.processInfo.environment) {
         self.overlay = overlay; self.resolved = resolved; self.sourceRoot = sourceRoot; self.workRoot = workRoot
         self.paths = paths; self.sdk = sdk; self.env = env
     }

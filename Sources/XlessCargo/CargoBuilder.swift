@@ -16,7 +16,7 @@ public struct CargoBuildContext: Sendable {
     public var env: [String: String]
 
     public init(overlay: CargoOverlay, resolved: ResolvedCargo, platform: Platform, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                sdk: DarwinSDK = DarwinSDK(), env: [String: String] = ProcessInfo.processInfo.environment) {
+                sdk: DarwinSDK, env: [String: String] = ProcessInfo.processInfo.environment) {
         self.overlay = overlay; self.resolved = resolved; self.platform = platform; self.sourceRoot = sourceRoot
         self.workRoot = workRoot; self.paths = paths; self.sdk = sdk; self.env = env
     }
