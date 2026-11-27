@@ -69,9 +69,15 @@ if [ "$mode" = separate ]; then
   done
   test -f "$x/swift/clang/lib/darwin/libclang_rt.ios.a" && test -f "$x/swift/clang/include/arm_neon.h"
   rm "$bin/ld64.lld"
-  # A trampoline that finds the SDK's linker from its own place (usr/bin of the toolchain, in the pack).
-  # shellcheck disable=SC2016 # the trampoline's own $here, expanded when it runs
-  printf '%s\n' '#!/bin/sh' 'here="$(cd "$(dirname "$0")" && pwd -P)"' \
+  # A trampoline that finds the SDK's linker from its own place (usr/bin of the toolchain, in the pack), with shell builtins
+  # only: Swift Build runs the linker with a PATH of the toolchain's and the platform's directories (no dirname). Its own
+  # place is where it was run from ($0: a path, or a bare name of the current directory or of PATH, as `sh ld64.lld`
+  # gives); a link to it elsewhere is not followed (nothing links to it: the toolchain's ld64.lld was the link it replaces).
+  # shellcheck disable=SC2016 # the trampoline's own variables, expanded when it runs
+  printf '%s\n' '#!/bin/sh' \
+    'case "$0" in */*) self=$0 ;; *) if [ -f "$0" ]; then self=./$0; else self=$(command -v -- "$0") || exit 127; fi ;; esac' \
+    'dir=${self%/*}; [ -n "$dir" ] || dir=/' \
+    'here=$(CDPATH= cd -P -- "$dir" && pwd -P) || exit 127' \
     "exec \"\$here/$(relpath "$(canon "$bin")" "$(canon "$bundle")")/toolset/bin/ld64.lld\" \"\$@\"" > "$bin/ld64.lld"
   chmod 755 "$bin/ld64.lld"
 fi
