@@ -24,8 +24,34 @@ import XlessImages
         words.indices.contains { words[$0...].starts(with: part) }
     }
 
-    /// The pack's place in a container: whatever mounts it, it is read-only there.
-    private func mountsAPack(_ word: String) -> Bool { word.contains("xless-xcode-") || word.contains("dst=/xcodes") || word.contains("/xcodes,") }
+    /// docker's command in `words` (`docker [--context <name>] <command> …`).
+    private func dockerCommand(_ words: [String]) -> String? {
+        guard words.first == "docker" else { return nil }
+        var i = 1
+        while i < words.count, words[i].hasPrefix("-") { i += words[i] == "--context" ? 2 : 1 }
+        return i < words.count ? words[i] : nil
+    }
+
+    /// Every mount option of a container's arguments, whatever its form (`--mount v`, `--mount=v`, `-v v`, `-v=v`, `--volume v`,
+    /// `--volume=v`), and whether it is read-only: `readonly`/`ro` in a `--mount`, `ro` in the options of a `-v`.
+    private func mountOptions(_ words: [String]) -> [(value: String, readOnly: Bool)] {
+        var found: [(String, Bool)] = []
+        for (i, word) in words.enumerated() {
+            var value: String?, long = false
+            if ["--mount", "-v", "--volume"].contains(word), i + 1 < words.count { value = words[i + 1]; long = word == "--mount" }
+            for prefix in ["--mount=", "--volume=", "-v="] where word.hasPrefix(prefix) { value = String(word.dropFirst(prefix.count)); long = prefix == "--mount=" }
+            guard let value else { continue }
+            let readOnly = long ? value.split(separator: ",").contains { ["readonly", "ro", "readonly=true", "ro=true", "readonly=1", "ro=1"].contains($0) }
+                                : value.split(separator: ":").dropFirst(2).first.map { $0.split(separator: ",").contains("ro") } ?? false
+            found.append((value, readOnly))
+        }
+        return found
+    }
+
+    /// The option mounts a pack, a pack volume or the store: `store`, the directory store, if any.
+    private func mountsAPack(_ value: String, store: String?) -> Bool {
+        value.contains("xless-xcode-") || value.contains("dst=/xcodes") || value.contains(":/xcodes") || store.map { value.contains($0) } == true
+    }
 
     @Test func pinChoosesItsPack() throws {
         try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")
@@ -46,43 +72,59 @@ import XlessImages
     }
 
     /// The most important property of a run: no container of it can write the pack, which the steps with the secrets read after the
-    /// build ran the app's code. Every `docker run` of a Tauri overlay run to `upload` and of a Swift-only project, in both kinds of store.
+    /// build ran the app's code. Every container (each `docker run` and `docker create`, whatever its options) of a Tauri and of a React
+    /// Native overlay run to `upload`, and of a Swift-only project, with xless's image and with one of its own, in both kinds of store.
     @Test(arguments: [false, true])
     func everyContainerGetsThePackReadOnly(directory: Bool) throws {
         var environment: [String: String] = [:]
         var expected = Self.pack262
-        if directory {
-            let store = "\(home.root)/xcodes"
+        let store = directory ? "\(home.root)/xcodes" : nil
+        if let store {
             for x in RunHome.xcodes { try home.packs.write(home.packs.current(x.xcode, x.build), in: store) }
             home.packs.removeAll()
             environment["XLESS_XCODES"] = store
             expected = ["--mount", "type=bind,src=\(store)/26.2-17C52-arm64,dst=/xcodes/26.2-17C52-arm64,readonly", "-e", "XLESS_XCODE=/xcodes/26.2-17C52-arm64"]
         }
-        try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")
-        try home.write("proj/xless.yml", "name: App\nxcode: \"26.2\"\n")
+        home.images.add(xcode: "26.6", build: "17F113", name: "mine:1", layers: ["mine"], id: "sha256:mine")
+        // (what to write, the run's arguments, how many containers of steps it starts)
+        let matrix: [(file: String, text: String, arguments: [String], steps: Int)] = [
+            ("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n", ["--config", home.overlay, "--to", "upload"], 3),
+            ("ov/app.yml", "type: react-native\nsource: ../src\nxcode: \"26.2\"\n", ["--config", home.overlay, "--to", "upload"], 3),
+            ("proj/xless.yml", "name: App\nxcode: \"26.2\"\n", [home.project], 1),
+            ("proj/xless.yml", "name: App\nxcode: \"26.2\"\n", [home.project, "--to", "finalize"], 1),
+            ("proj/xless.yml", "name: App\nxcode: \"26.2\"\nimage: mine:1\n", [home.project], 2),
+        ]
         var all: [RunStep] = []
-        for target in [["--config", home.overlay, "--to", "upload"], [home.project], [home.project, "--to", "finalize"]] {
-            let (host, code) = try run(target, environment)
-            #expect(code == 0, "\(target): \(host.lines)")
-            let runs = host.allSteps.filter(\.isDockerRun)
-            #expect(runs.filter(\.isContainer).count == (target[0] == "--config" ? 3 : 1), "\(target)")
-            all += runs
+        for row in matrix {
+            try home.write(row.file, row.text)
+            let (host, code) = try run(row.arguments, environment)
+            #expect(code == 0, "\(row.arguments): \(host.lines)")
+            let containers = host.allSteps.filter { ["run", "create"].contains(dockerCommand($0.words)) }
+            let steps = containers.filter { step in !step.words.contains { $0.contains("--- xless pack") } }
+            #expect(steps.count == row.steps, "\(row.text) \(row.arguments): \(steps.map(\.line))")
+            for step in steps {
+                // a step: the pack, named outright, once
+                #expect(has(step.words, expected), "\(step.line)")
+                #expect(step.words.filter { $0.hasPrefix("XLESS_XCODE=") }.count == 1, "\(step.line)")
+            }
+            all += containers
         }
         #expect(!all.isEmpty)
         for step in all {
-            let mounts = step.words.filter(mountsAPack)
-            // whatever mounts a pack or a store, read-only
-            #expect(mounts.allSatisfy { !$0.hasPrefix("type=") || $0.hasSuffix(",readonly") }, "\(step.line)")
+            // whatever mounts a pack, a pack volume or the store, in any form, read-only
+            for mount in mountOptions(step.words) where mountsAPack(mount.value, store: store) {
+                #expect(mount.readOnly, "\(mount.value) in \(step.line)")
+            }
             #expect(!step.isPackSetup && !step.words.contains { $0.contains("chown") }, "nothing was prepared: \(step.line)")
-            if step.isContainer {
-                // a step: the pack, named outright, once
-                #expect(has(step.words, expected), "\(step.line)")
-                #expect(step.words.filter { $0.hasPrefix("XLESS_XCODE") }.count == 1, "\(step.line)")
-            } else {
+            if step.words.contains(where: { $0.contains("--- xless pack") }) {
                 // the reading of the volumes: no network, nothing of a project
                 #expect(!directory && step.words.contains("--network") && step.words.contains("none") && !step.words.contains { $0.contains("/work") || $0.contains("/source") }, "\(step.line)")
             }
         }
+        // the census sees a writable -v of a pack, and a container without --rm
+        let planted = ["docker", "create", "-v", "xless-xcode-26.2-17C52-arm64:/xcodes", "img"]
+        #expect(dockerCommand(planted) == "create" && mountOptions(planted).contains { mountsAPack($0.value, store: nil) && !$0.readOnly })
+        #expect(mountOptions(["docker", "run", "--volume=xless-xcode-1:/x:ro"]).allSatisfy { $0.readOnly })
     }
 
     @Test func stalePartIsPreparedFromTheCachedExport() throws {
