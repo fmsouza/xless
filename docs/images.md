@@ -283,7 +283,9 @@ docker run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp \
 ```
 
 A pack mounted elsewhere is named with `XLESS_XCODE=<where it is>`, and a directory store of the host can be mounted at
-`/xcodes` read-only whole. A Tauri or Cargo app builds the same way in the `tauri` kit's image, a React Native app in the
+`/xcodes` read-only whole: the project's `xcode:` pin (or `XLESS_XCODE_PIN`) chooses among its packs, also for the build
+that Expo's ExpoModulesJSI phase starts under `env -i` (the `xcodebuild` shim takes `XLESS_XCODES`, `XLESS_XCODE` and
+`XLESS_XCODE_PIN` from the build phase's process). A Tauri or Cargo app builds the same way in the `tauri` kit's image, a React Native app in the
 `react-native` kit's: the run builds an overlay wherever its tools are installed, and where they are not it names what is
 missing and stops (exit 2). In the xless image itself an overlay lacks Node, Rust or Ruby.
 
