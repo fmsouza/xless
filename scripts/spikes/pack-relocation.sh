@@ -20,7 +20,7 @@ set -euo pipefail
 if [ -z "${SPIKE_INSIDE:-}" ]; then
   [ $# -eq 2 ] || { echo "usage: $0 <export dir> <arch: arm64|amd64>" >&2; exit 2; }
   EXPORT=$(cd "$1" && pwd); ARCH=$2
-  [ -f "$EXPORT/$ARCH/darwin.xtoolsdk/toolset-swb.json" ] || [ -d "$EXPORT/$ARCH/darwin.xtoolsdk" ] || { echo "no $EXPORT/$ARCH/darwin.xtoolsdk" >&2; exit 2; }
+  [ -d "$EXPORT/$ARCH/darwin.xtoolsdk" ] || { echo "no $EXPORT/$ARCH/darwin.xtoolsdk" >&2; exit 2; }
   REPO=$(cd "$(dirname "$0")/../.." && pwd)
   OUT=${SPIKE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/pack-relocation.XXXXXX")}; mkdir -p "$OUT"
   echo "raw logs: $OUT"

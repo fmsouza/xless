@@ -4,7 +4,9 @@
 
 **Relocatable.** An SDK installed with `xtool sdk install` holds no absolute path at all: not in any file, not in any
 symlink. Moved to another directory and mounted read-only, SwiftPM and Swift Build still found it and the compile phase
-ran against it. Tasks proceed as written; no "same path everywhere" rule is needed.
+ran against it. Tasks proceed as written; no "same path everywhere" rule is needed. **End-to-end build not shown; link
+step unmeasured** (the one phase that reads the SDK's `.tbd` stubs and `ld64.lld` from the read-only mount never ran).
+Measured with Swift 6.4 in a Linux container; native macOS not measured.
 
 - **Which switch the tools get (Task 6): `--swift-sdks-path <pack>/swiftpm/swift-sdks`, with the user's own (or a
   scratch) writable `XDG_CONFIG_HOME` left alone.** Both ways find the SDK. With `XDG_CONFIG_HOME=<pack>/config` SwiftPM
@@ -20,7 +22,7 @@ ran against it. Tasks proceed as written; no "same path everywhere" rule is need
   writable `XDG_CONFIG_HOME` outside the pack is where a user default could be set.
 - **The one writer beside an SDK is the installer.** `xtool sdk install` writes the bundle (a 3.1 GB copy of the export)
   and, outside it, lock files under `$HOME/.cache/xtool/pid-*-0.lock` and a temp directory. So a pack is prepared by
-  installing into a writable directory and only then mounted read-only; nothing at build time needs `xtool`'s cache.
+  installing into a writable directory and only then mounted read-only; nothing at build time needs `xtool`'s cache (inferred: the builds ran with a home of their own and touched no `~/.cache/xtool`).
 
 ## Method
 
@@ -68,13 +70,13 @@ Who wrote where during the install (`xtool sdk install`): the bundle under `/tmp
 ### (b) Builds
 
 Both X and S, moved and read-only, and the control C, unmoved and writable, end the same way: `swift build` plans the
-package, the Swift and C compile steps run against the SDK (in X, strace shows about 17,000 successful opens of files under
-`/tmp/p2`, 17,233 of them in the SDK's `SDKs/` trees, and the compiler wrote `HelloShipApp.o` and `ContentView.o`), and the link step
+package, the Swift and C compile steps run against the SDK (in X, strace shows about 17,200 successful opens of files in the SDK's `SDKs/`
+trees under `/tmp/p2` among about 23,500 `SDKs/` lines in the log, failed opens included, and the compiler wrote `HelloShipApp.o` and `ContentView.o`), and the link step
 `clang -r ... --ld-path=<bundle>/toolset/bin/ld64.lld` fails ("`HelloShip.o: No such file or directory`", "linker command
 failed"). The control fails at the same step with the same message, so this is not about relocation. Probably (not investigated) the plain image
 lacks the pieces xless's build adds (the `xless-ld64` linker shim and the toolchain pins of Ruling R10, which are in
-`docker/Dockerfile`'s later stages, not in the tools image). The app Swift for Xcode 26.2 (6.2.3) was not downloaded:
-nothing measured here depends on it.
+`docker/Dockerfile`'s later stages, not in the tools image). Everything here was measured with Swift 6.4; re-check with 6.2.3 (the Xcode 26.2 app Swift, not downloaded)
+when Task 6 lands.
 
 | Run | SDK found | Compile phase against the moved read-only SDK | Link |
 |---|---|---|---|
@@ -97,13 +99,14 @@ triples" (a triple is needed).
 
 After all runs: 0 entries in `/tmp/p2` modified since the mount. No tool tried to read `/tmp/p1` after the move (0 reads).
 No build wrote anywhere outside its own scratch, cache and home directories, `/tmp/TemporaryDirectory.*`, and the writable XDG directory.
-The warning in the first column of X is the difference that decides the switch: only `--swift-sdks-path` leaves nothing
-for a read-only pack to refuse.
+The decisive data for choosing S is the first-command-line column, whose strace was not kept and cannot be re-checked.
+The evidence on the final command line is the warnings alone: X also performs 0 writes there. The choice of S stands: it
+leaves nothing for a read-only pack to refuse and avoids the warnings.
 
 ## What this changes in the plan
 
 - Task 5's relocation test stays "move it, it still works"; no "same path" variant.
-- Task 6 gives the tools `--swift-sdks-path <pack>/swiftpm/swift-sdks` and a writable `XDG_CONFIG_HOME`; never `XDG_CONFIG_HOME=<pack>/config`.
+- Task 6 gives the tools `--swift-sdks-path <pack>/swiftpm/swift-sdks` and a writable `XDG_CONFIG_HOME` (a Linux-container finding; native macOS not measured); never `XDG_CONFIG_HOME=<pack>/config`.
 - `xtool sdk install` runs only when the pack is made, into a writable directory.
 - Not measured: the link step (needs the xless image's linker shim), Swift 6.2.3, and an x86_64 pack (the structure, with no absolute
   path, is by design the same). The raw strace and build logs of the last run are in `~/.cache/xless/spike-out/`.
