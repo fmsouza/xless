@@ -211,7 +211,7 @@ let notOnWindows: [String: [String]] = [
     "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
     "XlessCLITests": [
         "BuildIsolationTests.swift", "LiveCheckTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
-        "SecretsNamedByTests.swift", "NativeOverlayTests.swift", "ShimCommandsTests.swift",
+        "SecretsNamedByTests.swift", "NativeOverlayTests.swift", "ShimCommandsTests.swift", "XcodePinTests.swift",
     ],
 ]
 package.products = []

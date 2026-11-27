@@ -494,3 +494,4 @@
 + Tests/XlessCLITests/UserCommandTests.swift
 + Tests/XlessCLITests/VaultFormatCLITests.swift
 + Tests/XlessCLITests/WebhookCommandTests.swift
+- Tests/XlessCLITests/XcodePinTests.swift

@@ -94,11 +94,20 @@ struct Context {
         var context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh, expecting: expecting)
         context.configFile = opts.configURL
         for name in context.config.secretNames { SecretEnvironment.scrub(name) }
-        // The project's pinned Xcode, for this command and every child, as `xless run` gives it (XcodeEnvironment).
-        if let pin = XcodeEnvironment.pin(configured: context.config.xcode, env: ProcessInfo.processInfo.environment) {
-            setenv(XcodeEnvironment.pinVariable, pin, 1)
-        }
+        pinXcode(context.config.xcode, env: env)
         return context
+    }
+
+    /// The project's pinned Xcode for this command and every child, as `xless run` gives it: `XLESS_XCODE_PIN`
+    /// (`XcodeEnvironment.pin`: a value in `env` wins), and that Xcode's toolchain first on PATH again
+    /// (`NativeLayout.activatedPath`), where the command's start put the newest pack's. `set`: `setenv`.
+    static func pinXcode(_ configured: String?, env: [String: String], linux: Bool = NativeLayout.isLinuxHost,
+                         set: (String, String) -> Void = { setenv($0, $1, 1) }) {
+        guard let pin = XcodeEnvironment.pin(configured: configured, env: env) else { return }
+        set(XcodeEnvironment.pinVariable, pin)
+        var pinned = env
+        pinned[XcodeEnvironment.pinVariable] = pin
+        if let path = NativeLayout.activatedPath(env: pinned, linux: linux) { set("PATH", path) }
     }
 
     private static func loadConfiguration(_ opts: ProjectOptions, distribution: Distribution?, env: [String: String], fresh: Bool, expecting: String?) async throws -> Context {

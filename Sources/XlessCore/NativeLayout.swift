@@ -31,20 +31,47 @@ public struct NativeLayout: Sendable, Equatable {
     public func rcodesign(version: String) -> URL { tools.appendingPathComponent("rcodesign-\(version)") }
 
     /// `path` with the toolchain's `usr/bin` and then `bin` first (each moved there if already present), so they win
-    /// over any other `swift`, `xtool` or `rcodesign` on PATH (swiftly's, a distribution's).
-    public static func path(_ path: String?, toolchain: SwiftToolchain, bin: URL) -> String {
+    /// over any other `swift`, `xtool` or `rcodesign` on PATH (swiftly's, a distribution's). The `usr/bin` of another
+    /// Xcode's toolchain (`isOtherToolchain`: a pack's or a native install's, put there by an earlier activation) is
+    /// dropped, so only one Xcode's Swift is on it.
+    public static func path(_ path: String?, toolchain: SwiftToolchain, bin: URL, isOtherToolchain: (String) -> Bool = { _ in false }) -> String {
         let first = [toolchain.bin.path, bin.path]
         let rest = (path ?? "/usr/bin:/bin").split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-            .filter { !first.contains($0) }
+            .filter { !first.contains($0) && !isOtherToolchain($0) }
         return (first + rest).joined(separator: ":")
     }
 
-    /// A native xless puts the Xcode's Swift toolchain (`XcodeEnvironment.toolchain`: its pack's, else a native install's of
-    /// before the packs) and then `bin` first on this process's PATH, so every tool and child process uses them. Left as it
-    /// is with `XLESS_SWIFT_TOOLCHAIN` set (an image's), and without a toolchain.
-    public static func activate(env: [String: String] = ProcessInfo.processInfo.environment) {
-        guard (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty, let toolchain = (try? XcodeEnvironment.lookup(env: env))??.toolchain else { return }
-        let new = path(env["PATH"], toolchain: toolchain, bin: NativeLayout(env: env).bin)
-        if new != env["PATH"] { setenv("PATH", new, 1) }
+    /// Whether this host runs the toolchains of the packs and of the native setup (they are Linux's; a Mac builds with
+    /// its Xcode).
+    public static var isLinuxHost: Bool {
+        #if os(Linux)
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// The PATH a native xless runs with: the Xcode's Swift toolchain (`XcodeEnvironment.toolchain`: its pack's, by the pin
+    /// in `env`, else a native install's of before the packs) and then `bin` first, without another pack's or native
+    /// toolchain's `usr/bin`. nil: PATH stays as it is, on a host that is not Linux (`linux`), with `XLESS_SWIFT_TOOLCHAIN`
+    /// set (an image's), without a toolchain, and when it already is that.
+    public static func activatedPath(env: [String: String], linux: Bool = isLinuxHost) -> String? {
+        guard linux, (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty, let toolchain = (try? XcodeEnvironment.lookup(env: env))??.toolchain else { return nil }
+        let layout = NativeLayout(env: env)
+        let new = path(env["PATH"], toolchain: toolchain, bin: layout.bin) { entry in
+            let dir = URL(fileURLWithPath: entry)
+            guard dir.lastPathComponent == "bin", dir.deletingLastPathComponent().lastPathComponent == "usr" else { return false }
+            let root = dir.deletingLastPathComponent().deletingLastPathComponent()
+            if root.deletingLastPathComponent().path == layout.toolchains.path { return true }
+            return root.lastPathComponent == "toolchain"
+                && FileManager.default.fileExists(atPath: root.deletingLastPathComponent().appendingPathComponent("pack.json").path)
+        }
+        return new == env["PATH"] ? nil : new
+    }
+
+    /// Puts `activatedPath` on this process's PATH, so every tool and child process uses that toolchain. Every command
+    /// does it at its start; a command that loads a project with an `xcode:` pin does it again once the pin is set.
+    public static func activate(env: [String: String] = ProcessInfo.processInfo.environment, linux: Bool = isLinuxHost) {
+        if let new = activatedPath(env: env, linux: linux) { setenv("PATH", new, 1) }
     }
 }
