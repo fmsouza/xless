@@ -21,6 +21,9 @@ public enum BuildSDKCheck {
                              env: [String: String] = ProcessInfo.processInfo.environment) throws -> Result {
         var metaURL = metaURL, loadToolchain = loadToolchain
         var found: XcodePack?
+        // The pack is resolved by the pin checked here, as a command that loaded the project resolves it (`Context.pinXcode`).
+        var env = env
+        if let pin, (env[XcodeEnvironment.pinVariable] ?? "").isEmpty { env[XcodeEnvironment.pinVariable] = pin }
         if metaURL == nil || loadToolchain == nil {
             let xcode: XcodeEnvironment?
             do { xcode = pin == nil ? try XcodeEnvironment.lookup(env: env) : try XcodeEnvironment.current(env: env) } catch let problem as XcodeProblem {
@@ -31,6 +34,7 @@ public enum BuildSDKCheck {
             metaURL = metaURL ?? xcode?.meta
             loadToolchain = loadToolchain ?? { try xcode?.loadToolchain(stage: stage) }
         }
+        let load = loadToolchain ?? { nil }
         var meta: ToolchainMeta?
         do { meta = try metaURL.map { try ToolchainMeta.load(from: $0) } } catch let e as XlessError {
             if let pin {
@@ -46,7 +50,7 @@ public enum BuildSDKCheck {
         }
         if let meta { try XcodePin.check(pin: pin, meta: meta, platform: platform, file: file, stage: stage) }
         let toolchain: SwiftToolchain?
-        do { toolchain = try loadToolchain!() } catch let e as XlessError { throw XlessError(stage, e.cause, fix: e.fix) }
+        do { toolchain = try load() } catch let e as XlessError { throw XlessError(stage, e.cause, fix: e.fix) }
         let swift = try SwiftToolchain.check(toolchain, meta: meta, pin: pin, stage: stage)
         return Result(meta: meta, swift: swift, toolchain: toolchain)
     }

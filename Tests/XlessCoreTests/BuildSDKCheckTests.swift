@@ -174,3 +174,21 @@ private func noToolchain() throws -> SwiftToolchain? { nil }
     #expect(e?.stage == .build && e?.cause.contains(pack.name) == true && e?.cause.contains("toolchain-meta.json") == true, "\(String(describing: e))")
     #expect(e?.fix.contains("xless setup --sdk") == true)
 }
+
+/// The pin given to the check is the one it resolves with, also when the environment names none: the pinned Xcode's pack, not
+/// the newest.
+@Test func theCheckResolvesThePackOfItsPin() throws {
+    let store = try tempDir("sdkcheck-store"), home = try tempDir("sdkcheck-home"), share = try tempDir("sdkcheck-share")
+    defer { for d in [store, home, share] { try? FileManager.default.removeItem(at: d) } }
+    let arch = XcodeEnvironment.hostArch
+    for (xcode, build, code, swift) in [("26.2", "17C52", "2620", "6.2.3"), ("27.0", "27A266a", "2700", "6.4.0")] {
+        let pack = XcodePack(root: store.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch)),
+                             manifest: PackManifest(format: 1, xcode: xcode, build: build, arch: arch, swift: swift, mode: .separate, parts: ["sdk": "h"]))
+        try meta(code, build, sdk: xcode).write(to: pack.meta)
+        try pack.manifest.write(to: pack.manifestFile)
+    }
+    let env = ["HOME": home.path, "XLESS_XCODES": store.path, "XLESS_SHARE": share.path]
+    let tc = try fakeToolchain(version: "6.2.3", line: "Swift version 6.2.3 (swift-6.2.3-RELEASE)")
+    let result = try BuildSDKCheck.check(pin: "26.2", platform: .ios, file: "xless.yml", stage: .prepare, loadToolchain: { tc }, env: env)
+    #expect(result.meta?.xcodeBuild == "17C52")
+}
