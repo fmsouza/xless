@@ -241,12 +241,13 @@ final class RunHome: Sendable {
     }
 
     func run(_ arguments: [String], docker: Bool, host: FakeRunHost, environment: [String: String] = [:], session: String? = nil, unlocked: Bool = false,
-             prepareMac: (@Sendable (String?, Bool, Bool) throws -> Void)? = nil) throws -> Int32 {
+             prepareMac: (@Sendable (String?, Bool, Bool) throws -> Void)? = nil, overlayLacks: (@Sendable (Kit, [String: String]) -> [String])? = nil) throws -> Int32 {
         Thread.current.threadDictionary["run"] = true
         let environment = ["HOME": home, "PATH": "/bin", "XDG_RUNTIME_DIR": "\(root)/run"].merging(environment) { $1 }
             .merging(session.map { ["XLESS_SESSION": $0] } ?? [:]) { $1 } // as before `XlessSession` took it
         let context = RunContext(environment: environment, xless: "xless", again: ["/x/xless", "run"] + arguments, share: "\(root)/share",
-                                 useDocker: docker ? "1" : "0", session: session, unlocked: unlocked, prepareMac: prepareMac)
+                                 useDocker: docker ? "1" : "0", session: session, unlocked: unlocked, prepareMac: prepareMac,
+                                 overlayLacks: overlayLacks)
         return try ProjectRun(arguments, context: context, host: host).run()
     }
 

@@ -49,6 +49,7 @@ extension ProjectRun {
         let span = try RunSpan.overlay(request)
         overlay.span = span
         try chooseDocker()
+        try refuseMissingForOverlay(kind: Kit(overlayType: top["type"]))
 
         // Step 1 only for a run that starts with `build: dated` (the default): later stages read the number recorded in the work
         // copy, and a fixed build needs no App Store Connect query.

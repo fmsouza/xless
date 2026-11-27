@@ -29,9 +29,13 @@ public struct RunContext: Sendable {
     /// What a native run on a Mac needs before it asks anything or builds: an Xcode (the pin's, where there is one) when it
     /// builds, and the signer when it signs.
     public var prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)?
+    /// What an overlay of `kind` needs to build natively, off a Mac, that the machine of `environment` lacks
+    /// (`ProjectRun.missingForOverlay`); nil: nothing is looked for.
+    public var overlayLacks: (@Sendable (_ kind: Kit, _ environment: [String: String]) -> [String])?
 
     public init(environment: [String: String], xless: String, again: [String], share: String, useDocker: String, session: String?, unlocked: Bool,
-                prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil) {
+                prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil,
+                overlayLacks: (@Sendable (_ kind: Kit, _ environment: [String: String]) -> [String])? = nil) {
         self.environment = environment
         self.xless = xless
         self.again = again
@@ -40,6 +44,7 @@ public struct RunContext: Sendable {
         self.session = session
         self.unlocked = unlocked
         self.prepareMac = prepareMac
+        self.overlayLacks = overlayLacks
     }
 }
 

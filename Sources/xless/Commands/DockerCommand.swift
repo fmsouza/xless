@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import XlessCore
+import XlessImages
 import XlessRun
 
 /// `xless run`: a project's build, sign and upload, natively (what `xless setup` installed) or, with `--docker`, in the local
@@ -16,11 +17,13 @@ struct RunCommand: ParsableCommand {
         or natively on a Mac), --dry-run (print what would run), --allow-disk-secrets. The other arguments go to xless \
         ship, --from and --to among them.
 
-        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native: on Linux, of xless.yml \
-        projects, with what xless setup installed; on a Mac with the Xcode that is installed there (DEVELOPER_DIR, \
-        xcode-select or /Applications; XLESS_TOOLS=xless or actool=xless,ibtool=xless: xless's own tools in place of Xcode's). \
-        Tauri, plain Cargo and React Native overlays (--config) build in the images on Linux: add --docker. On a Mac they build \
-        with the Rust, Node and Ruby that are installed there too, in a sandbox. \
+        Without --docker, XLESS_USE_DOCKER=1 or 0 decides when it is set; else the run is native: on Linux with what xless \
+        setup installed; on a Mac with the Xcode that is installed there (DEVELOPER_DIR, xcode-select or /Applications; \
+        XLESS_TOOLS=xless or actool=xless,ibtool=xless: xless's own tools in place of Xcode's). Tauri, plain Cargo and React \
+        Native overlays (--config) build natively on Linux where what they need is installed, as in a container of a kit's \
+        image: Swift Build (a part of the Xcode's pack), the Xcode tool shims (XLESS_SHIM_DIR) and the kit's Node and Rust, or \
+        Node, Ruby, Bundler and hermesc. Elsewhere xless says what is missing: add --docker. On a Mac they build with the \
+        Rust, Node and Ruby that are installed there too, in a sandbox. \
         Secrets not set in the environment come from the secret store (`xless secrets`); with --docker they are written to a \
         tmpfs for the run (--allow-disk-secrets where there is none, as on macOS). \
         Example: xless run MyApp --build-number 1 --to finalize
@@ -33,10 +36,6 @@ struct RunCommand: ParsableCommand {
         let (docker, rest) = Self.split(arguments)
         let env = ProcessInfo.processInfo.environment
         let useDocker = docker ? "1" : env["XLESS_USE_DOCKER"].flatMap { $0.isEmpty ? nil : $0 } ?? (ProjectRunner.isScript(env) ? "auto" : "0")
-        if useDocker == "0", !MacNative.isMac, !ProjectRunner.isScript(env), Self.namesOverlay(rest) {
-            throw XlessError(.config, "a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images, not natively",
-                             fix: "add --docker (after building the images once: xless setup --docker --xcode <Xcode.xip>)")
-        }
         try ProjectRunner.run(rest, useDocker: useDocker)
     }
 
@@ -45,11 +44,6 @@ struct RunCommand: ParsableCommand {
         let end = arguments.firstIndex(of: "--") ?? arguments.endIndex
         let head = arguments[..<end]
         return (head.contains("--docker"), head.filter { $0 != "--docker" } + arguments[end...])
-    }
-
-    /// The script's arguments name an overlay (`--config`), before any `--`.
-    static func namesOverlay(_ arguments: [String]) -> Bool {
-        arguments.prefix { $0 != "--" }.contains { $0 == "--config" || $0.hasPrefix("--config=") }
     }
 }
 
@@ -95,8 +89,15 @@ enum ProjectRunner {
         let context = RunContext(environment: env, xless: isScript(env) ? env["XLESS_SELF"].flatMap { $0.isEmpty ? nil : $0 } ?? "xless" : exe.path,
                                  again: [exe.path] + PosixRunHost.arguments.dropFirst(), share: share.path, useDocker: useDocker,
                                  session: XlessSession.agent, unlocked: !(env["XLESS_RUN_UNLOCKED"] ?? "").isEmpty,
-                                 prepareMac: isScript(env) ? nil : MacNative.prepare)
+                                 prepareMac: isScript(env) ? nil : MacNative.prepare,
+                                 // (scripts/testflight.sh's run is as it always was: its stages say what they lack)
+                                 overlayLacks: isScript(env) ? nil : overlayLacks)
         let code = try ProjectRun(arguments, context: context, host: PosixRunHost()).run()
         if code != 0 { throw ExitCode(code) }
+    }
+
+    /// What this machine lacks for an overlay's build: what is installed on the PATH of the run, not where it runs.
+    @Sendable static func overlayLacks(_ kind: Kit, _ environment: [String: String]) -> [String] {
+        ProjectRun.missingForOverlay(kind: kind, env: environment) { XcodeEnvironment.which($0, path: environment["PATH"])?.path }
     }
 }

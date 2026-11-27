@@ -23,11 +23,13 @@ images:
 
 .PHONY: test-image
 # make test-image [ARCHS="arm64 amd64"]: what the xless image of this checkout and its kits hold (Tests/shell/image-contents.test.sh),
-# for this machine's architecture, or each of ARCHS when it is given. A missing image fails it.
+# and the tauri kit's image used directly, with an Xcode's pack volume read-only (Tests/shell/image-direct.test.sh): for this
+# machine's architecture, or each of ARCHS when it is given. A missing image, kit or pack fails it.
 HOST_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
 test-image:
 	for a in $(if $(filter command line environment,$(origin ARCHS)),$(ARCHS),$(HOST_ARCH)); do \
 	  XLESS_IMAGE_REQUIRED=1 XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-contents.test.sh || exit 1; \
+	  XLESS_IMAGE_REQUIRED=1 XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-direct.test.sh || exit 1; \
 	done
 
 .PHONY: sdk-export
