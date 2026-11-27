@@ -111,6 +111,32 @@ private func packEnvironment(store: URL, _ extra: [String: String] = [:]) throws
     #expect(NativeLayout.activatedPath(env: mixed, linux: true) == "\(older.toolchain.path)/usr/bin:\(bin):/opt/tools/bin:/usr/bin:/bin")
 }
 
+/// A command's start only puts the pack's toolchain on PATH: what a lookup would note of the pack (an Xcode this xless has no
+/// recipe for) is left to the lookup that uses it, so a command that uses no pack (`xless docker`, `--version`) says nothing.
+@Test func theStartSaysNothingOfThePackAndTheLookupThatUsesItDoes() throws {
+    let store = try realTemp("native-store")
+    let pack = try packWithToolchain(in: store, xcode: "26.8", build: "98Z98")
+    var env = try packEnvironment(store: store)
+    try Data("XCODE_RELEASES=\"\"\n".utf8).write(to: URL(fileURLWithPath: env["XLESS_SHARE"]!).appendingPathComponent("versions.env"))
+    let notes = Notes()
+    let (path, atStart, used) = try XcodeEnvironment.$noteSink.withValue({ notes.add($0) }) { () throws -> (String?, [String], String?) in
+        let path = NativeLayout.activatedPath(env: env, linux: true)
+        let atStart = notes.all
+        return (path, atStart, try XcodeEnvironment.current(env: env).pack?.name)
+    }
+    #expect(path?.hasPrefix(pack.toolchain.path) == true)
+    #expect(atStart.isEmpty, "\(atStart)")
+    #expect(used == pack.name)
+    #expect(notes.all.count == 1 && notes.all.first?.hasPrefix("note: the pack \(pack.name) is of Xcode 26.8 (98Z98)") == true, "\(notes.all)")
+}
+
+private final class Notes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    func add(_ line: String) { lock.lock(); lines.append(line); lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+}
+
 /// An older install is the SDK bundle with the record. The swift-sdks directory around the bundle is a person's, and an SDK without the
 /// record is not xless's: nothing.
 @Test func anOlderInstallNeedsTheBundleAndTheRecord() throws {

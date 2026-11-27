@@ -231,8 +231,16 @@ public struct XcodeEnvironment: Sendable {
         #endif
     }
 
+    /// Where a lookup's notes go instead of standard error (a test's).
+    @TaskLocal static var noteSink: (@Sendable (String) -> Void)?
+    /// A lookup that says nothing of the pack (`NativeLayout.activatedPath`: a command's start, which only puts its toolchain on
+    /// PATH): what there is to say is said by the lookup that uses the pack, so a command that uses none says nothing.
+    @TaskLocal static var quietNotes = false
+
     /// A note on standard error, once per process and text (a command may look the Xcode up more than once).
     private static func note(_ text: String) {
+        if quietNotes { return }
+        if let noteSink { noteSink(text); return }
         noted.withLock { seen in
             guard seen.insert(text).inserted else { return }
             FileHandle.standardError.write(Data("\(text)\n".utf8))

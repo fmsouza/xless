@@ -64,10 +64,12 @@ public struct NativeLayout: Sendable, Equatable {
     }
 
     /// The PATH a native xless runs with: the Xcode's Swift toolchain (`XcodeEnvironment.toolchain`: its pack's, by the pin
-    /// in `env`) and then `bin` first, without another pack's `usr/bin` (nor that of a native install of before the packs). nil: PATH stays as it is, on a host that is not Linux (`linux`), with `XLESS_SWIFT_TOOLCHAIN`
+    /// in `env`, looked up without its notes, `XcodeEnvironment.quietNotes`) and then `bin` first, without another pack's `usr/bin` (nor that of a native install of before the packs). nil: PATH stays as it is, on a host that is not Linux (`linux`), with `XLESS_SWIFT_TOOLCHAIN`
     /// set (an image's), without a toolchain, and when it already is that.
     public static func activatedPath(env: [String: String], linux: Bool = isLinuxHost) -> String? {
-        guard linux, (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty, let toolchain = (try? XcodeEnvironment.lookup(env: env))??.toolchain else { return nil }
+        guard linux, (env["XLESS_SWIFT_TOOLCHAIN"] ?? "").isEmpty,
+              let toolchain = XcodeEnvironment.$quietNotes.withValue(true, operation: { (try? XcodeEnvironment.lookup(env: env))??.toolchain })
+        else { return nil }
         let layout = NativeLayout(env: env)
         let new = path(env["PATH"], toolchain: toolchain, bin: layout.bin) { entry in
             let dir = URL(fileURLWithPath: entry)
