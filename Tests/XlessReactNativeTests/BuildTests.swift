@@ -420,6 +420,22 @@ private func git(_ dir: URL, _ args: String...) throws {
     let with262 = ReactNativeBuilder.toolchainIdentity(sdk262, tools: tools)
     try write(metaFile, "{\"xcodeVersion\": \"2700\"}")
     #expect(with262 != toolchain && ReactNativeBuilder.toolchainIdentity(sdk262, tools: tools) != with262)
+    // The pack: its build and the recipe hash of each part; not where it is mounted.
+    func pack(_ place: String, _ parts: [String: String]) throws -> ReactNativeBuildContext {
+        let root = try tmp(place).appendingPathComponent("26.2-17C52-arm64")
+        try write(root.appendingPathComponent("toolchain-meta.json"), "{\"xcodeVersion\": \"2620\"}")
+        try PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: "arm64", swift: "6.2.3", mode: .separate, parts: parts)
+            .write(to: root.appendingPathComponent("pack.json"))
+        var c = try ctx(o)
+        c.env["XLESS_XCODE"] = root.path
+        c.env["XLESS_SHARE"] = try tmp("noshare").path   // (no recipe to call the pack stale with)
+        for name in ["XLESS_TOOLCHAIN_META", "XLESS_SWIFT_TOOLCHAIN", "XLESS_XCODES"] { c.env[name] = nil }
+        return c
+    }
+    let packed = ReactNativeBuilder.toolchainIdentity(try pack("a", ["sdk": "s1", "swift-build": "b1"]), tools: tools)
+    #expect(ReactNativeBuilder.toolchainIdentity(try pack("b", ["sdk": "s1", "swift-build": "b1"]), tools: tools) == packed)   // elsewhere
+    #expect(ReactNativeBuilder.toolchainIdentity(try pack("c", ["sdk": "s1", "swift-build": "b2"]), tools: tools) != packed)   // another Swift Build
+    #expect(ReactNativeBuilder.toolchainIdentity(try pack("d", ["sdk": "s2", "swift-build": "b1"]), tools: tools) != packed)   // another SDK part
     #expect(ReactNativeBuilder.executableDigest().count == 64)
     try write(src.appendingPathComponent("apps/client/package.json"), "{\"a\": 1}")   // an uncommitted edit, which the work copy carries
     #expect(try ReactNativeBuilder.fingerprint(ctx(o), toolchain: toolchain) != base)

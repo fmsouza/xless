@@ -213,19 +213,22 @@ public enum ReactNativeBuilder {
         return h.finalize().map { String(format: "%02x", $0) }.joined() + "\n"
     }
 
-    /// What builds the app, hashed: the image (`XLESS_IMAGE_ID`, baked in by the Dockerfiles), the Darwin SDK (its
-    /// toolchain metadata, `XcodeEnvironment`: packs of other Xcodes share the image ID's commit; Ruling R8), the Swift toolchain that
-    /// compiles (Ruling R10), the running xless executable, and the tool versions (`tools`: Node, the JS package manager,
-    /// Ruby, Bundler).
+    /// What builds the app, hashed: the image (`XLESS_IMAGE_ID`, baked in by the Dockerfiles), the Xcode's pack (its build and the
+    /// recipe hash of each part, from its `pack.json`: one image builds with the packs of several Xcodes), the Darwin SDK (its
+    /// toolchain metadata, `XcodeEnvironment`; Ruling R8), the version of the Swift toolchain that compiles (Ruling R10; not where it
+    /// is: a pack is the same wherever it is mounted), the running xless executable, and the tool versions (`tools`: Node, the JS
+    /// package manager, Ruby, Bundler).
     static func toolchainIdentity(_ ctx: ReactNativeBuildContext, tools: [String]) -> String {
         var h = SHA256()
         func add(_ s: String) { h.update(data: Data(s.utf8)); h.update(data: Data([0])) }
-        add("xless-rn-toolchain-2")
+        add("xless-rn-toolchain-3")
         add(ctx.env["XLESS_IMAGE_ID"] ?? "(no image id)")
         // On a Mac (`ctx.xcode`) the Xcode is its own identity, and there is no pack.
         let linux = ctx.xcode == nil ? try? XcodeEnvironment.current(env: ctx.env) : nil
+        add(linux?.pack.map { p in "pack \(p.manifest.build) " + PackPart.allCases.map { "\($0.rawValue)=\(p.manifest.parts[$0.rawValue] ?? "none")" }.joined(separator: " ") }
+            ?? "(no pack)")
         add(linux.flatMap { try? Data(contentsOf: $0.meta) }.map { String(decoding: $0, as: UTF8.self) } ?? "(no toolchain metadata)")
-        add(linux?.toolchain.map { "swift \($0.version) at \($0.root)" } ?? "(no swift toolchain record)")
+        add(linux?.toolchain.map { "swift \($0.version)" } ?? "(no swift toolchain record)")
         add(executableDigest())
         if let xcode = ctx.xcode { add(xcode.identity) }
         for t in tools { add(t) }
