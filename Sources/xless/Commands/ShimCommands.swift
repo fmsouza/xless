@@ -70,12 +70,14 @@ struct PrepareClangShimCommand: ParsableCommand {
     static let configuration = CommandConfiguration(commandName: "prepare-clang")
     @Argument(parsing: .captureForPassthrough) var args: [String] = []
     func run() throws {
-        let mapped: [String], xcode: XcodeEnvironment
+        let call: (path: String, arguments: [String])
         do {
-            xcode = try XcodeEnvironment.current()
-            mapped = try PrepareClangShim.arguments(args, sdk: DarwinSDK(bundle: xcode.sdkBundle))
+            call = try PrepareClangShim.invocation(args) {
+                let xcode = try XcodeEnvironment.current()
+                return (DarwinSDK(bundle: xcode.sdkBundle), xcode.toolchain)
+            }
         } catch { refuse(error) }
-        try execTool(PrepareClangShim.executable(args, swift: xcode.toolchain), mapped)
+        try execTool(call.path, call.arguments)
     }
 }
 

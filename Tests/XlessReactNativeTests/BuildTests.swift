@@ -591,6 +591,22 @@ private func jsWorkCopy() throws -> (ctx: ReactNativeBuildContext, outside: URL)
     #expect(PrepareClangShim.executable(stub, swift: nil) == "/usr/bin/clang")
 }
 
+/// A host compile (a native gem's, node-gyp's) needs no Xcode: the shim asks for one only for the Darwin stub, so a machine
+/// with no pack still compiles them, and the stub alone says what is missing.
+@Test func aHostCompileDuringPrepareNeedsNoXcode() throws {
+    struct NoXcode: Error {}
+    let host = ["-c", "x.c", "-o", "x.o"]
+    let call = try PrepareClangShim.invocation(host) { throw NoXcode() }
+    #expect(call.path == "/usr/bin/clang" && call.arguments == host)
+    let stub = ["-x", "c", "-", "-dynamiclib", "-o", "S/.stub-binary", "-install_name", "@rpath/S.framework/S"]
+    #expect(throws: NoXcode.self) { try PrepareClangShim.invocation(stub) { throw NoXcode() } }
+    let bundle = try tmp("sdk-call")
+    try fm.createDirectory(at: bundle.appendingPathComponent("Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS27.0.sdk"), withIntermediateDirectories: true)
+    let swift = SwiftToolchain(version: "6.4.0", root: "/x/toolchain")
+    let darwin = try PrepareClangShim.invocation(stub) { (DarwinSDK(bundle: bundle), swift) }
+    #expect(darwin.path == "/x/toolchain/usr/bin/clang" && darwin.arguments.prefix(2) == ["-target", "arm64-apple-ios16.4"])
+}
+
 // MARK: Swift packages
 
 @Test func packageRootsAndPins() throws {

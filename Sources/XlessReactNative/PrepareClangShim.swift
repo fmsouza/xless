@@ -22,6 +22,14 @@ public enum PrepareClangShim {
         return darwinOnly && !targeted
     }
 
+    /// The compiler and its arguments for `args`. Only the retargeted Darwin compile asks for the Xcode (`xcode`: its SDK and
+    /// Swift toolchain); a host compile needs none, so it runs on a machine without a pack too.
+    public static func invocation(_ args: [String], xcode: () throws -> (sdk: DarwinSDK, swift: SwiftToolchain?)) throws -> (path: String, arguments: [String]) {
+        guard retargets(args) else { return (clang, args) }
+        let found = try xcode()
+        return (executable(args, swift: found.swift), try arguments(args, sdk: found.sdk))
+    }
+
     /// The compiler for `args`: the app Swift toolchain's clang for the retargeted Darwin compile, else the host's.
     public static func executable(_ args: [String], swift: SwiftToolchain?) -> String {
         guard retargets(args), let swift else { return clang }
