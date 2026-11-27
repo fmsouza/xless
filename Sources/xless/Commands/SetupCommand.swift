@@ -116,7 +116,7 @@ struct SetupCommand: AsyncParsableCommand {
         let table = KnownXcodes.parseEnv((try? String(contentsOf: versionsEnv, encoding: .utf8)) ?? "")
         let cacheRoot = SetupPlan.cacheRoot(env: env, home: home)
         // --with alone: on the images that are here, when there is one for each architecture.
-        if !kits.isEmpty, xcode == nil, sdk == nil, let bases = try? archs.map({ try LocalImages.here.base(version: ImageName.tag(ofShare: share), arch: $0) }) /* ADAPTER(packs): removed in the setup/run tasks */ {
+        if !kits.isEmpty, xcode == nil, sdk == nil, let bases = try? archs.map({ try LocalImages.here.base(version: ImageName.cachedTag(ofShare: share), arch: $0) }) /* ADAPTER(packs): removed in the setup/run tasks */ {
             return try runKits(kits, on: bases, share: share)
         }
         let source: XcodeSource.Identified
@@ -302,7 +302,7 @@ struct SetupCommand: AsyncParsableCommand {
         let start = Date()
         try run(steps, xcode: x, share: share)
         let version = SetupPlan.canonicalVersion(x.shortVersion)
-        let tag = try ImageName.tag(ofShare: share) // ADAPTER(packs): removed in the setup/run tasks
+        let tag = try ImageName.cachedTag(ofShare: share) // ADAPTER(packs): removed in the setup/run tasks
         let built = archs.map { ImageName.base(version: tag, arch: $0) }
         say("==> done in \(Self.minutes(since: start)): \(built.joined(separator: " and ")) (pin it with xcode: \"\(version)\")")
         if let note = Self.oldImages() { say(note) }
@@ -354,7 +354,7 @@ struct SetupCommand: AsyncParsableCommand {
     /// The kit's image on that Xcode's, unless it is there and nothing it is made from has changed.
     private static func build(_ kit: Kit, arch: String, xcode: String, share: URL) throws {
         let images = LocalImages.here
-        let base = try images.base(version: ImageName.tag(ofShare: share), arch: arch) // ADAPTER(packs): removed in the setup/run tasks (xcode is not used)
+        let base = try images.base(version: ImageName.cachedTag(ofShare: share), arch: arch) // ADAPTER(packs): removed in the setup/run tasks (xcode is not used)
         let state = { try images.state(of: kit, on: base, share: share) }
         if case .current = try state() { return say("    it is there already") }
         var env = ProcessInfo.processInfo.environment

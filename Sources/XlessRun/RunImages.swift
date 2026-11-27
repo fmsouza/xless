@@ -30,7 +30,7 @@ extension ProjectRun {
     private var shareDirectory: URL { URL(fileURLWithPath: context.share) }
     /// ADAPTER(packs): removed in the setup/run tasks. The part of an image's tag that names this xless.
     private func thisXless() throws -> String {
-        do { return try ImageName.tag(ofShare: shareDirectory) } catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }
+        do { return try ImageName.cachedTag(ofShare: shareDirectory) } catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }
     }
 
     /// Chooses them: the project's pinned Xcode, else the newest one there is an image of, decides. A person never names one,

@@ -63,7 +63,7 @@ public enum SetupPlan {
             let final = sdkDir.appendingPathComponent(a), partial = sdkDir.appendingPathComponent("\(a).partial")
             let xtoolSDK = final.appendingPathComponent("darwin.xtoolsdk")
             // ADAPTER(packs): removed in the setup/run tasks: there is no tools image and no image of an Xcode any more
-            let tools = "xless:local-\(a)-setup", image = ImageName.base(version: try ImageName.tag(ofShare: share), arch: a)
+            let tools = "xless:local-\(a)-setup", image = ImageName.base(version: try ImageName.cachedTag(ofShare: share), arch: a)
             // An export source has no Xcode to export from (setup refuses an export that lacks this arch).
             let exports = source.kind != .export && (reexport || !existing(xtoolSDK))
             if exports {

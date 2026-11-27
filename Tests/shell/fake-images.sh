@@ -2,23 +2,16 @@
 # The images of a fake docker: `fake-images.sh image ls …` and `fake-images.sh image inspect … NAME`, from the file $FAKE_IMAGES.
 # One image a line: NAME ID ARCH LAYER,LAYER,… [LABEL=VALUE …]. `fake-images.sh base ARCH XCODE BUILD [NAME]` prints the line of
 # an image as `xless setup --docker` builds it, `fake-images.sh kit KIT SHARE ARCH XCODE BUILD` that of a kit's image on it, and
-# `fake-images.sh tag [SHARE]` the part of the tag that names the xless of SHARE (the repository's when it is not given).
+# `fake-images.sh tag [SHARE]` the part of the tag that names the xless of SHARE (the repository's when it is not given), as the script says it.
 # ADAPTER(packs): removed in the setup/run tasks. An image holds no Xcode any more: XCODE and BUILD only make the fake's IDs and layers
 # differ, and its name is xless:<tag>-<arch>.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
-tag() { # [SHARE]: as scripts/docker-images.sh decides it
-  local share="${1:-$repo}" top version
-  share="$(cd "$share" && pwd -P)"
-  top="$(git -C "$share" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [[ -n "$top" && "$(cd "$top" && pwd -P)" == "$share" ]]; then
-    local id; id="$(git -C "$share" rev-parse --short=12 HEAD)"
-    git -C "$share" diff --quiet HEAD 2>/dev/null || id+="-dirty"
-    echo "$id"; return
+tag() { # [SHARE]: what scripts/docker-images.sh says (its `tag` mode), for the repository or for a copy of the script and versions.env in SHARE
+  local share="${1:-$repo}"
+  if [[ "$share" == "$repo" ]]; then "$repo/scripts/docker-images.sh" tag --arch arm64
+  else mkdir -p "$share/scripts"; cp "$repo/scripts/docker-images.sh" "$share/scripts/" 2>/dev/null || true; "$share/scripts/docker-images.sh" tag --arch arm64
   fi
-  version="$(sed -n 's/^XLESS_VERSION=//p' "$share/versions.env")"
-  [[ ! -s "$share/VERSION" ]] || version="$(tr -d '[:space:]' < "$share/VERSION")"
-  echo "$version"
 }
 base() { # ARCH XCODE BUILD [NAME] [ID] [LAYERS]
   echo "${4:-xless:$(tag "${FAKE_SHARE:-}")-$1} ${5:-sha256:base$2} $1 ${6:-base$2,xless$2} org.xless.image=true dev.xless.arch=$1 dev.xless.version=0.0.0-dev dev.xless.image=$(tag "${FAKE_SHARE:-}")-0123456789ab"

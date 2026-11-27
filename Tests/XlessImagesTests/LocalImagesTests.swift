@@ -94,6 +94,39 @@ func problem(_ body: () throws -> some Any) -> String {
         #expect(problem { try ImageName.tag(ofShare: none, git: noGit) }.hasPrefix("xless's share directory \(none.path) records no release"))
     }
 
+    /// A checkout with no commit yet is no checkout, as scripts/docker-images.sh has it.
+    @Test func aCheckoutWithNoCommitIsNamedByItsRelease() throws {
+        let share = try share(files: ["versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: share) }
+        let git: ImageName.Git = { words, _ in
+            switch words {
+            case ["rev-parse", "--show-toplevel"]: return (0, share.resolvingSymlinksInPath().path + "\n")
+            default: return (128, "")
+            }
+        }
+        #expect(try ImageName.tag(ofShare: share, git: git) == "0.0.0-dev")
+    }
+
+    #if !os(Windows)
+    /// The script and Swift name this very checkout's image the same way.
+    @Test func theScriptAndXlessAgreeOnTheTag() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let script = root.appendingPathComponent("scripts/docker-images.sh")
+        guard FileManager.default.isExecutableFile(atPath: "/bin/bash"), FileManager.default.fileExists(atPath: script.path),
+              ImageName.runGit(["--version"], in: root).code == 0 else { return } // skipped: no bash, script or git here
+        let process = Process(), out = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [script.path, "tag", "--arch", "arm64"]
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0 && !said.isEmpty)
+        #expect(try ImageName.tag(ofShare: root) == said)
+    }
+    #endif
+
     @Test func aCheckoutIsNamedByItsCommit() throws {
         #expect(ImageName.checkoutTag(commit: "0123456789ab", dirty: false) == "0123456789ab")
         #expect(ImageName.checkoutTag(commit: "0123456789ab", dirty: true) == "0123456789ab-dirty")

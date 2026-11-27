@@ -3,10 +3,13 @@
 # scripts/build-images.sh and `xless setup --docker` all build through it. (The kits on top of it are ordinary Dockerfiles:
 # docker/tauri, docker/react-native.)
 # Usage: scripts/docker-images.sh image --arch <arm64|amd64> [--xless-bin <file>]
+#        scripts/docker-images.sh tag --arch <arm64|amd64>      prints the part of the tag that names this xless
+#                                                              (<version>, or <commit12>[-dirty]), and nothing else (no docker)
 #   Builds xless:<version>-<arch>: one image per xless version and architecture, with nothing of an Xcode in it (no Apple
 #   file, so it may be published). The Xcode is an Xcode pack, which `xless setup` prepares (in a container of this image
 #   for `xless setup --docker`) and builds mount read-only. The version is the share's VERSION file's (a release), else
-#   versions.env's XLESS_VERSION; in a git checkout the tag is xless:<short commit>[-dirty]-<arch> instead.
+#   versions.env's XLESS_VERSION; in a git checkout (this directory, physically, is the top of a work tree that has a commit) the
+#   tag is xless:<short commit>[-dirty]-<arch> instead. ImageName.tag(ofShare:) in Sources/XlessImages decides it the same way.
 #   --xless-bin <file named xless>: a linux xless of the same arch (its ELF machine is checked against --arch) goes into the
 #   image instead of one compiled from source (XLESS_FROM=prebuilt).
 #   It runs `docker buildx build --load`. Pins come from versions.env next to this script's directory (the repository, or the
@@ -21,7 +24,7 @@ gone="an image holds no Xcode any more: xless setup prepares the Xcode as an Xco
 [[ $# -ge 1 ]] || die "$usage"
 what="$1"; shift
 case "$what" in
-  image) ;;
+  image|tag) ;;
   tools) die "there is no tools image: xtool is in the xless image, and $gone" ;;
   base|sdk|tauri|rn) die "there is one image now, and its kits (xless setup --docker --with …): $usage" ;;
   *) die "unknown image '$what' ($usage)" ;;
@@ -50,7 +53,7 @@ if [[ -n "$xless_bin" ]]; then
   [[ "$bin_arch" == "$arch" ]] || die "$xless_bin is a $bin_name binary, not $arch: pass the linux-$arch xless"
 fi
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
 docker_cmd="${DOCKER:-docker}"
 set -a
 # shellcheck disable=SC1091
@@ -60,14 +63,17 @@ cd "$root"
 
 version="$XLESS_VERSION"
 [[ ! -s VERSION ]] || version="$(tr -d '[:space:]' < VERSION)"
-if [[ "$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)" == "$root" ]]; then
-  id="$(git -C "$root" rev-parse --short=12 HEAD)"
+commit=""
+if [[ "$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)" == "$root" ]]; then commit="$(git -C "$root" rev-parse --short=12 HEAD 2>/dev/null || true)"; fi
+if [[ -n "$commit" ]]; then
+  id="$commit"
   git -C "$root" diff --quiet HEAD 2>/dev/null || id+="-dirty"
   tag="xless:$id-$arch"
 else
   id="v$version"
   tag="xless:$version-$arch"
 fi
+if [[ "$what" == tag ]]; then name="${tag#xless:}"; echo "${name%-"$arch"}"; exit 0; fi
 if command -v sha256sum >/dev/null 2>&1; then vsum="$(sha256sum versions.env | cut -d' ' -f1)"; else vsum="$(shasum -a 256 versions.env | cut -d' ' -f1)"; fi
 
 # No provenance: the same layers are the same image, with the same ID, however often it is built.

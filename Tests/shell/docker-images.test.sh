@@ -37,6 +37,23 @@ done < <(sed -nE 's/^ARG ([A-Z0-9_]+)$/\1/p' "$root/docker/Dockerfile" | LC_ALL=
 grep -Eq -- "--build-arg XLESS_IMAGE_ID=[0-9a-f]{12}(-dirty)?-$want( |$)" "$DOCKER_ARGV" || fail "image id in git: $(cat "$DOCKER_ARGV")"
 "${in_git[@]}" "$S" image --arch amd64 2>/dev/null
 grep -Eq -- "--platform linux/amd64 .* -t xless:[0-9a-f]{12}(-dirty)?-amd64 " "$DOCKER_ARGV" || fail "amd64: $(cat "$DOCKER_ARGV")"
+# The tag, from the script's own `tag` mode (which tests/shell/fake-images.sh and the Swift test ImageName.tag(ofShare:) rely on).
+[[ "$("${in_git[@]}" "$S" tag --arch arm64 2>/dev/null)" =~ ^[0-9a-f]{12}(-dirty)?$ ]] || fail "tag mode: $("${in_git[@]}" "$S" tag --arch arm64 2>&1)"
+# ... a checkout reached through a symbolic link is still the checkout (its physical place is git's top): the commit's tag, not the release's
+ln -s "$root" "$t/link"
+linked_tag="$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$root" "$t/link/scripts/docker-images.sh" tag --arch arm64 2>/dev/null)"
+[[ "$linked_tag" == "$("${in_git[@]}" "$S" tag --arch arm64 2>/dev/null)" && "$linked_tag" =~ ^[0-9a-f]{12}(-dirty)?$ ]] || fail "through a link: '$linked_tag'"
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$root" "$t/link/scripts/docker-images.sh" image --arch arm64 2>/dev/null
+grep -Eq -- " -t xless:[0-9a-f]{12}(-dirty)?-arm64 " "$DOCKER_ARGV" || fail "image through a link: $(cat "$DOCKER_ARGV")"
+# a release: a share with a VERSION file and no git; and a checkout with no commit yet is no checkout
+mkdir -p "$t/rel/scripts" "$t/nocommit/scripts"
+for d in rel nocommit; do cp "$S" "$t/$d/scripts/"; cp "$root/versions.env" "$t/$d/"; done
+echo 1.2.3 > "$t/rel/VERSION"
+[[ "$("$t/rel/scripts/docker-images.sh" tag --arch arm64)" == 1.2.3 ]] || fail "release tag"
+"$t/rel/scripts/docker-images.sh" image --arch amd64 2>/dev/null
+grep -Eq -- " -t xless:1.2.3-amd64 " "$DOCKER_ARGV" || fail "release image: $(cat "$DOCKER_ARGV")"
+git init -q "$t/nocommit"
+[[ "$("$t/nocommit/scripts/docker-images.sh" tag --arch arm64)" == "$(sed -n 's/^XLESS_VERSION=//p' "$root/versions.env")" ]] || fail "a checkout with no commit: $("$t/nocommit/scripts/docker-images.sh" tag --arch arm64 2>&1)"
 refused "an unknown architecture" image --arch riscv64
 refused "no architecture" image
 refused "an unknown option" image --arch arm64 --suffix x

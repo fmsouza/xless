@@ -34,7 +34,7 @@ public enum ImageName {
     public static func checkoutTag(commit: String, dirty: Bool) -> String { dirty ? "\(commit)-dirty" : commit }
 
     /// The part of the tag that names the xless of `share` (its share directory), as scripts/docker-images.sh decides it: the
-    /// commit of the checkout that `share` is the top of, else the release (its VERSION file's, else versions.env's).
+    /// commit of the checkout that `share` is the top of (when it has one), else the release (its VERSION file's, else versions.env's).
     public static func tag(ofShare share: URL, git: Git = ImageName.runGit) throws -> String {
         let root = share.resolvingSymlinksInPath()
         let top = git(["rev-parse", "--show-toplevel"], root)
@@ -49,6 +49,19 @@ public enum ImageName {
                                fix: "install xless again, or set XLESS_SHARE to its share directory")
         }
         return release
+    }
+
+    private static let remembered = NSLock(), cache = Box()
+    private final class Box: @unchecked Sendable { var tags: [String: String] = [:] }
+
+    /// `tag(ofShare:)`, asked of git once per share and process: what a run resolves its images by.
+    public static func cachedTag(ofShare share: URL) throws -> String {
+        remembered.lock(); defer { remembered.unlock() }
+        let key = share.resolvingSymlinksInPath().path
+        if let found = cache.tags[key] { return found }
+        let found = try tag(ofShare: share)
+        cache.tags[key] = found
+        return found
     }
 
     /// Thin: git, as the person has it, started as every tool is. Where it is not there, or fails, the share is no checkout.
