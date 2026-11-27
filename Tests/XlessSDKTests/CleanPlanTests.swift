@@ -10,6 +10,8 @@ xless:local-arm64-xcode26.2
 xless:local-arm64-xcode27.0
 xless:local-arm64-xcode27.0-tauri
 xless:local-arm64-setup
+xless:0.14.0-arm64
+xless:0.14.0-arm64-tauri
 xless-tauri:local-amd64-xcode27.0
 xless-rn:local-arm64
 xless-rn:<none>
@@ -34,27 +36,25 @@ xless:local-arm64
     #expect(CleanPlan.images(fromListing: "") == [])
 }
 
-/// The images of xless up to 0.10: by their names, or without the label that every image has now.
+/// The images of xless up to 0.10, and those of before the packs: by their names (ADAPTER(packs): the label of an SDK is gone, so
+/// `labelled` says nothing).
 @Test func whatAnUpgradeLeavesIsKnown() {
-    let labelled = "xless:local-arm64-xcode27.0\nxless:local-arm64-xcode27.0-tauri\nxless-rn:local-arm64\n"
-    #expect(CleanPlan.old(fromListing: listing, labelled: labelled) == [
-        "xless-base:local-arm64-xcode27.0-27A266a", "xless-base:local", "xless:local-arm64", "xless:local-arm64-xcode26.2", "xless:local-arm64-setup",
-        "xless-tauri:local-amd64-xcode27.0", "xless-rn:local-arm64",
+    #expect(CleanPlan.old(fromListing: listing, labelled: "") == [
+        "xless-base:local-arm64-xcode27.0-27A266a", "xless-base:local", "xless:local-arm64", "xless:local-arm64-xcode26.2", "xless:local-arm64-xcode27.0",
+        "xless:local-arm64-xcode27.0-tauri", "xless:local-arm64-setup", "xless-tauri:local-amd64-xcode27.0", "xless-rn:local-arm64",
     ])
-    #expect(CleanPlan.old(fromListing: labelled, labelled: labelled) == ["xless-rn:local-arm64"])
+    #expect(CleanPlan.old(fromListing: "xless:0.14.0-arm64\nxless:0.14.0-arm64-tauri\n", labelled: "") == [], "the images of this xless are not old")
     #expect(CleanPlan.old(fromListing: "", labelled: "") == [])
 }
 
 /// Time passes between the listing and the removal.
 @Test func anImageIsRemovedOnlyAsWhatItWasShown() {
-    func image(_ id: String, sdk: String? = nil) -> LocalImage {
-        LocalImage(name: "x", id: id, architecture: "arm64", labels: sdk.map { [ImageLabel.sdk: $0] } ?? [:], layers: [])
-    }
+    func image(_ id: String) -> LocalImage { LocalImage(name: "x", id: id, architecture: "arm64", labels: [:], layers: []) }
     #expect(CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: image("sha256:1")))
     #expect(!CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: image("sha256:2")))
-    #expect(!CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: image("sha256:1", sdk: "27A266a")))
+    #expect(!CleanPlan.isStillOld("xless:0.14.0-arm64", id: "sha256:1", now: image("sha256:1")), "an image of this xless")
     #expect(!CleanPlan.isStillOld("xless:local-arm64", id: "sha256:1", now: nil))
-    #expect(CleanPlan.isStillOld("xless-rn:local-arm64", id: "sha256:1", now: image("sha256:1", sdk: "27A266a")), "no xless of now uses it")
+    #expect(CleanPlan.isStillOld("xless-rn:local-arm64", id: "sha256:1", now: image("sha256:1")), "no xless of now uses it")
     for other in ["postgres:16", "xless:mine", "registry.example.com/xless:local-arm64", "xless"] { #expect(!CleanPlan.isStillOld(other, id: "sha256:1", now: image("sha256:1")), "\(other)") }
 }
 

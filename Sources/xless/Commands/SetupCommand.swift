@@ -116,7 +116,7 @@ struct SetupCommand: AsyncParsableCommand {
         let table = KnownXcodes.parseEnv((try? String(contentsOf: versionsEnv, encoding: .utf8)) ?? "")
         let cacheRoot = SetupPlan.cacheRoot(env: env, home: home)
         // --with alone: on the images that are here, when there is one for each architecture.
-        if !kits.isEmpty, xcode == nil, sdk == nil, let bases = try? archs.map({ try LocalImages.here.base(arch: $0, pin: nil).image }) {
+        if !kits.isEmpty, xcode == nil, sdk == nil, let bases = try? archs.map({ try LocalImages.here.base(version: ImageName.tag(ofShare: share), arch: $0) }) /* ADAPTER(packs): removed in the setup/run tasks */ {
             return try runKits(kits, on: bases, share: share)
         }
         let source: XcodeSource.Identified
@@ -302,7 +302,8 @@ struct SetupCommand: AsyncParsableCommand {
         let start = Date()
         try run(steps, xcode: x, share: share)
         let version = SetupPlan.canonicalVersion(x.shortVersion)
-        let built = archs.map { ImageName.base(arch: $0, xcode: version) }
+        let tag = try ImageName.tag(ofShare: share) // ADAPTER(packs): removed in the setup/run tasks
+        let built = archs.map { ImageName.base(version: tag, arch: $0) }
         say("==> done in \(Self.minutes(since: start)): \(built.joined(separator: " and ")) (pin it with xcode: \"\(version)\")")
         if let note = Self.oldImages() { say(note) }
         say("next: xless run --docker <project-dir> --build-number 1 --to finalize")
@@ -353,7 +354,7 @@ struct SetupCommand: AsyncParsableCommand {
     /// The kit's image on that Xcode's, unless it is there and nothing it is made from has changed.
     private static func build(_ kit: Kit, arch: String, xcode: String, share: URL) throws {
         let images = LocalImages.here
-        let base = try images.base(arch: arch, pin: xcode).image
+        let base = try images.base(version: ImageName.tag(ofShare: share), arch: arch) // ADAPTER(packs): removed in the setup/run tasks (xcode is not used)
         let state = { try images.state(of: kit, on: base, share: share) }
         if case .current = try state() { return say("    it is there already") }
         var env = ProcessInfo.processInfo.environment
@@ -369,9 +370,8 @@ struct SetupCommand: AsyncParsableCommand {
     /// What an older xless left, in one line.
     private static func oldImages() -> String? {
         let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
-        guard let all = try? Shell.docker(ls, stage: .sdk).stdout,
-              let labelled = try? Shell.docker(ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout else { return nil }
-        let old = CleanPlan.old(fromListing: all, labelled: labelled)
+        guard let all = try? Shell.docker(ls, stage: .sdk).stdout else { return nil }
+        let old = CleanPlan.old(fromListing: all, labelled: "") // ADAPTER(packs): removed in the setup/run tasks
         return old.isEmpty ? nil : "note: \(old.count) image tag\(old.count == 1 ? "" : "s") of an older xless (as \(old[0])) \(old.count == 1 ? "is" : "are") not used any more: xless clean --old removes \(old.count == 1 ? "it" : "them")"
     }
 
@@ -490,23 +490,9 @@ struct SetupCommand: AsyncParsableCommand {
     /// Two builds of one Xcode version (a beta and the release): `-xcode<V>` names one of them. As scripts/build-images.sh:
     /// refused when it names another build, unless XLESS_XCODE_RETAG=1, which keeps that build's image as `-xcode<V>-<B>`.
     private static func retagSteps(xcode: KnownXcode, archs: [String], env: [String: String]) throws -> [SetupStep] {
-        let version = SetupPlan.canonicalVersion(xcode.shortVersion)
-        var steps: [SetupStep] = []
-        for a in archs {
-            let name = ImageName.base(arch: a, xcode: version)
-            guard let image = LocalImages.here.image(name) else { continue }
-            guard let old = image.sdk else {
-                say("note: \(name) is an image of an older xless, which does not say which build of Xcode \(version) it holds: this setup replaces it with Xcode \(xcode.build)'s")
-                continue
-            }
-            guard old != xcode.build else { continue }
-            guard env["XLESS_XCODE_RETAG"] == "1" else {
-                throw XlessError(.sdk, "\(name) is another build of Xcode \(version) (\(old), this is \(xcode.build)); a pin xcode: \"\(version)\" selects it",
-                                 fix: "to point it at this build: XLESS_XCODE_RETAG=1 xless setup … (the \(old) image stays as \(ImageName.base(arch: a, xcode: version, build: old)))")
-            }
-            let kept = ImageName.base(arch: a, xcode: version, build: old)
-            steps.append(SetupStep(title: "XLESS_XCODE_RETAG=1: keep \(name) (Xcode \(old)) as \(kept)", argv: ["docker", "tag", name, kept], estimate: "seconds"))
-        }
+        // ADAPTER(packs): removed in the setup/run tasks: an image holds no Xcode, so there is no other build of it to keep
+        _ = (xcode, archs, env)
+        let steps: [SetupStep] = []
         return steps
     }
 

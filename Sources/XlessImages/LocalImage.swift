@@ -32,22 +32,25 @@ public struct LocalImage: Equatable, Sendable {
 
     private func label(_ name: String) -> String? { labels[name].flatMap { $0.isEmpty ? nil : $0 } }
 
-    public var sdk: String? { label(ImageLabel.sdk) }
-    public var xcode: String? { label(ImageLabel.xcode) }
     public var version: String? { label(ImageLabel.version) }
+    /// Which xless built it (`ImageLabel.id`).
+    public var imageID: String? { label(ImageLabel.id) }
 
     /// The image holds all of `base`, and may hold more on top of it.
     public func isBuilt(on base: LocalImage) -> Bool { !base.layers.isEmpty && layers.starts(with: base.layers) }
 
-    /// Why it cannot be the one for `arch` and, when that is given, for Xcode `xcode`: "which …", without its name.
-    func mismatch(arch: String, xcode: String?) -> String? {
+    /// Why it cannot be the one of the xless named `version` (the part of the tag that names it) for `arch`: "which …", without
+    /// its name. An image made by another xless of the same version (the same tag) is the same, so its ID starts with the
+    /// release (`v<version>-`) or with the commit (`<version>-`), then 12 hex.
+    func mismatch(arch: String, version: String) -> String? {
         for found in [architecture, labels[ImageLabel.arch] ?? ""] where found != arch { return "is for \(found.isEmpty ? "an unknown architecture" : found), not \(arch)" }
-        if let xcode, self.xcode != xcode { return "holds the SDK of Xcode \(self.xcode ?? "?") (\(sdk ?? "?")), not Xcode \(xcode)'s" }
-        guard let version, let parts = version.wholeMatch(of: /([0-9]+\.[0-9]+\.[0-9]+)(-.*)?/) else { return "holds an unknown xless" }
-        // 0.0.0-dev is a source build, as new as its checkout
-        if version != "0.0.0-dev", ImageName.isOlder(String(parts.1), than: ImageLabel.minimumVersion) {
-            return "holds xless \(version), and this xless needs \(ImageLabel.minimumVersion) or later there"
+        guard let id = imageID else { return "holds an unknown xless (it has no \(ImageLabel.id) label)" }
+        func isIt(_ start: String) -> Bool {
+            guard id.hasPrefix(start) else { return false }
+            let pins = id.dropFirst(start.count)
+            return pins.count == 12 && pins.allSatisfy(\.isHexDigit)
         }
+        guard isIt("v\(version)-") || isIt("\(version)-") else { return "is the image of xless \(id), not of \(version)" }
         return nil
     }
 }

@@ -186,7 +186,7 @@ final class RunHome: Sendable {
         }
         try write("ov/app.yml", "type: tauri\nsource: ../src\nteamID: ABCDE12345\n")
         try write("proj/xless.yml", "name: App\n")
-        try write("share/versions.env", "XCODE_VERSION=27.0\n")
+        try write("share/versions.env", "XCODE_VERSION=27.0\nXLESS_VERSION=\(FakeImages.version)\n")
         for kit in Kit.allCases {
             try FileManager.default.createDirectory(at: kit.directory(share: share), withIntermediateDirectories: true)
             try write("share/docker/\(kit.rawValue)/Dockerfile", "FROM \(kit.rawValue)\n")
@@ -257,15 +257,20 @@ final class FakeImages: @unchecked Sendable {
     /// The name of the image with this ID, which is what a container must be of; else what was given.
     func name(_ id: String) -> String { lock.withLock { images.values.filter { $0.id == id }.map(\.name).min() } ?? "not an ID: \(id)" }
 
-    /// An image as `xless setup --docker` builds it.
+    /// The xless of the tests: its share directory records this release (`RunHome`).
+    static let version = "0.14.0"
+    static var baseName: String { ImageName.base(version: version, arch: "arm64") }
+
+    /// An image as `xless setup --docker` builds it. ADAPTER(packs): removed in the setup/run tasks (`xcode` only tells the fake apart
+    /// what an image is made of: an image holds no Xcode any more).
     func add(xcode: String, build: String, name: String? = nil, layers more: [String] = [], id: String? = nil) {
-        set(LocalImage(name: name ?? ImageName.base(arch: "arm64", xcode: xcode), id: id ?? "sha256:base\(xcode)", architecture: "arm64",
-                       labels: [ImageLabel.image: "true", ImageLabel.sdk: build, ImageLabel.xcode: xcode, ImageLabel.arch: "arm64", ImageLabel.version: "0.0.0-dev"],
+        set(LocalImage(name: name ?? Self.baseName, id: id ?? "sha256:base\(xcode)", architecture: "arm64",
+                       labels: [ImageLabel.image: "true", ImageLabel.arch: "arm64", ImageLabel.version: Self.version, ImageLabel.id: "v\(Self.version)-0123456789ab"],
                        layers: ["os", "xcode\(xcode)"] + more))
     }
 
     func add(_ kit: Kit, xcode: String, share: URL) throws {
-        let name = ImageName.base(arch: "arm64", xcode: xcode), base = lock.withLock { images[name] }!
+        let name = Self.baseName, base = lock.withLock { images[name] }!
         var image = base
         image.name = kit.image(on: base)
         image.id = "sha256:\(kit.rawValue)\(xcode)"
@@ -288,7 +293,7 @@ final class FakeImages: @unchecked Sendable {
         if buildFails { return (1, "") }
         for kit in Kit.allCases where words.contains("\(ImageLabel.kit)=\(kit.rawValue)") {
             let tag = words[words.firstIndex(of: "-t")! + 1]
-            try! add(kit, xcode: String(tag.dropFirst("xless:local-arm64-xcode".count).dropLast("-\(kit.rawValue)".count)), share: share)
+            try! add(kit, xcode: "26.6", share: share) // ADAPTER(packs): removed in the setup/run tasks
             if buildIsElsewhere { change(tag) { $0.layers = ["pulled"] } }
         }
         return (0, "")

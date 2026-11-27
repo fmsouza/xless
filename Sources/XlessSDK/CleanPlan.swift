@@ -25,14 +25,16 @@ public enum CleanPlan {
     /// Those that nothing uses any more, as an upgrade leaves them: the images of xless up to 0.10, and what an interrupted setup
     /// left. `labelled`: the listing of the images that have the label of the SDK they hold, which this xless's all do.
     public static func old(fromListing listing: String, labelled: String) -> [String] {
-        let current = Set(references(labelled) { $0 == ImageName.repository })
-        return references(listing) { $0 == ImageName.repository || ImageName.oldRepositories.contains($0) }.filter { !current.contains($0) }
+        // ADAPTER(packs): removed in the setup/run tasks: an image of this xless has no label of an SDK any more, so `labelled` says
+        // nothing; the older xless's are those with a legacy tag
+        return references(listing) { $0 == ImageName.repository || ImageName.oldRepositories.contains($0) }.filter(ImageName.isLegacy)
     }
 
     /// `reference`, which was an old image with this ID when it was listed, is one now.
     public static func isStillOld(_ reference: String, id: String, now: LocalImage?) -> Bool {
         guard let now, now.id == id, images(fromListing: reference) == [reference] else { return false }
-        return now.sdk == nil || !reference.hasPrefix("\(ImageName.repository):")
+        // ADAPTER(packs): removed in the setup/run tasks
+        return ImageName.isLegacy(reference)
     }
 
     private static func references(_ listing: String, of isOurs: (String) -> Bool) -> [String] {

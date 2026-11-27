@@ -56,7 +56,7 @@ struct CleanCommand: AsyncParsableCommand {
                 if listOnly || doOld {
                     let all = try Shell.docker(ls, stage: .sdk).stdout
                     if asks {
-                        for ref in CleanPlan.old(fromListing: all, labelled: try Shell.docker(ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout) {
+                        for ref in CleanPlan.old(fromListing: all, labelled: "" /* ADAPTER(packs): removed in the setup/run tasks */) {
                             guard let image = LocalImages.here.image(ref), CleanPlan.isStillOld(ref, id: image.id, now: image) else { continue }
                             imageRefs.append(ref)
                             oldIDs[ref] = image.id

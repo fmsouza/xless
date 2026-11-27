@@ -24,10 +24,14 @@ struct RunImages {
 
 extension ProjectRun {
     private var localImages: LocalImages {
-        LocalImages(exports: { [self] in SDKExport.all(in: RunFiles.cache(setting("XDG_CACHE_HOME"), home: files.home), arch: $0) }) { [self] in ask(dockerCLI + $0, quiet: true) }
+        LocalImages { [self] in ask(dockerCLI + $0, quiet: true) }
     }
     private func started(_ image: LocalImage) -> RunImages.Image { RunImages.Image(name: image.name, reference: dryRun ? image.name : image.id) }
     private var shareDirectory: URL { URL(fileURLWithPath: context.share) }
+    /// ADAPTER(packs): removed in the setup/run tasks. The part of an image's tag that names this xless.
+    private func thisXless() throws -> String {
+        do { return try ImageName.tag(ofShare: shareDirectory) } catch let problem as ImageProblem { throw RunStop.usage("\(problem)") }
+    }
 
     /// Chooses them: the project's pinned Xcode, else the newest one there is an image of, decides. A person never names one,
     /// unless the app needs one of their own (`image:`, XLESS_IMAGE), which is for the build step alone.
@@ -49,7 +53,7 @@ extension ProjectRun {
         var images: RunImages
         let base: LocalImage
         if let own, try isHere(own.name, own.variable) {
-            let custom = try localImages.custom(own.name, named: own.variable, arch: architecture, pin: xcodeTag)
+            let custom = try localImages.custom(own.name, named: own.variable, version: thisXless(), arch: architecture) // ADAPTER(packs): removed in the setup/run tasks
             base = custom.base
             images = RunImages(build: started(custom.isBase ? base : custom.image), secrets: started(base))
         } else {
@@ -60,7 +64,7 @@ extension ProjectRun {
         if signImage, let name = setting("XLESS_SIGN_IMAGE") {
             host.say("note: XLESS_SIGN_IMAGE still works, but nothing needs it any more: without it the steps with the secrets run in xless's own image of the same Xcode")
             if try isHere(name, "XLESS_SIGN_IMAGE") {
-                let custom = try localImages.custom(name, named: "XLESS_SIGN_IMAGE", arch: architecture, pin: base.xcode)
+                let custom = try localImages.custom(name, named: "XLESS_SIGN_IMAGE", version: thisXless(), arch: architecture) // ADAPTER(packs): removed in the setup/run tasks
                 guard custom.isBase else {
                     throw ImageProblem("XLESS_SIGN_IMAGE names \(name), which has more in it than xless's own image \(custom.base.name), and the steps with the secrets run in that one alone", fix: "unset XLESS_SIGN_IMAGE")
                 }
@@ -83,16 +87,13 @@ extension ProjectRun {
 
     private func baseImage() throws -> LocalImage {
         do {
-            let base = try localImages.base(arch: architecture, pin: xcodeTag)
-            if let notice = base.notice { host.say(notice) }
-            return base.image
+            return try localImages.base(version: thisXless(), arch: architecture) // ADAPTER(packs): removed in the setup/run tasks (the pin chooses no image)
         } catch let problem as ImageProblem {
             if let pin = xcodePin { throw RunStop.usage("\(pinFile) pins xcode: \"\(pin)\", but \(problem)") }
             guard dryRun else { throw problem }
             host.say("==> note: \(problem)")
-            let versions = (try? String(contentsOfFile: "\(context.share)/versions.env", encoding: .utf8)) ?? ""
-            let xcode = RunText.lines(versions).lazy.compactMap { RunText.value(of: "XCODE_VERSION=", in: $0) }.first.flatMap(RunText.xcodeTag) ?? "<version>"
-            return LocalImage(name: ImageName.base(arch: architecture, xcode: xcode), id: "", architecture: architecture, labels: [ImageLabel.xcode: xcode], layers: [])
+            // ADAPTER(packs): removed in the setup/run tasks
+            return LocalImage(name: ImageName.base(version: (try? thisXless()) ?? "<version>", arch: architecture), id: "", architecture: architecture, labels: [:], layers: [])
         }
     }
 

@@ -12,7 +12,7 @@ private let xcode26 = KnownXcode(build: "17C52", shortVersion: "26.2", appleSwif
 private let share: URL = {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-plan-share-\(UUID())")
     try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    try! "XCODE_VERSION=27.0\nXCODE_BUILD=27A266a\n".write(to: dir.appendingPathComponent("versions.env"), atomically: true, encoding: .utf8)
+    try! "XCODE_VERSION=27.0\nXCODE_BUILD=27A266a\nXLESS_VERSION=0.14.0\n".write(to: dir.appendingPathComponent("versions.env"), atomically: true, encoding: .utf8)
     for kit in Kit.allCases {
         try! FileManager.default.createDirectory(at: kit.directory(share: dir), withIntermediateDirectories: true)
         try! "FROM \(kit.rawValue)\n".write(to: kit.directory(share: dir).appendingPathComponent("Dockerfile"), atomically: true, encoding: .utf8)
@@ -64,7 +64,7 @@ private func kinds(_ steps: [SetupStep]) -> [String] {
     #expect(steps[2].action == .meta(xtoolSDK: cache.appendingPathComponent("sdk/xcode27.0-27A266a/arm64/darwin.xtoolsdk"),
                                      out: cache.appendingPathComponent("sdk/xcode27.0-27A266a/toolchain-meta.json")))
     // The image takes the export and this arch's linux xless, and gets its one tag.
-    #expect(steps[3].title == "xless:local-arm64-xcode27.0")
+    #expect(steps[3].title == "xless:0.14.0-arm64")
     #expect(steps[3].argv == [script, "image", "--arch", "arm64", "--xcode", "27.0", "--xcode-build", "27A266a",
                               "--sdk-dir", "\(cache.path)/sdk/xcode27.0-27A266a", "--xless-bin", "/tmp/bin-arm64/xless"])
     #expect(steps[4].action == .tidy && steps[4].argv.last == "xless:local-arm64-setup")
@@ -73,13 +73,13 @@ private func kinds(_ steps: [SetupStep]) -> [String] {
 @Test func theKitsAskedForComeLast() {
     let steps = plan(kits: [.tauri, .reactNative])
     #expect(kinds(steps) == ["tools", "export", "meta", "image", "rm", "kit", "kit"])
-    #expect(steps[5].action == .kit(.tauri, arch: "arm64", xcode: "27.0") && steps[6].action == .kit(.reactNative, arch: "arm64", xcode: "27.0"))
+    #expect(steps[5].action == .kit(.tauri, arch: "arm64", xcode: "") && steps[6].action == .kit(.reactNative, arch: "arm64", xcode: ""))
     // all of the command that runs: the ID is known once the image is built
     let recipe = try! Kit.reactNative.recipe(share: share)
-    #expect(steps[6].argv == ["docker", "build", "--builder", "colima", "--platform", "linux/arm64", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=xless:local-arm64-xcode27.0",
-                              "--label", "dev.xless.kit=react-native", "--label", "dev.xless.kit.base=<the ID of xless:local-arm64-xcode27.0>", "--label", "dev.xless.kit.recipe=\(recipe)",
-                              "-t", "xless:local-arm64-xcode27.0-react-native", "\(share.path)/docker/react-native"])
-    #expect(steps[6].title == "xless:local-arm64-xcode27.0-react-native: Node, pnpm, Ruby, Bundler and hermesc, for React Native and Expo apps")
+    #expect(steps[6].argv == ["docker", "build", "--builder", "colima", "--platform", "linux/arm64", "--pull=false", "--provenance=false", "--build-arg", "XLESS_IMAGE=xless:0.14.0-arm64",
+                              "--label", "dev.xless.kit=react-native", "--label", "dev.xless.kit.base=<the ID of xless:0.14.0-arm64>", "--label", "dev.xless.kit.recipe=\(recipe)",
+                              "-t", "xless:0.14.0-arm64-react-native", "\(share.path)/docker/react-native"])
+    #expect(steps[6].title == "xless:0.14.0-arm64-react-native: Node, pnpm, Ruby, Bundler and hermesc, for React Native and Expo apps")
 }
 
 @Test func theSourceIsMountedReadOnly() {
@@ -145,8 +145,9 @@ private func kinds(_ steps: [SetupStep]) -> [String] {
     #expect(!steps[3].estimate.contains("emulat"))
     // A patch release keeps its patch, and a version without one has none (26.2.0).
     let patch = KnownXcode(build: "17A400", shortVersion: "26.0.1", appleSwift: "6.2", buildMachineOSBuild: "26A434", xipSHA256: [])
-    #expect(plan((patch, .app, URL(fileURLWithPath: "/x/X.app"))).contains { $0.title == "xless:local-arm64-xcode26.0.1" })
-    #expect(plan((xcode26, .app, URL(fileURLWithPath: "/x/X.app"))).contains { $0.title == "xless:local-arm64-xcode26.2" })
+    // ADAPTER(packs): removed in the setup/run tasks. The image is the same whatever the Xcode
+    #expect(plan((patch, .app, URL(fileURLWithPath: "/x/X.app"))).contains { $0.title == "xless:0.14.0-arm64" })
+    #expect(plan((xcode26, .app, URL(fileURLWithPath: "/x/X.app"))).contains { $0.title == "xless:0.14.0-arm64" })
 }
 
 @Test func cacheRootFollowsXDG() {

@@ -3,7 +3,7 @@ import Foundation
 import XlessCore
 
 /// The toolchains that some kinds of app need besides xless's own image: a Dockerfile shipped with xless for each, which is
-/// built on the local image of the project's Xcode. They are the only Dockerfiles that xless builds by itself.
+/// built on the local image of this xless. They are the only Dockerfiles that xless builds by itself.
 public enum Kit: String, CaseIterable, Sendable {
     case tauri
     case reactNative = "react-native"
@@ -29,8 +29,8 @@ public enum Kit: String, CaseIterable, Sendable {
 
     public func directory(share: URL) -> URL { share.appendingPathComponent("docker/\(rawValue)") }
 
-    /// Its image on `base`: the name follows the Xcode, also where `base` has the tag without one.
-    public func image(on base: LocalImage) -> String { "\(ImageName.base(arch: base.architecture, xcode: base.xcode ?? ""))-\(rawValue)" }
+    /// Its image on `base`: the name of `base`, and the kit.
+    public func image(on base: LocalImage) -> String { "\(base.name)-\(rawValue)" }
 
     public enum State: Equatable, Sendable {
         case current(LocalImage)

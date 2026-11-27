@@ -102,34 +102,40 @@ grep -q 'builder prune\|system prune' "$log" && fail "pruned Docker-wide caches"
 [[ ! -e "$cache" ]] || fail "cache left behind"
 grep -q 'docker builder prune' "$t/out" || fail "no build cache hint: $(cat "$t/out")"
 
-# --old: what an upgrade leaves (the images of xless 0.10 and older, shown, and the label prune): no image of this xless, no
-# volume, no cache.
+# --old: what an upgrade leaves (the images of xless 0.10 and older, and of before the packs: every legacy tag, shown, and the label
+# prune): no image of this xless, no volume, no cache.
 mkcache
 run --old --dry-run
 [[ $code == 0 && -z "$(removed)" ]] || fail "--old --dry-run: $code $(removed)"
-[[ "$(sed -n 1,3p "$t/out")" == "would remove 2 image tags:
+[[ "$(sed -n 1,5p "$t/out")" == "would remove 4 image tags:
   xless-base:local-arm64
-  xless:local-arm64" ]] || fail "--old --dry-run says: $(cat "$t/out")"
-[[ "$(sed -n 4p "$t/out")" == "and the untagged older builds (docker image prune --filter label=org.xless.image=true)" ]] || fail "--old --dry-run says: $(cat "$t/out")"
+  xless:local-arm64
+  xless:local-arm64-xcode27.0
+  xless:local-arm64-xcode27.0-tauri" ]] || fail "--old --dry-run says: $(cat "$t/out")"
+[[ "$(sed -n 6p "$t/out")" == "and the untagged older builds (docker image prune --filter label=org.xless.image=true)" ]] || fail "--old --dry-run says: $(cat "$t/out")"
 both='image rm xless-base:local-arm64
 image rm xless:local-arm64
+image rm xless:local-arm64-xcode27.0
+image rm xless:local-arm64-xcode27.0-tauri
 image prune --force --filter label=org.xless.image=true'
 # It asks, and nothing but yes is yes.
 for no in n "" nope; do
   on "$no" --old --cache
   [[ $code == 0 && -z "$(removed)" && -d "$cache" ]] || fail "--old, answered '$no': $code $(removed)"
-  [[ "$(cat "$t/out")" == "would remove 2 image tags:
+  [[ "$(cat "$t/out")" == "would remove 4 image tags:
   xless-base:local-arm64
   xless:local-arm64
+  xless:local-arm64-xcode27.0
+  xless:local-arm64-xcode27.0-tauri
 and the untagged older builds (docker image prune --filter label=org.xless.image=true)
-"*"Remove these 2 image tags, and the untagged older builds? [y/N] "*"cancelled; nothing was removed" ]] || fail "--old asks: $(cat "$t/out")"
+"*"Remove these 4 image tags, and the untagged older builds? [y/N] "*"cancelled; nothing was removed" ]] || fail "--old asks: $(cat "$t/out")"
 done
 on y --old
 [[ $code == 0 && "$(removed)" == "$both" && -d "$cache" ]] || fail "--old, answered yes: $code $(removed) $(cat "$t/out")"
 # --yes answers; without a terminal, or with --no-input, it is needed.
 on none --old --yes
 [[ $code == 0 && "$(removed)" == "$both" && -d "$cache" ]] || fail "--old --yes: $code $(removed) $(cat "$t/err")"
-[[ "$(sed -n 1p "$t/out")" == "removing 2 image tags:" ]] || fail "--old --yes says: $(cat "$t/out")"
+[[ "$(sed -n 1p "$t/out")" == "removing 4 image tags:" ]] || fail "--old --yes says: $(cat "$t/out")"
 on none --old --cache
 [[ $code == 11 && -z "$(removed)" && -d "$cache" ]] || fail "--old without a terminal: $code $(removed)"
 grep -q 'removing the images of an older xless needs a confirmation and there is no terminal — re-run with --yes' "$t/err" || fail "--old without a terminal says: $(cat "$t/err")"
@@ -140,14 +146,11 @@ f="$t/images/xless_local-arm64"
 echo '{"Id":"sha256:xless:local-arm64","Architecture":"arm64","Config":{"Labels":{}},"RootFS":{"Layers":[]}}' > "$f.once"
 echo '{"Id":"sha256:new","Architecture":"arm64","Config":{"Labels":{}},"RootFS":{"Layers":[]}}' > "$f"
 on y --old
-[[ $code == 0 && "$(removed)" == "$(grep -v 'rm xless:local' <<<"$both")" ]] || fail "--old removed another image: $code $(removed)"
+[[ $code == 0 && "$(removed)" == "$(grep -vx 'image rm xless:local-arm64' <<<"$both")" ]] || fail "--old removed another image: $code $(removed)"
 grep -qx 'kept xless:local-arm64: it is another image now' "$t/out" || fail "--old does not say it: $(cat "$t/out")"
-echo '{"Id":"sha256:xless:local-arm64","Architecture":"arm64","Config":{"Labels":{"dev.xless.sdk":"27A266a"}},"RootFS":{"Layers":[]}}' > "$f"
-on none --old --yes
-[[ $code == 0 && "$(removed)" == "$(grep -v 'rm xless:local' <<<"$both")" ]] || fail "--old removed an image of this xless: $code $(removed)"
 rm -f "$f" "$f.once"
 # Only untagged builds: nothing to ask about.
-sed -i.bak 's/xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0/xless:local-arm64-xcode27.0/' "$t/bin/docker"; rm "$t/bin/docker.bak"
+sed -i.bak 's/xless-base:local-arm64 xless:local-arm64 xless:local-arm64-xcode27.0 xless:local-arm64-xcode27.0-tauri/xless:0.14.0-arm64/' "$t/bin/docker"; rm "$t/bin/docker.bak"
 on none --old
 [[ $code == 0 && "$(removed)" == 'image prune --force --filter label=org.xless.image=true' ]] || fail "--old without an old tag: $code $(removed)"
 

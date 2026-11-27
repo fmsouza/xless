@@ -62,7 +62,8 @@ public enum SetupPlan {
             let est = { (s: String, disk: String) in estimate(s, arch: a, hostArch: hostArch) + disk }
             let final = sdkDir.appendingPathComponent(a), partial = sdkDir.appendingPathComponent("\(a).partial")
             let xtoolSDK = final.appendingPathComponent("darwin.xtoolsdk")
-            let tools = ImageName.tools(arch: a), image = ImageName.base(arch: a, xcode: version)
+            // ADAPTER(packs): removed in the setup/run tasks: there is no tools image and no image of an Xcode any more
+            let tools = "xless:local-\(a)-setup", image = ImageName.base(version: try ImageName.tag(ofShare: share), arch: a)
             // An export source has no Xcode to export from (setup refuses an export that lacks this arch).
             let exports = source.kind != .export && (reexport || !existing(xtoolSDK))
             if exports {
@@ -89,7 +90,7 @@ public enum SetupPlan {
             if let bin = xlessBinaries[a] { build += ["--xless-bin", bin.path] }
             steps.append(SetupStep(title: image, argv: build, estimate: est("~7 min", "")))
             if exports { steps.append(SetupStep(title: "remove \(tools)", argv: ["docker", "image", "rm", tools], estimate: "seconds", action: .tidy)) }
-            let built = LocalImage(name: image, id: "<the ID of \(image)>", architecture: a, labels: [ImageLabel.xcode: version], layers: [])
+            let built = LocalImage(name: image, id: "<the ID of \(image)>", architecture: a, labels: [:], layers: [])
             steps += try kits.map { try kit($0, on: built, hostArch: hostArch, share: share, builder: builder) }
         }
         return steps
@@ -99,7 +100,7 @@ public enum SetupPlan {
     public static func kit(_ kit: Kit, on base: LocalImage, hostArch: String, share: URL, builder: String?) throws -> SetupStep {
         let arch = base.architecture
         return SetupStep(title: "\(kit.image(on: base)): \(kit.holds), for \(kit.apps)", argv: ["docker"] + (try kit.build(on: base, share: share, builder: builder)),
-                         estimate: estimate(kit.estimate, arch: arch, hostArch: hostArch), action: .kit(kit, arch: arch, xcode: base.xcode ?? ""))
+                         estimate: estimate(kit.estimate, arch: arch, hostArch: hostArch), action: .kit(kit, arch: arch, xcode: "") /* ADAPTER(packs): removed in the setup/run tasks */)
     }
 
     private static func estimate(_ s: String, arch: String, hostArch: String) -> String {
