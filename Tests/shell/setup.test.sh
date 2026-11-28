@@ -351,7 +351,7 @@ grep -q "^\[1/1\] xless:$rt-arm64 " "$t/out" && grep -q "no Xcode pack is prepar
 grep -q '^run\|^buildx\|^volume' "$log" && fail "--dry-run ran docker: $(cat "$log")"
 # Natively there is nothing to do without one: refused, naming --xcode (on a Mac, the installed Xcode is checked instead).
 if [[ "$(uname)" == Linux ]]; then
-  run ok --arch arm64 --dry-run
+  run ok --arch "$host" --dry-run
   [[ $code == 11 ]] && grep -q "no --xcode, and no SDK export under $t/home/.cache/xless/sdk to reuse" "$t/err" || fail "native, no export: $code $(cat "$t/err")"
 fi
 # The cache's one export: the images are planned from it, nothing is exported and the cache needs no room.
@@ -405,10 +405,10 @@ mkdir -p "$us"; cp -R "$repo/docker" "$repo/scripts" "$us/"
 cp "$us/docker/toolchain/target-os/27A266a.txt" "$us/docker/toolchain/target-os/27Z1.txt"
 sed -e 's/^XCODE_RELEASES="\(.*\)"/XCODE_RELEASES="\1 27Z1"/' "$repo/versions.env" > "$us/versions.env"
 printf 'XCODE_SHORT_27Z1=27.9\nXCODE_APPLE_SWIFT_27Z1=6.4\nXCODE_BUILD_MACHINE_OS_27Z1=26A434\nXCODE_SWIFT_27Z1=6.4.0\n' >> "$us/versions.env"
-export_meta "$t/x99" 27Z1 arm64
+export_meta "$t/x99" 27Z1 arm64 amd64
 for how in --docker ''; do
   [[ -n "$how" || "$(uname)" == Linux ]] || continue
-  share="$us" run ok $how --arch arm64 --sdk "$t/x99"
+  share="$us" run ok $how --arch "$host" --sdk "$t/x99"   # natively, only this machine's architecture is set up
   [[ $code == 11 ]] && grep -q "has not measured the asset catalog and storyboard tools of Xcode 27.9 (27Z1)" "$t/err" \
     && grep -q "use an Xcode this xless supports (Xcode 26.0.1 (17A400), .*Xcode 27.0 (27A266a)" "$t/err" || fail "an unmeasured Xcode ($how): $code $(cat "$t/err")"
   [[ ! -s "$log" ]] || fail "docker was asked about an unmeasured Xcode: $(cat "$log")"
