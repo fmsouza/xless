@@ -1,12 +1,12 @@
 import Foundation
 
-/// Rulings R8 and R10 at the start of a build: the image's SDK (toolchain metadata) against the project's `xcode:` pin,
+/// Rulings R8 and R10 at the start of a build: the Xcode pack's SDK (toolchain metadata) against the project's `xcode:` pin,
 /// and its Swift toolchain against the SDK's Xcode. `prepare` runs the same checks first (nothing recorded), so a wrong
-/// image is refused before the JS install, prebuild and CocoaPods run; `build` checks again and records the result
+/// Xcode is refused before the JS install, prebuild and CocoaPods run; `build` checks again and records the result
 /// (`BuildSDKRecord`, `<stage dir>/sdk.json`).
 public enum BuildSDKCheck {
     public struct Result {
-        /// nil without toolchain metadata (a host with no SDK installed, no pin).
+        /// nil without toolchain metadata (a machine with no Xcode, no pin).
         public var meta: ToolchainMeta?
         public var swift: BuildSwiftRecord?
         public var toolchain: SwiftToolchain?
@@ -14,18 +14,43 @@ public enum BuildSDKCheck {
 
     /// The checks, without recording. `file` words the refusal ("the overlay", "xless.yml"). A pinned project needs
     /// metadata and a toolchain record; the pin must be the metadata's Xcode, and the toolchain the Swift that Xcode ships.
+    /// `metaURL` and `loadToolchain` default to the Xcode's (`XcodeEnvironment`). A pack that does not fit is refused; on
+    /// a machine with no Xcode at all an unpinned project has nothing to check.
     public static func check(pin: String?, platform: Platform, file: String, stage: Stage,
-                             metaURL: URL = ToolchainMeta.defaultLocation(),
-                             loadToolchain: () throws -> SwiftToolchain? = { try SwiftToolchain.load(stage: .build) }) throws -> Result {
+                             metaURL: URL? = nil, loadToolchain: (() throws -> SwiftToolchain?)? = nil,
+                             env: [String: String] = ProcessInfo.processInfo.environment) throws -> Result {
+        var metaURL = metaURL, loadToolchain = loadToolchain
+        var found: XcodePack?
+        // The pack is resolved by the pin checked here, as a command that loaded the project resolves it (`Context.pinXcode`).
+        var env = env
+        if let pin, (env[XcodeEnvironment.pinVariable] ?? "").isEmpty { env[XcodeEnvironment.pinVariable] = pin }
+        if metaURL == nil || loadToolchain == nil {
+            let xcode: XcodeEnvironment?
+            do { xcode = pin == nil ? try XcodeEnvironment.lookup(env: env) : try XcodeEnvironment.current(env: env) } catch let problem as XcodeProblem {
+                guard let pin else { throw problem.stageError(stage) }
+                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(problem.cause)", fix: problem.fix, code: 2)
+            }
+            if metaURL == nil { found = xcode?.pack }
+            metaURL = metaURL ?? xcode?.meta
+            loadToolchain = loadToolchain ?? { try xcode?.loadToolchain(stage: stage) }
+        }
+        let load = loadToolchain ?? { nil }
         var meta: ToolchainMeta?
-        do { meta = try ToolchainMeta.load(from: metaURL) } catch let e as XlessError {
+        do { meta = try metaURL.map { try ToolchainMeta.load(from: $0) } } catch let e as XlessError {
             if let pin {
-                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)", fix: "install Xcode \(pin) (`xless setup --xcode <path to Xcode \(pin)'s .xip>`), or build in an xless image made from it (`xless setup --docker --xcode …`, tags *-xcode\(pin))")
+                throw XlessError(stage, "xcode: \"\(pin)\" is pinned, but \(e.cause)",
+                                 fix: found.map { XcodeResolver.prepareAgain($0, env: env) }
+                                    ?? "prepare Xcode \(pin)'s pack again: `xless setup --xcode <path to Xcode \(pin)'s .xip>` (`xless setup --docker --xcode …` for xless run --docker)")
+            }
+            // Unpinned, any Xcode will do, but the pack found is the one the build uses: without its metadata it cannot.
+            if let found {
+                throw XlessError(stage, "the Xcode pack \(found.name)'s toolchain metadata (toolchain-meta.json) cannot be used: \(e.cause)",
+                                 fix: XcodeResolver.prepareAgain(found, env: env), code: 2)
             }
         }
         if let meta { try XcodePin.check(pin: pin, meta: meta, platform: platform, file: file, stage: stage) }
         let toolchain: SwiftToolchain?
-        do { toolchain = try loadToolchain() } catch let e as XlessError { throw XlessError(stage, e.cause, fix: e.fix) }
+        do { toolchain = try load() } catch let e as XlessError { throw XlessError(stage, e.cause, fix: e.fix) }
         let swift = try SwiftToolchain.check(toolchain, meta: meta, pin: pin, stage: stage)
         return Result(meta: meta, swift: swift, toolchain: toolchain)
     }
@@ -33,10 +58,10 @@ public enum BuildSDKCheck {
     /// The build stage's form: the previous record is deleted first (a refused build leaves none), then `check`, then the
     /// record is written when there is metadata.
     public static func checkAndRecord(stageRoot: URL, pin: String?, platform: Platform, file: String,
-                                      metaURL: URL = ToolchainMeta.defaultLocation(),
-                                      loadToolchain: () throws -> SwiftToolchain? = { try SwiftToolchain.load(stage: .build) }) throws -> (Result, BuildSDKRecord?) {
+                                      metaURL: URL? = nil, loadToolchain: (() throws -> SwiftToolchain?)? = nil,
+                                      env: [String: String] = ProcessInfo.processInfo.environment) throws -> (Result, BuildSDKRecord?) {
         try? FileManager.default.removeItem(at: BuildSDKRecord.url(in: stageRoot))
-        let result = try check(pin: pin, platform: platform, file: file, stage: .build, metaURL: metaURL, loadToolchain: loadToolchain)
+        let result = try check(pin: pin, platform: platform, file: file, stage: .build, metaURL: metaURL, loadToolchain: loadToolchain, env: env)
         guard let meta = result.meta else { return (result, nil) }
         let record = BuildSDKRecord(pin: pin, toolchain: meta, swift: result.swift)
         try record.write(in: stageRoot)

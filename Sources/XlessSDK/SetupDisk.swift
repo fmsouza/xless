@@ -1,14 +1,17 @@
 import Foundation
 
 /// The free space `xless setup` asks for before it runs anything, in two places: the cache (the SDK export, which xtool
-/// expands the .xip into) and Docker's data root (the four images and their build cache). Each figure is per
-/// architecture, from versions.env (`XLESS_SETUP_CACHE_GB`, `XLESS_SETUP_DOCKER_GB`); an environment variable of the same
-/// name wins. The cache figure counts only the architectures whose SDK is exported in this run.
+/// expands the .xip into; with --docker the image's setup exports into the host's cache too) and Docker's data root (the
+/// image, its kits, their build cache, and the pack volumes). Each figure is per architecture, from versions.env
+/// (`XLESS_SETUP_CACHE_GB`, `XLESS_SETUP_DOCKER_GB`); an environment variable of the same name wins. The cache figure counts
+/// only the architectures whose SDK is exported in this run. The setup in the image checks the store it prepares the pack
+/// in against `XLESS_SETUP_NATIVE_GB` (the host's value, when it sets one, goes into its container).
 public enum SetupDisk {
     public static let cacheKey = "XLESS_SETUP_CACHE_GB"
     public static let dockerKey = "XLESS_SETUP_DOCKER_GB"
-    /// A native setup (no Docker): the Swift toolchain, xtool, rcodesign and the installed SDK, for this machine's
-    /// architecture only.
+    /// A native setup (no Docker): the Xcode pack it prepares in the store (`XcodeStore`: the Swift toolchain and its
+    /// download, the installed SDK), for this machine's architecture only. xtool and rcodesign, in the native home, are
+    /// small enough not to be counted.
     public static let nativeKey = "XLESS_SETUP_NATIVE_GB"
     /// When versions.env has no value (an older share): the figures measured for Xcode 26.2 and 27.0.
     public static let fallback = [cacheKey: 17, dockerKey: 30, nativeKey: 10]
@@ -37,10 +40,10 @@ public enum SetupDisk {
          Need(key: dockerKey, perArchGB: perArchGB(dockerKey, env: env, table: table), archs: archs))
     }
 
-    /// What a native run needs: the cache for the export (when it runs), and the native home for one architecture.
-    public static func nativeNeeds(exporting: Bool, env: [String: String], table: [String: String]) -> (cache: Need, native: Need) {
+    /// What a native run needs: the cache for the export (when it runs), and the store for the pack (when one is prepared).
+    public static func nativeNeeds(exporting: Bool, preparing: Bool, env: [String: String], table: [String: String]) -> (cache: Need, store: Need) {
         (Need(key: cacheKey, perArchGB: perArchGB(cacheKey, env: env, table: table), archs: exporting ? 1 : 0),
-         Need(key: nativeKey, perArchGB: perArchGB(nativeKey, env: env, table: table), archs: 1))
+         Need(key: nativeKey, perArchGB: perArchGB(nativeKey, env: env, table: table), archs: preparing ? 1 : 0))
     }
 
     /// The refusal when `freeGB` under `path` is short of `need`: nil when there is room.

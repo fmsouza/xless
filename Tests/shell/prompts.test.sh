@@ -263,9 +263,14 @@ if sys.platform == "darwin":   # what signs is there already (nothing is fetched
     env["XLESS_SHARE"] = t + "/share"
 with concurrent.futures.ThreadPoolExecutor(len(COMMANDS)) as pool:   # each retries a while when Apple does not answer
     results = list(pool.map(lambda c: on_a_terminal_of_its_own((EMPTY if c[0].startswith("auth") else "") + "$X " + c[0], PASS, *c[1]), COMMANDS))
+def stopped_later(command, rc, shown):
+    """Exit 2 is a usage error, which comes before the store is opened, but for one: on Linux there is no Xcode pack here, and
+    xless run's build stage stops on that with 2, after the prompt and the steps before it."""
+    if rc not in (0, 2, 23): return True
+    return rc == 2 and command.startswith("run") and "error: [build] there is no pack for " in shown
 for (command, answers), (rc, shown, n) in zip(COMMANDS, results):
     name = "xless " + " ".join(command.split()[:3 if command.startswith("auth") else 1 if command.startswith(("run", "ship")) else 2])
-    check(rc not in (0, 2, 23) and len(asked(shown)) == 1 + len(answers) and name + " opens the secret store (" in shown,
+    check(stopped_later(command, rc, shown) and len(asked(shown)) == 1 + len(answers) and name + " opens the secret store (" in shown,
           f"`{command}` asks for the passphrase once{' and signs in once' if answers else ''}, and says why (exit {rc})", shown)
     if answers: check(name + " signs in to Apple: Apple's documented API does not cover what it does. Asked once for this command" in shown, "and why it signs in", shown)
 for (command, _), (rc, shown, n) in zip(COMMANDS, results):

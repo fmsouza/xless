@@ -28,8 +28,8 @@ infoPlist: Resources/Info.plist
 | `privacyManifest` | path | required for iOS (app-store) | `PrivacyInfo.xcprivacy`, copied into the bundle; `finalize` fails for App Store builds if it is missing. |
 | `infoPlist` | path | no | Extra Info.plist keys merged into the generated one (usage descriptions, orientations, export-compliance keys). |
 | `usesNonExemptEncryption` | boolean | no | Stamps `ITSAppUsesNonExemptEncryption` (export compliance) into the Info.plist. `finalize` refuses iOS App Store builds whose Info.plist has no such key (they would stall at "Missing Compliance" in TestFlight). Set it here, or put the key in the `infoPlist` file. If both define it with different values, `finalize` refuses. `false` means the app uses no encryption beyond what Apple's OS provides or only exempt encryption. `true` is valid, but App Store Connect then needs an export compliance answer for each build before testers can install it. A non-boolean value in the Info.plist is refused. |
-| `xcode` | string | no | The Xcode whose SDK must build the app, e.g. `"26.2"` (Ruling R8; see [react-native.md](react-native.md#pinning-the-xcode-sdk)). `build` refuses an image whose SDK comes from another Xcode, the app compiles with an open-source Swift release matching that Xcode's Swift, and `xless run --docker` runs in the image `xless setup --docker --xcode …` made from it (`xless:local-<arch>-xcode<version>`). On a Mac, natively, it chooses among the installed Xcodes ([native-install.md](native-install.md#on-a-mac)). Default: the installed SDK (on a Mac the selected Xcode); with `--docker`, the image of the newest Xcode there is one of. |
-| `image` | string | no | Only with `--docker`: an image of your own for the build ([images.md](images.md#an-image-of-your-own)), already built on this machine. The run is then two containers: the build's has no secret, and signing and the upload run in the xless image. `XLESS_IMAGE` wins over it. Default: the xless image. |
+| `xcode` | string | no | The Xcode whose SDK must build the app, e.g. `"26.2"` (Ruling R8; see [react-native.md](react-native.md#pinning-the-xcode-sdk)). `build` uses that Xcode's pack (`xless setup --xcode …`, or with `--docker` `xless setup --docker --xcode …`, prepares it) and stops (exit 2) when there is none, the app compiles with an open-source Swift release matching that Xcode's Swift, and `xless run --docker` gives that pack to every container, read-only. On a Mac, natively, it chooses among the installed Xcodes ([native-install.md](native-install.md#on-a-mac)). Default: the newest Xcode there is a pack of (on a Mac the selected Xcode). |
+| `image` | string | no | Only with `--docker`: an image of your own for the build ([images.md](images.md#an-image-of-your-own)), already built on this machine. The run is then two containers: the build's has no secret, and signing and the upload run in the xless image; an image that is the xless image itself (a tag of it) gives one container, as without `image:` ([security.md](security.md#a-build-that-means-harm)). `XLESS_IMAGE` wins over it. Default: the xless image. |
 | `provisioningUpdates` | boolean | no | `false`: `sign` changes nothing on the Apple account, and fails with exit 24 and the list when it would have to ([signing-and-testflight.md](signing-and-testflight.md#what-sign-changes-on-the-account)). Default `true`; the key without a value is refused. |
 | `testflight` | map | no | Deliver uploaded builds to TestFlight groups. See [`testflight`](#testflight). |
 | `launchStoryboard` | path | no | iOS only (ignored for macOS). A launch-screen `.storyboard` (must end in `.storyboard`), relative to the project. See [Launch storyboard](#launch-storyboard). |
@@ -112,7 +112,7 @@ After `upload` reaches `VALID`, xless (iOS, and the macOS App Store package):
 - adds the new build to each group that does not have it yet, as `xless testflight builds add` does;
 - sets or updates "What to Test" for `locale` when `whatToTest` is given and differs;
 - adds the `testers` missing from each internal group. An address that is not an App Store Connect user of the team is a warning, not a failure (the check needs an Admin key; without one, Apple decides);
-- with `external`: sets what differs in `external.info` and `external.review` (the demo account's password, read from its secret, only when the account is new, renamed or newly required; with `xless run --docker` only the container that uploads gets it: [secrets.md](secrets.md#xless-run-and-docker-builds)), reuses or creates each external group (an internal group of that name is an error), adds the build and the missing `external.testers`, and submits the build for beta app review unless it already was or `submit: false`;
+- with `external`: sets what differs in `external.info` and `external.review` (the demo account's password, read from its secret, only when the account is new, renamed or newly required; with `xless run --docker` only the container that uploads is handed it, which for a project without an image of its own is the one that builds too, where the build's code can read its file: [secrets.md](secrets.md#xless-run-and-docker-builds)), reuses or creates each external group (an internal group of that name is an error), adds the build and the missing `external.testers`, and submits the build for beta app review unless it already was or `submit: false`;
 - prints the build number, the groups and `available to N testers` (with the testers added), the beta app review state, and warns about groups with 0 testers. Afterwards, [`xless testflight`](apple-account.md#xless-testflight) manages the groups, testers, public links and the review.
 
 [`xless provision apply`](apple-account.md#xless-provision) creates the groups of `groups` and `external.groups` ahead
@@ -124,8 +124,8 @@ A failure here exits 17 as `[upload] …`; the build is already uploaded and pro
 ## Launch storyboard
 
 With `launchStoryboard` set, the iOS `assets` stage compiles the storyboard without ibtool, byte-identical to the ibtool of
-the image's Xcode (27B52, 27A9275, 27A266a, 17F113, 17F42, 17E202, 17E192, 17C529, 17C52, 17B100, 17B55 or 17A400; any other Xcode is refused, [research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)).
-`xless storyboard compile` is the same compiler as a standalone command (`--xcode-build` picks the Xcode; by default the image's):
+the pack's Xcode (27B52, 27A9275, 27A266a, 17F113, 17F42, 17E202, 17E192, 17C529, 17C52, 17B100, 17B55 or 17A400; any other Xcode is refused, [research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)).
+`xless storyboard compile` is the same compiler as a standalone command (`--xcode-build` picks the Xcode; by default the pack's):
 
 - The `--target-device` set comes from `UIDeviceFamily` in the app's Info.plist: `[1]` → iPhone, `[1, 2]` → iPhone + iPad
   (absent → iPhone + iPad). Other families are an error.
@@ -161,6 +161,6 @@ launch screen compiled both ways).
 | Variable | Effect |
 |---|---|
 | `XLESS_BUILD_NUMBER` | Overrides `build`. `--build-number` takes precedence. |
-| `XLESS_TOOLCHAIN_META` | Path of `toolchain-meta.json`. Default: `/opt/xless/toolchain-meta.json` if present, else `$XDG_CONFIG_HOME/xless/toolchain-meta.json` (`~/.config/xless/toolchain-meta.json` when `XDG_CONFIG_HOME` is unset). |
+| `XLESS_TOOLCHAIN_META` | Path of a `toolchain-meta.json` to use in place of the Xcode pack's. Default: the `toolchain-meta.json` of the pack the build resolves (the one `XLESS_XCODE` names, else the pinned or newest pack of the store). |
 
 Secrets (`ASC_*`, `XLESS_DIST_KEY`, `XLESS_DEVID_KEY`) are never part of `xless.yml`; see [signing-and-testflight.md](signing-and-testflight.md#secrets).

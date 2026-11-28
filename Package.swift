@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/attaswift/BigInt", from: "5.4.0"), // Apple ID sign-in: SRP's big-number arithmetic
     ],
     targets: [
-        .target(name: "XlessCore", dependencies: ["CXlessProcess", .product(name: "Yams", package: "Yams")]),
+        .target(name: "XlessCore", dependencies: ["CXlessProcess", .product(name: "Yams", package: "Yams"), .product(name: "Crypto", package: "swift-crypto")]),
         // The Docker images: their names and labels, the choice of one, and the derived images built from shipped Dockerfiles.
         .target(name: "XlessImages", dependencies: ["XlessCore", .product(name: "Crypto", package: "swift-crypto")]),
         .target(name: "XlessSDK", dependencies: ["XlessCore", "XlessImages", .product(name: "Crypto", package: "swift-crypto")]),
@@ -101,7 +101,7 @@ let package = Package(
         // `xless run`: a project's build, sign and upload as processes of their own (containers, or natively), so that the app's
         // build code never runs next to a secret.
         .target(name: "XlessRun", dependencies: [
-            "XlessCore", "XlessImages", "CXlessProcess",
+            "XlessCore", "XlessImages", "XlessSDK", "CXlessProcess",
             .product(name: "Yams", package: "Yams"),
             .product(name: "Crypto", package: "swift-crypto"),
         ]),
@@ -166,7 +166,7 @@ let package = Package(
         ]),
         // The CLI's command tree (ArgumentParser's help dump): no option or argument named like a secret.
         .testTarget(name: "XlessCLITests", dependencies: ["xless", "XlessCore", "XlessASC", "XlessStore", "XlessAppleID", "XlessVault", "XlessAgent", "XlessSign", "XlessRun", .product(name: "Crypto", package: "swift-crypto"), .product(name: "X509", package: "swift-certificates"), .product(name: "SwiftASN1", package: "swift-asn1"), .product(name: "ArgumentParser", package: "swift-argument-parser")]),
-        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessImages", "XlessCore", "CXlessProcess"]),
+        .testTarget(name: "XlessRunTests", dependencies: ["XlessRun", "XlessImages", "XlessSDK", "XlessCore", "CXlessProcess"]),
         .testTarget(name: "XlessXcodeTests", dependencies: ["XlessXcode", "XlessCore", "XlessTauri", "XlessMachO"], exclude: ["Fixtures"]),
     ]
 )
@@ -184,7 +184,7 @@ let notOnWindows: [String: [String]] = [
         "BuildSDKCheck.swift", "BuildPlaces.swift", "BuildSandbox.swift", "BuiltTree.swift", "ChildProcess.swift", "DittoShim.swift", "ExecutableFile.swift",
         "MemoryFileSystem.swift", "NativeLayout.swift", "PlistBuddyShim.swift", "Shell.swift", "SwiftToolchain.swift", "XcrunShim.swift",
         "XlessShare.swift", "AppleSignature.swift", "InstalledXcode.swift", "NativeTools.swift", "TrustedPath.swift",
-        "PackageResolved.swift",
+        "PackageResolved.swift", "XcodeEnvironment.swift", "XcodeStore.swift",
     ],
     "XlessSign": ["PrivateFiles.swift", "RCodesign.swift", "SignStage.swift"],
     "XlessVault": ["CredentialHelper.swift", "VaultMaterialize.swift"],
@@ -193,7 +193,7 @@ let notOnWindows: [String: [String]] = [
         "AgentProgram.swift", "AgentServer.swift", "AgentState.swift", "AgentWire.swift", "SecretPages.swift",
     ],
     "xless": [
-        "Context.swift", "LiveCheck.swift", "MacNative.swift", "NativeOverlay.swift", "Overlays.swift", "Stages.swift",
+        "Context.swift", "HostDocker.swift", "LiveCheck.swift", "MacNative.swift", "NativeOverlay.swift", "Overlays.swift", "Stages.swift",
         "Commands/CargoCommands.swift", "Commands/CleanCommand.swift", "Commands/DockerCommand.swift", "Commands/InspectCommand.swift",
         "Commands/LiveCheckCommand.swift", "Commands/NextBuildCommand.swift", "Commands/SDKCommands.swift", "Commands/SecretsImportEnvCommand.swift", "Commands/SecretsMaterializeCommand.swift",
         "Commands/SessionCommand.swift", "Commands/SetupCommand.swift", "Commands/ShimCommands.swift", "Commands/ShipCommand.swift",
@@ -204,14 +204,14 @@ let notOnWindows: [String: [String]] = [
         "BuildSDKCheckTests.swift", "BuildPlacesTests.swift", "BuildSandboxTests.swift", "BuiltTreeTests.swift", "ChildProcessTests.swift", "DittoShimTests.swift", "ExecutableFileTests.swift", "NativeLayoutTests.swift", "PlainFileTests.swift", "PlistBuddyShimTests.swift",
         "SecretScrubTests.swift", "ShellTests.swift", "SwiftToolchainTests.swift", "XcrunShimTests.swift", "XlessShareTests.swift",
         "AppleSignatureTests.swift", "InstalledXcodeTests.swift", "NativeToolsTests.swift", "TrustedPathTests.swift",
-        "PackageResolvedTests.swift", "WindowsFilterTests.swift",
+        "PackageResolvedTests.swift", "WindowsFilterTests.swift", "XcodeEnvironmentTests.swift", "XcodeStoreTests.swift",
     ],
     "XlessASCTests": ["PathOwnersTests.swift"],
     "XlessSignTests": ["MultiBundleSignTests.swift", "NestedSigningTests.swift", "PrivateFilesTests.swift", "RCodesignTests.swift", "SignStageTests.swift"],
     "XlessVaultTests": ["HelperSecretStoreTests.swift", "VaultMaterializeTests.swift"],
     "XlessCLITests": [
-        "BuildIsolationTests.swift", "LiveCheckTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
-        "SecretsNamedByTests.swift", "NativeOverlayTests.swift",
+        "BuildIsolationTests.swift", "CacheRemovalTests.swift", "CleanRealPathTests.swift", "HostDockerTests.swift", "LiveCheckTests.swift", "NativeToolsInstallTests.swift", "NextCommandTests.swift", "ProvisioningUpdatesTests.swift", "SecretsImportEnvTests.swift",
+        "SecretsNamedByTests.swift", "NativeOverlayTests.swift", "ShimCommandsTests.swift", "XcodePinTests.swift",
     ],
 ]
 package.products = []

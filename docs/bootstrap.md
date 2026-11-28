@@ -145,9 +145,9 @@ App Store Connect creates a certificate from a CSR but never returns the private
 
 ## 6. Setup (once per Xcode release)
 
-[build.md](build.md): on a Mac, on Linux, in Docker. On another machine (a CI runner, a build server) build the image from a copy of
-the SDK export ([maintainers.md](maintainers.md#images-on-other-machines)): never push an image to a registry, since it contains
-Apple's SDK.
+[build.md](build.md): on a Mac, on Linux, in Docker. On another machine (a CI runner, a build server) prepare the Xcode pack from a
+copy of the SDK export ([maintainers.md](maintainers.md#images-on-other-machines)). The export and the packs hold Apple's SDK: they
+go to no registry, CI cache or artifact. The xless image holds nothing of Apple's.
 
 ## 7. Ship
 

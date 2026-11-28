@@ -17,11 +17,13 @@ images() { # XCODE BUILD ...
   done
 }
 images 27.0 27A266a > "$t/images"
-I="xless:local-$A-xcode27.0"
+# An image holds no Xcode: there is one base image, named after this xless. (No Xcode pack is on this fake machine: a dry run
+# says that a run would stop, and shows what it would run with the pack it would use.)
+I="xless:$("$fake" tag)-$A"
 # A fake docker that knows two contexts, so context selection is testable without a daemon, and whose images are $t/images.
 cat > "$t/bin/docker" <<D
 #!/usr/bin/env bash
-if [[ "\$1 \$2" == "context ls" ]]; then printf 'default\ncolima-xless\n'; exit 0; fi
+if [[ "\$1 \$2" == "context ls" ]]; then printf 'default\ncolima-xless\nother\n'; exit 0; fi
 [[ "\$1" != --context ]] || shift 2
 [[ "\$1" != image ]] || FAKE_IMAGES="$t/images" exec "$fake" "\$@"
 D
@@ -40,6 +42,10 @@ out=$("${base[@]}" "$S" "$t/proj" 2>/dev/null) || fail "dry run failed"
 # explicit context wins, image override, build number override
 out=$("${base[@]}" DOCKER_CONTEXT=other XLESS_IMAGE=img:1 XLESS_BUILD_NUMBER=42 "$S" "$t/proj" 2>/dev/null)
 [[ "$out" == *"--context other"* && "$out" == *" img:1 xless ship"* ]] || fail "overrides ignored: $out"
+# a context docker does not have stops the run before anything, with the contexts there are
+code=0; msg=$("${base[@]}" DOCKER_CONTEXT=gone "$S" "$t/proj" 2>&1) || code=$?
+[[ $code == 2 && "$msg" == *"DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name; its contexts: default, colima-xless, other;"* ]] \
+  || fail "a missing context: exit $code: $msg"
 # XLESS_BUILD_NUMBER is passed by name; its value is in the script's environment, not argv
 [[ "$out" == *"-e XLESS_BUILD_NUMBER "* ]] || fail "build number not passed by name: $out"
 
@@ -81,10 +87,23 @@ out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto d
 printf '{}' > "$t/meta.json"
 out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_TOOLCHAIN_META="$t/meta.json" "$S" "$t/proj" 2>/dev/null) || fail "auto native dry run failed"
 [[ "$out" == "xless ship --platform ios "* ]] || fail "auto with a toolchain-meta does not run native: $out"
+# An Xcode pack in the store: natively. (Its build is in no table, so no recipe of this xless makes it stale.)
+case "$(uname -m)" in arm64|aarch64) pa=arm64 ;; *) pa=amd64 ;; esac
+pk="$t/xcodes/99.0-99Z99-$pa"; mkdir -p "$pk"; printf '{}' > "$pk/toolchain-meta.json"
+printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{"sdk":"h"}}' "$pa" > "$pk/pack.json"
+out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_XCODES="$t/xcodes" "$S" "$t/proj" 2>/dev/null) || fail "auto native (a pack) failed"
+[[ "$out" == "xless ship --platform ios "* ]] || fail "a pack in the store is ignored: $out"
+# A pack that cannot be used (here: it has no Darwin SDK): in the images, and the run says why.
+printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{}}' "$pa" > "$pk/pack.json"
+out=$("${base[@]}" XLESS_USE_DOCKER= XLESS_XCODES="$t/xcodes" "$S" "$t/proj" 2>"$t/err") || fail "auto beside a broken pack failed: $(cat "$t/err")"
+[[ "$out" == *"docker "* ]] || fail "a pack that cannot be used runs natively: $out"
+grep -qF "==> note: the pack 99.0-99Z99-$pa has no Darwin SDK; " "$t/err" && grep -qF "so this run is in the images (docker)" "$t/err" \
+  || fail "a pack that cannot be used is passed over in silence: $(cat "$t/err")"
+# The metadata a native setup of before the packs left (~/.config/xless) is not read: in the images.
 mkdir -p "$t/home/.config/xless"; printf '{}' > "$t/home/.config/xless/toolchain-meta.json"
-out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto native (default meta) failed"
-[[ "$out" == "xless ship --platform ios "* ]] || fail "default toolchain-meta path ignored: $out"
-rm -rf "$t/home/.config"
+out=$("${base[@]}" XLESS_USE_DOCKER= "$S" "$t/proj" 2>/dev/null) || fail "auto beside an older native install failed"
+[[ "$out" == *"docker "* ]] || fail "the metadata of a native install of before the packs is read: $out"
+rm -rf "$t/home/.config" "$t/xcodes"
 
 # with ASC_KEY_P8_FILE set, each missing ID is a usage error (exit 2) naming the variable; IDs without the key file too
 # (the App Store Connect key and its IDs come from one place). A missing key file means the secret store
@@ -364,11 +383,11 @@ done
 [[ "$s3" == *"-v $vol:/cache/work -e XLESS_WORK_ROOT=/cache/work -e XLESS_WORK_VOLUME=$vol "* && "$s3" == *"dst=/secrets/dist-key.pem,readonly"* ]] || fail "rn step 3 mounts: $s3"
 [[ "$s3" != *"cocoapods"* && "$s3" != *"corepack"* && "$s3" != *".cache/xless"* ]] || fail "rn step 3 mounts build caches: $s3"
 # image and volume overrides; XLESS_RN_CLEAN reaches the build
-out=$("${base[@]}" XLESS_IMAGE=rn:1 XLESS_SIGN_IMAGE=keys:1 XLESS_RN_WORK_VOLUME=w1 XLESS_RN_CLEAN=1 "$S" --config "$t/rn/app.yml" 2>/dev/null)
+out=$("${base[@]}" XLESS_IMAGE=rn:1 XLESS_RN_WORK_VOLUME=w1 XLESS_RN_CLEAN=1 "$S" --config "$t/rn/app.yml" 2>/dev/null)
 # (an image that is not here cannot be shown to be xless's own, which the steps with the secrets run in)
-[[ "$(line "next-build")" == *" xless:local-$A-xcode27.0 xless next-build "* ]] || fail "rn step 1 image: $out"
+[[ "$(line "next-build")" == *" $I xless next-build "* ]] || fail "rn step 1 image: $out"
 [[ "$(line "--to finalize")" == *"-v w1:/cache/work "*"-e XLESS_RN_CLEAN "*" rn:1 xless ship "* ]] || fail "rn step 2 overrides: $out"
-[[ "$(line "--from sign")" == *"-v w1:/cache/work "*" xless:local-$A-xcode27.0 xless ship "* ]] || fail "rn step 3 overrides: $out"
+[[ "$(line "--from sign")" == *"-v w1:/cache/work "*" $I xless ship "* ]] || fail "rn step 3 overrides: $out"
 # offline: --build-number with --to finalize needs no secret at all (--dry-run is XLESS_TESTFLIGHT_DRY_RUN=1)
 bare=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1)
 out=$("${bare[@]}" "$S" --config "$t/rn/app.yml" --dry-run --build-number 1.0.0.2026101601 --to finalize 2>/dev/null) || fail "offline rn run needs secrets"
@@ -565,55 +584,39 @@ code=0; "${base[@]}" "$S" "$t/proj" --config "$t/ov/my.overlay.yml" >/dev/null 2
 printf 'type: tauri\n' > "$t/ov/nosrc.yml"
 code=0; "${base[@]}" "$S" --config "$t/ov/nosrc.yml" >/dev/null 2>&1 || code=$?
 [[ $code -eq 2 ]] || fail "overlay without source exits $code, want 2"
-# xcode: pin (Ruling R8): every step in the image of that Xcode (xless setup), xless:local-<arch>-xcode<pin>, or a kit on it
+# xcode: pin: every step in this xless's image (or a kit on it), with the pinned Xcode's pack mounted read-only
 pinned=("${base[@]}")
 mkdir -p "$t/pin/app"
 printf 'type: react-native\nsource: app\nxcode: "26.2"   # the release pipeline'"'"'s Xcode\n' > "$t/pin/rn.yml"
-P="xless:local-$A-xcode26.2"
-images 27.0 27A266a 26.2 17C52 > "$t/images"
+P="$I"
+images 26.2 17C52 > "$t/images"
 out=$("${pinned[@]}" "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "pinned rn dry run: $(cat "$t/err")"
 [[ "$(line "next-build")" == *" $P xless next-build "* ]] || fail "pinned rn step 1: $out"
 [[ "$(line "--to finalize")" == *" $P-react-native xless ship "* ]] || fail "pinned rn step 2: $out"
 [[ "$(line "--from sign")" == *" $P xless ship "* ]] || fail "pinned rn step 3: $out"
-grep -qF "xcode: \"26.2\" (pinned): build $P-react-native, signing and upload $P" "$t/err" || fail "pin not reported: $(cat "$t/err")"
-# a missing image is refused (exit 2) with the command that builds it; another Xcode's never stands in for it
-images 27.0 27A266a > "$t/images"
-code=0; "${pinned[@]}" "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
+grep -qF "xcode: \"26.2\" (pinned): Xcode 26.2 (17C52), build $P-react-native, signing and upload $P" "$t/err" || fail "pin not reported: $(cat "$t/err")"
+# the pin chooses the pack, which every container gets read-only, named outright; a dry run with none says a run would stop
+[[ $(grep -c " --mount type=volume,src=xless-xcode-26.2-17C52-$A,dst=/xcodes,readonly -e XLESS_XCODE=/xcodes/26.2-17C52-$A " <<<"$out") -eq 3 ]] || fail "the pinned pack: $out"
+grep -qF "note: $t/pin/rn.yml pins xcode: \"26.2\", but there is no pack of Xcode 26.2 for $A in the pack volumes" "$t/err" \
+  && grep -qF "a run would stop here (xless setup --docker --xcode <path to Xcode 26.2's .xip or Xcode.app>)" "$t/err" || fail "no pack not said: $(cat "$t/err")"
+# a missing image is refused (exit 2) with the command that builds it, pin or not
+: > "$t/images"
+code=0; "${pinned[@]}" XLESS_TESTFLIGHT_DRY_RUN= "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 2 ]] || fail "missing pinned image exits $code, want 2"
-grep -qF "pins xcode: \"26.2\", but the image $P is missing; build it from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch $A" "$t/err" \
+grep -qF "testflight: the image $P is missing (xless images are never pulled from a registry); build it: xless setup --docker --arch $A (it needs no Xcode to build the image)" "$t/err" \
   || fail "missing image message: $(cat "$t/err")"
-# so is one whose SDK is another's (its labels, not its name, say which it holds)
-"$fake" base "$A" 26.1 17B55 "$P" >> "$t/images"
-code=0; "${pinned[@]}" "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -qF "$P holds the SDK of Xcode 26.1 (17B55), not Xcode 26.2's" "$t/err" || fail "an image with another Xcode's SDK: exit $code $(cat "$t/err")"
-# The pin is looked up as image tags spell it (major.minor, the patch when not 0): "26.2.0" → -xcode26.2, "26" → -xcode26.0
-images 26.2 17C52 26.0 17A324 26.0.1 17A400 > "$t/images"
-for pair in "26.2.0 26.2" "26 26.0" "26.0.0 26.0" "26.0.1 26.0.1"; do
-  # shellcheck disable=SC2086
-  set -- $pair
-  printf 'type: react-native\nsource: app\nxcode: "%s"\n' "$1" > "$t/pin/canon.yml"
-  out=$("${pinned[@]}" "$S" --config "$t/pin/canon.yml" 2>"$t/err") || fail "pin $1: $(cat "$t/err")"
-  [[ "$(line "--to finalize")" == *" xless:local-$A-xcode$2-react-native xless ship "* && "$(line "--from sign")" == *" xless:local-$A-xcode$2 xless ship "* ]] \
-    || fail "pin $1 does not select -xcode$2: $out"
-done
+images 26.2 17C52 > "$t/images"
 # without a pin: the newest one there is
 out=$("${pinned[@]}" "$S" --config "$t/rn/app.yml" 2>"$t/err") || fail "unpinned: $(cat "$t/err")"
 [[ "$(line "--from sign")" == *" $P xless ship "* ]] || fail "unpinned image: $out"
-grep -qF "no xcode: is pinned, so the newest Xcode there is an image of: build $P-react-native, signing and upload $P" "$t/err" || fail "the choice is not said: $(cat "$t/err")"
-# the tag without an Xcode, where it holds the labels: used, with a notice
-"$fake" base "$A" 27.0 27A266a "xless:local-$A" > "$t/images"
-dx="$(sed -n 's/^XCODE_VERSION=//p' "$repo/versions.env")"
-printf 'type: react-native\nsource: app\nxcode: 27.0\n' > "$t/pin/def.yml"
-out=$("${pinned[@]}" "$S" "$t/proj" --to finalize 2>"$t/err") || fail "plain tag: $(cat "$t/err")"
-[[ "$out" == *" xless:local-$A xless ship "* ]] && grep -qF "note: xless:local-$A is used for Xcode 27.0; the tag without an Xcode goes away" "$t/err" || fail "plain tag: $out $(cat "$t/err")"
-# ... and the images of an older xless, which have none, are not: what to do is said
+grep -qE "no xcode: is pinned, so the newest Xcode there is a pack of: Xcode [0-9.]+ \([0-9A-Za-z]+\), build $P-react-native, signing and upload $P" "$t/err" || fail "the choice is not said: $(cat "$t/err")"
+# the images of an older xless (the tag without an Xcode, or with one, and the older repositories) are not used: what to do is said
 printf '%s\n' "xless:local-$A sha256:old $A old" "xless-rn:local-$A sha256:rn $A old" "xless-base:local-$A sha256:b $A old" > "$t/images"
-code=0; "${pinned[@]}" "$S" --config "$t/pin/def.yml" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -qF "the image xless:local-$A-xcode27.0 is missing; build it: xless setup --docker --arch $A (from the SDK export in the cache; when that is gone: xless setup --docker --xcode " "$t/err" || fail "the older images: exit $code $(cat "$t/err")"
+code=0; "${pinned[@]}" XLESS_TESTFLIGHT_DRY_RUN= "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
+[[ $code -eq 2 ]] && grep -qF "there is no xless image on this machine (xless images are never pulled from a registry), and xless:local-$A is an older xless's, which is not used; build it: xless setup --docker --arch $A (it needs no Xcode to build the image), and xless clean --old removes the older xless's images" "$t/err" || fail "the older images: exit $code $(cat "$t/err")"
+# a dry run with none shows what there would be: this xless's image
 out=$("${pinned[@]}" "$S" --config "$t/rn/app.yml" 2>"$t/err") || fail "unpinned dry run with the older images: $(cat "$t/err")"
-grep -qF "; those of an older xless, as xless:local-$A, are not used: xless clean --old removes them)" "$t/err" || fail "the older images are not explained: $(cat "$t/err")"
-# a dry run with none shows what there would be, versions.env's Xcode's
-[[ "$(line "--to finalize")" == *" xless:local-$A-xcode$dx-react-native xless ship "* ]] || fail "dry run with no image: $out"
+[[ "$(line "--to finalize")" == *" $I-react-native xless ship "* ]] || fail "dry run with no image: $out"
 # A kit that is missing or stale: a dry run says what it would build, and builds nothing (the command is printed)
 "$fake" base "$A" 27.0 27A266a > "$t/images"
 out=$("${pinned[@]}" "$S" --config "$t/rn/app.yml" 2>"$t/err") || fail "missing kit: $(cat "$t/err")"
@@ -632,9 +635,7 @@ images 26.2 17C52 > "$t/images"
 printf 'type: react-native\nsource: app\nxcode: "26.2"\nimage: mine:1\n' > "$t/pin/own.yml"
 out=$("${pinned[@]}" "$S" --config "$t/pin/own.yml" 2>"$t/err") || fail "image: $(cat "$t/err")"
 [[ "$(line "next-build")" == *" $P xless "* && "$(line "--to finalize")" == *" mine:1 xless ship "* && "$(line "--from sign")" == *" $P xless "* && "$out" != *" build --platform "* ]] || fail "image: $out"
-for wrong in "26.1 17B55 mine:2 sha256:m base26.1,xless26.1,mine|holds the SDK of Xcode 26.1 (17B55), not Xcode 26.2's" \
-             "26.2 17C529 mine:2 sha256:m base26.2,xless26.2,mine|is built for Xcode 26.2 (17C529), and the image" \
-             "26.2 17C52 mine:2 sha256:m other,mine|is not built on $P as it is now"; do
+for wrong in "26.2 17C52 mine:2 sha256:m other,mine|is not built on $P as it is now"; do
   images 26.2 17C52 > "$t/images"
   # shellcheck disable=SC2086
   "$fake" base "$A" ${wrong%%|*} >> "$t/images"
@@ -646,15 +647,14 @@ for value in --privileged '[a]'; do
   code=0; "${pinned[@]}" "$S" --config "$t/pin/option.yml" >/dev/null 2>"$t/err" || code=$?
   [[ $code -eq 2 ]] && grep -qF "image: in $t/pin/option.yml" "$t/err" || fail "image: $value: exit $code $(cat "$t/err")"
 done
-# XLESS_SIGN_IMAGE still works for xless's own image, with a notice; one with more in it is refused
-out=$("${pinned[@]}" XLESS_SIGN_IMAGE="$P" "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
-[[ "$(line "--from sign")" == *" $P xless ship "* ]] && grep -q "note: XLESS_SIGN_IMAGE still works" "$t/err" || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
+# XLESS_SIGN_IMAGE is not read any more (a note says so, once): the steps with the secrets are in xless's own image, whatever it names
 "$fake" base "$A" 26.2 17C52 keys:2 sha256:keys base26.2,xless26.2,keys >> "$t/images"
-code=0; "${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -q "XLESS_SIGN_IMAGE names keys:2, which has more in it than xless's own image $P, .*; unset XLESS_SIGN_IMAGE" "$t/err" || fail "XLESS_SIGN_IMAGE keys:2: $code $(cat "$t/err")"
+out=$("${pinned[@]}" XLESS_SIGN_IMAGE=keys:2 "$S" --config "$t/pin/rn.yml" 2>"$t/err") || fail "XLESS_SIGN_IMAGE: $(cat "$t/err")"
+[[ "$(line "--from sign")" == *" $P xless ship "* && "$(grep -c "XLESS_SIGN_IMAGE" "$t/err")" -eq 1 ]] && grep -qF "note: XLESS_SIGN_IMAGE is set, but nothing reads it any more" "$t/err" \
+  || fail "XLESS_SIGN_IMAGE: $out $(cat "$t/err")"
 # Tauri overlays and xless.yml projects take the pin too
 printf 'type: tauri\nsource: app\nbundleID: com.example.x\nxcode: 26.2\n' > "$t/pin/tauri.yml"
-images 27.0 27A266a 26.2 17C52 > "$t/images"
+images 26.2 17C52 > "$t/images"
 out=$("${pinned[@]}" "$S" --config "$t/pin/tauri.yml" 2>/dev/null) || fail "pinned tauri"
 [[ $(grep -c " $P xless " <<<"$out") -eq 2 && $(grep -c " $P-tauri xless " <<<"$out") -eq 1 ]] || fail "pinned tauri images: $out"
 mkdir -p "$t/pinproj"; printf 'xcode: "26.2"\n' > "$t/pinproj/xless.yml"
@@ -686,7 +686,7 @@ out=$("${pinned[@]}" "$S" "$t/pinproj" 2>/dev/null) || fail "pull=never dry run"
 real=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
       ASC_KEY_ID=KEYID ASC_ISSUER_ID_FILE="$t/issuer" ASC_KEY_P8_FILE="$t/key.p8" XLESS_DIST_KEY_FILE="$t/dist.pem")
 code=0; "${real[@]}" "$S" "$t/proj" >/dev/null 2>"$t/err" || code=$?
-[[ $code -eq 2 ]] && grep -qF "there is no xless image on this machine" "$t/err" && grep -qF "xless setup --docker --xcode <Xcode.xip>" "$t/err" \
+[[ $code -eq 2 ]] && grep -qF "the image $I is missing" "$t/err" && grep -qF "build it: xless setup --docker --arch $A (it needs no Xcode to build the image)" "$t/err" \
   || fail "missing image on a real run: exit $code $(cat "$t/err")"
 grep -qi "pull access denied" "$t/err" && fail "docker's own pull error reached the user"
 # a stopped run removes its container (fmsouza/xless#50): docker run gets --init and the run's label, and on TERM the
@@ -705,7 +705,8 @@ exit 0
 D
 chmod +x "$t/kbin/docker"
 : > "$t/klog"
-env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 \
+"$fake" pack "$t/kxcodes" "$A"   # the pack the run's containers get
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 XLESS_XCODES="$t/kxcodes" \
   "$S" "$t/proj" --build-number 1 --to finalize >/dev/null 2>"$t/err" & pid=$!
 for _ in $(seq 50); do grep -q '^run ' "$t/klog" && break; sleep 0.1; done
 grep -q '^run .*--init --label xless\.run=' "$t/klog" || fail "docker run without --init and the run label: $(cat "$t/klog")"
@@ -738,7 +739,7 @@ done
 # until it ends.
 keys=(ASC_KEY_ID=KEYID ASC_ISSUER_ID_FILE="$t/issuer" ASC_KEY_P8_FILE="$t/key.p8" XLESS_DIST_KEY_FILE="$t/dist.pem")
 : > "$t/klog"
-env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 "${keys[@]}" \
+env -i HOME="$t/home" PATH="$t/kbin:/usr/bin:/bin" KLOG="$t/klog" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1 XLESS_XCODES="$t/kxcodes" "${keys[@]}" \
   "$S" --config "$t/ov/my.overlay.yml" --to finalize >/dev/null 2>"$t/err" & pid=$!
 for _ in $(seq 50); do grep -q '^run .*next-build' "$t/klog" && break; sleep 0.1; done
 grep -q '^run .*next-build' "$t/klog" || { kill "$pid"; fail "step 1 never started: $(cat "$t/klog" "$t/err")"; }

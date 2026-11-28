@@ -199,9 +199,10 @@ private func meta(_ code: String, _ build: String, sdk: String) -> ToolchainMeta
     try XcodePin.check(pin: nil, meta: m27, platform: .ios, file: "the overlay")
     try XcodePin.check(pin: "27.0", meta: m27, platform: .ios, file: "the overlay")
     let e = #expect(throws: XlessError.self) { try XcodePin.check(pin: "26.2", meta: m27, platform: .ios, file: "the overlay") }
-    #expect(e?.description == "[build] the overlay pins xcode: \"26.2\", but this image has the iphoneos27.0 SDK from Xcode 27.0 (27A266a) — "
-            + "install Xcode 26.2 natively (`xless setup --xcode <path to Xcode 26.2's .xip>`, which replaces the installed one), or build with --docker "
-            + "in the images made from it (`xless setup --docker --xcode …`, tags *-xcode26.2; xless run --docker selects them from the pin), or change the pin to 27.0")
+    #expect(e?.description == "[build] the overlay pins xcode: \"26.2\", but the Xcode pack it would build with has the iphoneos27.0 SDK from Xcode 27.0 (27A266a) — "
+            + "unset XLESS_XCODE and XLESS_TOOLCHAIN_META, which name another Xcode, so that the pin chooses its pack; prepare Xcode 26.2's pack when there is none "
+            + "(`xless setup --xcode <path to Xcode 26.2's .xip>`, or `xless setup --docker --xcode …` for xless run --docker; from the cached SDK export no .xip is "
+            + "needed: `xless setup --sdk <export>`); or change the pin to 27.0")
     for bad in ["26.2b", "", "x", "1.2.3.4", "26..2"] {
         #expect(throws: XlessError.self) { try XcodePin.validate(bad, file: "xless.yml") }
     }

@@ -90,15 +90,22 @@ STUB
 cat > "$t/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 S="$STUB_DIR"
+# the context it was given ("-": none), for each call; its contexts: default and colima-xless
+if [[ "${1:-}" == --context ]]; then echo "$2 $3" >> "$S/contexts"; shift 2; else echo "- ${1:-}" >> "$S/contexts"; fi
 case "$1" in
+  context) printf 'default\ncolima-xless\n'; exit 0 ;;
   image) echo c0ffee; exit 0 ;;
+  # the pack volumes, made by hand (no label: a listing filtered by xless's label finds none; xless finds them by name)
+  # (STUB_ODD_VOLUME_ONCE: the first listing has only a volume that is no pack's by its name, as xless reads one)
+  volume) [[ "${STUB_ODD_VOLUME_ONCE:-0}" != 1 || -e "$S/odd-listed" ]] || { touch "$S/odd-listed"; printf 'xless-xcode-my-backup-arm64\n'; exit 0; }
+          [[ "$*" == *label=* ]] || printf 'xless-xcode-26.2-17C52-arm64\nxless-xcode-26.2-17C52-amd64\n'; exit 0 ;;
   ps) [[ -e "$S/container" ]] && echo "c0ffee$(cat "$S/container")" ; exit 0 ;;
   inspect)
     if [[ "$2" == *sign ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; else mounts='[{"Destination": "/work"}]'; fi
     if [[ "$2" == *build && "${STUB_LEAK_DOCKER:-0}" == 1 ]]; then mounts='[{"Destination": "/work"}, {"Destination": "/secrets/store"}]'; fi
     # as the swift base image has it: the fingerprint of the public key its tarballs are verified with
     key="${STUB_SIGNING_KEY:-52BB7E3DE28A71BE22EC05FFEF80A866B47A981F}"
-    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:local\", \"Env\": [\"PATH=/usr/bin\", \"SWIFT_SIGNING_KEY=$key\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
+    echo "[{\"Id\": \"$2\", \"Config\": {\"Image\": \"xless:0.9.0-arm64\", \"Env\": [\"PATH=/usr/bin\", \"SWIFT_SIGNING_KEY=$key\", \"XLESS_BUILD_NUMBER=7\"]}, \"Mounts\": $mounts, \"Args\": [\"xless\", \"ship\"]}]" ;;
   *) echo "stub docker: $*" >&2; exit 99 ;;
 esac
 STUB
@@ -128,8 +135,8 @@ kit() {   # NAME ARGS…: runs the kit in scenario NAME (its own state, stub acc
     XLESS_M7_CONTACT_FIRST=Rita XLESS_M7_CONTACT_LAST=Reviewer XLESS_M7_CONTACT_PHONE="+55 11 5555 0100" \
     XLESS_M7_CONTACT_EMAIL=rev@example.com \
     STUB_LOGIN_FAIL="${STUB_LOGIN_FAIL:-0}" STUB_SAVED_SESSION="${STUB_SAVED_SESSION:-0}" STUB_LEAK_ENV="${STUB_LEAK_ENV:-0}" STUB_LEAK_TRACE="${STUB_LEAK_TRACE:-0}" STUB_LIVE_FAIL="${STUB_LIVE_FAIL:-0}" \
-    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" \
-    ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} \
+    STUB_NO_REDACT="${STUB_NO_REDACT:-0}" STUB_LEAK_DOCKER="${STUB_LEAK_DOCKER:-0}" STUB_SIGNING_KEY="${STUB_SIGNING_KEY:-}" STUB_RUN_FAIL_ONCE="${STUB_RUN_FAIL_ONCE:-0}" STUB_ODD_VOLUME_ONCE="${STUB_ODD_VOLUME_ONCE:-0}" \
+    ${DEVICE:+XLESS_M7_DEVICE_UDID=$DEVICE} ${DOCKER_CONTEXT:+DOCKER_CONTEXT=$DOCKER_CONTEXT} \
     bash "$repo/scripts/acceptance-m7.sh" "$@" >"$t/$name/out" 2>"$t/$name/err" </dev/null || code=$?
 }
 calls() { grep -c -- "$2" "$t/$1/stub/log" || true; }
@@ -189,6 +196,11 @@ for i in 6 7 9; do grep -q "^| $i | .* | \*\*PASS\*\*" "$r" || fail "step $i is 
 [[ $(calls main '^release publish') == 1 ]] || fail "not published once"
 { grep -q 'run --docker .* --to finalize' "$t/main/stub/log" && grep -q 'run --docker .* --from sign' "$t/main/stub/log"; } || fail "the docker run was not split"
 grep -q 'container c0ffeebuild .*mounts=/work env=' "$r" || fail "the build container was not inspected: $(grep -n container "$r")"
+# step 8's docker is the one xless run --docker uses (scripts/docker-context.sh): colima-xless here, for every look at it
+for call in ps inspect volume image; do
+  grep -q "^colima-xless $call\$" "$t/main/stub/contexts" || fail "step 8 did not use colima-xless for docker $call: $(sort "$t/main/stub/contexts" | uniq -c)"
+done
+if grep -v '^colima-xless \|^- context$' "$t/main/stub/contexts"; then fail "step 8 looked at another docker"; fi
 for c in 'team list --verbose' 'keys list --team <redacted> --verbose' 'apps list --team <redacted> --verbose'; do
   grep -qF "\`xless $c\`: 3 trace line(s), 0 finding(s)" "$r" || fail "the trace of '$c' was not scanned: $(grep 'trace line' "$r")"
 done
@@ -225,14 +237,23 @@ mkdir -p "$t/dock/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dock/stub/review"
 STUB_LEAK_DOCKER=1 kit dock
 [[ $code == 1 ]] || fail "docker leak: exit $code"
 grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dock/record.md" || fail "a build container with the store passed step 8"
+# a DOCKER_CONTEXT that docker does not have fails step 8 before anything runs, as xless would refuse it
+before=$(grep -c '^run-build ' "$t/dock/stub/log")
+DOCKER_CONTEXT=gone kit dock
+[[ $code == 1 ]] || fail "a DOCKER_CONTEXT docker does not have: exit $code"
+grep -q '^| 8 | .* | \*\*FAIL\*\*.*DOCKER_CONTEXT is gone (set in the environment), but docker has no context of that name' "$t/dock/record.md" \
+  || fail "the missing context is not step 8's failure: $(grep '^| 8 |' "$t/dock/record.md")"
+[[ $(grep -c '^run-build ' "$t/dock/stub/log") == "$before" ]] || fail "xless run --docker ran with a missing context"
 kit dock   # step 8 starts again: its failure is not judged a second time from the old containers
 [[ $code == 0 ]] || fail "step 8 again without the leak: exit $code: $(tail -5 "$t/dock/err")"
 builds=(); while IFS= read -r line; do builds+=("$line"); done < <(grep '^run-build ' "$t/dock/stub/log" | tail -4)   # two halves, then two halves
 [[ ${#builds[@]} == 4 && "${builds[0]}" == "${builds[1]}" && "${builds[2]}" == "${builds[3]}" && "${builds[1]}" != "${builds[2]}" ]] ||
   fail "step 8 did not run again with a new build number: ${builds[*]}"
 mkdir -p "$t/dockkey/stub"; echo PENDING_DEVELOPER_RELEASE > "$t/dockkey/stub/review"
-STUB_SIGNING_KEY=not-a-fingerprint kit dockkey
+STUB_SIGNING_KEY=not-a-fingerprint STUB_ODD_VOLUME_ONCE=1 kit dockkey
 [[ $code == 1 ]] || fail "SWIFT_SIGNING_KEY holding something else: exit $code"
+# (and a volume whose name is no pack's, as xless reads one, is not taken for the pack step 8 needs)
+grep -q 'There is no xless image of this xless, or no Xcode pack' "$t/dockkey/record.md" "$t/dockkey/out" "$t/dockkey/err" || fail "xless-xcode-my-backup-arm64 was taken for a pack"
 grep -q '^| 8 | .* | \*\*FAIL\*\*' "$t/dockkey/record.md" || fail "SWIFT_SIGNING_KEY holding something else passed step 8"
 
 # 6. --contract alone: a FAIL from live-check stops with 1, recorded; without `secrets redact` the fallback redacts.

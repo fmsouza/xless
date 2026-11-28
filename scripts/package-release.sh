@@ -91,7 +91,7 @@ fi
 cp "$root/LICENSE" "$stage/LICENSE"
 echo "$version" > "$share/VERSION"
 cp "$root/versions.env" "$share/versions.env"
-for s in docker-images xcode-swift testflight native-toolchain; do install -m 755 "$root/scripts/$s.sh" "$share/scripts/$s.sh"; done
+for s in docker-images xcode-swift testflight fit-toolchain pack-swift-build pack-check; do install -m 755 "$root/scripts/$s.sh" "$share/scripts/$s.sh"; done
 # The reference credential helpers (`secrets: { backend: helper }`, docs/secrets.md): users put them on PATH.
 for h in pass secret-tool; do install -m 755 "$root/scripts/credential-helpers/xless-credential-$h" "$share/credential-helpers/xless-credential-$h"; done
 

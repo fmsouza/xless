@@ -10,28 +10,38 @@ public struct SwiftBuildEnvironment: Sendable {
     /// The image's shim directory (`XLESS_SHIM_DIR`): `xless-ld64` (the linker) and `swift-build/` (tools Swift Build
     /// must find before the toolchain's: `strip`, `embeddedBinaryValidationUtility`).
     public let shimDirectory: URL
-    /// Headers Apple's clang finds in the toolchain's `usr/include` (Swift's `swift/bridging` and its module map),
-    /// from this Swift toolchain (`XLESS_TOOLCHAIN_INCLUDE`).
+    /// Headers Apple's clang finds in the toolchain's `usr/include` (Swift's `swift/bridging` and its module map), of
+    /// the Xcode's Swift toolchain (`XcodeEnvironment.include`).
     public let toolchainInclude: URL
-    /// The Swift toolchain that compiles (Ruling R10: the one the image's Xcode ships); nil: the `swift` on PATH.
+    /// The Swift toolchain that compiles (Ruling R10: the one the Xcode ships); nil: the `swift` on PATH.
     public let swift: SwiftToolchain?
+    /// Swift Build's `swbuild` (`XcodeEnvironment.swbuild`); nil: the one on the build's PATH.
+    public let swbuild: URL?
 
-    public init(sdk: DarwinSDK, shimDirectory: URL, toolchainInclude: URL, swift: SwiftToolchain? = nil) {
+    public init(sdk: DarwinSDK, shimDirectory: URL, toolchainInclude: URL, swift: SwiftToolchain? = nil, swbuild: URL? = nil) {
         self.sdk = sdk
         self.shimDirectory = shimDirectory
         self.toolchainInclude = toolchainInclude
         self.swift = swift
+        self.swbuild = swbuild
     }
 
-    /// From the image's environment; refuses when the React Native image's shims are not installed.
+    /// The Xcode's (`XcodeEnvironment`, with Swift Build) and the shims of this machine; refuses without either.
     public static func fromProcess(_ env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage) throws -> SwiftBuildEnvironment {
-        guard let shims = env["XLESS_SHIM_DIR"], !shims.isEmpty, let include = env["XLESS_TOOLCHAIN_INCLUDE"], !include.isEmpty else {
-            throw XlessError(stage, "XLESS_SHIM_DIR or XLESS_TOOLCHAIN_INCLUDE is not set: this is not one of xless's images",
-                             fix: "run in an image that xless setup --docker builds: it has Swift Build's tool shims")
+        guard let shims = env["XLESS_SHIM_DIR"], !shims.isEmpty else {
+            throw XlessError(stage, "the Xcode tool shims are not installed on this machine (XLESS_SHIM_DIR)",
+                             fix: "build in Docker, where the xless image has them: xless setup --docker --xcode <path to Xcode's .xip>, then xless run --docker")
         }
-        return SwiftBuildEnvironment(sdk: DarwinSDK(bundle: DarwinSDKLocator.bundle(env: env)),
-                                     shimDirectory: URL(fileURLWithPath: shims), toolchainInclude: URL(fileURLWithPath: include),
-                                     swift: try SwiftToolchain.load(env: env, stage: stage))
+        let xcode: XcodeEnvironment
+        do { xcode = try XcodeEnvironment.current(env: env, needs: [.sdk, .swiftBuild]) } catch let problem as XcodeProblem {
+            throw problem.stageError(stage)
+        }
+        guard let include = xcode.include else {
+            throw XlessError(stage, "the Swift toolchain's include directory is not known (no Xcode pack, and XLESS_TOOLCHAIN_INCLUDE is not set)",
+                             fix: "xless setup --xcode <path to Xcode's .app or .xip>")
+        }
+        return SwiftBuildEnvironment(sdk: DarwinSDK(bundle: xcode.sdkBundle), shimDirectory: URL(fileURLWithPath: shims), toolchainInclude: include,
+                                     swift: try xcode.loadToolchain(stage: stage), swbuild: xcode.swbuild)
     }
 
     /// The Swift SDK toolset Swift Build reads (`SWIFT_SDK_TOOLSETS`): the SDK's own (`toolset-swb.json`: `llvm-lib`

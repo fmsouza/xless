@@ -14,13 +14,18 @@
 # (host build) reads them and the reference's recorded catalogs with `xcrun assetutil --info` (Opaque, colour space,
 # pixel size, … per rendition; docs/research/parity-known-gaps.md, "Asset catalog comparison"). Elsewhere it is skipped.
 # Variables: ARCH (arm64 or amd64; default the host's: ARCH=amd64 on an arm64 Mac runs the amd64 chain under emulation),
-#   XLESS_IMAGE (default xless:local-<arch>-xcode<versions.env's>-tauri), DOCKER_CONTEXT (default colima-xless if it exists).
+#   XLESS_XCODE_PIN (default versions.env's XCODE_VERSION): the Xcode whose pack the container gets, read-only, as xless run gives it
+#   (its volume xless-xcode-<XLESS_XCODE_PIN>-<build>-<arch>, or its directory in XLESS_XCODES), e.g. XLESS_XCODE_PIN=26.2;
+#   XLESS_IMAGE (default xless:<this checkout's tag>-<arch>-tauri, which xless setup --docker --with tauri builds),
+#   DOCKER_CONTEXT (default colima-xless if it exists).
 # The repository is mounted read-only; the work copy lives in the xless-work volume, Rust toolchains in xless-rustup and
 # xless-cargo (the first run downloads them and builds the Rust code, which takes a few minutes; later runs are faster).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-ctx="${DOCKER_CONTEXT:-}"
-if [[ -z "$ctx" ]] && docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx 'colima-xless'; then ctx=colima-xless; fi
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$root/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
+ctx="$(docker_context test-tauri-linux)" || exit 2
+[[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 vsuf=""; plat=()   # ARCH=amd64|arm64 runs the image of that architecture (under emulation when it is not the host's)
 if [[ -n "${ARCH:-}" ]]; then
@@ -28,8 +33,9 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's work copy and Rust toolchains stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-xcode="$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")"
-image="${XLESS_IMAGE:-xless:local-$arch-xcode$xcode-tauri}"   # xless setup --docker --with tauri builds it
+xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}"   # the Xcode whose pack builds (XLESS_XCODE_PIN=26.2: that pin's; not XCODE, the Xcode.app the Makefile exports for make images)
+[[ "$xcode" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "test-tauri-linux: XLESS_XCODE_PIN must be an Xcode version such as 26.2, not $xcode" >&2; exit 2; }
+image="${XLESS_IMAGE:-xless:$("$root/scripts/docker-images.sh" tag --arch "$arch")-$arch-tauri}"   # xless setup --docker --with tauri builds it
 platform=ios
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,10 +47,13 @@ done
 [[ "$platform" == ios || "$platform" == macos ]] || { echo "--platform must be ios or macos" >&2; exit 2; }
 args=(docker)
 [[ -z "$ctx" ]] || args+=(--context "$ctx")
+# shellcheck source=SCRIPTDIR/xcode-pack-args.sh
+. "$root/scripts/xcode-pack-args.sh"   # pack_args: the Xcode's pack, read-only, as xless run gives it
+pack_args test-tauri-linux
 
 # The in-container script reads the same XLESS_BUILD_NUMBER from the environment, never contacting App Store Connect. The overlay
 # is `build: dated`, so the override is a dated build of the sample's version (1.0.0).
-"${args[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
+"${args[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} "${pack[@]}" -v "$root":/repo:ro -v "xless-work$vsuf":/cache/work -v "xless-rustup$vsuf":/cache/rustup -v "xless-cargo$vsuf":/cache/cargo \
   -e XLESS_BUILD_NUMBER="$([[ $platform == macos ]] && echo 1.0.0.202601010000 || echo 1.0.0.2026010101)" -e PLATFORM="$platform" \
   "$image" bash -s <<'IN'
 set -euo pipefail

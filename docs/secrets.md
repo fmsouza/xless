@@ -104,7 +104,8 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
 - **With `--docker`**, the store is not in any container. Before the first step, the xless on your machine (asking the
   passphrase once) writes the secrets each container needs into a fresh `$XDG_RUNTIME_DIR/xless/<random>/` (a tmpfs on
   systemd hosts: never on disk), one directory per container (step 1 gets the App Store Connect key; step 3, or the
-  project's one container, that key and the signing keys; the macOS App-Store ship its own two keys), directories 0700
+  project's one container, which builds too ([security.md](security.md#a-build-that-means-harm)), that key and the
+  signing keys; the macOS App-Store ship its own two keys), directories 0700
   and files 0600. Each directory is mounted read-only into its container only (`/secrets/store`, with
   `NAME_FILE=/secrets/store/NAME`) and removed when that container ends; the rest goes when the run ends, on an error
   and when it is stopped (by any signal but SIGKILL). The build container (step 2) never sees them, and the run refuses
@@ -113,8 +114,14 @@ come from one place: set all of them, or none (`ASC_KEY_ID` without `ASC_KEY_P8_
   `~/.cache/xless/secrets/<random>/` (under your home directory, which Colima and Docker Desktop share with their VM)
   for the length of the run. The run does this with `xless secrets materialize` (not listed in `--help`).
 - **The TestFlight demo account's password** (a run that uploads with `testflight.external.review.demoAccount` in
-  [xless.yml](xless-yml.md#testflight) or the overlay) goes to the container that uploads only: step 3, the project's
-  one container, or the macOS App-Store ship; never to step 1 or the build. Its secret is `passwordSecret`
+  [xless.yml](xless-yml.md#testflight) or the overlay) is handed to the container that uploads only: an overlay's step 3,
+  the container that signs and uploads for a project whose build has an image of its own, the project's one container
+  otherwise, or the macOS App-Store ship; never to step 1 or to a build's container of its own. The project's one
+  container builds too: the build's tools start there without the variable, but the file is in their container, and
+  their code can read it ([security.md](security.md#a-build-that-means-harm)). Natively no step is handed a file: the
+  xless that uploads reads the variable, its file or the store itself, the build's tools start without the variable, and
+  a `NAME_FILE` that your user can read, the build's code can read (but for an overlay app's build on a Mac, whose sandbox
+  opens no home directory: [security.md](security.md#an-overlays-build-on-a-mac)). Its secret is `passwordSecret`
   (`XLESS_DEMO_PASSWORD` by default), a name of your own if you like (`NAME@<TEAM_ID>` too; not a key's or token's,
   nor a variable the system or xless uses, such as `PATH`, `HOME`, `ENV` or `XLESS_*`); the xless on your machine
   reads it from the configuration (`xless secrets named-by`, not listed in `--help`). `NAME_FILE` wins, mounted

@@ -5,15 +5,17 @@ import XlessImages
 import XlessSDK
 
 /// `xless setup`: on a Mac, by default, a check of the Xcode that is installed there, which a native build uses (nothing is
-/// downloaded or changed); on Linux, by default, a native install of what the images carry (`NativeSetupPlan`: xtool, rcodesign,
-/// the Xcode's open-source Swift, the Darwin SDK exported from the Xcode), with no Docker and no sudo. With `--docker`,
-/// the image xless:local-<arch>-xcode<version> from an Xcode .xip or Xcode.app, with Docker and nothing else: no Mac, no Apple
-/// binary executed (xtool reads the Xcode in a container), no checkout. `--with` adds the kits: what Tauri, Cargo, React Native
-/// and Expo apps need on top of it, which `xless run --docker` otherwise builds when it needs them.
+/// downloaded or changed); on Linux, by default, a native install of what the images carry (`NativeSetupPlan`: xtool and
+/// rcodesign, and the Xcode pack of the Xcode, with its open-source Swift and the Darwin SDK exported from it), with no
+/// Docker and no sudo. With `--docker`,
+/// the image of this xless, xless:<version>-<arch> (no Xcode goes into it), and the Xcode pack of an Xcode .xip or Xcode.app
+/// prepared by that image's own setup in a container, into a volume: Docker and nothing else, no Mac, no Apple binary
+/// executed (xtool reads the Xcode in the container), no checkout. `--with` adds the kits: what Tauri, Cargo, React Native
+/// and Expo apps need on top of the image, which `xless run --docker` otherwise builds when it needs them.
 struct SetupCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup",
-        abstract: "Install xless's toolchain and Apple's SDK natively from an Xcode .xip (on a Mac: check the installed Xcode), or build the xless image with --docker.",
+        abstract: "Prepare an Xcode's pack (its SDK, with the Swift toolchain fitted to it) natively from its .xip (on a Mac: check the installed Xcode), or with --docker the xless image and the pack in a Docker volume.",
         discussion: """
         On a Mac, without --docker, it checks the Xcode that native builds use (DEVELOPER_DIR, xcode-select or /Applications; \
         --xcode <Xcode.app> checks that one) and says which tools they run. It downloads and changes nothing. The rest is for \
@@ -28,21 +30,30 @@ struct SetupCommand: AsyncParsableCommand {
         cache's export when exactly one holds the architectures it sets up. Nothing is exported then, so the cache's \
         free-space check is skipped.
 
-        Native (the default, Linux only): xtool, rcodesign and the open-source Swift toolchain of that Xcode's Swift are \
-        downloaded (each checked against versions.env's sha256) into $XLESS_NATIVE_HOME (default \
-        $XDG_DATA_HOME/xless-native, else ~/.local/share/xless-native), the SDK is installed for xtool and SwiftPM, and the \
-        toolchain is fitted to it. No Docker and no sudo; the host commands it needs (\(NativeSetupPlan.requiredCommands.joined(separator: ", "))) \
-        are checked first, and free space: XLESS_SETUP_CACHE_GB under the cache (only when the SDK is exported) and \
-        XLESS_SETUP_NATIVE_GB under the native home. One Xcode at a time: the last setup wins.
+        Native (the default, Linux only): xtool and rcodesign are downloaded (each checked against versions.env's sha256) into \
+        $XLESS_NATIVE_HOME (default $XDG_DATA_HOME/xless-native, else ~/.local/share/xless-native), and the Xcode pack of \
+        that Xcode is prepared in the store, $XLESS_XCODES (default the native home's xcodes/): the open-source Swift \
+        toolchain of that Xcode's Swift, the SDK installed for xtool and SwiftPM, the toolchain fitted to it. Several Xcodes \
+        live side by side, one pack each; a project's xcode: picks one, else the newest is used. A pack is prepared beside \
+        its place and put there whole, so a failed setup leaves the pack that was there; a second setup of the same pack \
+        waits for the first. The store must be on a case-sensitive file system. No Docker and no sudo; the host commands it \
+        needs (\(NativeSetupPlan.requiredCommands.joined(separator: ", "))) are checked first, and free space: \
+        XLESS_SETUP_CACHE_GB under the cache (only when the SDK is exported) and XLESS_SETUP_NATIVE_GB under the store (only \
+        when a pack is prepared).
 
-        --docker: the image xless:local-<arch>-xcode<version>, one per Xcode and architecture. --with adds the kits on top of \
-        it: tauri (Tauri and Cargo apps) and react-native (React Native and Expo apps), comma separated; xless run --docker builds \
-        the one it needs by itself. --with without --xcode and --sdk adds them to the image that is already there (the newest \
-        Xcode's). The Linux xless that goes into the image: \
-        XLESS_BIN_ARM64 / XLESS_BIN_AMD64 when set, else this xless on a Linux host of that arch, else the release's linux \
-        tarball, checked against its SHA256SUMS. Before any step it checks that Docker answers, that buildx is installed, \
-        and that there is free space, per architecture: XLESS_SETUP_CACHE_GB under the cache (only when the SDK is \
-        exported) and, on Linux, XLESS_SETUP_DOCKER_GB under Docker's data root.
+        --docker: the image of this xless, xless:<version>-<arch>, one per xless and architecture, with nothing of an Xcode in \
+        it (built unless it is there), and the Xcode pack, prepared by that image's own xless setup in a container: in the \
+        volume xless-xcode-<version>-<build>-<arch> (one per pack), or in the directory XLESS_XCODES names. The container \
+        mounts the Xcode read-only, the SDK export of the cache (written when it is exported there), and the store; nothing \
+        else of this machine. The pack is left as it is when it is current (its recipes are this xless's), so a new xless \
+        reuses it; a part that is not is prepared again alone. --with adds the kits on top of the image: tauri (Tauri and \
+        Cargo apps) and react-native (React Native and Expo apps), comma separated; xless run --docker builds the one it needs \
+        by itself. With neither --xcode nor --sdk, --with adds them to the image, and with no SDK export in the cache either \
+        setup builds the image alone. The Linux xless that goes into the image: XLESS_BIN_ARM64 / XLESS_BIN_AMD64 when set, \
+        else this xless on a Linux host of that arch, else, for a checkout, the one the image compiles from it, else the \
+        release's linux tarball, checked against its SHA256SUMS. Before any step it checks that Docker answers, that buildx \
+        is installed, and that there is free space, per architecture: XLESS_SETUP_CACHE_GB under the cache (only when the \
+        SDK is exported) and, on Linux, XLESS_SETUP_DOCKER_GB under Docker's data root.
 
         Each figure is versions.env's; an environment variable of the same name wins. --dry-run prints the plan and what \
         the disk check asks for, and runs nothing.
@@ -51,7 +62,7 @@ struct SetupCommand: AsyncParsableCommand {
     @Option(help: "The Xcode: a downloaded Xcode .xip (any name) or an Xcode.app. Not needed once its SDK is exported (see --sdk).") var xcode: String?
     @Option(help: ArgumentHelp("Set up from this SDK export instead of an Xcode: a directory an earlier setup exported into (e.g. ~/.cache/xless/sdk/xcode27.0-27A266a). Without --xcode or --sdk: the cache's one export.",
                                valueName: "dir")) var sdk: String?
-    @Flag(help: "Build the xless Docker image instead of installing natively.") var docker = false
+    @Flag(help: "Build the xless Docker image, and prepare the Xcode's pack in a container of it, instead of installing natively.") var docker = false
     @Option(parsing: .upToNextOption, help: "With --docker: architectures arm64 and/or amd64 (default: this machine's).") var arch: [String] = []
     @Option(help: ArgumentHelp("With --docker: also build the kits for these kinds of app, comma separated (\(Kit.names.joined(separator: ", "))).", valueName: "kinds")) var with: String?
     @Flag(help: "Export the SDK again even when an export of this Xcode exists (needs --xcode).") var reexport = false
@@ -88,7 +99,7 @@ struct SetupCommand: AsyncParsableCommand {
             }
             guard arch.allSatisfy({ $0 == Self.hostArch }) else {
                 throw XlessError(.sdk, "--arch \(arch.joined(separator: " ")) needs --docker: a native setup installs for this machine (\(Self.hostArch)) only",
-                                 fix: "drop --arch, or add --docker to build the images for those architectures")
+                                 fix: "drop --arch, or add --docker to set up the xless image and the Xcode packs for those architectures")
             }
             guard Self.isLinux else { return try macSetup() }
         }
@@ -110,24 +121,27 @@ struct SetupCommand: AsyncParsableCommand {
 
         let table = KnownXcodes.parseEnv((try? String(contentsOf: versionsEnv, encoding: .utf8)) ?? "")
         let cacheRoot = SetupPlan.cacheRoot(env: env, home: home)
-        // --with alone: on the images that are here, when there is one for each architecture.
-        if !kits.isEmpty, xcode == nil, sdk == nil, let bases = try? archs.map({ try LocalImages.here.base(arch: $0, pin: nil).image }) {
-            return try runKits(kits, on: bases, share: share)
-        }
-        let source: XcodeSource.Identified
+        let source: XcodeSource.Identified?
         if let xcode {
             if !dryRun { say("==> identifying \(xcode)") }
             source = try XcodeSource.identify(path: xcode, known: known, cwd: cwd, home: home)
         } else if let sdk {
             source = try XcodeSource.identifyExport(path: sdk, known: known, cwd: cwd, home: home)
+        } else if docker, !kits.isEmpty || !Self.hasExports(cacheRoot) {
+            // The image needs no Xcode: --with alone adds the kits to it, and with no export to prepare a pack from, it is built alone.
+            source = nil
         } else {
             source = try XcodeSource.findExport(cacheRoot: cacheRoot, known: known, archs: archs)
         }
-        // An export is reused as it is: every architecture this run sets up must already be in it.
-        if source.kind == .export { try XcodeSource.checkExport(source.url, holds: archs) }
+        if let source {
+            // Before anything is downloaded, built or started: an Xcode that no pack can be prepared of.
+            try XcodeSupport.require(source.xcode, known: known, table: table, share: share)
+            // An export is reused as it is: every architecture this run sets up must already be in it.
+            if source.kind == .export { try XcodeSource.checkExport(source.url, holds: archs) }
+        }
         if docker {
             try dockerSetup(source: source, archs: archs, kits: kits, env: env, exe: exe, share: share, home: home, cwd: cwd, table: table, cacheRoot: cacheRoot)
-        } else {
+        } else if let source {
             try nativeSetup(source: source, env: env, share: share, table: table, cacheRoot: cacheRoot)
         }
     }
@@ -163,108 +177,185 @@ struct SetupCommand: AsyncParsableCommand {
 
     private func nativeSetup(source: XcodeSource.Identified, env: [String: String], share: URL, table: [String: String], cacheRoot: URL) throws {
         let fm = FileManager.default
-        let x = source.xcode, layout = NativeLayout(env: env)
-        let sdkBundle = DarwinSDKLocator.bundle(env: env), metaDest = ToolchainMeta.defaultLocation(env: env)
-        let installed: NativeSetupPlan.Installed? = {
-            guard fm.fileExists(atPath: sdkBundle.path), let meta = try? ToolchainMeta.load(from: metaDest),
-                  let data = fm.contents(atPath: layout.record.path), let swift = try? JSONDecoder().decode(SwiftToolchain.self, from: data)
-            else { return nil }
-            return .init(xcodeBuild: meta.xcodeBuild, swiftVersion: swift.version)
-        }()
-        let steps = try NativeSetupPlan.make(source: source, arch: Self.hostArch, share: share, cacheRoot: cacheRoot, layout: layout,
-                                             sdkBundle: sdkBundle, metaDest: metaDest, table: table, reexport: reexport,
-                                             installed: installed, existing: { fm.fileExists(atPath: $0.path) })
-        let exporting = steps.contains { if case .export = $0.action { true } else { false } }
-        let need = SetupDisk.nativeNeeds(exporting: exporting, env: env, table: table)
+        let x = source.xcode, layout = NativeLayout(env: env), store = XcodeStore(env: env), arch = Self.hostArch
+        let version = XcodeVersion.canonical(x.shortVersion)
+        let name = XcodePack.name(xcode: version, build: x.build, arch: arch)
+        let abilities = PackPlan.abilities(env: env)
+        func plan() throws -> [SetupStep] {
+            try NativeSetupPlan.make(source: source, arch: arch, share: share, cacheRoot: cacheRoot, layout: layout, store: store,
+                                     table: table, reexport: reexport, abilities: abilities,
+                                     installed: { NativeSetupPlan.pinnedOnPath($0, version: $1, path: env["PATH"]) },
+                                     existing: { fm.fileExists(atPath: $0.path) })
+        }
+        var steps = try plan()
+        let need = Self.nativeNeeds(steps, env: env, table: table)
         let missing = NativeSetupPlan.requiredCommands.filter { Self.which($0, path: env["PATH"]) == nil }
 
-        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(Self.origin(source)), natively for \(Self.hostArch) into \(layout.root.path); SDK in \(SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot).path)")
+        say("==> Xcode \(version) (\(x.build)) from \(Self.origin(source)), natively for \(arch): the pack \(name) in \(store.root.path); "
+            + "tools in \(layout.root.path); SDK export in \(SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot).path)")
         if dryRun {
             say("dry run: the plan, nothing runs")
             if !missing.isEmpty { say("missing commands: \(missing.joined(separator: ", ")) (\(NativeSetupPlan.aptLine))") }
-            say("disk: the check asks for about \(need.cache.spoken) free under \(cacheRoot.path) (\(need.cache.key)) and \(need.native.spoken) under \(layout.root.path) (\(need.native.key))")
+            say("disk: the check asks for about \(need.cache.spoken) free under \(cacheRoot.path) (\(need.cache.key)) and \(need.store.spoken) under \(store.root.path) (\(need.store.key))")
             for (n, s) in steps.enumerated() {
                 say("[\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
                 say("    " + s.argv.map(ShellWord.quoted).joined(separator: " "))
             }
-            if steps.isEmpty { say("nothing to do: Xcode \(x.shortVersion) is installed") }
+            if steps.isEmpty { say("nothing to do: the pack \(name) is current") }
             return
         }
         guard missing.isEmpty else {
             throw XlessError(.sdk, "a native setup needs \(missing.joined(separator: ", ")), which \(missing.count == 1 ? "is" : "are") not on PATH",
-                             fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build the images instead: xless setup --docker\(sourceArgs)")
+                             fix: "install them (Debian/Ubuntu: \(NativeSetupPlan.aptLine)), or build in Docker instead: xless setup --docker\(sourceArgs)")
         }
-        if need.cache.totalGB > 0 {
-            try Self.checkFree(cacheRoot, need: need.cache, what: "the cache (the SDK export, which expands the .xip there)",
-                               fix: "free some space, or set XDG_CACHE_HOME to a directory on a larger disk")
+        // Before anything is written into the store: the SDK has headers whose names differ only in case.
+        try PackStore.requireCaseSensitive(store)
+        // A second setup of this pack waits for the first, then finds what it left.
+        let lock: PackLock
+        do { lock = try PackLock(store: store, name: name, wait: false) } catch is PackLock.Busy {
+            say("==> waiting for another xless setup, which is preparing the pack \(name) (it holds \(PackLock.file(store: store, name: name).path))")
+            lock = try PackLock(store: store, name: name, wait: true)
         }
-        if !steps.isEmpty {
-            try Self.checkFree(layout.root, need: need.native, what: "the native install (the Swift toolchain, xtool, rcodesign and the SDK)",
-                               fix: "free some space, or set XLESS_NATIVE_HOME to a directory on a larger disk")
-        }
+        try withExtendedLifetime(lock) {
+            for back in try PackStore.recoverAll(store, holding: name) {
+                say("==> the pack \(back) is back in place: a setup had stopped while it replaced it")
+            }
+            // An Xcode installed natively by an xless of before the packs: its SDK and toolchain record, and no pack.
+            let old = DarwinSDKLocator.bundle(env: env)
+            let olderInstall = store.packs().isEmpty && !layout.olderInstall(env: env).isEmpty
+            if olderInstall {
+                say("note: the Xcode that an older xless installed natively (the SDK in \(old.deletingLastPathComponent().path), the Swift toolchain under \(layout.toolchains.path)) is not used any more: this setup prepares an Xcode pack instead")
+            }
+            steps = try plan() // what the setup that held the lock left changes it
+            let need = Self.nativeNeeds(steps, env: env, table: table)
+            if need.cache.totalGB > 0 {
+                try Self.checkFree(cacheRoot, need: need.cache, what: "the cache (the SDK export, which expands the .xip there)",
+                                   fix: "free some space, or set XDG_CACHE_HOME to a directory on a larger disk")
+            }
+            if need.store.totalGB > 0 {
+                try Self.checkFree(store.root, need: need.store, what: "the Xcode pack (the Swift toolchain and the SDK)",
+                                   fix: "free some space, or set XLESS_XCODES to a directory on a larger disk")
+            }
 
-        say("    (\(SetupPlan.estimateNote))")
-        let start = Date()
-        for (n, s) in steps.enumerated() {
-            say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
-            let t0 = Date()
-            try execute(s, xcode: x, layout: layout)
-            say("    done in \(Self.minutes(since: t0))")
+            if !steps.isEmpty { say("    (\(SetupPlan.estimateNote))") }
+            let start = Date()
+            let staging = PackPlan.staging(of: store.directory(xcode: version, build: x.build, arch: arch))
+            let checks = SetupStep.inUseChecks(steps)
+            // The docker it asks whether a running build uses the pack, as every xless command chooses it: only a setup that asks.
+            if !checks.isEmpty { try HostDocker.check() }
+            do {
+                for (n, s) in steps.enumerated() {
+                    // Not under a running xless docker build that mounts this store (XLESS_XCODES): asked before the first step,
+                    // and again right before the pack is replaced.
+                    if checks.contains(n) {
+                        let target = SetupStep.PackTarget(store: .directory(store.root), xcode: version, build: x.build, arch: arch)
+                        do { try target.refuseInUseWhereDockerAnswers(LocalImages.hereDocker) } catch let problem as ImageProblem {
+                            throw XlessError(.sdk, problem.cause, fix: problem.fix) // the staging directory is discarded below
+                        }
+                    }
+                    say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
+                    let t0 = Date()
+                    try execute(s, xcode: x, layout: layout)
+                    say("    done in \(Self.minutes(since: t0))")
+                }
+            } catch {
+                // Nothing half-prepared stays beside the pack, which is as it was.
+                try? PackPlan.discard(staging: staging)
+                throw error
+            }
+            if steps.isEmpty { say("==> nothing to do: the pack \(name) of Xcode \(version) (\(x.build)) is current" + (source.kind == .export ? "" : " (--reexport exports the SDK again)")) }
+            else { say("==> done in \(Self.minutes(since: start)): the pack \(name) of Xcode \(version) (\(x.build)), in \(store.root.path) (pin it with xcode: \"\(version)\")") }
+            if olderInstall { say("note: what the older xless installed is not used: xless clean --old removes it") }
         }
-        if steps.isEmpty { say("==> nothing to do: Xcode \(x.shortVersion) (\(x.build)) is installed natively" + (source.kind == .export ? "" : " (--reexport exports the SDK again)")) }
-        else { say("==> done in \(Self.minutes(since: start)): Xcode \(x.shortVersion) (\(x.build))'s SDK and its Swift are installed natively") }
         say("next: xless run <project-dir> --build-number 1 --to finalize")
+    }
+
+    /// What a native plan needs on disk: the cache when it exports, the store when it prepares a pack.
+    private static func nativeNeeds(_ steps: [SetupStep], env: [String: String], table: [String: String]) -> (cache: SetupDisk.Need, store: SetupDisk.Need) {
+        let exporting = steps.contains { if case .export = $0.action { true } else { false } }
+        let preparing = steps.contains { if case .packBegin = $0.action { true } else { false } }
+        return SetupDisk.nativeNeeds(exporting: exporting, preparing: preparing, env: env, table: table)
     }
 
     // MARK: - Docker
 
-    private func dockerSetup(source: XcodeSource.Identified, archs: [String], kits: [Kit], env: [String: String], exe: URL, share: URL, home: URL, cwd: URL,
+    private func dockerSetup(source: XcodeSource.Identified?, archs: [String], kits: [Kit], env: [String: String], exe: URL, share: URL, home: URL, cwd: URL,
                              table: [String: String], cacheRoot: URL) throws {
+        // Before docker is asked anything: the docker, as every xless command chooses it.
+        try HostDocker.check()
         let fm = FileManager.default
         let host = Self.hostArch
-
-        // The .xip or .app is mounted with -v (an export is a build context instead).
-        guard source.kind == .export || !source.url.path.contains(":") else {
-            throw XlessError(.sdk, "\(source.url.path) contains ':', which docker cannot mount", fix: "move or rename it, then run xless setup again")
-        }
-        let x = source.xcode
         let work = fm.temporaryDirectory.appendingPathComponent("xless-setup-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: work) }
+        let store = PackStore(env: env)
+        // A directory store is checked here, where its path is: the setup container would refuse it as /xcodes.
+        if case let .directory(dir) = store, source != nil, !dryRun { try PackStore.requireCaseSensitive(XcodeStore(root: dir), docker: true) }
+        let tag = try ImageName.cachedTag(ofShare: share)
+        let images = archs.map { ImageName.base(version: tag, arch: $0) }
 
-        // The disk figures are per architecture; the cache one counts only the architectures exported in this run (none
-        // from an export). An environment variable of the same name (e.g. when most layers are already cached) wins over versions.env's.
-        let sdkDir = SetupPlan.sdkDir(source: source, cacheRoot: cacheRoot)
-        let exporting = source.kind == .export ? []
-            : archs.filter { reexport || !fm.fileExists(atPath: sdkDir.appendingPathComponent("\($0)/darwin.xtoolsdk").path) }
+        // The disk figures are per architecture; the cache one counts only the architectures whose SDK is exported in this run
+        // (none from an export). An environment variable of the same name (e.g. when most layers are already cached) wins over versions.env's.
+        let exporting = source.map { s in
+            let dir = SetupPlan.sdkDir(source: s, cacheRoot: cacheRoot)
+            return s.kind == .export ? [] : archs.filter { reexport || !fm.fileExists(atPath: dir.appendingPathComponent("\($0)/darwin.xtoolsdk").path)
+                || !fm.fileExists(atPath: dir.appendingPathComponent("toolchain-meta.json").path) }
+        } ?? []
         let need = SetupDisk.needs(archs: archs.count, exporting: exporting.count, env: env, table: table)
-        var rootless = false
-        if !dryRun { rootless = try Self.preflight(cacheRoot: cacheRoot, need: need) }
+        // Rootless Docker already writes as the calling user from the container's root; `--user` would map to a subuid.
+        let rootless = dryRun ? ((try? Self.dockerInfo())?.rootless ?? false) : try Self.preflight(cacheRoot: cacheRoot, need: need)
+        let missing = archs.filter { (try? LocalImages.here.base(version: tag, arch: $0)) == nil }
         var binaries: [String: URL] = [:]
-        for a in archs { binaries[a] = try binary(arch: a, host: host, env: env, exe: exe, cwd: cwd, home: home, work: work) }
+        for a in missing { binaries[a] = try binary(arch: a, host: host, env: env, exe: exe, cwd: cwd, home: home, work: work, tag: tag) }
 
-        var steps = dryRun ? [] : try Self.retagSteps(xcode: x, archs: archs, env: env)
-        steps += try SetupPlan.make(source: source, archs: archs, hostArch: host, share: share, cacheRoot: cacheRoot,
-                                xlessBinaries: binaries, reexport: reexport, kits: kits, builder: kits.isEmpty ? nil : LocalImages.here.builder, existing: { fm.fileExists(atPath: $0.path) })
-            // Rootless Docker already writes as the calling user from the container's root; `--user` would map to a subuid.
-            .map { rootless ? Self.withoutUser($0) : $0 }
-
-        say("==> Xcode \(x.shortVersion) (\(x.build)) from \(Self.origin(source)), for \(archs.joined(separator: ", ")); SDK in \(sdkDir.path)")
-        say("    (\(SetupPlan.estimateNote))")
+        let plan = try SetupPlan.make(source: source, archs: archs, hostArch: host, share: share, cacheRoot: cacheRoot, table: table,
+                                      xlessBinaries: binaries, store: store, docker: LocalImages.hereDocker, readVolumes: !dryRun, rootless: rootless,
+                                      reexport: reexport, kits: kits, builder: kits.isEmpty ? nil : LocalImages.here.builder, environment: env,
+                                      existing: { fm.fileExists(atPath: $0.path) })
+        let place: String
+        switch store {
+        case .volumes:
+            let x = source.map { (SetupPlan.canonicalVersion($0.xcode.shortVersion), $0.xcode.build) }
+            place = x.map { x in "the volume " + archs.map { PackVolumes.name(xcode: x.0, build: x.1, arch: $0) }.joined(separator: " and ") } ?? "a volume of its own"
+        case let .directory(dir): place = "\(dir.path) (XLESS_XCODES)"
+        }
+        if let x = source?.xcode, let source {
+            say("==> Xcode \(x.shortVersion) (\(x.build)) from \(Self.origin(source)), for \(archs.joined(separator: ", ")): the image \(images.joined(separator: " and ")), and the pack in \(place)")
+        } else {
+            say("==> the image \(images.joined(separator: " and "))" + (kits.isEmpty ? "" : ", and the kits \(kits.map(\.rawValue).joined(separator: ", ")) on it"))
+        }
+        for note in plan.notes { say("==> \(note)") }
+        if !plan.steps.isEmpty { say("    (\(SetupPlan.estimateNote))") }
+        let noPack = source == nil && kits.isEmpty
+            ? "note: no Xcode pack is prepared (no --xcode, and no SDK export in \(cacheRoot.appendingPathComponent("sdk").path)): xless setup --docker --xcode <Xcode .xip or Xcode.app> prepares one"
+            : nil
         if dryRun {
             say("dry run: the plan, nothing runs")
             say("disk: the check asks for about \(need.cache.spoken) free under \(cacheRoot.path) (\(need.cache.key))"
                 + (Self.isLinux ? " and \(need.docker.spoken) under Docker's data root (\(need.docker.key))" : ""))
-            list(steps)
+            list(plan.steps)
+            if plan.steps.isEmpty { say("nothing to do") }
+            if let noPack { say(noPack) }
             return
         }
 
         let start = Date()
-        try run(steps, xcode: x, share: share)
-        let version = SetupPlan.canonicalVersion(x.shortVersion)
-        let built = archs.map { ImageName.base(arch: $0, xcode: version) }
-        say("==> done in \(Self.minutes(since: start)): \(built.joined(separator: " and ")) (pin it with xcode: \"\(version)\")")
+        try run(plan.steps, share: share)
+        var done = images
+        if let x = source?.xcode {
+            let version = SetupPlan.canonicalVersion(x.shortVersion)
+            done.append("the pack of Xcode \(version) (\(x.build)) in \(place) (pin it with xcode: \"\(version)\")")
+        }
+        say("==> done in \(Self.minutes(since: start)): \(done.joined(separator: "; "))")
+        if let noPack { say(noPack) }
         if let note = Self.oldImages() { say(note) }
         say("next: xless run --docker <project-dir> --build-number 1 --to finalize")
+    }
+
+    /// Whether `<cacheRoot>/sdk` holds anything exported (of any Xcode, supported or not).
+    private static func hasExports(_ cacheRoot: URL) -> Bool {
+        let sdk = cacheRoot.appendingPathComponent("sdk")
+        return ((try? FileManager.default.contentsOfDirectory(atPath: sdk.path)) ?? [])
+            .contains { !XcodeSource.exportedArchs(sdk.appendingPathComponent($0)).isEmpty }
     }
 
     private func kits() throws -> [Kit] {
@@ -279,20 +370,6 @@ struct SetupCommand: AsyncParsableCommand {
         return kits
     }
 
-    /// `--with` alone: the kits, on the images that are here.
-    private func runKits(_ kits: [Kit], on bases: [LocalImage], share: URL) throws {
-        let builder = LocalImages.here.builder
-        let steps = try bases.flatMap { base in
-            try kits.map { try SetupPlan.kit($0, on: base, hostArch: Self.hostArch, share: share, builder: builder) }
-        }
-        say("==> on \(bases.map(\.name).joined(separator: " and "))")
-        if dryRun {
-            say("dry run: the plan, nothing runs")
-            return list(steps)
-        }
-        try run(steps, xcode: nil, share: share)
-    }
-
     private func list(_ steps: [SetupStep]) {
         for (n, s) in steps.enumerated() {
             say("[\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
@@ -300,24 +377,52 @@ struct SetupCommand: AsyncParsableCommand {
         }
     }
 
-    private func run(_ steps: [SetupStep], xcode: KnownXcode?, share: URL) throws {
+    private func run(_ steps: [SetupStep], share: URL) throws {
+        var read: [String: [String]] = [:]
         for (n, s) in steps.enumerated() {
             say("==> [\(n + 1)/\(steps.count)] \(s.title) (\(s.estimate))")
             let t0 = Date()
-            if case let .kit(kit, arch, version) = s.action { try Self.build(kit, arch: arch, xcode: version, share: share) } else { try execute(s, xcode: xcode) }
+            switch s.action {
+            case let .kit(kit, arch):
+                try Self.build(kit, arch: arch, share: share)
+            case let .packRun(job):
+                if let check = job.unlessCurrent {
+                    // The pack the plan could not read: read now, once, with the image this setup has built.
+                    let reasons = try read[check.pack] ?? {
+                        let found = try PackVolumes(LocalImages.hereDocker).manifest(of: check.pack, arch: check.arch, image: check.image)
+                        let reasons = SetupPlan.staleness(found, check: check)
+                        say(reasons.isEmpty ? "    the pack \(check.pack) in the volume \(check.volume) is current for this xless: nothing to prepare"
+                                            : "    the pack \(check.pack) in the volume \(check.volume) is not current (\(reasons.joined(separator: "; ")))")
+                        return reasons
+                    }()
+                    read[check.pack] = reasons
+                    if reasons.isEmpty {
+                        say("    skipped")
+                        continue
+                    }
+                }
+                // Not under a running build that has it (a run's, or another setup's): asked before each step that writes it.
+                if let target = job.writes {
+                    do { try target.refuseInUse(LocalImages.hereDocker) } catch let problem as ImageProblem { throw XlessError(.sdk, problem.cause, fix: problem.fix) }
+                }
+                for dir in job.directories { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
+                try s.start(passthrough: true)
+            default:
+                try execute(s, xcode: nil)
+            }
             say("    done in \(Self.minutes(since: t0))")
         }
     }
 
-    /// The kit's image on that Xcode's, unless it is there and nothing it is made from has changed.
-    private static func build(_ kit: Kit, arch: String, xcode: String, share: URL) throws {
+    /// The kit's image on the image of this xless, unless it is there and nothing it is made from has changed.
+    private static func build(_ kit: Kit, arch: String, share: URL) throws {
         let images = LocalImages.here
-        let base = try images.base(arch: arch, pin: xcode).image
+        let base = try images.base(version: ImageName.cachedTag(ofShare: share), arch: arch)
         let state = { try images.state(of: kit, on: base, share: share) }
         if case .current = try state() { return say("    it is there already") }
         var env = ProcessInfo.processInfo.environment
         for name in LocalImages.builderVariables { env[name] = nil }
-        do { try Shell.docker(kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
+        do { try HostDocker.docker(kit.build(on: base, share: share, builder: images.builder), baseEnvironment: env, stage: .sdk, passthrough: true) } catch let e as XlessError {
             throw ImageProblem("\(kit.image(on: base)) was not built: \(e.cause)", fix: "its output is above: it needs buildx (docker buildx version), the network and room on Docker's disk")
         }
         guard case .current = try state() else {
@@ -325,12 +430,11 @@ struct SetupCommand: AsyncParsableCommand {
         }
     }
 
-    /// What an older xless left, in one line.
+    /// The images an older xless left (one per Xcode, or the tools image), in one line.
     private static func oldImages() -> String? {
         let ls = ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"]
-        guard let all = try? Shell.docker(ls, stage: .sdk).stdout,
-              let labelled = try? Shell.docker(ls + ["--filter", "label=\(ImageLabel.sdk)"], stage: .sdk).stdout else { return nil }
-        let old = CleanPlan.old(fromListing: all, labelled: labelled)
+        guard let all = try? HostDocker.docker(ls, stage: .sdk).stdout else { return nil }
+        let old = all.split(whereSeparator: \.isNewline).map(String.init).filter(ImageName.isLegacy)
         return old.isEmpty ? nil : "note: \(old.count) image tag\(old.count == 1 ? "" : "s") of an older xless (as \(old[0])) \(old.count == 1 ? "is" : "are") not used any more: xless clean --old removes \(old.count == 1 ? "it" : "them")"
     }
 
@@ -339,9 +443,7 @@ struct SetupCommand: AsyncParsableCommand {
     private func execute(_ s: SetupStep, xcode: KnownXcode?, layout: NativeLayout? = nil) throws {
         let fm = FileManager.default
         switch s.action {
-        case .kit: break // run(_:xcode:share:) builds it
-        case .tidy:
-            _ = try? s.start()
+        case .kit, .packRun: break // run(_:share:) runs them
         case .run:
             try s.start(passthrough: true)
         case let .export(partial, final):
@@ -367,20 +469,33 @@ struct SetupCommand: AsyncParsableCommand {
             try meta.write(to: out)
         case let .download(d):
             try Self.install(d, layout: layout ?? NativeLayout())
-        case let .sdkInstall(xtoolSDK, meta, toolchain):
-            let layout = layout ?? NativeLayout()
-            // The record says the toolchain is fitted to the installed SDK: gone until the fit-up after this rewrites it,
-            // so a run stopped in between plans the fit-up again.
-            if FileManager.default.fileExists(atPath: layout.record.path) { try FileManager.default.removeItem(at: layout.record) }
-            let xtool = layout.bin.appendingPathComponent("xtool").path
-            let at = try SDKInstaller.install(xtoolsdk: xtoolSDK, meta: meta, xtool: xtool, toolchain: toolchain)
-            say("    SDK at \(at.sdk.path); metadata at \(at.meta.path)")
+        case let .packBegin(staging, from, manifest):
+            try PackPlan.begin(staging: staging, from: from, manifest: manifest)
+        case let .packSDK(xtoolSDK, config, toolchain, xtool):
+            try PackPlan.installSDK(xtoolSDK: xtoolSDK, config: config, toolchain: toolchain, xtool: xtool.path)
+        case let .packPart(part, hash, staging):
+            try PackPlan.record(part, hash: hash, staging: staging)
+        case let .packCommit(staging, final):
+            try PackPlan.commit(staging: staging, final: final)
         }
     }
 
     /// A native download: fetched next to its `.partial` directory (both removed first: a leftover is never reused),
     /// checked against its pin, unpacked into `.partial`, then renamed into place and linked into the native `bin/`.
-    static func install(_ d: NativeDownload, layout: NativeLayout) throws {
+    /// A tool (xtool, rcodesign) goes into the native home every Xcode's setup shares, under its lock (`PackLock(tools:)`):
+    /// one that a setup of another Xcode installed while this one waited is left as it is. `wait`: false, a test's.
+    static func install(_ d: NativeDownload, layout: NativeLayout, wait: Bool = true) throws {
+        guard let link = d.link else { return try unpack(d, layout: layout) }
+        let lock = try PackLock(tools: layout, wait: wait)
+        try withExtendedLifetime(lock) {
+            let at = layout.bin.appendingPathComponent(link.name)
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: at.path)) == d.final.appendingPathComponent(link.target).path,
+               FileManager.default.fileExists(atPath: at.path) { return }
+            try unpack(d, layout: layout)
+        }
+    }
+
+    private static func unpack(_ d: NativeDownload, layout: NativeLayout) throws {
         let fm = FileManager.default
         let partial = d.partial, file = URL(fileURLWithPath: partial.path + ".download")
         for u in [partial, file] where fm.fileExists(atPath: u.path) { try fm.removeItem(at: u) }
@@ -396,14 +511,13 @@ struct SetupCommand: AsyncParsableCommand {
             throw XlessError(.sdk, "\(d.url.absoluteString) has sha256 \(sum), not versions.env's \(d.sha256): nothing was installed",
                              fix: "run xless setup again; if it persists, report it (the download changed upstream)")
         }
-        let staged: URL, link: (name: String, target: String)?
+        let staged: URL, link = d.link
         switch d.kind {
         case .appImage:
             // The AppImage's own runtime extracts it (no FUSE needed) into squashfs-root under its working directory.
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
             try Shell.run(file.path, ["--appimage-extract"], cwd: partial, stage: .sdk)
             staged = partial.appendingPathComponent("squashfs-root")
-            link = ("xtool", "AppRun")
         case .rcodesign:
             try Shell.run("tar", ["-xzf", file.path, "-C", partial.path], stage: .sdk)
             let found = fm.enumerator(at: partial, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL }
@@ -413,11 +527,9 @@ struct SetupCommand: AsyncParsableCommand {
             try fm.createDirectory(at: staged, withIntermediateDirectories: true)
             try fm.moveItem(at: found, to: staged.appendingPathComponent("rcodesign"))
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: staged.appendingPathComponent("rcodesign").path)
-            link = ("rcodesign", "rcodesign")
         case .swiftToolchain:
             try Shell.run("tar", ["-xzf", file.path, "-C", partial.path, "--strip-components=1"], stage: .sdk)
             staged = partial
-            link = nil
             // swift.org's toolchains link against the host's libraries: a missing one is named here, not mid-build.
             do { try Shell.run(partial.appendingPathComponent("usr/bin/swiftc").path, ["--version"], stage: .sdk) } catch let e as XlessError {
                 throw XlessError(.sdk, "the Swift toolchain does not run on this machine: \(e.cause)",
@@ -444,40 +556,21 @@ struct SetupCommand: AsyncParsableCommand {
         return nil
     }
 
-    /// Two builds of one Xcode version (a beta and the release): `-xcode<V>` names one of them. As scripts/build-images.sh:
-    /// refused when it names another build, unless XLESS_XCODE_RETAG=1, which keeps that build's image as `-xcode<V>-<B>`.
-    private static func retagSteps(xcode: KnownXcode, archs: [String], env: [String: String]) throws -> [SetupStep] {
-        let version = SetupPlan.canonicalVersion(xcode.shortVersion)
-        var steps: [SetupStep] = []
-        for a in archs {
-            let name = ImageName.base(arch: a, xcode: version)
-            guard let image = LocalImages.here.image(name) else { continue }
-            guard let old = image.sdk else {
-                say("note: \(name) is an image of an older xless, which does not say which build of Xcode \(version) it holds: this setup replaces it with Xcode \(xcode.build)'s")
-                continue
-            }
-            guard old != xcode.build else { continue }
-            guard env["XLESS_XCODE_RETAG"] == "1" else {
-                throw XlessError(.sdk, "\(name) is another build of Xcode \(version) (\(old), this is \(xcode.build)); a pin xcode: \"\(version)\" selects it",
-                                 fix: "to point it at this build: XLESS_XCODE_RETAG=1 xless setup … (the \(old) image stays as \(ImageName.base(arch: a, xcode: version, build: old)))")
-            }
-            let kept = ImageName.base(arch: a, xcode: version, build: old)
-            steps.append(SetupStep(title: "XLESS_XCODE_RETAG=1: keep \(name) (Xcode \(old)) as \(kept)", argv: ["docker", "tag", name, kept], estimate: "seconds"))
-        }
-        return steps
-    }
-
     // MARK: - Preflight
+
+    /// Docker's data root, and whether the daemon is rootless.
+    private static func dockerInfo() throws -> (root: String, rootless: Bool) {
+        let info = try HostDocker.docker(["info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"], stage: .sdk).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (String(info.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""), info.contains("name=rootless"))
+    }
 
     /// Docker answers (the cause named: permission denied or no daemon), buildx is there, and the disks have room.
     /// Returns whether the daemon is rootless.
     private static func preflight(cacheRoot: URL, need: (cache: SetupDisk.Need, docker: SetupDisk.Need)) throws -> Bool {
         let root: String, rootless: Bool
         do {
-            let info = try Shell.docker(["info", "--format", "{{.DockerRootDir}}|{{json .SecurityOptions}}"], stage: .sdk).stdout
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            root = String(info.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
-            rootless = info.contains("name=rootless")
+            (root, rootless) = try dockerInfo()
         } catch let e as XlessError {
             let cause = e.cause.lowercased()
             let detail = e.cause.split(separator: "\n").dropFirst().first.map { " (\($0.trimmingCharacters(in: .whitespaces)))" } ?? ""
@@ -495,7 +588,7 @@ struct SetupCommand: AsyncParsableCommand {
             }
             throw XlessError(.sdk, "`docker info` failed\(detail)", fix: "check that `docker info` works, then run xless setup again")
         }
-        do { try Shell.docker(["buildx", "version"], stage: .sdk) } catch {
+        do { try HostDocker.docker(["buildx", "version"], stage: .sdk) } catch {
             throw XlessError(.sdk, "docker buildx is not available", fix: "install Docker's buildx plugin (e.g. the docker-buildx-plugin package)")
         }
         if need.cache.totalGB > 0 {
@@ -505,18 +598,11 @@ struct SetupCommand: AsyncParsableCommand {
         // Docker's data root, when it is on this machine (a Linux host; a Mac's Docker keeps it inside its VM).
         #if os(Linux)
         if !root.isEmpty, FileManager.default.fileExists(atPath: root) {
-            try checkFree(URL(fileURLWithPath: root), need: need.docker, what: "Docker's data root (the images and their build cache)",
+            try checkFree(URL(fileURLWithPath: root), need: need.docker, what: "Docker's data root (the image, its kits, their build cache and the pack volumes)",
                           fix: "free some space (docker system prune), or move Docker's data-root to a larger disk")
         }
         #endif
         return rootless
-    }
-
-    static func withoutUser(_ s: SetupStep) -> SetupStep {
-        guard let i = s.argv.firstIndex(of: "--user"), i + 1 < s.argv.count else { return s }
-        var argv = s.argv
-        argv.removeSubrange(i...(i + 1))
-        return SetupStep(title: s.title, argv: argv, estimate: s.estimate, action: s.action)
     }
 
     private static func checkFree(_ url: URL, need: SetupDisk.Need, what: String, fix: String) throws {
@@ -532,7 +618,8 @@ struct SetupCommand: AsyncParsableCommand {
 
     // MARK: - The Linux xless for the image
 
-    private func binary(arch a: String, host: String, env: [String: String], exe: URL, cwd: URL, home: URL, work: URL) throws -> URL {
+    /// The linux xless of `a` for its image, copied into the work dir; nil: the image compiles the checkout `tag` names.
+    private func binary(arch a: String, host: String, env: [String: String], exe: URL, cwd: URL, home: URL, work: URL, tag: String) throws -> URL? {
         let key = "XLESS_BIN_\(a.uppercased())"
         var bin: URL
         if let p = env[key], !p.isEmpty {
@@ -540,6 +627,10 @@ struct SetupCommand: AsyncParsableCommand {
             guard FileManager.default.fileExists(atPath: bin.path) else {
                 throw XlessError(.sdk, "\(key)=\(p) does not exist", fix: "point \(key) at a Linux \(a) xless binary")
             }
+        } else if tag.wholeMatch(of: /[0-9a-f]{12}(-dirty)?/) != nil {
+            // A checkout's image is named by its commit: the xless in it is compiled from that checkout, as the image is built
+            // (also on Linux, where the running xless need not be that commit's, e.g. a release with XLESS_SHARE at a checkout).
+            return nil
         } else if Self.isLinux && a == host {
             bin = exe
         } else if dryRun {
@@ -589,13 +680,7 @@ struct SetupCommand: AsyncParsableCommand {
 
     // MARK: - Helpers
 
-    static var hostArch: String {
-        #if arch(arm64)
-        "arm64"
-        #else
-        "amd64"
-        #endif
-    }
+    static var hostArch: String { XcodeEnvironment.hostArch }
 
     /// The setup there is on this system.
     static var name: String { isLinux ? "xless setup" : "xless setup --docker" }
@@ -632,16 +717,22 @@ private extension SetupStep {
     /// Runs its command: docker's are the client's, any other is a tool's.
     func start(passthrough: Bool = false) throws {
         let arguments = Array(argv.dropFirst())
-        if argv[0] == "docker" { try Shell.docker(arguments, stage: .sdk, passthrough: passthrough) } else { try Shell.run(argv[0], arguments, stage: .sdk, passthrough: passthrough) }
+        if argv[0] == "docker" { try HostDocker.docker(arguments, stage: .sdk, passthrough: passthrough) } else {
+            // (docker-images.sh calls docker itself: with the same docker)
+            try Shell.run(argv[0], arguments, baseEnvironment: try HostDocker.environment(), stage: .sdk, passthrough: passthrough)
+        }
     }
 }
 
 extension LocalImages {
-    /// Those of this machine's docker.
-    static var here: LocalImages {
-        LocalImages { arguments in
-            guard let answer = try? Shell.docker(arguments, stage: .sdk) else { return (1, "") }
+    /// This machine's docker, for what reads its images and volumes.
+    static var hereDocker: LocalImages.Docker {
+        { arguments in
+            guard let answer = try? HostDocker.docker(arguments, stage: .sdk) else { return (1, "") }
             return (0, answer.stdout)
         }
     }
+
+    /// Those of this machine's docker.
+    static var here: LocalImages { LocalImages(hereDocker) }
 }

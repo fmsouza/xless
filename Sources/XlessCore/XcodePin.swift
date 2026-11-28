@@ -1,9 +1,10 @@
 import Foundation
 
 /// Ruling R8: a project may pin the Xcode whose SDK builds it (`xcode: "26.2"` in xless.yml or an overlay), so an app
-/// is built with the SDK its own release pipeline uses. xless images bake one SDK each (`xless setup --xcode …`, tagged
-/// `-xcode<version>`); prepare (overlay projects) and the build stage refuse an image whose SDK comes from another Xcode
-/// (`BuildSDKCheck`), and the build stage records the SDK it used (`BuildSDKRecord`) for finalize, which stamps the app from that same SDK. Without a pin the image's SDK is used.
+/// is built with the SDK its own release pipeline uses. Each Xcode has a pack of its own (`xless setup --xcode …`), and the
+/// pin chooses it (`XcodeResolver`); prepare (overlay projects) and the build stage refuse an Xcode other than the pin's, which
+/// only `XLESS_XCODE` or `XLESS_TOOLCHAIN_META` naming another can give (`BuildSDKCheck`), and the build stage records the SDK it
+/// used (`BuildSDKRecord`) for finalize, which stamps the app from that same SDK. Without a pin the newest Xcode's pack is used.
 public enum XcodePin {
     /// A pin is 1–3 dot-separated integers (`26.2`, `27.0.1`); `27` equals `27.0` and `27.0.0`.
     public static func validate(_ pin: String, key: String = "xcode", file: String) throws {
@@ -26,14 +27,14 @@ public enum XcodePin {
         return p == have
     }
 
-    /// The image's SDK checked against the pin (nil: no pin, anything goes). The refusal names the image tag and the
-    /// command that builds images from that Xcode.
+    /// The Xcode's SDK checked against the pin (nil: no pin, anything goes). The refusal names the Xcode found, what named
+    /// it, and the command that prepares the pin's pack.
     public static func check(pin: String?, meta: ToolchainMeta, platform: Platform, file: String, stage: Stage = .build) throws {
         guard let pin else { return }
         guard matches(pin: pin, meta: meta) else {
             let sdk = (try? meta.sdk(for: platform)).map { "the \($0.sdkName) SDK" } ?? "its SDK"
-            throw XlessError(stage, "\(file) pins xcode: \"\(pin)\", but this image has \(sdk) from Xcode \(xcodeVersion(meta)) (\(meta.xcodeBuild))",
-                             fix: "install Xcode \(pin) natively (`xless setup --xcode <path to Xcode \(pin)'s .xip>`, which replaces the installed one), or build with --docker in the images made from it (`xless setup --docker --xcode …`, tags *-xcode\(pin); xless run --docker selects them from the pin), or change the pin to \(xcodeVersion(meta))")
+            throw XlessError(stage, "\(file) pins xcode: \"\(pin)\", but the Xcode pack it would build with has \(sdk) from Xcode \(xcodeVersion(meta)) (\(meta.xcodeBuild))",
+                             fix: "unset XLESS_XCODE and XLESS_TOOLCHAIN_META, which name another Xcode, so that the pin chooses its pack; prepare Xcode \(pin)'s pack when there is none (`xless setup --xcode <path to Xcode \(pin)'s .xip>`, or `xless setup --docker --xcode …` for xless run --docker; from the cached SDK export no .xip is needed: `xless setup --sdk <export>`); or change the pin to \(xcodeVersion(meta))")
         }
     }
 }

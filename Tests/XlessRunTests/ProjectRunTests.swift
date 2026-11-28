@@ -60,6 +60,20 @@ import XlessCore
         }
     }
 
+    /// The stage commands it starts natively read the Xcode of the project's pin (`XcodeEnvironment`); a project with
+    /// none leaves it to them (the newest), and the containers get none from the run's own environment.
+    @Test func nativelyTheStagesAreGivenThePin() throws {
+        try home.write("proj/xless.yml", "name: App\nxcode: \"26.2\"\n")
+        let host = FakeRunHost(answer: home.answer())
+        #expect(try home.run([home.project, "--to", "finalize", "--build-number", "1"], docker: false, host: host) == 0)
+        let ship = try #require(host.allSteps.first { $0.words.contains("ship") })
+        #expect(ship.environment[XcodeEnvironment.pinVariable] == "26.2")
+        try home.write("proj/xless.yml", "name: App\n")
+        let unpinned = FakeRunHost(answer: home.answer())
+        #expect(try home.run([home.project, "--to", "finalize", "--build-number", "1"], docker: false, host: unpinned) == 0)
+        #expect(unpinned.allSteps.allSatisfy { $0.environment[XcodeEnvironment.pinVariable] == nil })
+    }
+
     /// Nor one that stops before it signs, which needs none.
     @Test func nativelyABuildThatStopsIsGivenNone() throws {
         var secrets = try home.files()

@@ -18,6 +18,15 @@ public enum SwiftBuildRunner {
         return environment.overrides(toolset: toolset).merging(extra) { _, new in new }
     }
 
+    /// The `swbuild` that builds: the Xcode pack's (`SwiftBuildEnvironment.swbuild`), else the first on `path`.
+    static func swbuild(_ environment: SwiftBuildEnvironment, path: String?, stage: Stage) throws -> URL {
+        guard let swbuild = environment.swbuild ?? XcodeEnvironment.which("swbuild", path: path) else {
+            throw XlessError(stage, "Swift Build is not here: the Xcode pack has no swbuild, and none is on PATH",
+                             fix: XcodeResolver.swiftBuildFix(nil, env: ProcessInfo.processInfo.environment))
+        }
+        return swbuild
+    }
+
     /// `extraEnvironment` (applied last; nil removes) and `baseEnvironment` (default: this process's) are used by the
     /// build stage (Task 8), which adds React Native variables and runs from a scrubbed environment.
     @discardableResult
@@ -27,18 +36,19 @@ public enum SwiftBuildRunner {
         var extra: [String: String?] = environment.processEnvironment(path: baseEnvironment["PATH"]).mapValues { $0 }
         for (k, v) in extraEnvironment { extra[k] = v }
         let env = ChildProcess.environment(baseEnvironment, extra: extra)
+        let swbuild = try swbuild(environment, path: env["PATH"], stage: stage)
         let status: Int32
         do {
             try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
             _ = FileManager.default.createFile(atPath: log.path, contents: nil)
             let out = try FileHandle(forWritingTo: log)
             defer { try? out.close() }
-            status = try ChildProcess.start("/usr/bin/env", ["swbuild", "build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path],
+            status = try ChildProcess.start(swbuild.path, ["build", pif.path, "--derivedDataPath", derivedData.path, "--buildRequestFile", request.path],
                                             environment: env, stdout: out.fileDescriptor, stage: stage).wait()
         } catch let e as XlessError {
             throw e
         } catch {
-            throw XlessError(stage, "cannot run swbuild: \(error)", fix: "run in an image that xless setup --docker builds: it has Swift Build's swbuild on PATH")
+            throw XlessError(stage, "cannot run \(swbuild.path): \(error)", fix: "check that \(swbuild.path) is there and can run; " + XcodeResolver.swiftBuildFix(nil, env: ProcessInfo.processInfo.environment))
         }
         let data = (try? Data(contentsOf: log)) ?? Data()
         var summary = SwiftBuildOutput.summarize(data)

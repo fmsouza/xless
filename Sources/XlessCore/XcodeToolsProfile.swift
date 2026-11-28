@@ -255,21 +255,13 @@ public struct XcodeToolsProfile: Sendable, Equatable {
     /// The profile of the image's Xcode. An image made from an Xcode xless has not measured is refused.
     public static func forImage(meta: ToolchainMeta, stage: Stage) throws -> XcodeToolsProfile {
         guard let p = all[meta.xcodeBuild] else {
-            throw XlessError(stage, "this image's Xcode build \(meta.xcodeBuild) has no measured asset/storyboard tools profile",
-                             fix: "rebuild the images with xless setup --xcode <Xcode.xip> from an Xcode xless has measured (\(all.keys.sorted().joined(separator: ", ")))")
+            throw XlessError(stage, "the Xcode build \(meta.xcodeBuild) that this build uses has no measured asset/storyboard tools profile",
+                             fix: "build with an Xcode xless has measured (\(all.keys.sorted().joined(separator: ", "))): prepare its pack with xless setup --xcode <Xcode.xip> (--docker for xless run --docker) and pin it with xcode:")
         }
         return p
     }
 
-    /// `forImage` with the image's toolchain metadata (`ToolchainMeta.defaultLocation`: `/opt/xless/toolchain-meta.json` in
-    /// an image), read once per call. Missing or invalid metadata is refused in `stage`.
-    public static func forImage(env: [String: String] = ProcessInfo.processInfo.environment, stage: Stage) throws -> XcodeToolsProfile {
-        let meta: ToolchainMeta
-        do { meta = try ToolchainMeta.load(from: ToolchainMeta.defaultLocation(env: env)) } catch let e as XlessError {
-            throw XlessError(stage, e.cause, fix: e.fix)
-        }
-        return try forImage(meta: meta, stage: stage)
-    }
+    // `forImage(env:stage:)`, with the Xcode's metadata: XcodeEnvironment.swift (not built on Windows).
 
     /// A measured build by name (`xless storyboard compile --xcode-build`).
     public static func named(_ build: String, stage: Stage) throws -> XcodeToolsProfile {

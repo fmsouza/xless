@@ -420,6 +420,24 @@ private func git(_ dir: URL, _ args: String...) throws {
     let with262 = ReactNativeBuilder.toolchainIdentity(sdk262, tools: tools)
     try write(metaFile, "{\"xcodeVersion\": \"2700\"}")
     #expect(with262 != toolchain && ReactNativeBuilder.toolchainIdentity(sdk262, tools: tools) != with262)
+    // The pack: its build and the recipe hash of each part; not where it is mounted.
+    func pack(_ place: String, _ parts: [String: String]) throws -> ReactNativeBuildContext {
+        let arch = XcodeEnvironment.hostArch   // (a pack of another arch is no pack here)
+        let root = try tmp(place).appendingPathComponent("26.2-17C52-\(arch)")
+        try write(root.appendingPathComponent("toolchain-meta.json"), "{\"xcodeVersion\": \"2620\"}")
+        try PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: arch, swift: "6.2.3", mode: .separate, parts: parts)
+            .write(to: root.appendingPathComponent("pack.json"))
+        var c = try ctx(o)
+        c.env["XLESS_XCODE"] = root.path
+        c.env["XLESS_SHARE"] = try tmp("noshare").path   // (no recipe to call the pack stale with)
+        for name in ["XLESS_TOOLCHAIN_META", "XLESS_SWIFT_TOOLCHAIN", "XLESS_XCODES"] { c.env[name] = nil }
+        return c
+    }
+    #expect(try XcodeEnvironment.current(env: pack("a", ["sdk": "s1", "swift-build": "b1"]).env).pack != nil)   // (else every identity below is "(no pack)")
+    let packed = ReactNativeBuilder.toolchainIdentity(try pack("a", ["sdk": "s1", "swift-build": "b1"]), tools: tools)
+    #expect(ReactNativeBuilder.toolchainIdentity(try pack("b", ["sdk": "s1", "swift-build": "b1"]), tools: tools) == packed)   // elsewhere
+    #expect(ReactNativeBuilder.toolchainIdentity(try pack("c", ["sdk": "s1", "swift-build": "b2"]), tools: tools) != packed)   // another Swift Build
+    #expect(ReactNativeBuilder.toolchainIdentity(try pack("d", ["sdk": "s2", "swift-build": "b1"]), tools: tools) != packed)   // another SDK part
     #expect(ReactNativeBuilder.executableDigest().count == 64)
     try write(src.appendingPathComponent("apps/client/package.json"), "{\"a\": 1}")   // an uncommitted edit, which the work copy carries
     #expect(try ReactNativeBuilder.fingerprint(ctx(o), toolchain: toolchain) != base)
@@ -573,6 +591,22 @@ private func jsWorkCopy() throws -> (ctx: ReactNativeBuildContext, outside: URL)
     #expect(PrepareClangShim.executable(stub, swift: swift) == "/opt/xless/toolchains/swift-6.2.3/usr/bin/clang")
     #expect(PrepareClangShim.executable(["-c", "x.c", "-o", "x.o"], swift: swift) == "/usr/bin/clang")
     #expect(PrepareClangShim.executable(stub, swift: nil) == "/usr/bin/clang")
+}
+
+/// A host compile (a native gem's, node-gyp's) needs no Xcode: the shim asks for one only for the Darwin stub, so a machine
+/// with no pack still compiles them, and the stub alone says what is missing.
+@Test func aHostCompileDuringPrepareNeedsNoXcode() throws {
+    struct NoXcode: Error {}
+    let host = ["-c", "x.c", "-o", "x.o"]
+    let call = try PrepareClangShim.invocation(host) { throw NoXcode() }
+    #expect(call.path == "/usr/bin/clang" && call.arguments == host)
+    let stub = ["-x", "c", "-", "-dynamiclib", "-o", "S/.stub-binary", "-install_name", "@rpath/S.framework/S"]
+    #expect(throws: NoXcode.self) { try PrepareClangShim.invocation(stub) { throw NoXcode() } }
+    let bundle = try tmp("sdk-call")
+    try fm.createDirectory(at: bundle.appendingPathComponent("Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS27.0.sdk"), withIntermediateDirectories: true)
+    let swift = SwiftToolchain(version: "6.4.0", root: "/x/toolchain")
+    let darwin = try PrepareClangShim.invocation(stub) { (DarwinSDK(bundle: bundle), swift) }
+    #expect(darwin.path == "/x/toolchain/usr/bin/clang" && darwin.arguments.prefix(2) == ["-target", "arm64-apple-ios16.4"])
 }
 
 // MARK: Swift packages

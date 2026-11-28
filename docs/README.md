@@ -34,8 +34,8 @@ The [README](../README.md) says what xless is and how to install it. These are t
 - [tauri.md](tauri.md): Tauri v2 apps, for iOS and macOS.
 - [cargo.md](cargo.md): plain Cargo apps (a Rust binary with its own event loop), for iOS and macOS.
 - [native-install.md](native-install.md): without Docker: what goes where on Linux, what is used on a Mac, what there is on Windows.
-- [images.md](images.md): the Docker image (`--docker`), the kits for Tauri, Cargo and React Native apps, an image of your own, and
-  how to build it by hand.
+- [images.md](images.md): the Docker image (`--docker`) and the Xcode packs it builds with, where the packs are, the kits for
+  Tauri, Cargo and React Native apps, an image of your own, preparing by hand, and the image used directly.
 
 ## Sign and ship
 
@@ -84,6 +84,7 @@ Measurements and decisions behind the code, in [research/](research/):
 - [The Mac App Store `.pkg` from Linux](research/mas-pkg.md)
 - [Parity known gaps](research/parity-known-gaps.md) between Xcode builds and xless builds
 - [Asset and storyboard tools by Xcode version](research/xcode-tools-by-version.md)
+- [Moving an Xcode pack and using it read-only](research/xcode-pack-relocation.md)
 - [ibtool's invocation](research/ib-invocation.md) and [the NIB encoding](research/nib-encoding.md)
 - [The React Native iOS contract](research/react-native-ios-contract.md) and [the Tauri iOS contract](research/tauri-ios-contract.md)
 - [What M7 has not verified against a real Apple account](research/m7-live-checklist.md), and where #105 checks it
@@ -94,4 +95,5 @@ What each milestone checked, and how: [m2a](acceptance-m2a.md), [m2b](acceptance
 [m3](acceptance-m3.md), [m4](acceptance-m4.md), [m5](acceptance-m5.md) (releases, and setup from a `.xip` on a fresh Linux VM),
 [m6](acceptance-m6.md) (plain Cargo apps: a checklist for the maintainer, not yet run),
 [m7](acceptance-m7.md) (an Apple account from the terminal: a guided, recorded run of `scripts/acceptance-m7.sh`, up to
-the App Review submission).
+the App Review submission), and [Xcode packs](acceptance-xcode-packs.md) (what is built with a pack, against what the
+images with the Xcode baked in built).

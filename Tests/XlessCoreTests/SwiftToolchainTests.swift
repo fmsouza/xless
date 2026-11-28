@@ -43,13 +43,39 @@ private func meta(swift: String?) -> ToolchainMeta {
     #expect(SwiftToolchain.engineSwift(t) == "/usr/bin/swift" && SwiftToolchain.engineSwift(nil) == "swift")
 }
 
+/// An Xcode pack whose Swift is the image's own (mode own) holds a copy of that release, fitted to its SDK: its own tools
+/// go on PATH (it is not the engine), but its SwiftPM is the engine's release and builds as the engine's does.
+@Test func aCopyOfTheEnginesReleaseBuildsAsTheEngine() {
+    let copy = SwiftToolchain(version: "6.4", root: "/xcodes/27.0-27A266a-arm64/toolchain")
+    #expect(!copy.isEngine && copy.path("/x:/usr/bin") == "/x:/xcodes/27.0-27A266a-arm64/toolchain/usr/bin:/usr/bin")
+    #expect(copy.isEngineRelease("6.4.0") && copy.isEngineRelease("6.4"))
+    #expect(!copy.isEngineRelease("6.4.1") && !copy.isEngineRelease("6.2.3") && !copy.isEngineRelease(nil) && !copy.isEngineRelease("main"))
+    #expect(!SwiftToolchain(version: "6.2.3", root: "/xcodes/26.2-17C52-arm64/toolchain").isEngineRelease("6.4.0"))
+    // The engine's way of building (the triple, no product named) is SwiftPM 6.4's: an older copy never takes it, even
+    // where the engine is that release too (a Linux host's own Swift).
+    #expect(!SwiftToolchain(version: "6.2.3", root: "/xcodes/26.2-17C52-arm64/toolchain").isEngineRelease("6.2.3"))
+    #expect(!SwiftToolchain(version: "6.3.0", root: "/xcodes/26.4-17E1-arm64/toolchain").isEngineRelease("6.3"))
+    #expect(SwiftToolchain(version: "6.5", root: "/xcodes/28.0-28A1-arm64/toolchain").isEngineRelease("6.5.0"))
+    // The engine itself, whatever its release is measured to be.
+    #expect(SwiftToolchain(version: "6.4", root: "/").isEngineRelease(nil) && SwiftToolchain(version: "6.4", root: "/").isEngineRelease("6.2.3"))
+}
+
+/// The engine's release is measured from its swiftc, where the images have it (Linux); elsewhere there is none.
+@Test func theEnginesReleaseIsMeasured() {
+    #if os(Linux)
+    if FileManager.default.isExecutableFile(atPath: "/usr/bin/swiftc") { #expect(SwiftToolchain.engineRelease.flatMap(DottedVersion.init) != nil) }
+    #else
+    #expect(SwiftToolchain.engineRelease == nil)
+    #endif
+}
+
 @Test func loadsTheRecordNamedByTheEnvironment() throws {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent("swift-toolchain-\(UUID().uuidString).json")
     try Data(#"{"version":"6.2.3","root":"/opt/xless/toolchains/swift-6.2.3"}"#.utf8).write(to: file)
-    let t = try SwiftToolchain.load(env: ["XLESS_SWIFT_TOOLCHAIN": file.path])
+    let t = try XcodeEnvironment.toolchain(env: ["XLESS_SWIFT_TOOLCHAIN": file.path])
     #expect(t == SwiftToolchain(version: "6.2.3", root: "/opt/xless/toolchains/swift-6.2.3"))
     #expect(t?.include.path == "/opt/xless/toolchains/swift-6.2.3/usr/include")
-    #expect(throws: XlessError.self) { try SwiftToolchain.load(env: ["XLESS_SWIFT_TOOLCHAIN": "/nope.json"]) }
+    #expect(throws: XlessError.self) { try XcodeEnvironment.toolchain(env: ["XLESS_SWIFT_TOOLCHAIN": "/nope.json"]) }
 }
 
 @Test func theBuildChecksTheCompilerAgainstTheXcode() throws {

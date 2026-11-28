@@ -6,10 +6,8 @@ import Foundation
 private let xcode27 = KnownXcode(build: "27A266a", shortVersion: "27.0", appleSwift: "6.4", buildMachineOSBuild: "26A434", xipSHA256: [])
 private let xcode26 = KnownXcode(build: "17C52", shortVersion: "26.2", appleSwift: "6.2.3", buildMachineOSBuild: "26A434", xipSHA256: [])
 private let layout = NativeLayout(root: URL(fileURLWithPath: "/n"))
-private let share = URL(fileURLWithPath: "/share")
+private let store = XcodeStore(root: URL(fileURLWithPath: "/n/xcodes"))
 private let cache = URL(fileURLWithPath: "/cache/xless")
-private let bundle = URL(fileURLWithPath: "/home/u/.swiftpm/swift-sdks/darwin.artifactbundle")
-private let metaDest = URL(fileURLWithPath: "/home/u/.config/xless/toolchain-meta.json")
 private let table: [String: String] = [
     "SWIFT_VERSION": "6.4.0", "XTOOL_VERSION": "1.21.0", "RCODESIGN_VERSION": "0.29.0",
     "XTOOL_SHA256_AARCH64": "xa", "XTOOL_SHA256_X86_64": "xx", "RCODESIGN_SHA256_AARCH64": "ra", "RCODESIGN_SHA256_X86_64": "rx",
@@ -18,21 +16,61 @@ private let table: [String: String] = [
     "SWIFT_TOOLCHAIN_6_4_0_URL_X86_64": "https://example.com/s640-x.tar.gz", "SWIFT_TOOLCHAIN_6_4_0_SHA256_X86_64": "s640x",
     "SWIFT_TOOLCHAIN_6_2_3_URL_AARCH64": "https://example.com/s623-a.tar.gz", "SWIFT_TOOLCHAIN_6_2_3_SHA256_AARCH64": "s623a",
 ]
+private let bare = PackPlan.Abilities(swiftBuild: false)
 
-private func plan(_ x: KnownXcode = xcode27, arch: String = "arm64", table t: [String: String] = table, reexport: Bool = false,
-                  installed: NativeSetupPlan.Installed? = nil, existing: @escaping (URL) -> Bool = { _ in false }) throws -> [SetupStep] {
-    try NativeSetupPlan.make(source: (x, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: arch, share: share,
-                             cacheRoot: cache, layout: layout, sdkBundle: bundle, metaDest: metaDest, table: t,
-                             reexport: reexport, installed: installed, existing: existing)
+/// A share with the files the pack's recipe hashes read: one for the process, made when a test first needs it and removed when
+/// the process ends.
+private let madeShare = Result<URL, Error> {
+    let dir = sharePlace()
+    for path in ["scripts/fit-toolchain.sh", "scripts/pack-swift-build.sh", "docker/toolchain/clang-driver", "docker/toolchain/target-os-check",
+                 "docker/toolchain/record-flags.py", "docker/toolchain/target-os/derived.txt", "docker/toolchain/target-os/27A266a.txt",
+                 "docker/toolchain/target-os/17C52.txt"] {
+        let url = dir.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(path.utf8).write(to: url)
+    }
+    atexit { try? FileManager.default.removeItem(at: sharePlace()) }
+    return dir
+}
+private func sharePlace() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("native-plan-share-\(getpid())") }
+private func share() throws -> URL { try madeShare.get() }
+
+/// The links of bin/ as setup makes them for the pinned versions (xtool 1.21.0, rcodesign 0.29.0).
+private func pinnedLinks(_ link: URL) -> String? {
+    ["/n/bin/xtool": "/n/tools/xtool-1.21.0/AppRun", "/n/bin/rcodesign": "/n/tools/rcodesign-0.29.0/rcodesign"][link.path]
+}
+
+private func plan(_ x: KnownXcode = xcode27, arch: String = "arm64", table t: [String: String] = table, share sh: URL? = nil, reexport: Bool = false,
+                  store s: XcodeStore = store, existing: @escaping (URL) -> Bool = { _ in false },
+                  linked: @escaping (URL) -> String? = pinnedLinks) throws -> [SetupStep] {
+    try NativeSetupPlan.make(source: (x, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: arch, share: try sh ?? share(),
+                             cacheRoot: cache, layout: layout, store: s, table: t, reexport: reexport, abilities: bare, linked: linked, existing: existing)
 }
 
 private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     steps.compactMap { if case let .download(d) = $0.action { return d } else { return nil } }
 }
 
+private func isPackStep(_ s: SetupStep) -> Bool {
+    switch s.action {
+    case .packBegin, .packSDK, .packPart, .packCommit: return true
+    case .download(let d): return d.kind == .swiftToolchain
+    case .run: return s.argv.contains { $0.hasPrefix("/n/xcodes/") }
+    default: return false
+    }
+}
+
+/// A real directory (macOS: /var is /private/var).
+private func tempDir() throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("native-plan-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    guard let real = realpath(dir.path, nil) else { return dir }
+    defer { free(real) }
+    return URL(fileURLWithPath: String(cString: real))
+}
+
 @Test func aFreshMachineGetsEveryStepInOrder() throws {
     let steps = try plan()
-    #expect(steps.count == 7)
     let d = downloads(steps)
     #expect(d.map(\.kind) == [.appImage, .rcodesign, .swiftToolchain])
     #expect(d[0].url.absoluteString == "https://github.com/xtool-org/xtool/releases/download/1.21.0/xtool-aarch64.AppImage")
@@ -40,21 +78,67 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     #expect(d[0].partial.path == "/n/tools/xtool-1.21.0.partial")
     #expect(d[1].url.absoluteString == "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.29.0/apple-codesign-0.29.0-aarch64-unknown-linux-musl.tar.gz")
     #expect(d[1].sha256 == "ra" && d[1].final.path == "/n/tools/rcodesign-0.29.0")
+    // The toolchain goes into the pack being prepared, never under the native home's toolchains/.
     #expect(d[2].url.absoluteString == "https://example.com/s640-a.tar.gz" && d[2].sha256 == "s640a")
-    #expect(d[2].final.path == "/n/toolchains/swift-6.4.0")
+    #expect(d[2].final.path == "/n/xcodes/27.0-27A266a-arm64.partial/toolchain")
+    #expect(!steps.contains { $0.argv.joined(separator: " ").contains("/n/toolchains") })
 
     // The export runs the native xtool, into the cache the Docker path uses too; nothing runs docker.
     let sdk = "/cache/xless/sdk/xcode27.0-27A266a"
-    #expect(steps[3].argv == ["/n/bin/xtool", "sdk", "build", "/home/u/Downloads/Xcode_27.xip", "\(sdk)/arm64.partial"])
-    #expect(steps[3].action == .export(partial: URL(fileURLWithPath: "\(sdk)/arm64.partial"), final: URL(fileURLWithPath: "\(sdk)/arm64")))
-    #expect(steps[4].action == .meta(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"), out: URL(fileURLWithPath: "\(sdk)/toolchain-meta.json")))
-    // xtool runs swiftc from PATH: the step carries the toolchain this setup installs, which is on no PATH yet.
-    #expect(steps[5].action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"), meta: URL(fileURLWithPath: "\(sdk)/toolchain-meta.json"),
-                                           toolchain: URL(fileURLWithPath: "/n/toolchains/swift-6.4.0")))
-    #expect(steps[6].argv == ["/share/scripts/native-toolchain.sh", "/n/toolchains/swift-6.4.0", "own", bundle.path, metaDest.path,
-                              "/share/docker/toolchain", "/n/swift-toolchain.json"])
-    #expect(steps[6].action == .run)
+    #expect(steps[2].argv == ["/n/bin/xtool", "sdk", "build", "/home/u/Downloads/Xcode_27.xip", "\(sdk)/arm64.partial"])
+    #expect(steps[2].action == .export(partial: URL(fileURLWithPath: "\(sdk)/arm64.partial"), final: URL(fileURLWithPath: "\(sdk)/arm64")))
+    #expect(steps[3].action == .meta(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"), out: URL(fileURLWithPath: "\(sdk)/toolchain-meta.json")))
+    // Then the pack, from that export: the SDK installed into the staging pack, fitted there (own: the image's Swift).
+    let staging = "/n/xcodes/27.0-27A266a-arm64.partial"
+    #expect(steps.contains { $0.action == .packSDK(xtoolSDK: URL(fileURLWithPath: "\(sdk)/arm64/darwin.xtoolsdk"),
+                                                    config: URL(fileURLWithPath: "\(staging)/config"), toolchain: URL(fileURLWithPath: "\(staging)/toolchain"),
+                                                    xtool: URL(fileURLWithPath: "/n/bin/xtool")) })
+    let sh = try share()
+    #expect(steps.contains { $0.argv == ["\(sh.path)/scripts/fit-toolchain.sh", staging, "own", "\(sh.path)/docker/toolchain"] })
+    #expect(steps.last?.action == .packCommit(staging: URL(fileURLWithPath: staging), final: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64")))
     #expect(!steps.contains { $0.argv.first == "docker" })
+}
+
+@Test func packStepsFollowTheTools() throws {
+    let steps = try plan()
+    let first = try #require(steps.firstIndex(where: isPackStep))
+    // The tools, the export and its metadata, then the pack's steps and nothing else.
+    #expect(steps[..<first].allSatisfy { !isPackStep($0) })
+    #expect(steps[first...].allSatisfy(isPackStep))
+    #expect(steps[first].action == .packBegin(staging: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64.partial"), from: nil,
+                                              manifest: PackManifest(format: PackRecipe.format, xcode: "27.0", build: "27A266a", arch: "arm64",
+                                                                     swift: "6.4.0", mode: .own, parts: [:])))
+    #expect(first == 4)
+    // A bare host (no shims): no Swift Build, no check; the pack records the sdk part alone.
+    #expect(!steps.contains { $0.argv.contains { $0.hasSuffix("pack-swift-build.sh") || $0.hasSuffix("pack-check.sh") } })
+    let parts: [PackPart] = steps.compactMap { if case let .packPart(p, _, _) = $0.action { return p } else { return nil } }
+    #expect(parts == [.sdk])
+}
+
+@Test func secondXcodeAddsAPack() throws {
+    // Xcode 26.2's pack is in the store and current: a setup of 27.0 prepares 27.0's beside it and touches nothing of it.
+    let root = try tempDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let s = XcodeStore(root: root.appendingPathComponent("xcodes"))
+    let hash = try PackRecipe.hash(.sdk, build: "17C52", arch: "arm64", table: table, share: share())
+    let p26 = XcodePack(root: s.directory(xcode: "26.2", build: "17C52", arch: "arm64"),
+                        manifest: PackManifest(format: PackRecipe.format, xcode: "26.2", build: "17C52", arch: "arm64", swift: "6.2.3",
+                                               mode: .separate, parts: ["sdk": hash]))
+    try p26.manifest.write(to: p26.manifestFile)
+    for entry in PackPlan.entries(of: .sdk) {
+        try FileManager.default.createDirectory(at: p26.root.appendingPathComponent(entry), withIntermediateDirectories: true)
+    }
+    let all: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) || $0.path.hasPrefix("/n/") || $0.path.hasPrefix("/cache/") }
+    // 26.2 again: nothing to do (its pack is current, the tools and the export are there).
+    #expect(try plan(xcode26, store: s, existing: all).isEmpty)
+    let steps = try plan(xcode27, store: s, existing: all)
+    #expect(!steps.isEmpty)
+    #expect(!steps.contains { $0.argv.joined(separator: " ").contains("26.2-17C52") || $0.title.contains("26.2-17C52") })
+    #expect(steps.first?.action == .packBegin(staging: PackPlan.staging(of: s.directory(xcode: "27.0", build: "27A266a", arch: "arm64")),
+                                              from: nil, manifest: PackManifest(format: PackRecipe.format, xcode: "27.0", build: "27A266a", arch: "arm64",
+                                                                                swift: "6.4.0", mode: .own, parts: [:])))
+    #expect(steps.last?.action == .packCommit(staging: PackPlan.staging(of: s.directory(xcode: "27.0", build: "27A266a", arch: "arm64")),
+                                              final: s.directory(xcode: "27.0", build: "27A266a", arch: "arm64")))
 }
 
 @Test func aMacGetsTheSignersOwnReleaseByItsOwnPin() throws {
@@ -78,47 +162,89 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
 
 @Test func anotherSwiftReleaseIsFittedAsSeparate() throws {
     let steps = try plan(xcode26)
-    #expect(downloads(steps).last?.final.path == "/n/toolchains/swift-6.2.3")
-    #expect(steps.last?.argv[1] == "/n/toolchains/swift-6.2.3")
-    #expect(steps.last?.argv[2] == "separate")
+    #expect(downloads(steps).last?.final.path == "/n/xcodes/26.2-17C52-arm64.partial/toolchain")
+    let fit = try #require(steps.first { $0.argv.first?.hasSuffix("/scripts/fit-toolchain.sh") == true })
+    #expect(fit.argv[1] == "/n/xcodes/26.2-17C52-arm64.partial" && fit.argv[2] == "separate")
 }
 
 @Test func installedToolsAndAnExistingExportAreSkipped() throws {
-    let present: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign", "/n/toolchains/swift-6.4.0/usr/bin/swiftc",
+    let present: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign",
                                 "/cache/xless/sdk/xcode27.0-27A266a/arm64/darwin.xtoolsdk", "/cache/xless/sdk/xcode27.0-27A266a/toolchain-meta.json"]
-    // Another Xcode installed: the SDK is installed again and the toolchain fitted again.
-    let other = try plan(installed: .init(xcodeBuild: "17C52", swiftVersion: "6.2.3")) { present.contains($0.path) }
-    #expect(other.count == 2)
-    #expect(other.first?.action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "/cache/xless/sdk/xcode27.0-27A266a/arm64/darwin.xtoolsdk"),
-                                              meta: URL(fileURLWithPath: "/cache/xless/sdk/xcode27.0-27A266a/toolchain-meta.json"),
-                                              toolchain: URL(fileURLWithPath: "/n/toolchains/swift-6.4.0")))
-    // Everything in place: nothing to do.
-    let done = present.union(["/n/swift-toolchain.json"])
-    #expect(try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.contains($0.path) }.isEmpty)
-    #expect(try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4")) { done.contains($0.path) }.isEmpty)
-    // A tool unpacked but not linked into bin/ (a run stopped in between): installed again, and everything after it.
-    let unlinked = try plan(installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.subtracting(["/n/bin/xtool"]).contains($0.path) }
-    #expect(downloads(unlinked).map(\.final.path) == ["/n/tools/xtool-1.21.0"])
-    #expect(unlinked.count == 3)
-    // --reexport: the export, then everything after it.
-    let again = try plan(reexport: true, installed: .init(xcodeBuild: "27A266a", swiftVersion: "6.4.0")) { done.contains($0.path) }
-    #expect(again.count == 4)
+    // No pack yet: the pack's steps alone.
+    let steps = try plan { present.contains($0.path) }
+    #expect(steps.allSatisfy(isPackStep))
+    if case .packBegin = steps.first?.action {} else { Issue.record("first step is not the pack's: \(steps.first?.title ?? "none")") }
+    // A tool unpacked but not linked into bin/ (a run stopped in between): installed again.
+    let unlinked = try plan { present.subtracting(["/n/bin/xtool"]).contains($0.path) }
+    #expect(downloads(unlinked).map(\.final.path) == ["/n/tools/xtool-1.21.0", "/n/xcodes/27.0-27A266a-arm64.partial/toolchain"])
+    // A tool of another version, linked by a setup before a pin moved (XTOOL_VERSION, RCODESIGN_VERSION): installed again, at
+    // the pinned version, before the export and the pack use it.
+    let older: (URL) -> String? = { ["/n/bin/xtool": "/n/tools/xtool-1.20.0/AppRun", "/n/bin/rcodesign": "/n/tools/rcodesign-0.28.0/rcodesign"][$0.path] }
+    let moved = try plan(existing: { present.contains($0.path) }, linked: older)
+    #expect(downloads(moved).map(\.final.path) == ["/n/tools/xtool-1.21.0", "/n/tools/rcodesign-0.29.0", "/n/xcodes/27.0-27A266a-arm64.partial/toolchain"])
+    // (a link that leads nowhere, or is no link: installed again too)
+    #expect(downloads(try plan(existing: { present.contains($0.path) }, linked: { _ in nil })).map(\.kind) == [.appImage, .rcodesign, .swiftToolchain])
+    // --reexport: the export first, then its metadata.
+    let again = try plan(reexport: true) { present.contains($0.path) }
     if case .export = again[0].action {} else { Issue.record("first step is not the export: \(again[0].title)") }
+    if case .meta = again[1].action {} else { Issue.record("second step is not the metadata: \(again[1].title)") }
+}
+
+@Test func pinnedToolOnPathIsNotDownloaded() throws {
+    // Executables that print a version, as xtool (`xtool 1.21.0`) and rcodesign (`apple-codesign 0.29.0`) do; the check runs them.
+    let dir = try tempDir(), pinned = dir.appendingPathComponent("pinned"), other = dir.appendingPathComponent("other")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    for (bin, xtool, rcodesign) in [(pinned, "1.21.0", "0.29.0"), (other, "1.20.0", "0.28.0")] {
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try ExecutableFile.write("#!/bin/sh\n[ \"$1\" = --version ] && echo 'xtool \(xtool)'\n", to: bin.appendingPathComponent("xtool"), stage: .sdk)
+        try ExecutableFile.write("#!/bin/sh\n[ \"$1\" = --version ] && echo 'apple-codesign \(rcodesign)'\n", to: bin.appendingPathComponent("rcodesign"), stage: .sdk)
+    }
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: "\(other.path):\(pinned.path)") == nil) // the first one found is another version
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: pinned.path)?.path == pinned.appendingPathComponent("xtool").path)
+    #expect(NativeSetupPlan.pinnedOnPath("rcodesign", version: "0.29.0", path: pinned.path)?.path == pinned.appendingPathComponent("rcodesign").path)
+    #expect(NativeSetupPlan.pinnedOnPath("rcodesign", version: "0.29.0", path: other.path) == nil)
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21", path: pinned.path) == nil) // a whole word, not a prefix
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: dir.path) == nil)  // not there
+    // One that does not run (exits non-zero) is not installed, whatever it prints.
+    let broken = dir.appendingPathComponent("broken")
+    try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+    try ExecutableFile.write("#!/bin/sh\necho 'xtool 1.21.0'\nexit 1\n", to: broken.appendingPathComponent("xtool"), stage: .sdk)
+    #expect(NativeSetupPlan.pinnedOnPath("xtool", version: "1.21.0", path: broken.path) == nil)
+
+    func make(_ path: String) throws -> [SetupStep] {
+        try NativeSetupPlan.make(source: (xcode27, .xip, URL(fileURLWithPath: "/home/u/Downloads/Xcode_27.xip")), arch: "arm64", share: share(),
+                                 cacheRoot: cache, layout: layout, store: store, table: table, reexport: false, abilities: bare,
+                                 installed: { NativeSetupPlan.pinnedOnPath($0, version: $1, path: path) }, existing: { _ in false })
+    }
+    // Both pinned on PATH (an image): neither is downloaded into the native home, and the export runs the one on PATH.
+    let steps = try make(pinned.path)
+    #expect(downloads(steps).map(\.kind) == [.swiftToolchain])
+    #expect(!steps.contains { $0.argv.joined(separator: " ").contains("/n/tools") || $0.argv.contains("/n/bin/xtool") })
+    let export = try #require(steps.first { if case .export = $0.action { true } else { false } })
+    #expect(export.argv.first == pinned.appendingPathComponent("xtool").path)
+    // and the SDK install into the pack runs that same xtool, by its path, not whichever `xtool` PATH names then
+    let install = try #require(steps.first { if case .packSDK = $0.action { true } else { false } })
+    guard case let .packSDK(_, _, _, xtool) = install.action else { return }
+    #expect(xtool == pinned.appendingPathComponent("xtool") && install.argv.contains(pinned.appendingPathComponent("xtool").path))
+    // Another version on PATH: downloaded, and the export runs the downloaded one.
+    let older = try make(other.path)
+    #expect(downloads(older).map(\.kind) == [.appImage, .rcodesign, .swiftToolchain])
+    #expect(older.first { if case .export = $0.action { true } else { false } }?.argv.first == "/n/bin/xtool")
 }
 
 @Test func anExportSourceIsInstalledFromWhereItIsAndNeverExported() throws {
     let export = URL(fileURLWithPath: "/exports/x27")
-    let tools: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign", "/n/toolchains/swift-6.4.0/usr/bin/swiftc"]
-    let steps = try NativeSetupPlan.make(source: (xcode27, .export, export), arch: "arm64", share: share, cacheRoot: cache, layout: layout,
-                                         sdkBundle: bundle, metaDest: metaDest, table: table, reexport: false, installed: nil,
-                                         existing: { tools.contains($0.path) })
+    let tools: Set<String> = ["/n/bin/xtool", "/n/bin/rcodesign"]
+    let steps = try NativeSetupPlan.make(source: (xcode27, .export, export), arch: "arm64", share: share(), cacheRoot: cache, layout: layout,
+                                         store: store, table: table, reexport: false, abilities: bare, linked: pinnedLinks, existing: { tools.contains($0.path) })
     for s in steps { if case .export = s.action { Issue.record("an export source was exported again: \(s.title)") } }
-    #expect(steps.count == 3)
     #expect(steps[0].action == .meta(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
                                      out: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json")))
-    #expect(steps[1].action == .sdkInstall(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
-                                           meta: URL(fileURLWithPath: "/exports/x27/toolchain-meta.json"),
-                                           toolchain: URL(fileURLWithPath: "/n/toolchains/swift-6.4.0")))
+    #expect(steps.contains { $0.action == .packSDK(xtoolSDK: URL(fileURLWithPath: "/exports/x27/arm64/darwin.xtoolsdk"),
+                                                    config: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64.partial/config"),
+                                                    toolchain: URL(fileURLWithPath: "/n/xcodes/27.0-27A266a-arm64.partial/toolchain"),
+                                                    xtool: URL(fileURLWithPath: "/n/bin/xtool")) })
+    #expect(steps.contains { $0.argv == ["cp", "/exports/x27/toolchain-meta.json", "/n/xcodes/27.0-27A266a-arm64.partial/toolchain-meta.json"] })
     #expect(steps.allSatisfy { !$0.argv.joined(separator: " ").contains("/cache/xless") })
 }
 
@@ -134,7 +260,7 @@ private func downloads(_ steps: [SetupStep]) -> [NativeDownload] {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let t = KnownXcodes.parseEnv(try String(contentsOf: root.appendingPathComponent("versions.env"), encoding: .utf8))
     for x in try KnownXcodes.load(versionsEnv: root.appendingPathComponent("versions.env")) {
-        for a in ["arm64", "amd64"] { #expect(throws: Never.self) { try plan(x, arch: a, table: t) } }
+        for a in ["arm64", "amd64"] { #expect(throws: Never.self) { try plan(x, arch: a, table: t, share: root) } }
     }
 }
 

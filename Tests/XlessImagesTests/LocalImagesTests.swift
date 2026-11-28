@@ -12,11 +12,11 @@ final class FakeDocker: @unchecked Sendable {
         images[name] = LocalImage(name: name, id: id, architecture: arch, labels: labels, layers: layers)
     }
 
-    /// An image as `xless setup` builds it.
-    func addBase(_ xcode: String, sdk: String = "17F113", arch: String = "arm64", name: String? = nil, id: String = "sha256:base", version: String = "0.10.0",
+    /// An image as scripts/docker-images.sh builds it for `version`: a release's, so its `dev.xless.image` is `v<version>-<12 hex>`.
+    func addBase(_ version: String = "0.14.0", arch: String = "arm64", name: String? = nil, id: String = "sha256:base", imageID: String? = nil,
                  layers: [String] = ["a", "b"]) {
-        add(name ?? ImageName.base(arch: arch, xcode: xcode), id: id, arch: arch,
-            labels: ["org.xless.image": "true", "dev.xless.sdk": sdk, "dev.xless.xcode": xcode, "dev.xless.arch": arch, "dev.xless.version": version], layers: layers)
+        add(name ?? ImageName.base(version: version, arch: arch), id: id, arch: arch,
+            labels: ["org.xless.image": "true", "dev.xless.arch": arch, "dev.xless.version": version, "dev.xless.image": imageID ?? "v\(version)-0123456789ab"], layers: layers)
     }
 
     func answer(_ words: [String]) -> (code: Int32, output: String) {
@@ -28,10 +28,7 @@ final class FakeDocker: @unchecked Sendable {
         return (0, String(decoding: try! JSONSerialization.data(withJSONObject: json), as: UTF8.self) + "\n")
     }
 
-    /// The SDK exports in the cache.
-    var exports: [SDKExport] = []
-
-    var local: LocalImages { LocalImages(exports: { _ in self.exports }) { self.answer($0) } }
+    var local: LocalImages { LocalImages { self.answer($0) } }
 }
 
 /// The message of the `ImageProblem` that `body` throws.
@@ -44,14 +41,20 @@ func problem(_ body: () throws -> some Any) -> String {
 }
 
 @Suite struct ImageNameTests {
-    @Test func aBaseImagesTagNamesItsArchitectureAndXcode() {
-        #expect(ImageName.base(arch: "arm64", xcode: "26.6") == "xless:local-arm64-xcode26.6")
-        #expect(ImageName.xcode(ofBase: "xless:local-arm64-xcode26.6", arch: "arm64") == "26.6")
-        #expect(ImageName.xcode(ofBase: "xless:local-arm64-xcode26.0.1", arch: "arm64") == "26.0.1")
-        for other in ["xless:local-arm64", "xless:local-amd64-xcode26.6", "xless:local-arm64-xcode26.6-17F113", "xless:local-arm64-xcode26.6-tauri",
-                      "xless-base:local-arm64-xcode26.6", "registry.example.com/xless:local-arm64-xcode26.6", "xless:local-arm64-setup"] {
-            #expect(ImageName.xcode(ofBase: other, arch: "arm64") == nil, "\(other)")
+    @Test func aBaseImagesTagNamesItsVersionAndArchitecture() {
+        #expect(ImageName.base(version: "0.14.0", arch: "arm64") == "xless:0.14.0-arm64")
+        #expect(ImageName.base(version: "0123456789ab-dirty", arch: "amd64") == "xless:0123456789ab-dirty-amd64")
+    }
+
+    @Test func everyTagOfTheOldLayoutsIsLegacy() {
+        for old in ["xless:local", "xless:local-arm64", "xless:local-arm64-xcode26.6", "xless:local-arm64-xcode26.6-17F113", "xless:local-arm64-xcode26.6-tauri", "xless:local-arm64-setup",
+                    "xless-base:0.9.0", "xless-tauri:local-arm64", "xless-rn:anything"] {
+            #expect(ImageName.isLegacy(old), "\(old)")
         }
+        for current in ["xless:0.14.0-arm64", "xless:0123456789ab-dirty-arm64", "xless:0.14.0-arm64-tauri", "someone/xless:local-arm64", "mine:local", "xless:locale-arm64", "xless:localx"] {
+            #expect(!ImageName.isLegacy(current), "\(current)")
+        }
+        #expect("local".wholeMatch(of: ImageName.legacyTag) != nil && "local-arm64-xcode26.6".wholeMatch(of: ImageName.legacyTag) != nil && "0.14.0-arm64".wholeMatch(of: ImageName.legacyTag) == nil)
     }
 
     /// What a person writes goes into docker's arguments: never an option of it.
@@ -63,185 +66,247 @@ func problem(_ body: () throws -> some Any) -> String {
     }
 }
 
+/// The tag part that names this xless: the way scripts/docker-images.sh decides it.
+@Suite struct ThisXlessTests {
+    private func share(files: [String: String]) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("share-\(UUID())")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (name, text) in files { try Data(text.utf8).write(to: directory.appendingPathComponent(name)) }
+        return directory
+    }
+    /// No git checkout is there.
+    private let noGit: ImageName.Git = { _, _ in (128, "") }
+
+    @Test func aReleaseIsNamedByItsVersionFile() throws {
+        let release = try share(files: ["VERSION": "0.14.0\n", "versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: release) }
+        #expect(try ImageName.tag(ofShare: release, git: noGit) == "0.14.0")
+        // even where git is there, but the share is not its checkout's top
+        #expect(try ImageName.tag(ofShare: release) == "0.14.0")
+    }
+
+    @Test func withoutAVersionFileItIsVersionsEnvs() throws {
+        let source = try share(files: ["versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: source) }
+        #expect(try ImageName.tag(ofShare: source, git: noGit) == "0.0.0-dev")
+        let none = try share(files: [:])
+        defer { try? FileManager.default.removeItem(at: none) }
+        #expect(problem { try ImageName.tag(ofShare: none, git: noGit) }.hasPrefix("xless's share directory \(none.path) records no release"))
+    }
+
+    /// A checkout with no commit yet is no checkout, as scripts/docker-images.sh has it.
+    @Test func aCheckoutWithNoCommitIsNamedByItsRelease() throws {
+        let share = try share(files: ["versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: share) }
+        let git: ImageName.Git = { words, _ in
+            switch words {
+            case ["rev-parse", "--show-toplevel"]: return (0, share.resolvingSymlinksInPath().path + "\n")
+            default: return (128, "")
+            }
+        }
+        #expect(try ImageName.tag(ofShare: share, git: git) == "0.0.0-dev")
+    }
+
+    /// `xless clean --old` trusts a tag that names the release or the commit; one that a checkout fell back to (git failed there) is not that.
+    @Test func aCheckoutWhoseGitFailedHasFallenBack() throws {
+        let checkout = try share(files: ["versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: checkout) }
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        let top = checkout.resolvingSymlinksInPath().path + "\n"
+        let broken: ImageName.Git = { words, _ in words == ["rev-parse", "--show-toplevel"] ? (0, top) : (128, "") }
+        let fell = try ImageName.resolution(ofShare: checkout, git: broken)
+        #expect(fell.tag == "0.0.0-dev" && fell.fellBack)
+        let working: ImageName.Git = { words, _ in
+            switch words {
+            case ["rev-parse", "--show-toplevel"]: return (0, top)
+            case ["rev-parse", "--short=12", "HEAD"]: return (0, "0123456789ab\n")
+            default: return (0, "")
+            }
+        }
+        let fine = try ImageName.resolution(ofShare: checkout, git: working)
+        #expect(fine.tag == "0123456789ab" && !fine.fellBack)
+        let release = try share(files: ["VERSION": "0.14.0\n"])
+        defer { try? FileManager.default.removeItem(at: release) }
+        let plain = try ImageName.resolution(ofShare: release, git: noGit)
+        #expect(plain.tag == "0.14.0" && !plain.fellBack, "a release has no .git: its tag is trusted")
+    }
+
+    #if !os(Windows)
+    private static let checkoutRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    /// bash, the script and git are here (a skip is recorded otherwise, not passed in silence).
+    private static var scriptRuns: Bool {
+        FileManager.default.isExecutableFile(atPath: "/bin/bash") && FileManager.default.fileExists(atPath: checkoutRoot.appendingPathComponent("scripts/docker-images.sh").path)
+            && ImageName.runGit(["--version"], in: checkoutRoot).code == 0
+    }
+
+    /// The script and Swift name this very checkout's image the same way.
+    @Test(.enabled(if: scriptRuns, "needs bash, scripts/docker-images.sh and git"))
+    func theScriptAndXlessAgreeOnTheTag() throws {
+        let root = Self.checkoutRoot
+        let script = root.appendingPathComponent("scripts/docker-images.sh")
+        let process = Process(), out = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [script.path, "tag", "--arch", "arm64"]
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0 && !said.isEmpty)
+        #expect(try ImageName.tag(ofShare: root) == said)
+    }
+    #endif
+
+    @Test func aCheckoutIsNamedByItsCommit() throws {
+        #expect(ImageName.checkoutTag(commit: "0123456789ab", dirty: false) == "0123456789ab")
+        #expect(ImageName.checkoutTag(commit: "0123456789ab", dirty: true) == "0123456789ab-dirty")
+        let checkout = try share(files: ["versions.env": "XLESS_VERSION=0.0.0-dev\n"])
+        defer { try? FileManager.default.removeItem(at: checkout) }
+        let top = checkout.resolvingSymlinksInPath().path
+        func git(dirty: Bool, top: String? = nil) -> ImageName.Git {
+            { words, _ in
+                switch words {
+                case ["rev-parse", "--show-toplevel"]: return (0, (top ?? "\(checkout.resolvingSymlinksInPath().path)") + "\n")
+                case ["rev-parse", "--short=12", "HEAD"]: return (0, "0123456789ab\n")
+                case ["diff", "--quiet", "HEAD"]: return (dirty ? 1 : 0, "")
+                default: return (1, "")
+                }
+            }
+        }
+        #expect(try ImageName.tag(ofShare: checkout, git: git(dirty: false)) == "0123456789ab")
+        #expect(try ImageName.tag(ofShare: checkout, git: git(dirty: true)) == "0123456789ab-dirty")
+        _ = top
+        // a share inside somebody else's checkout is not a checkout of its own
+        #expect(try ImageName.tag(ofShare: checkout, git: git(dirty: true, top: "/somewhere/else")) == "0.0.0-dev")
+    }
+}
+
 @Suite struct LocalImagesTests {
     let docker = FakeDocker()
 
     @Test func anImageIsWhatDockerSaysOfIt() throws {
-        docker.addBase("26.6")
-        let image = try #require(docker.local.image("xless:local-arm64-xcode26.6"))
-        #expect(image == docker.images["xless:local-arm64-xcode26.6"])
-        #expect(image.sdk == "17F113" && image.xcode == "26.6" && image.version == "0.10.0")
-        #expect(docker.local.image("xless:local-arm64-xcode1.0") == nil)
+        docker.addBase()
+        let image = try #require(docker.local.image("xless:0.14.0-arm64"))
+        #expect(image == docker.images["xless:0.14.0-arm64"])
+        #expect(image.version == "0.14.0" && image.imageID == "v0.14.0-0123456789ab")
+        #expect(docker.local.image("xless:1.0.0-arm64") == nil)
         // docker prints no labels as null
         let bare = LocalImage.parse(#"{"Id":"sha256:1","Architecture":"amd64","Config":{"Labels":null},"RootFS":{"Layers":null}}"#, name: "x")
         #expect(bare == LocalImage(name: "x", id: "sha256:1", architecture: "amd64", labels: [:], layers: []))
         #expect(LocalImage.parse("", name: "x") == nil && LocalImage.parse("[]", name: "x") == nil)
     }
 
-    @Test func thePinChoosesTheImage() throws {
-        docker.addBase("26.6")
-        docker.addBase("27.0", sdk: "27A266a")
-        #expect(try docker.local.base(arch: "arm64", pin: "26.6").image.name == "xless:local-arm64-xcode26.6")
-        let missing = problem { try docker.local.base(arch: "arm64", pin: "26.2") }
-        #expect(missing == "the image xless:local-arm64-xcode26.2 is missing; build it from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64")
+    @Test func baseIsTheImageOfThisVersion() throws {
+        docker.addBase("0.14.0")
+        docker.addBase("0.13.0")
+        docker.addBase("0.14.0", arch: "amd64")
+        #expect(try docker.local.base(version: "0.14.0", arch: "arm64").name == "xless:0.14.0-arm64")
+        #expect(try docker.local.base(version: "0.14.0", arch: "amd64").name == "xless:0.14.0-amd64")
+        // a checkout's image: the tag is the commit, and so is the start of its ID
+        docker.addBase("0.0.0-dev", name: "xless:0123456789ab-dirty-arm64", imageID: "0123456789ab-dirty-fedcba987654")
+        #expect(try docker.local.base(version: "0123456789ab-dirty", arch: "arm64").name == "xless:0123456789ab-dirty-arm64")
+        // missing: the one of another version is named, and is no use
+        let missing = problem { try docker.local.base(version: "0.15.0", arch: "arm64") }
+        #expect(missing == "the image xless:0.15.0-arm64 is missing (xless:0.13.0-arm64 is another version's; xless images are never pulled from a registry); build it: xless setup --docker --arch arm64 (it needs no Xcode to build the image)")
+        #expect(problem { try FakeDocker().local.base(version: "0.15.0", arch: "arm64") }
+            == "the image xless:0.15.0-arm64 is missing (xless images are never pulled from a registry); build it: xless setup --docker --arch arm64 (it needs no Xcode to build the image)")
+        #expect(problem { try FakeDocker().local.base(version: "0.14.0", arch: "arm64") }.hasPrefix("the image xless:0.14.0-arm64 is missing"))
     }
 
-    @Test func withoutAPinTheNewestXcodeIsChosen() throws {
-        for xcode in ["26.2", "26.10", "26.9.1", "9.9"] { docker.addBase(xcode) }
-        docker.addBase("27.0", arch: "amd64")
-        docker.add("xless:local-arm64-xcode99.0") // of an older xless: no labels
-        docker.addBase("98.0", name: "xless:local-arm64-xcode98.0-98A1")
-        docker.addBase("97.0", name: "someone/xless:local-arm64-xcode97.0")
-        let choice = try docker.local.base(arch: "arm64", pin: nil)
-        #expect(choice.image.name == "xless:local-arm64-xcode26.10" && choice.notice == nil)
-        let none = problem { try FakeDocker().local.base(arch: "arm64", pin: nil) }
-        #expect(none == "there is no xless image on this machine (xless images are never pulled from a registry); build it with: xless setup --docker --xcode <Xcode.xip> --arch arm64")
-    }
-
-    @Test func anImageOfAnOlderXlessIsNamedAsOne() {
-        docker.add("xless:local-arm64-xcode26.2", labels: ["org.xless.image": "true"])
-        let pinned = problem { try docker.local.base(arch: "arm64", pin: "26.2") }
-        #expect(pinned == "xless:local-arm64-xcode26.2 is not an image of this xless (it has no dev.xless.sdk label: an older xless built it); build it again: xless setup --docker --arch arm64 (from the SDK export in the cache; when that is gone: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64)")
-        let any = problem { try docker.local.base(arch: "arm64", pin: nil) }
-        #expect(any == "there is no xless image on this machine (xless images are never pulled from a registry); build it with: xless setup --docker --arch arm64 (from the SDK export in the cache; when that is gone: xless setup --docker --xcode <Xcode.xip> --arch arm64; those of an older xless, as xless:local-arm64-xcode26.2, are not used: xless clean --old removes them)")
-        // the pinned Xcode's is missing, and an older xless's without an Xcode in its tag is there
+    @Test func anotherVersionIsRefusedWithSetup() {
+        let fix = "build it again: xless setup --docker --arch arm64 (it needs no Xcode to build the image)"
+        // the tag is not what the image is
+        docker.addBase("0.13.0", name: "xless:0.14.0-arm64")
+        #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") } == "xless:0.14.0-arm64 is the image of xless v0.13.0-0123456789ab, not of 0.14.0; \(fix)")
+        // an image that does not say (an older xless's tag with the new name)
+        docker.add("xless:0.14.0-arm64", labels: ["dev.xless.arch": "arm64"])
+        #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") } == "xless:0.14.0-arm64 holds an unknown xless (it has no dev.xless.image label); \(fix)")
+        // another version's image is named where the one wanted is missing
         docker.images = [:]
-        docker.add("xless:local-arm64")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.contains("build it: xless setup --docker --arch arm64 (from the SDK export in the cache; when that is gone: xless setup --docker --xcode <path to Xcode 26.6's .app or .xip> --arch arm64)"))
+        docker.addBase("0.13.0")
+        #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") }.contains("the image xless:0.14.0-arm64 is missing (xless:0.13.0-arm64 is another version's;"))
     }
 
-    /// The export of an earlier setup is all that a new image needs: the Xcode need not be there any more.
-    @Test func theExportInTheCacheIsNamedBeforeTheXcode() {
-        let again = "xless setup --docker --arch arm64 (from the SDK export in the cache; when that is gone: xless setup --docker --xcode"
-        docker.exports = [SDKExport(xcode: "26.6", directory: "/c/sdk/xcode26.6-17F113")]
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") } == "the image xless:local-arm64-xcode26.6 is missing; build it: \(again) <path to Xcode 26.6's .app or .xip> --arch arm64)")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: nil) }.hasSuffix("build it with: \(again) <Xcode.xip> --arch arm64)"))
-        // another Xcode's export is of no use
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.2") }.hasSuffix("build it from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64"))
-        docker.add("xless:local-arm64-xcode26.2")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.2") }.hasSuffix("build it again from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64"))
-        // one of several is named
-        docker.exports.append(SDKExport(xcode: "27.0", directory: "/c/sdk x/xcode27.0-27A266a"))
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.contains("build it: xless setup --docker --sdk /c/sdk/xcode26.6-17F113 --arch arm64 (from the SDK export in the cache; when that is gone: "))
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "27.0") }.contains("build it: xless setup --docker --sdk '/c/sdk x/xcode27.0-27A266a' --arch arm64 ("))
-        #expect(problem { try docker.local.base(arch: "arm64", pin: nil) }.contains("xless setup --docker --sdk '/c/sdk x/xcode27.0-27A266a' --arch arm64 ("))
-        // quoted by its bytes: a mark after a quote makes them one Character
-        docker.exports[1].directory = "/c/a'\u{301}; b"
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "27.0") }.contains(" --sdk '/c/a'\\''\u{301}; b' --arch arm64 ("))
-    }
-
-    @Test func theExportsAreWhatTheCacheHolds() throws {
-        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("exports-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: cache) }
-        #expect(SDKExport.all(in: cache, arch: "arm64").isEmpty)
-        for path in ["xcode26.6-17F113/arm64/darwin.xtoolsdk", "xcode26.10-18A1/arm64/darwin.xtoolsdk", "xcode27.0-27A266a/amd64/darwin.xtoolsdk", "xcode28.0-28A1/arm64/darwin.xtoolsdk.partial", "mine/arm64/darwin.xtoolsdk"] {
-            try FileManager.default.createDirectory(at: cache.appendingPathComponent("sdk/\(path)"), withIntermediateDirectories: true)
+    @Test func onlyLegacyImagesAreNamedAsOld() {
+        for old in ["xless:local-arm64-xcode26.6", "xless:local-arm64", "xless-base:local-arm64-xcode26.6", "xless-tauri:local-arm64", "xless-rn:local-arm64"] {
+            let docker = FakeDocker()
+            docker.add(old, labels: ["org.xless.image": "true", "dev.xless.sdk": "17F113"])
+            #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") }
+                == "there is no xless image on this machine (xless images are never pulled from a registry), and \(old) is an older xless's, which is not used; build it: xless setup --docker --arch arm64 (it needs no Xcode to build the image), and xless clean --old removes the older xless's images", "\(old)")
         }
-        #expect(SDKExport.all(in: cache, arch: "arm64") == [SDKExport(xcode: "26.6", directory: "\(cache.path)/sdk/xcode26.6-17F113"), SDKExport(xcode: "26.10", directory: "\(cache.path)/sdk/xcode26.10-18A1")])
-        #expect(SDKExport.all(in: cache, arch: "amd64").map(\.xcode) == ["27.0"])
+        // another image is not
+        docker.add("mine:local")
+        docker.add("someone/xless:local-arm64")
+        #expect(!problem { try docker.local.base(version: "0.14.0", arch: "arm64") }.contains("older xless's"))
     }
 
-    /// For one release more: the tag `xless:local-<arch>`, on an image that has the labels.
-    @Test func thePlainTagStillWorksWhereItHasTheLabels() throws {
-        docker.addBase("26.6", name: "xless:local-arm64")
-        for pin in [nil, "26.6"] {
-            let choice = try docker.local.base(arch: "arm64", pin: pin)
-            #expect(choice.image.name == "xless:local-arm64")
-            #expect(choice.notice == "note: xless:local-arm64 is used for Xcode 26.6; the tag without an Xcode goes away in a later release (xless setup --docker makes xless:local-arm64-xcode26.6)")
-        }
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "27.0") }.contains("xless:local-arm64-xcode27.0 is missing"))
-        docker.addBase("26.2")
-        #expect(try docker.local.base(arch: "arm64", pin: nil).image.name == "xless:local-arm64-xcode26.2")
-        docker.images["xless:local-arm64"]?.labels = [:]
-        docker.images["xless:local-arm64-xcode26.2"] = nil
-        #expect(problem { try docker.local.base(arch: "arm64", pin: nil) }.contains("as xless:local-arm64, are not used"))
-    }
-
-    @Test func aTagThatIsNotWhatItSaysIsRefused() {
-        docker.addBase("27.0", sdk: "27A266a", name: "xless:local-arm64-xcode26.6")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.hasPrefix("xless:local-arm64-xcode26.6 holds the SDK of Xcode 27.0 (27A266a), not Xcode 26.6's; build it again"))
-        docker.addBase("26.6", arch: "amd64", name: "xless:local-arm64-xcode26.6")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.hasPrefix("xless:local-arm64-xcode26.6 is for amd64, not arm64; build it again"))
+    @Test func aBaseOfAnotherArchitectureIsRefused() {
+        docker.addBase("0.14.0", arch: "amd64", name: "xless:0.14.0-arm64")
+        #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") }.hasPrefix("xless:0.14.0-arm64 is for amd64, not arm64; build it again: xless setup --docker"))
         // the label, and what docker says
-        docker.images["xless:local-arm64-xcode26.6"]?.labels["dev.xless.arch"] = "arm64"
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.contains("is for amd64, not arm64"))
-        docker.addBase("26.6", version: "0.1.2")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.hasPrefix("xless:local-arm64-xcode26.6 holds xless 0.1.2, and this xless needs \(ImageLabel.minimumVersion) or later there; build it again"))
-        for good in ["0.0.0-dev", ImageLabel.minimumVersion, "12.0.0", "1.0.0-rc.1"] {
-            docker.addBase("26.6", version: good)
-            #expect((try? docker.local.base(arch: "arm64", pin: "26.6")) != nil, "\(good)")
-        }
-        docker.addBase("26.6", version: "")
-        #expect(problem { try docker.local.base(arch: "arm64", pin: "26.6") }.contains("holds an unknown xless"))
+        docker.addBase("0.14.0")
+        docker.images["xless:0.14.0-arm64"]?.labels["dev.xless.arch"] = "amd64"
+        #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") }.contains("is for amd64, not arm64"))
     }
 
     @Test func aDockerThatDoesNotAnswerIsNamed() {
         docker.answers = false
-        #expect(problem { try docker.local.base(arch: "arm64", pin: nil) }.hasPrefix("docker does not list its images (docker image ls failed); is it running?"))
+        #expect(problem { try docker.local.base(version: "0.14.0", arch: "arm64") }.hasPrefix("docker does not list its images (docker image ls failed); is it running?"))
     }
 }
 
 @Suite struct CustomImageTests {
     let docker = FakeDocker()
     init() {
-        docker.addBase("26.6")
-        docker.addBase("27.0", sdk: "27A266a", id: "sha256:27", layers: ["x", "y"])
+        docker.addBase("0.14.0")
         mine()
     }
 
-    private func mine(sdk: String = "17F113", xcode: String = "26.6", layers: [String] = ["a", "b", "c"], arch: String = "arm64", version: String = "0.10.0") {
-        docker.addBase(xcode, sdk: sdk, arch: arch, name: "mine:1", id: "sha256:mine", version: version, layers: layers)
+    /// A person's image, built on the base: the labels are inherited, and its layers are the base's and one more.
+    private func mine(layers: [String] = ["a", "b", "c"], arch: String = "arm64", version: String = "0.14.0") {
+        docker.addBase(version, arch: arch, name: "mine:1", id: "sha256:mine", layers: layers)
     }
 
-    private func custom(pin: String? = nil, _ name: String = "mine:1") throws -> LocalImages.Custom {
-        try docker.local.custom(name, named: "XLESS_IMAGE", arch: "arm64", pin: pin)
+    private func custom(_ name: String = "mine:1") throws -> LocalImages.Custom {
+        try docker.local.custom(name, named: "XLESS_IMAGE", version: "0.14.0", arch: "arm64")
     }
 
     @Test func itIsUsedWithTheLocalImageItIsBuiltOn() throws {
-        for pin in [nil, "26.6"] {
-            let custom = try custom(pin: pin)
-            #expect(custom.image.name == "mine:1" && custom.base.name == "xless:local-arm64-xcode26.6" && !custom.isBase)
+        let custom = try custom()
+        #expect(custom.image.name == "mine:1" && custom.base.name == "xless:0.14.0-arm64" && !custom.isBase)
+        #expect(try self.custom("xless:0.14.0-arm64").isBase)
+    }
+
+    @Test func customMustBeBuiltOnTheBase() {
+        // the labels are inherited, and anybody can write them: what is inside is compared too
+        for layers in [["a"], ["a", "x", "c"], [], ["x", "a", "b"]] {
+            mine(layers: layers)
+            #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is not built on xless:0.14.0-arm64 as it is now (xless setup has built that again since, or the labels are copied); build it again: docker build --pull=false --build-arg XLESS_IMAGE=xless:0.14.0-arm64 -t mine:1 <its folder>", "\(layers)")
         }
-        #expect(try custom("xless:local-arm64-xcode27.0").isBase)
+        docker.images["xless:0.14.0-arm64"] = nil
+        mine()
+        #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is built on an image of xless 0.14.0, and xless:0.14.0-arm64 is missing, which the steps with the secrets run in; build it: xless setup --docker --arch arm64 (it needs no Xcode to build the image)")
+        docker.add("mine:1")
+        #expect(problem { try custom() }.hasPrefix("XLESS_IMAGE names mine:1, which is not built on an image of this xless (it has no dev.xless.image label); build it on xless:0.14.0-arm64: docker build"))
     }
 
-    @Test func anotherXcodesIsRefused() {
-        #expect(problem { try custom(pin: "27.0") } == "XLESS_IMAGE names mine:1, which holds the SDK of Xcode 26.6 (17F113), not Xcode 27.0's; build it on the image of Xcode 27.0: docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode27.0 -t mine:1 <its folder>")
-        docker.images["xless:local-arm64-xcode26.6"] = nil
-        #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is built for Xcode 26.6 (17F113), and the image xless:local-arm64-xcode26.6 is missing, which the steps with the secrets run in; build it from Xcode 26.6: xless setup --docker --xcode <path to Xcode 26.6's .app or .xip> --arch arm64")
-    }
-
-    @Test func anotherArchitecturesOrAnOlderXlesssIsRefused() {
+    @Test func customOfAnotherArchIsRefused() {
         mine(arch: "amd64")
         #expect(problem { try custom() }.hasPrefix("XLESS_IMAGE names mine:1, which is for amd64, not arm64; "))
-        mine(version: "0.2.0")
-        #expect(problem { try custom() }.hasPrefix("XLESS_IMAGE names mine:1, which holds xless 0.2.0, and this xless needs"))
-        docker.add("mine:1")
-        #expect(problem { try custom() }.hasPrefix("XLESS_IMAGE names mine:1, which is not built on an image of this xless (it has no dev.xless.sdk label); build it on xless:local-arm64-xcode<version>: "))
+    }
+
+    @Test func customOfAnotherVersionIsRefused() {
+        mine(version: "0.13.0")
+        #expect(problem { try custom() }.hasPrefix("XLESS_IMAGE names mine:1, which is the image of xless v0.13.0-0123456789ab, not of 0.14.0; build it on xless:0.14.0-arm64: docker build"))
         #expect(problem { try custom("none:1") } == "XLESS_IMAGE names none:1, which is not on this machine (images are never pulled from a registry); build it first: docker build -t none:1 <its folder>")
         #expect(problem { try custom("--privileged") } == "XLESS_IMAGE names '--privileged', which is not an image name; name a local image")
     }
 
-    /// The labels are inherited, and anybody can write them: what is inside is compared too.
-    @Test func theLabelsAloneDoNotMakeIt() {
-        for layers in [["a"], ["a", "x", "c"], [], ["x", "a", "b"]] {
-            mine(layers: layers)
-            #expect(problem { try custom() } == "XLESS_IMAGE names mine:1, which is not built on xless:local-arm64-xcode26.6 as it is now (xless setup has built that again since, or the labels are copied); build it again: docker build --pull=false --build-arg XLESS_IMAGE=xless:local-arm64-xcode26.6 -t mine:1 <its folder>", "\(layers)")
-        }
-    }
-
     /// The steps with the secrets run in it.
     @Test func theImageItIsBuiltOnIsCheckedToo() {
-        docker.images["xless:local-arm64-xcode26.6"]?.labels["dev.xless.version"] = "0.1.0"
-        #expect(problem { try custom() }.hasPrefix("xless:local-arm64-xcode26.6 holds xless 0.1.0, and this xless needs"))
-        docker.addBase("26.6", arch: "amd64", name: "xless:local-arm64-xcode26.6")
-        #expect(problem { try custom() }.hasPrefix("xless:local-arm64-xcode26.6 is for amd64, not arm64"))
-    }
-
-    @Test func theImageOfAnotherBuildOfThatXcodeIsFound() throws {
-        docker.addBase("26.6", sdk: "17F200")
-        #expect(problem { try custom() }.contains("the image xless:local-arm64-xcode26.6-17F113 is missing"))
-        docker.addBase("26.6", name: "xless:local-arm64-xcode26.6-17F113")
-        #expect(try custom().base.name == "xless:local-arm64-xcode26.6-17F113")
+        docker.images["xless:0.14.0-arm64"]?.labels["dev.xless.image"] = "v0.1.0-0123456789ab"
+        #expect(problem { try custom() }.hasPrefix("xless:0.14.0-arm64 is the image of xless v0.1.0-0123456789ab, not of 0.14.0"))
+        docker.addBase("0.14.0", arch: "amd64", name: "xless:0.14.0-arm64")
+        #expect(problem { try custom() }.hasPrefix("xless:0.14.0-arm64 is for amd64, not arm64"))
     }
 }

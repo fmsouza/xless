@@ -13,7 +13,7 @@ public struct TauriBuildContext: Sendable {
     public var env: [String: String]
 
     public init(overlay: TauriOverlay, resolved: ResolvedTauri, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                sdk: DarwinSDK = DarwinSDK(), env: [String: String] = ProcessInfo.processInfo.environment) {
+                sdk: DarwinSDK, env: [String: String] = ProcessInfo.processInfo.environment) {
         self.overlay = overlay; self.resolved = resolved; self.sourceRoot = sourceRoot; self.workRoot = workRoot
         self.paths = paths; self.sdk = sdk; self.env = env
     }
@@ -33,7 +33,7 @@ public struct TauriMacBuildContext: Sendable {
     public var env: [String: String]
 
     public init(overlay: TauriOverlay, resolved: ResolvedTauriMac, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                sdk: DarwinSDK = DarwinSDK(), env: [String: String] = ProcessInfo.processInfo.environment) {
+                sdk: DarwinSDK, env: [String: String] = ProcessInfo.processInfo.environment) {
         self.overlay = overlay; self.resolved = resolved; self.sourceRoot = sourceRoot; self.workRoot = workRoot
         self.paths = paths; self.sdk = sdk; self.env = env
     }
@@ -59,7 +59,7 @@ extension TauriWorkContext {
     var tauriDir: URL { workRoot.appendingPathComponent(tauriDirPath, isDirectory: true) }
     /// The Tauri app root (the parent of the Tauri directory), where tauri-cli runs the frontend and cargo.
     var appRoot: URL { tauriDir.deletingLastPathComponent() }
-    var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
+    var cargoHome: String { KitTools.cargoHome(env: env) }
     /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it), no corepack prompt. With an
     /// installed Xcode, before them xless's `swift`.
     var tools: [String: String?] {
@@ -196,7 +196,14 @@ public enum TauriBuilder {
             let metadata = try Shell.run("cargo", ["metadata", "--format-version", "1", "--filter-platform", target, "--manifest-path", manifest.path],
                                          cwd: ctx.appRoot, env: ctx.tools, baseEnvironment: ctx.env, stage: .build).stdout
             let crate = try rootCrate(metadata: Data(metadata.utf8), manifest: manifest)
-            let swift = try SwiftToolchain.load(env: ctx.env)
+            // Outputs of another Xcode pack, of one prepared again by another recipe, or of the Mac's own Xcode (native and
+            // --docker runs share the work copy), go.
+            let identity = PackOutputs.identity(env: ctx.env, xcode: ctx.sdk.isXcode)
+            let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: crate.targetDir), record: PackOutputs.record(work: work), identity: identity)
+            if !removed.isEmpty {
+                log("the work copy's outputs were not built with this \(ctx.sdk.isXcode ? "Mac's Xcode" : "Xcode pack (\(identity))"): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), built again")
+            }
+            let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)   // on a Mac: the Xcode's own, no pack
             try TauriEnvironment.writeLinkerWrapper(minOS: minOS, sdk: ctx.sdk, workRoot: work, swift: swift)
             var cargoEnv = ctx.tools
             for (k, v) in try TauriEnvironment.cargo(resolved: r, overlay: ctx.overlay, sdk: ctx.sdk, workRoot: work, swift: swift) { cargoEnv[k] = v }
@@ -368,10 +375,17 @@ public enum TauriBuilder {
             r.mainBinaryName = r.mainBinaryName ?? main.bin
             let bundle = r.tauri.raw["bundle"] as? [String: Any] ?? [:]
             let staging = work.appendingPathComponent(".xless/mac", isDirectory: true)
+            // Outputs of another Xcode pack, of one prepared again by another recipe, or of the Mac's own Xcode (native and
+            // --docker runs share the work copy), go.
+            let identity = PackOutputs.identity(env: ctx.env, xcode: ctx.sdk.isXcode)
+            let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: main.targetDir), record: PackOutputs.record(work: work), identity: identity)
+            if !removed.isEmpty {
+                log("the work copy's outputs were not built with this \(ctx.sdk.isXcode ? "Mac's Xcode" : "Xcode pack (\(identity))"): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), built again")
+            }
 
             var thins: [(triple: String, url: URL)] = [], snapshots: [(triple: String, dir: URL)] = [], targets: [String]? = nil
             var dSYMs: [DSYM.Source] = []
-            let swift = try SwiftToolchain.load(env: ctx.env)
+            let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)   // on a Mac: the Xcode's own, no pack
             for triple in TauriMacEnvironment.targets {
                 // The wrapper's debug link gives the executable its dSYM when the release profile has debug info.
                 let release = main.targetDir.appendingPathComponent("\(triple)/release", isDirectory: true)

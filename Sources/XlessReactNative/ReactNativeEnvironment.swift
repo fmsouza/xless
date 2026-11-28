@@ -5,7 +5,7 @@ import XlessTauri
 /// The environment of the React Native steps (contract doc, "Env-only fixes" and "Overrides and environment Task 8 sets").
 public enum ReactNativeEnvironment {
     /// The image's `hermesc` (built from the Hermes source React Native pins; React Native's npm `hermesc` is macOS / x86_64).
-    public static let hermesc = "/usr/local/bin/hermesc"
+    public static let hermesc = KitTools.hermesc
 
     /// What GNU tar needs to read macOS-made tarballs as bsdtar does: no warning on stderr for the Apple pax headers
     /// (Expo reads tar's merged output as a plist), no AppleDouble `._*` files (they would be embedded in the app).

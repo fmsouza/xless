@@ -31,7 +31,9 @@ exit 0
 D
 chmod +x "$t/bin/docker"
 printf '#!/bin/sh\nexit 0\n' > "$t/nbin/xless"; chmod +x "$t/nbin/xless"
-docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" KLOG="$t/klog" FAKE="$fake" FAKE_IMAGES="$t/images" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1)
+"$fake" pack "$t/xcodes" "$A"   # the Xcode's pack every container gets, read-only
+docker=(env -i HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" KLOG="$t/klog" FAKE="$fake" FAKE_IMAGES="$t/images" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=1
+        XLESS_XCODES="$t/xcodes")
 native=(env -i HOME="$t/home" PATH="$t/nbin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" XLESS_USE_DOCKER=0)
 args=(--build-number 1 --to finalize)
 

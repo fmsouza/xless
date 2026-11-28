@@ -18,8 +18,19 @@ The scripts named here run from a source checkout. Those that run Apple's progra
   documentation's relative links, and that every page is reached from docs/README.md (`Tests/shell/check-doc-links.test.sh` runs it too).
 
 All the Docker commands below use the active Docker context. To use a separate engine (for example a dedicated Colima
-VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that `xless run --docker` and
-`scripts/sim-launch.sh` prefer a context named `colima-xless` when one exists.
+VM), set `DOCKER_CONTEXT`. Nothing in the repository hardcodes a context, except that, when neither `DOCKER_CONTEXT` nor
+`DOCKER_HOST` is set, these prefer a context named `colima-xless` when one exists (with `DOCKER_HOST` set and no
+`DOCKER_CONTEXT`, they use docker's current one, that address): every xless command that talks to Docker (`xless setup
+--docker`, `xless run --docker`, `xless clean`, `xless sdk export`: `Sources/XlessCore/DockerContext.swift` decides it
+for all of them), and the scripts that source `scripts/docker-context.sh`: `scripts/build-images.sh` (`make images`),
+`scripts/sim-launch.sh`, `scripts/parity.sh`, `scripts/acceptance-m7.sh`, the sample tests `scripts/test-cargo-linux.sh`,
+`scripts/test-tauri-linux.sh` and `scripts/test-rn-linux.sh`, and `make test-image` (`Tests/shell/image-target.sh`). Both
+read `DOCKER_CONTEXT` from the environment and from `testflight.env` (`XLESS_TESTFLIGHT_ENV`, else
+`~/.config/xless/testflight.env`), whose value wins; a script reads a plain name there only (`DOCKER_CONTEXT=colima`, quoted
+or not), and stops on any other form rather than guess what xless would make of it. A chosen context is the docker even
+with `DOCKER_HOST` set: xless passes `--context`, and the scripts remove `DOCKER_HOST` before they call docker (docker ranks
+it above `DOCKER_CONTEXT`). A `DOCKER_CONTEXT` that docker does not have stops each of them before anything, exit 2, with
+the contexts there are ([images.md](images.md#which-docker) has the message).
 
 ## Windows
 
@@ -67,36 +78,74 @@ zip's own, or a list of what every Windows has in System32, or the Visual C++ ru
 
 ## Building the images on the Mac
 
-`xless setup --docker` builds the image of a release ([images.md](images.md)). On the Mac, from a checkout:
+`xless setup --docker` builds the image of a release and prepares the Xcode packs ([images.md](images.md)). On the Mac,
+from a checkout:
 
 ```sh
-make images XCODE=/Applications/Xcode.app            # or XCODE=<Xcode_*.xip>, ARCHS=arm64 for one architecture
+make images                                          # ARCHS=arm64 for one architecture; no Xcode
 make kits                                            # KITS=tauri,react-native, the Dockerfiles of the checkout
+XLESS_SHARE="$PWD" swift run xless setup --docker --xcode ~/Downloads/Xcode_26.2_Universal.xip   # the pack, by this checkout's recipe
 ```
 
-`make images` (`scripts/build-images.sh`) builds `xless:local-<arch>-xcode<version>` from one Xcode and keeps the SDK
-export in `dist/sdk-xcode<version>/` (git-ignored). A `.xip` is expanded once with Apple's `xip --expand` into
-`~/.cache/xless/xcode/<name>/`. Unlike `xless setup`, the image gets an `xless` compiled from the checkout.
+`make images` (`scripts/build-images.sh`) builds `xless:<commit>[-dirty]-<arch>` with an `xless` compiled from the
+checkout, by `scripts/docker-images.sh`, the same recipe `xless setup` uses. It takes no Xcode: an Xcode is a pack.
+`make kits` builds the kits by `xless setup --docker --with`, so a kit of the checkout has the labels a run looks for.
+With `XLESS_SHARE` naming the checkout, `xless setup --docker` prepares packs with the checkout's files, in the image of
+the checkout, and their recipe hashes are the checkout's ([below](#xcode-packs)).
 
-`make sdk-export` is the export alone (`xless sdk export`: `xtool sdk build` in `xless:local-<arch>-setup`, with Xcode
-mounted read-only, into `dist/sdk/`). The images are built by `scripts/docker-images.sh`, the same recipe `xless setup`
-uses, and the kits by `xless setup --docker --with`, so a kit of the checkout has the labels a run looks for. Every
-download of the image (the static Swift SDK, xtool, rcodesign, Swift Build) is sha256-pinned in `versions.env`; those of
-the kits (Node, rustup, Ruby, Bundler, Hermes) in `docker/tauri/Dockerfile` and `docker/react-native/Dockerfile`, which
-are complete by themselves so that a person can start from a copy.
+`make sdk-export` is the SDK export alone (`xless sdk export`: `xtool sdk build` in the xless image, with the Xcode
+mounted read-only, into `dist/sdk/`, git-ignored); `xless setup --docker --sdk dist/sdk` prepares a pack from it.
 
-The Docker VM must be able to see Xcode. Colima: `colima start --mount /Applications:r --mount $HOME:w`. Docker
-Desktop does not share `/Applications`; make an APFS clone under your home directory (cheap, copy-on-write) and point
-`XCODE` at it:
+Every download of the image (Swift's static Linux SDK, xtool, rcodesign, the Swift toolchains' pins, Swift Build's
+sources) is sha256-pinned in `versions.env`; those of the kits (Node, rustup, Ruby, Bundler, Hermes) in
+`docker/tauri/Dockerfile` and `docker/react-native/Dockerfile`, which are complete by themselves so that a person can
+start from a copy. The image fetches no Swift toolchain of an Xcode and compiles no Swift Build: that happens when a
+pack is prepared.
+
+The Docker VM must be able to see the Xcode that `make sdk-export` exports. Colima: `colima start --mount /Applications:r
+--mount $HOME:w`. Docker Desktop does not share `/Applications`; make an APFS clone under your home directory (cheap,
+copy-on-write) and point `XCODE` at it:
 
 ```sh
 mkdir -p ~/.cache/xless && cp -cR /Applications/Xcode.app ~/.cache/xless/Xcode.app
-make images XCODE=$HOME/.cache/xless/Xcode.app
+make sdk-export XCODE=$HOME/.cache/xless/Xcode.app
 ```
 
-The amd64 images build and run on an arm64 Mac only with Rosetta in the Docker VM: check that
+(`xless setup --docker --xcode <.xip>` needs none of that for a `.xip` under your home directory, which the VM sees.)
+
+The amd64 images and packs build and run on an arm64 Mac only with Rosetta in the Docker VM: check that
 `/proc/sys/fs/binfmt_misc/rosetta` is registered in the VM. Under QEMU's user-mode emulation gcc and Swift crash at
 random. Milestone 4 verified amd64 this way, not yet on a native x86_64 host ([acceptance-m4.md](acceptance-m4.md)).
+
+## Xcode packs
+
+A pack's `pack.json` holds a **recipe hash** for each part, which `PackRecipe` computes from the share directory and
+`versions.env` and nothing else (not xless's version):
+
+| Part | Made from (the hash's inputs) |
+|---|---|
+| `sdk` | `scripts/fit-toolchain.sh`; `docker/toolchain/clang-driver`, `target-os-check`, `record-flags.py`, `target-os/derived.txt` and `target-os/<build>.txt`; the Swift toolchain's URL and sha256 for the architecture; whether that toolchain is the image's own Swift; every `versions.env` entry ending in `_<build>` but `XCODE_XIP_SHA256_<build>` (another vetted `.xip` of the same Xcode makes the same pack); `XTOOL_VERSION`; the Xcode build |
+| `swift-build` | `SWB_TAG` and every `SWB_*` pin; the toolchain's sha256; the distribution of `SWIFT_IMAGE` (`jammy`); `scripts/pack-swift-build.sh` |
+
+Both start with `PackRecipe.format`, the pack format number. A pack whose hash is not the one this xless computes is
+stale: a run prepares the part again from the SDK export, or stops (exit 2) and names `xless setup`. So:
+
+- **A change to `scripts/fit-toolchain.sh`, `scripts/pack-swift-build.sh`, anything under `docker/toolchain/`, or a pin
+  among those inputs makes the packs stale, by design**: every machine prepares that part again once (on an arm64 Mac
+  the `sdk` part took 2 min 34 s for 26.2 and 2 min 50 s for 27.0 after the last change to `scripts/fit-toolchain.sh`, and
+  1 min 33 s for 26.2 in an earlier run; compiling Swift Build took 4 min 7 s for 26.2 and 4 min 16 s for 27.0). Change them when the packs must change, and say so in the commit.
+  A comment counts: it changes the file's bytes.
+- **Raise `PackRecipe.format`** when the Swift code that prepares a pack (`PackPlan`, `PackStore`, the setup) changes what
+  it produces, the layout or a file's content, without a change to any of those files. Then every pack is prepared
+  again. Nothing finds such a change for you: the files above are hashed, the Swift code is not.
+- A change to `docker/Dockerfile`, the kits or the rest of xless prepares nothing again.
+
+`make test-image` checks the xless image of this checkout and its kits (`Tests/shell/image-contents.test.sh`): no file,
+label or build argument of an Xcode in any layer, and what each must hold. Then it uses the `tauri` kit's image directly
+with a pack volume read-only (`Tests/shell/image-direct.test.sh`): an overlay builds from the pack, nothing can write
+the pack, and without a pack a build exits 2. It needs the image, the `tauri` kit and a pack volume of the pinned Xcode
+(`XLESS_XCODE_PIN`, else `versions.env`'s `XCODE_VERSION`), and fails when one is missing; `ARCHS="arm64 amd64"` checks
+each.
 
 ## Parity tests
 
@@ -108,6 +157,7 @@ They compare what xless builds with what Xcode builds from the same sources.
 | `make test-tauri-linux` | Docker | `samples/HelloTauri`, iOS (and `--platform macos`), against `samples/HelloTauri/reference/` ([tauri.md](tauri.md#linux-parity-test)) |
 | `ARCH=amd64 make test-rn-linux` (`test-tauri-linux`) | Docker | The same in the amd64 images |
 | `scripts/arch-compare.sh <app-a> <app-b>` | anywhere | An app built in the arm64 image against one built in the amd64 image: byte for byte outside the code signature |
+| `scripts/pack-parity.sh <baseline dir> <candidate dir>` | anywhere | Products built with an Xcode baked into the image against the same built with the Xcode's pack: byte for byte outside the code signature, but for the paths the pack moved, each listed ([acceptance-xcode-packs.md](acceptance-xcode-packs.md)) |
 | `make parity` | Mac | HelloShip built by Xcode against the xless build: Info.plist keys, `LC_BUILD_VERSION`, files, `Assets.car` ([research/parity-known-gaps.md](research/parity-known-gaps.md)) |
 | `make ib-parity` | Mac | The storyboard compiler: golden drift, and a simulator screenshot of a launch screen compiled both ways |
 | `make rn-reference`, `make tauri-reference APP=… OUT=…` | Mac | Record the references the Linux tests compare with |
@@ -125,35 +175,44 @@ xless accepts only the Xcode releases it has measured. Adding one takes, on a Ma
 2. **The Swift toolchain** (Ruling R10): `XCODE_SWIFT_<B>`, the open-source Swift release with the same major.minor as
    Apple's and the highest patch not above it; for a release other than `SWIFT_VERSION`, its
    `SWIFT_TOOLCHAIN_<x_y_z>_*` download pins. `scripts/xcode-swift.sh <B>` checks the entry and prints what is missing.
-3. **The `TARGET_OS_*` macros:** `scripts/target-os-macros.sh <Xcode.app> > docker/toolchain/target-os/<B>.txt`. The
-   image build fails without this file.
+3. **The `TARGET_OS_*` macros:** `scripts/target-os-macros.sh <Xcode.app> > docker/toolchain/target-os/<B>.txt`.
+   Preparing a pack of that Xcode fails without this file, which is part of the pack's `sdk` recipe.
 4. **The asset and storyboard tools profile:** `scripts/xcode-tools.sh <B>` prints the commands. With
    `DEVELOPER_DIR=<Xcode.app>/Contents/Developer`, run `scripts/assetkit-golden.sh`, `scripts/ib-golden.sh` and
    `scripts/copypng-golden.sh`, compare their outputs with the measured builds
    ([research/xcode-tools-by-version.md](research/xcode-tools-by-version.md)), and add the entry to
    `Sources/XlessCore/XcodeToolsProfile.swift`.
-5. **The references and the tests:** `make images XCODE=…`, then `make rn-reference` and `make tauri-reference` with
-   that Xcode, `make kits`, `make test-rn-linux` and `make test-tauri-linux` in its images, and `xless setup --xcode <the .xip>` on
-   Linux.
+5. **The references and the tests:** the pack of that Xcode (`XLESS_SHARE="$PWD" swift run xless setup --docker --xcode
+   <the .xip>`; no image is built for an Xcode), then `make rn-reference` and `make tauri-reference` with that Xcode,
+   `make kits` when the kits are not there, `XLESS_XCODE_PIN=<version> make test-rn-linux` and `make test-tauri-linux`
+   with its pack, and `xless setup --xcode <the .xip>` on Linux.
 
 ## Images on other machines
 
-Images hold Apple's SDK, so they stay on the machine that built them: xless has no command, make target or workflow that
-pushes one, and none is ever pushed by hand either, also not to a registry that is private today. On another machine (a CI
-runner, a build server), copy the SDK export of one you set up (`~/.cache/xless/sdk/xcode<V>-<B>`, as you may copy the Xcode
-it comes from) and build the image there:
+What may travel, and what never does:
+
+| | Holds Apple's | May go to another machine | May go to a registry, a CI cache or an artifact |
+|---|---|---|---|
+| The xless image and its kits | nothing | yes | Apple's terms do not prevent it; the licences of the other software in it (the GPL 3 of libdmg-hfsplus, the APSL of hfsprogs, Swift's, LLVM's, xtool's, rcodesign's) are not yet reviewed for publishing, so a registry of your own only (xless has no command, make target or workflow that pushes one) |
+| The SDK export (`~/.cache/xless/sdk/xcode<V>-<B>`) | the SDK | yes, to a machine of yours, as you may copy the Xcode it comes from | never |
+| An Xcode pack (a `xless-xcode-…` volume, a store's directory) | the SDK | no: prepare it there | never |
+
+On another machine (a CI runner, a build server), copy the SDK export of one you set up and prepare the pack there:
 
 ```sh
-xless setup --docker --sdk <the copied directory>     # the image; without --docker the native install
+xless setup --docker --sdk <the copied directory>     # the image and the pack; without --docker the native install
 ```
 
-- [examples/example-ios.yml](examples/example-ios.yml) is a GitHub Actions workflow for such a runner of your own
-  ([signing-and-testflight.md](signing-and-testflight.md#continuous-integration)). It lives in `docs/`, so this repository
-  never runs it.
-- `scripts/check-private-registry.sh` is for whoever already keeps such images in a registry of their own, from before: it says
-  whether `registry.env` (from `registry.env.example`) names one that has been checked to be private, refuses Docker Hub
-  (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and bare names such as `myuser`, which Docker takes for
-  Docker Hub's), and pushes nothing.
+A pack is not copied: it is prepared from the export in a few minutes, by that machine's xless, which then knows it
+current.
+
+- [examples/example-ios.yml](examples/example-ios.yml) and [examples/example-ios-image.yml](examples/example-ios-image.yml)
+  are GitHub Actions workflows for such a runner of your own ([ci.md](ci.md#the-runner)). They live in `docs/`, so this
+  repository never runs them.
+- `scripts/check-private-registry.sh` says whether `registry.env` (from `registry.env.example`) names a registry that has
+  been checked to be private, refuses Docker Hub (`docker.io`, `index.docker.io`, `registry-1.docker.io` in any case, and
+  bare names such as `myuser`, which Docker takes for Docker Hub's), and pushes nothing. It is for whoever keeps images of
+  an older xless, which held Apple's SDK, in a registry of their own.
 
 ## Releases
 
@@ -256,4 +315,4 @@ release when that tag has no GitHub release, i.e. when it was pushed by hand. To
 ## Private notes
 
 The maintainer's design notes and acceptance logs (`docs/superpowers/`, `docs/acceptance/`) are git-ignored and stay on
-the maintainer's machine. Public acceptance records are the `docs/acceptance-m*.md` files.
+the maintainer's machine. Public acceptance records are the `docs/acceptance-m*.md` files and `docs/acceptance-xcode-packs.md`.

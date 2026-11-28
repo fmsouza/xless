@@ -53,8 +53,8 @@ read all that is in them: name nothing with a secret in it. What each kind of ap
   `xless setup` checks for the commands and prints the `apt-get install` line that adds whatever is missing
   ([the whole list](native-install.md#what-it-needs)). It never runs `sudo` itself.
 - Free disk space, per Xcode version: about 17 GB in your home directory's cache (`~/.cache`) while the SDK is taken
-  out of the `.xip` (about 3.5 GB of it stays), and about 10 GB for the native install (`~/.local/share/xless-native`
-  and the installed SDK), plus a few GB for each app's build caches. `xless setup` checks both before it starts.
+  out of the `.xip` (about 3.5 GB of it stays), and about 10 GB for each Xcode's pack (in `~/.local/share/xless-native`;
+  a pack keeps about 6 to 7 GB), plus a few GB for each app's build caches. `xless setup` checks both before it starts.
 - An Xcode download from Apple, the `.xip` file: [which versions, and how to get it](xcode-versions.md). You do not need a
   Mac, and you do not unpack it.
 
@@ -72,9 +72,9 @@ you already have alone, and does not touch your shell's startup files: xless fin
 commands it needs and your free disk space, then prints each step. When it finishes it prints the next command to run.
 To see the plan and the disk space it asks for without running anything, add `--dry-run`.
 
-The native install holds one Xcode at a time: for Xcode 26.2 run
-`xless setup --xcode ~/Downloads/Xcode_26.2_Universal.xip`, which replaces 27.0's SDK and Swift (the exported SDKs stay
-in the cache, so switching back is quick). Running it again with the same Xcode does nothing. What it puts where:
+Each Xcode gets a pack of its own (its SDK, the Swift that matches it, about 6 to 7 GB), side by side: for Xcode 26.2 as well,
+run `xless setup --xcode ~/Downloads/Xcode_26.2_Universal.xip`. A project that pins `xcode: "26.2"` builds with that one,
+any other with the newest. Running it again with the same Xcode does nothing. What it puts where:
 [native-install.md](native-install.md).
 
 ### Build
@@ -98,20 +98,23 @@ unsigned iOS app for arm64 devices.
 
 ## In Docker
 
-The same builds can run in a Docker image on your machine, on Linux or on a Mac. Swift package apps can; on Linux, React Native,
-Expo, Tauri and Cargo apps build in the images only. You need [Docker Engine](https://docs.docker.com/engine/install/) with the
-buildx plugin, usable without `sudo` (your user is in the `docker` group), about 40 GB where Docker keeps its data, and an
-[Xcode download](xcode-versions.md). Build the image once per Xcode version:
+The same builds can run in Docker on your machine, on Linux or on a Mac. Swift package apps can; on Linux, React Native and
+Expo apps need what only the image has (Swift Build and stand-ins for Xcode's tools), and Tauri and Cargo apps build natively
+only where Rust and Node are installed. You need [Docker Engine](https://docs.docker.com/engine/install/) with the buildx
+plugin, usable without `sudo` (your user is in the `docker` group), about 30 GB where Docker keeps its data, and an
+[Xcode download](xcode-versions.md). Set it up once per Xcode:
 
 ```sh
 xless setup --docker --xcode ~/Downloads/Xcode_27.xip
 ```
 
-This builds one Docker image on your machine, `xless:local-<arch>-xcode<version>`, with Apple's SDK. It first checks
-Docker and your free disk space, then prints each step with a rough time: most of it is unpacking the `.xip`.
-`--dry-run` shows the plan, and `--arch amd64` (or `arm64`, or both) builds for another architecture.
+This builds the xless image on your machine, `xless:<version>-<arch>` (about 6.5 GB, one for every Xcode), and prepares
+the Xcode's pack in a Docker volume: its SDK, the Swift that matches it and Swift Build (about 7 GB). It first checks
+Docker and your free disk space, then prints each step with a rough time. `--dry-run` shows the plan, and `--arch amd64`
+(or `arm64`, or both) sets up another architecture. Another Xcode adds its pack beside the first; the image stays.
 
-**The images never leave your machine:** they contain Apple's SDK, so never push them to a registry.
+**The packs never leave your machine:** they hold Apple's SDK. The image holds nothing of Apple's
+([images.md](images.md#what-there-is)).
 
 Then add `--docker` to `xless run`:
 
@@ -122,9 +125,10 @@ xless run --docker ~/HelloShip --build-number 1 --to finalize
 - A Tauri, plain Cargo, React Native or Expo app needs other toolchains too (Rust, Node, Ruby, Hermes). `xless run` adds
   them in a small image on top the first time such an app needs it, and says so; `xless setup --docker --with
   tauri,react-native` does it ahead of time ([images.md](images.md)).
-- A project that pins an Xcode (`xcode: "26.2"`) runs in that one's image, another in the newest Xcode's there is an image of.
-- Once the SDK is exported, the `.xip` is no longer needed: to build the image again (on a machine that lost it,
-  say), run `xless setup --docker` with no `--xcode`. It reuses the SDK export in `~/.cache/xless/sdk/`, or the one you
+- A project that pins an Xcode (`xcode: "26.2"`) builds with that one's pack, another with the newest Xcode's there is a
+  pack of. Every container of the run gets it read-only.
+- Once the SDK is exported, the `.xip` is no longer needed: to prepare the pack again (on a machine that lost it, say),
+  run `xless setup --docker` with no `--xcode`. It reuses the SDK export in `~/.cache/xless/sdk/`, or the one you
   name with `--sdk <dir>` ([troubleshooting.md](troubleshooting.md#without-the-xip)). The same works without
   `--docker` for the native install on Linux.
 - Paths in the output that start with `/work` are inside the build container, where `/work` is your project directory.

@@ -276,7 +276,7 @@ private func fixtureMetadata() throws -> (data: Data, work: URL, registry: URL) 
         #expect(calls[0].0 == "swift")
         #expect(calls[0].1 == ["build", "-c", "release", "--package-path", agg.path, "--build-system", "swiftbuild",
                                "--triple", "arm64-apple-ios16.0", "--toolset", bundle.appendingPathComponent("toolset-swb.json").path,
-                               "--force-resolved-versions"])
+                               "--force-resolved-versions", "--swift-sdks-path", bundle.deletingLastPathComponent().path])
         #expect(calls[0].2["SDKROOT"] == .some(nil))
         #expect(calls[0].2["XCODE_EXTRA_PLATFORM_FOLDERS"] == bundle.appendingPathComponent("Developer/Platforms").path)
         #expect(calls[0].2["PATH"] == "\(bundle.appendingPathComponent("toolset/bin").path):/usr/bin")
@@ -321,6 +321,33 @@ private func fixtureMetadata() throws -> (data: Data, work: URL, registry: URL) 
         #expect(calls[1].1.map { $0.hasPrefix("/") ? real(URL(fileURLWithPath: $0)) : $0 }
             == ["-static", "-o", real(products.appendingPathComponent("libXlessTauriSwift.a"))]
             + ["SwiftRs.o", "Tauri.o", "XlessTauriSwift.o"].map { real(products.appendingPathComponent($0)) })
+    }
+
+    /// A copy of the engine's release (an Xcode pack whose Swift is the image's own) builds as the engine does: its own
+    /// `swift`, the engine's arguments and the `.build` scratch directory, as the image with that Xcode built in did.
+    @Test func aCopyOfTheEnginesReleaseBuildsInBuildAsTheEngineDoes() throws {
+        let bundle = tmp(), agg = tmp()
+        try write("{}", to: bundle.appendingPathComponent("toolset-swb.json"))
+        let swift = SwiftToolchain(version: "6.4", root: "/xcodes/27.0-27A266a-arm64/toolchain")
+        let built = agg.appendingPathComponent(".build/out/Products/Release-iphoneos/libXlessTauriSwift.a")
+        var calls: [(String, [String], [String: String?])] = []
+        let lib = try SwiftPackages.build(aggregateDir: agg, minimumIOS: "16.0", sdk: DarwinSDK(bundle: bundle), env: ["PATH": "/x:/usr/bin"],
+                                          swift: swift, engineRelease: "6.4.0") { exe, args, env in
+            calls.append((exe, args, env))
+            try write("!<arch>\n", to: built)
+        }
+        #expect(lib.path == built.path)
+        #expect(calls.count == 1)
+        #expect(calls[0].0 == "/xcodes/27.0-27A266a-arm64/toolchain/usr/bin/swift")
+        #expect(!calls[0].1.contains("--scratch-path") && !calls[0].1.contains("--product") && !calls[0].1.contains("--target"))
+        #expect(calls[0].2["PATH"] == "\(bundle.appendingPathComponent("toolset/bin").path):/x:/xcodes/27.0-27A266a-arm64/toolchain/usr/bin:/usr/bin")
+        // Another release still builds in its own directory.
+        var args: [String] = []
+        _ = try? SwiftPackages.build(aggregateDir: tmp(), minimumIOS: "16.0", sdk: DarwinSDK(bundle: bundle), env: [:],
+                                     swift: SwiftToolchain(version: "6.4.1", root: "/xcodes/27.1-27B1-arm64/toolchain"), engineRelease: "6.4.0") { exe, a, _ in
+            if exe.hasSuffix("/swift") { args = a }
+        }
+        #expect(args.contains { $0.hasSuffix("/.build-swift-6.4.1") })
     }
 
     /// Every 6.3.x names the target (6.3.0 for Xcode 26.4, 6.3.1 for Xcode 26.4.1, 6.3.2 for Xcode 26.5, 6.3.3 for Xcode 26.6); 6.2 and 6.4 name the product.
@@ -482,7 +509,7 @@ func aggregateBuildsAndExportsEverySymbolTheCrateImports() throws {
     let found = try SwiftPackages.discover(metadata: Data(contentsOf: metadata))
     let staged = try SwiftPackages.stage(tauriAPI: found.tauriAPI, plugins: found.plugins, into: out)
     let agg = try SwiftPackages.writeAggregate(minimumIOS: "16.0", plugins: staged, into: out)
-    let lib = try SwiftPackages.build(aggregateDir: agg, minimumIOS: "16.0")
+    let lib = try SwiftPackages.build(aggregateDir: agg, minimumIOS: "16.0", sdk: try DarwinSDK())
     // rustup picks the app's toolchain (rust-toolchain.toml) by walking up from the cargo output dir.
     let cwd = crateLib.deletingLastPathComponent()
     let nm = SwiftPackages.llvmTool("llvm-nm", cwd: cwd), objdump = SwiftPackages.llvmTool("llvm-objdump", cwd: cwd)

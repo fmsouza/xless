@@ -30,18 +30,130 @@ import Testing
     #expect(t.path(once) == once)
 }
 
-@Test func loadFallsBackToTheNativeRecord() throws {
-    // Only meaningful outside an image (the image's record would win).
-    guard !FileManager.default.fileExists(atPath: SwiftToolchain.imageFile) else { return }
+@Test func theNativeRecordOfBeforeThePacksIsNotRead() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
     let env = ["XLESS_NATIVE_HOME": root.path, "HOME": "/nonexistent"]
-    #expect(try SwiftToolchain.load(env: env) == nil)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try #"{"version":"6.4.0","root":"/n/toolchains/swift-6.4.0","clangFlags":["-fdefine-target-os-macros"]}"#
         .write(to: NativeLayout(env: env).record, atomically: true, encoding: .utf8)
-    #expect(try SwiftToolchain.load(env: env)
-        == SwiftToolchain(version: "6.4.0", root: "/n/toolchains/swift-6.4.0", clangFlags: ["-fdefine-target-os-macros"]))
-    // XLESS_SWIFT_TOOLCHAIN still wins.
-    #expect(throws: XlessError.self) { try SwiftToolchain.load(env: env.merging(["XLESS_SWIFT_TOOLCHAIN": "/missing.json"]) { $1 }) }
+    #expect(try XcodeEnvironment.toolchain(env: env) == nil)
+    #expect(NativeLayout.activatedPath(env: env.merging(["PATH": "/usr/bin:/bin"]) { $1 }, linux: true) == nil)
+    // XLESS_SWIFT_TOOLCHAIN is read.
+    #expect(throws: XlessError.self) { try XcodeEnvironment.toolchain(env: env.merging(["XLESS_SWIFT_TOOLCHAIN": "/missing.json"]) { $1 }) }
+}
+
+// MARK: - Activation from a pack
+
+/// A real directory (macOS: /var is /private/var), as the store lists its packs.
+private func realTemp(_ name: String) throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("\(name)-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    guard let real = realpath(dir.path, nil) else { return dir }
+    defer { free(real) }
+    return URL(fileURLWithPath: String(cString: real))
+}
+
+/// A pack with its SDK, metadata and toolchain record (root relative), as `xless setup` lays it out.
+@discardableResult
+private func packWithToolchain(in store: URL, xcode: String, build: String) throws -> XcodePack {
+    #if arch(arm64)
+    let arch = "arm64"
+    #else
+    let arch = "amd64"
+    #endif
+    let fm = FileManager.default
+    let pack = XcodePack(root: store.appendingPathComponent(XcodePack.name(xcode: xcode, build: build, arch: arch)),
+                         manifest: PackManifest(format: 1, xcode: xcode, build: build, arch: arch, swift: "6.2.3", mode: .separate, parts: ["sdk": "h"]))
+    try fm.createDirectory(at: pack.sdkBundle, withIntermediateDirectories: true)
+    try fm.createDirectory(at: pack.toolchain.appendingPathComponent("usr/bin"), withIntermediateDirectories: true)
+    try Data(#"{"xcodeBuild":"\#(build)"}"#.utf8).write(to: pack.meta)
+    try Data(#"{"version":"6.2.3","root":"toolchain","clangFlags":[]}"#.utf8).write(to: pack.record)
+    try pack.manifest.write(to: pack.manifestFile)
+    return pack
+}
+
+private func packEnvironment(store: URL, _ extra: [String: String] = [:]) throws -> [String: String] {
+    let home = try realTemp("native-home"), share = try realTemp("native-share")
+    return ["HOME": home.path, "XLESS_NATIVE_HOME": home.appendingPathComponent("native").path, "XLESS_XCODES": store.path,
+            "XLESS_SHARE": share.path, "PATH": "/usr/bin:/bin"].merging(extra) { $1 }
+}
+
+@Test func onLinuxThePacksToolchainGoesFirst() throws {
+    let store = try realTemp("native-store")
+    let pack = try packWithToolchain(in: store, xcode: "26.2", build: "17C52")
+    let env = try packEnvironment(store: store)
+    let bin = NativeLayout(env: env).bin.path
+    #expect(NativeLayout.activatedPath(env: env, linux: true) == "\(pack.toolchain.path)/usr/bin:\(bin):/usr/bin:/bin")
+    // Already so: nothing to do.
+    #expect(NativeLayout.activatedPath(env: env.merging(["PATH": "\(pack.toolchain.path)/usr/bin:\(bin):/usr/bin:/bin"]) { $1 }, linux: true) == nil)
+    // A Mac builds with its Xcode: the pack's Linux toolchain is never put on PATH there.
+    #expect(NativeLayout.activatedPath(env: env, linux: false) == nil)
+    // An image's own record leaves PATH alone.
+    #expect(NativeLayout.activatedPath(env: env.merging(["XLESS_SWIFT_TOOLCHAIN": "/opt/xless/swift-toolchain.json"]) { $1 }, linux: true) == nil)
+}
+
+@Test func thePinnedPacksToolchainDisplacesTheNewestPacks() throws {
+    let store = try realTemp("native-store")
+    let older = try packWithToolchain(in: store, xcode: "26.2", build: "17C52")
+    let newer = try packWithToolchain(in: store, xcode: "27.0", build: "27A266a")
+    let env = try packEnvironment(store: store)
+    let bin = NativeLayout(env: env).bin.path
+    // A command's start: no pin yet, the newest pack's toolchain.
+    let started = try #require(NativeLayout.activatedPath(env: env, linux: true))
+    #expect(started == "\(newer.toolchain.path)/usr/bin:\(bin):/usr/bin:/bin")
+    // The project pins the older one: its toolchain first, the newer's gone.
+    let pinned = env.merging([XcodeEnvironment.pinVariable: "26.2", "PATH": started]) { $1 }
+    #expect(NativeLayout.activatedPath(env: pinned, linux: true) == "\(older.toolchain.path)/usr/bin:\(bin):/usr/bin:/bin")
+    // A native install's toolchain of before the packs goes too; other directories stay.
+    let native = NativeLayout(env: env).toolchain(version: "6.1.0").appendingPathComponent("usr/bin").path
+    let mixed = pinned.merging(["PATH": "/opt/tools/bin:\(native):\(started)"]) { $1 }
+    #expect(NativeLayout.activatedPath(env: mixed, linux: true) == "\(older.toolchain.path)/usr/bin:\(bin):/opt/tools/bin:/usr/bin:/bin")
+}
+
+/// A command's start only puts the pack's toolchain on PATH: what a lookup would note of the pack (an Xcode this xless has no
+/// recipe for) is left to the lookup that uses it, so a command that uses no pack (`xless docker`, `--version`) says nothing.
+@Test func theStartSaysNothingOfThePackAndTheLookupThatUsesItDoes() throws {
+    let store = try realTemp("native-store")
+    let pack = try packWithToolchain(in: store, xcode: "26.8", build: "98Z98")
+    var env = try packEnvironment(store: store)
+    try Data("XCODE_RELEASES=\"\"\n".utf8).write(to: URL(fileURLWithPath: env["XLESS_SHARE"]!).appendingPathComponent("versions.env"))
+    let notes = Notes()
+    let (path, atStart, used) = try XcodeEnvironment.$noteSink.withValue({ notes.add($0) }) { () throws -> (String?, [String], String?) in
+        let path = NativeLayout.activatedPath(env: env, linux: true)
+        let atStart = notes.all
+        return (path, atStart, try XcodeEnvironment.current(env: env).pack?.name)
+    }
+    #expect(path?.hasPrefix(pack.toolchain.path) == true)
+    #expect(atStart.isEmpty, "\(atStart)")
+    #expect(used == pack.name)
+    #expect(notes.all.count == 1 && notes.all.first?.hasPrefix("note: the pack \(pack.name) is of Xcode 26.8 (98Z98)") == true, "\(notes.all)")
+}
+
+private final class Notes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    func add(_ line: String) { lock.lock(); lines.append(line); lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return lines }
+}
+
+/// An older install is the SDK bundle with the record. The swift-sdks directory around the bundle is a person's, and an SDK without the
+/// record is not xless's: nothing.
+@Test func anOlderInstallNeedsTheBundleAndTheRecord() throws {
+    let fm = FileManager.default
+    let home = fm.temporaryDirectory.appendingPathComponent("older-\(UUID().uuidString)")
+    defer { try? fm.removeItem(at: home) }
+    let env = ["HOME": home.path]
+    let layout = NativeLayout(env: env)
+    let bundle = DarwinSDKLocator.bundle(env: env)
+    #expect(layout.olderInstall(env: env).isEmpty)
+    try fm.createDirectory(at: bundle, withIntermediateDirectories: true)
+    try fm.createDirectory(at: bundle.deletingLastPathComponent().appendingPathComponent("mine.artifactbundle"), withIntermediateDirectories: true)
+    #expect(layout.olderInstall(env: env).isEmpty, "a bundle alone may be a person's own")
+    try fm.createDirectory(at: layout.root, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: layout.record)
+    try fm.createDirectory(at: layout.toolchains, withIntermediateDirectories: true)
+    #expect(layout.olderInstall(env: env).map(\.path) == [bundle.path, layout.toolchains.path, layout.record.path])
+    try fm.removeItem(at: bundle)
+    #expect(layout.olderInstall(env: env).isEmpty, "a record alone is not an install with an SDK")
 }

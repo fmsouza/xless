@@ -49,6 +49,7 @@ extension ProjectRun {
         let span = try RunSpan.overlay(request)
         overlay.span = span
         try chooseDocker()
+        try refuseMissingForOverlay(kind: OverlayKind(type: top["type"]), span: span)
 
         // Step 1 only for a run that starts with `build: dated` (the default): later stages read the number recorded in the work
         // copy, and a fixed build needs no App Store Connect query.
@@ -189,9 +190,10 @@ extension ProjectRun {
             steps.signCaches = ["--mount", RunText.bind("\(cache)/work", "/cache/work")]
         }
         steps.signCaches += origin(overlay.path)
+        // (every mount of the steps' containers: the build's caches and work volume are writable, the sign step's work copy too)
+        try refuseWritableReach(in: steps.mounts + steps.buildCaches + steps.signCaches)
         // A simulator build is step 2 only.
-        steps.images = try chooseImages(top, kit: Kit(overlayType: top["type"]), builds: overlay.span.from <= .finalize, other: next || overlay.span.to >= .sign,
-                                        signImage: overlay.isReactNative && !overlay.isSimulator)
+        steps.images = try chooseImages(top, kit: Kit(overlayType: top["type"]), builds: overlay.span.from <= .finalize, other: next || overlay.span.to >= .sign)
         return steps
     }
 

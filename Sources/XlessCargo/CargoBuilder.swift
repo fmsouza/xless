@@ -16,20 +16,26 @@ public struct CargoBuildContext: Sendable {
     public var env: [String: String]
 
     public init(overlay: CargoOverlay, resolved: ResolvedCargo, platform: Platform, sourceRoot: URL, workRoot: URL, paths: StagePaths,
-                sdk: DarwinSDK = DarwinSDK(), env: [String: String] = ProcessInfo.processInfo.environment) {
+                sdk: DarwinSDK, env: [String: String] = ProcessInfo.processInfo.environment) {
         self.overlay = overlay; self.resolved = resolved; self.platform = platform; self.sourceRoot = sourceRoot
         self.workRoot = workRoot; self.paths = paths; self.sdk = sdk; self.env = env
     }
 
-    var cargoHome: String { env["CARGO_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (env["HOME"] ?? NSHomeDirectory()) + "/.cargo" }
+    var cargoHome: String { KitTools.cargoHome(env: env) }
     /// Child-process additions: rustup's bin dir first on PATH (rustup-init may have just created it); with an installed Xcode, before
     /// it xless's `swift`.
     var tools: [String: String] {
         ["PATH": (sdk.isXcode ? RustApple.wrapperDirectory(workRoot: workRoot).path + ":" : "") + "\(cargoHome)/bin:\(env["PATH"] ?? "/usr/bin:/bin")"]
     }
     /// The cargo targets of this platform: on macOS, those of `macos.architectures`.
-    public var rustTargets: [String] { platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget) }
+    public var rustTargets: [String] { Self.rustTargets(platform: platform, resolved: resolved) }
+    /// The same, before there is a context (it needs no Xcode).
+    public static func rustTargets(platform: Platform, resolved: ResolvedCargo) -> [String] {
+        platform == .ios ? [RustApple.iosTarget] : resolved.platform.architectures.map(\.rustTarget)
+    }
     var inputsRecord: URL { workRoot.appendingPathComponent(".xless/cargo-inputs.json") }
+    /// The Xcode pack that cargo's outputs in the work copy were built with (`PackOutputs`).
+    var packRecord: URL { PackOutputs.record(work: workRoot) }
 }
 
 /// The `prepare` and `build` stages for `type: cargo` overlays: a Rust binary built with cargo for iOS (device) or macOS
@@ -81,7 +87,8 @@ public enum CargoBuilder {
             let record = try readRecord(ctx)
             if ctx.sdk.isXcode { try RustApple.writeSwiftWrapper(sdk: ctx.sdk, workRoot: work) }
             let inputURLs = record.paths.mapValues { URL(fileURLWithPath: $0, isDirectory: true) }
-            let swift = try SwiftToolchain.load(env: ctx.env)
+            // On a Mac it is the Xcode's own (`DarwinSDK.compiler`), and there is no pack.
+            let swift = ctx.sdk.isXcode ? nil : try XcodeEnvironment.toolchain(env: ctx.env)
             let toolchain = ctx.overlay.toolchain
 
             func environment(platform: [String: String]) -> [String: String] {
@@ -93,6 +100,13 @@ public enum CargoBuilder {
 
             let metadata = try readMetadata(cargo(["metadata", "--format-version", "1", "--no-deps"], env: environment(platform: [:])), package: block.package)
             let bin = block.bin ?? metadata.onlyBin ?? block.package
+            // Outputs of another Xcode pack, of one prepared again by another recipe, or of the Mac's own Xcode (native and
+            // --docker runs share the work copy), go.
+            let identity = PackOutputs.identity(env: ctx.env, xcode: ctx.sdk.isXcode)
+            let removed = try PackOutputs.reset(PackOutputs.outputs(work: work, targetDir: metadata.targetDir), record: ctx.packRecord, identity: identity)
+            if !removed.isEmpty {
+                log("the work copy's outputs were not built with this \(ctx.sdk.isXcode ? "Mac's Xcode" : "Xcode pack (\(identity))"): removed \(removed.map(\.lastPathComponent).joined(separator: ", ")), cargo builds them again")
+            }
 
             // The linker wrapper's debug link gives each thin executable its dSYM when the release profile has debug
             // info (RustApple.DebugLink).

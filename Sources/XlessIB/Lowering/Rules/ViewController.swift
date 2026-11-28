@@ -169,8 +169,8 @@ enum DocumentRule {
                     throw LoweringError.unsupported("<capability> minToolsVersion=\"\(s)\"", line: c.line)
                 }
                 if v > limit {
-                    throw XlessError(.ib, "This document requires at least Xcode \(s). This image's ibtool \(profile.ibtoolShortVersion) (Xcode \(profile.xcodeVersion), \(profile.xcodeBuild)) accepts documents up to Xcode \(profile.ibtoolShortVersion).",
-                                     fix: "re-save the storyboard without features newer than Xcode \(profile.ibtoolShortVersion), or pin a newer Xcode (`xcode:`) and build with its images (xless setup --xcode <Xcode.xip>)")
+                    throw XlessError(.ib, "This document requires at least Xcode \(s). The ibtool \(profile.ibtoolShortVersion) of the Xcode this build uses (Xcode \(profile.xcodeVersion), \(profile.xcodeBuild)) accepts documents up to Xcode \(profile.ibtoolShortVersion).",
+                                     fix: "re-save the storyboard without features newer than Xcode \(profile.ibtoolShortVersion), or pin a newer Xcode (`xcode:`) and prepare its pack (xless setup --xcode <Xcode.xip>; --docker for xless run --docker)")
                 }
             }
         }

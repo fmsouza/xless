@@ -11,17 +11,31 @@ test-linux:
 	  bash -c 'apt-get update -qq && apt-get install -y -qq zip unzip rsync git >/dev/null && swift test --scratch-path /scratch'
 
 XCODE ?= /Applications/Xcode.app
-# The image targets build these architectures. The SDK is exported to, and read from, $(SDK_DIR).
+# The image targets build these architectures. `make sdk-export` exports the SDK to $(SDK_DIR).
 ARCHS ?= arm64 amd64
 SDK_DIR ?= dist/sdk
 
 .PHONY: images
-# make images [XCODE=<Xcode.app | Xcode_*.xip>] [ARCHS="arm64"]: the image xless:local-<arch>-xcode<version> from one Xcode's SDK
-# and the Swift toolchain that Xcode ships (Ruling R10), with the xless of this checkout. A project pins it with
-# `xcode: "<version>"`; xless run selects the image from the pin. Mac only (scripts/build-images.sh; a .xip is expanded with
-# `xip --expand` first). Nothing here pushes an image: they hold Apple's SDK.
+# make images [ARCHS="arm64"]: the xless image of this checkout, xless:<short commit>[-dirty]-<arch> (scripts/build-images.sh).
+# It holds no Xcode: an Xcode is an Xcode pack, which `xless setup` prepares. Nothing here pushes an image.
 images:
-	scripts/build-images.sh "$(XCODE)" $(ARCHS)
+	@if [ "$(origin XCODE)" = "command line" ] || [ "$(origin XCODE)" = environment ]; then \
+	  echo "make images: the image holds no Xcode, so XCODE is not used here; prepare the Xcode's pack with xless setup --docker --xcode $(XCODE)" >&2; exit 2; fi
+	scripts/build-images.sh $(ARCHS)
+
+.PHONY: test-image
+# make test-image [ARCHS="arm64 amd64"]: what the xless image of this checkout and its kits hold (Tests/shell/image-contents.test.sh),
+# and the tauri kit's image used directly, with an Xcode's pack volume read-only (Tests/shell/image-direct.test.sh): for this
+# machine's architecture, or each of ARCHS when it is given. A missing image, kit or pack fails it. The image and the docker
+# context are decided once (Tests/shell/image-target.sh: XLESS_IMAGE, DOCKER_CONTEXT, or the defaults) and are the same for both.
+HOST_ARCH := $(if $(filter arm64 aarch64,$(shell uname -m)),arm64,amd64)
+test-image:
+	for a in $(if $(filter command line environment,$(origin ARCHS)),$(ARCHS),$(HOST_ARCH)); do \
+	  target="$$(XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-target.sh --print)" || exit 1; \
+	  ( eval "$$target"; export XLESS_IMAGE DOCKER_CONTEXT; echo "test-image: $$XLESS_IMAGE, docker context $${DOCKER_CONTEXT:-$$(docker context show 2>/dev/null)}"; \
+	    XLESS_IMAGE_REQUIRED=1 XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-contents.test.sh && \
+	    XLESS_IMAGE_REQUIRED=1 XLESS_IMAGE_ARCH=$$a bash Tests/shell/image-direct.test.sh ) || exit 1; \
+	done
 
 .PHONY: sdk-export
 sdk-export:
@@ -31,13 +45,13 @@ sdk-export:
 XLESS_HERE = XLESS_SHARE="$(CURDIR)" $(or $(XLESS_SELF),swift run xless)
 
 .PHONY: kits
-# make kits [KITS=tauri,react-native] [ARCHS="arm64"]: what Tauri, Cargo, React Native and Expo apps need, on the newest Xcode's
-# image (docker/tauri, docker/react-native). `xless run` builds the one it needs by itself.
+# make kits [KITS=tauri,react-native] [ARCHS="arm64"]: what Tauri, Cargo, React Native and Expo apps need, on the xless image
+# of this checkout (docker/tauri, docker/react-native). `xless run` builds the one it needs by itself.
 KITS ?= tauri,react-native
 kits:
 	$(XLESS_HERE) setup --docker --with $(KITS) --arch $(ARCHS)
 
-# `xless run` of this machine's xless (XLESS_SELF, else PATH), as scripts/testflight.sh has it: in the images, unless an SDK is
+# `xless run` of this machine's xless (XLESS_SELF, else PATH), as scripts/testflight.sh has it: in the images, unless an Xcode pack is
 # installed natively (XLESS_USE_DOCKER=1 or 0 decides).
 XLESS_RUN = XLESS_RUN_AS_SCRIPT=1 "$${XLESS_SELF:-xless}" run
 

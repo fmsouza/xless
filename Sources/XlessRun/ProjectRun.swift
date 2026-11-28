@@ -1,5 +1,6 @@
 import Foundation
 import XlessCore
+import XlessImages
 
 /// What `xless run` is started with, besides its arguments.
 public struct RunContext: Sendable {
@@ -14,6 +15,11 @@ public struct RunContext: Sendable {
     public var again: [String]
     /// xless's share directory.
     public var share: String
+    /// The part of the images' tags that names this xless (`xless:<version>-<arch>`): the release its share records, or the
+    /// commit of a checkout (`ImageName.tag(ofShare:)`).
+    public var version: String {
+        get throws { try ImageName.cachedTag(ofShare: URL(fileURLWithPath: share)) }
+    }
     /// `1`: in the images; `0`: natively; `auto`: in the images, unless an SDK is installed natively.
     public var useDocker: String
     /// The session this run is in (XLESS_SESSION): for the steps that read the store, and for nothing else.
@@ -23,9 +29,17 @@ public struct RunContext: Sendable {
     /// What a native run on a Mac needs before it asks anything or builds: an Xcode (the pin's, where there is one) when it
     /// builds, and the signer when it signs.
     public var prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)?
+    /// What an overlay of `kind` needs to build natively, off a Mac, that the machine of `environment` lacks
+    /// (`ProjectRun.missingForOverlay`); nil: nothing is looked for.
+    public var overlayLacks: (@Sendable (_ kind: OverlayKind, _ environment: [String: String]) -> [String])?
+    /// Whether the directory store (XLESS_XCODES) that a run prepares a pack into tells names apart by case, asked on the host
+    /// (`PackStore.distinguishesCase`) before the setup container would refuse it as /xcodes; nil: it is not asked.
+    public var storeDistinguishesCase: (@Sendable (URL) throws -> Bool)?
 
     public init(environment: [String: String], xless: String, again: [String], share: String, useDocker: String, session: String?, unlocked: Bool,
-                prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil) {
+                prepareMac: (@Sendable (_ pin: String?, _ builds: Bool, _ signs: Bool) throws -> Void)? = nil,
+                overlayLacks: (@Sendable (_ kind: OverlayKind, _ environment: [String: String]) -> [String])? = nil,
+                storeDistinguishesCase: (@Sendable (URL) throws -> Bool)? = nil) {
         self.environment = environment
         self.xless = xless
         self.again = again
@@ -34,6 +48,8 @@ public struct RunContext: Sendable {
         self.session = session
         self.unlocked = unlocked
         self.prepareMac = prepareMac
+        self.overlayLacks = overlayLacks
+        self.storeDistinguishesCase = storeDistinguishesCase
     }
 }
 
@@ -45,7 +61,8 @@ public struct RunContext: Sendable {
 ///   2. xless ship --to finalize    WITHOUT any secret mount or variable: prepare, build, assets, finalize.
 ///   3. xless ship --from sign      with the secrets: sign, package, upload (no build code runs here).
 /// The secrets a step needs are required only when that step runs. A project directory is one `xless ship`, with the secrets
-/// unless it stops before sign; natively on a Mac it is steps 2 and 3. docs/signing-and-testflight.md has the rest.
+/// unless it stops before sign; natively on a Mac it is steps 2 and 3. In containers every one has the Xcode's pack, read-only
+/// (`RunPack`). docs/signing-and-testflight.md has the rest.
 public final class ProjectRun {
     let host: any RunHost
     let context: RunContext
@@ -57,6 +74,8 @@ public final class ProjectRun {
     var environment: [String: String]
     /// Where the settings of `environment` may come from, for the messages.
     let environmentFile: String
+    /// The names `environmentFile` set.
+    var fromEnvironmentFile: Set<String> = []
     var dryRun = false
     /// What the build leaves running is this run's to end (`endBuild`).
     var endsOrphans = false
@@ -68,12 +87,13 @@ public final class ProjectRun {
     // in containers
     var dockerCLI = ["docker"]
     var dockerRun: [String] = []
+    /// What every container of the run is labelled with: the clean-up removes them by it.
+    var runLabel = ""
     var architecture = ""
     /// The host folders that the build container (step 2) mounts: no secret may be inside one.
     var buildMounts: [String] = []
 
     var xcodePin: String?
-    var xcodeTag: String?
     var pinFile = ""
     /// What `pinFile` held when the run began.
     private var pinned = Data()
@@ -142,7 +162,10 @@ public final class ProjectRun {
             let text: String
             do { text = try String(contentsOfFile: environmentFile, encoding: .utf8) } catch { throw RunStop.usage("cannot read \(environmentFile)") }
             do {
-                for (name, value) in try EnvFile.parse(text, environment: environment) where name != ChildProcess.session { environment[name] = value }
+                for (name, value) in try EnvFile.parse(text, environment: environment) where name != ChildProcess.session {
+                    environment[name] = value
+                    fromEnvironmentFile.insert(name)
+                }
             } catch let problem as EnvFile.Problem {
                 throw RunStop.usage("\(environmentFile), line \(problem.line) \(problem.what): the file is read as NAME=value lines, and nothing in it is run")
             }
@@ -169,8 +192,7 @@ public final class ProjectRun {
         }
         xcodePin = top["xcode"]
         if let pin = xcodePin {
-            xcodeTag = RunText.xcodeTag(pin)
-            if xcodeTag == nil { throw RunStop.usage("xcode: '\(pin)' in \(pinFile) is not an Xcode version (e.g. xcode: \"26.2\")") }
+            if RunText.xcodeTag(pin) == nil { throw RunStop.usage("xcode: '\(pin)' in \(pinFile) is not an Xcode version (e.g. xcode: \"26.2\")") }
         }
         return top
     }
@@ -181,10 +203,33 @@ public final class ProjectRun {
         case "1": docker = true
         case "0": docker = false
         case "auto":
-            let meta = setting("XLESS_TOOLCHAIN_META") ?? "\(setting("XDG_CONFIG_HOME") ?? "\(files.home)/.config")/xless/toolchain-meta.json"
-            docker = !FileManager.default.fileExists(atPath: meta) || !has(xself)
+            // Natively when this machine has the Xcode (`XcodeEnvironment`: a pack, or a native install of before them). A
+            // pack that is there but cannot be used (stale, of another pin, broken) sends the run to the images, and says so.
+            var env = environment
+            if let pin = xcodePin { env[XcodeEnvironment.pinVariable] = pin }
+            var meta: URL?
+            do { meta = try XcodeEnvironment.lookup(env: env)?.meta } catch {
+                host.say("==> note: \(error); so this run is in the images (docker)")
+            }
+            docker = !(meta.map { FileManager.default.fileExists(atPath: $0.path) } ?? false) || !has(xself)
         default: throw RunStop.usage("XLESS_USE_DOCKER must be 0, 1 or unset")
         }
+    }
+
+    /// The docker of the run, as every xless command chooses it (`DockerContext`): before anything of docker is used, once the
+    /// secrets are known (`findSecrets`), which its environment leaves out.
+    func chooseDockerContext() throws {
+        let given = DockerContext.setting(environment: environment, file: nil).map {
+            DockerContext.Setting(name: $0.name, source: fromEnvironmentFile.contains(DockerContext.variable) ? environmentFile : $0.source)
+        }
+        let listing = ask(["docker"] + DockerContext.listing, quiet: true, without: [DockerContext.variable])
+        do {
+            let chosen = try DockerContext.choose(given, contexts: listing.code == 0 ? DockerContext.listed(listing.output) : nil,
+                                                  host: environment[DockerContext.hostVariable])
+            dockerCLI = ["docker"] + DockerContext.arguments(chosen)
+            // A chosen context is the docker: its calls go without a DOCKER_HOST, as a script's do (`HostDocker.environment`).
+            if chosen != nil { environment[DockerContext.hostVariable] = nil }
+        } catch { throw RunStop.usage("\(error.cause); \(error.fix)") }
     }
 
     func has(_ program: String) -> Bool { host.program(program, path: environment["PATH"]) != nil }
@@ -209,6 +254,8 @@ public final class ProjectRun {
 
     func environment(_ sees: Sees, told: Bool = false) -> [String: String] {
         var out = environment
+        // Natively, the stage commands read the Xcode of the project's pin (`XcodeEnvironment`).
+        if !docker, let pin = xcodePin { out[XcodeEnvironment.pinVariable] = pin }
         if sees != .everything {
             for name in secretVariables where sees != .identifiers || !["ASC_KEY_ID", "ASC_ISSUER_ID"].contains(name) { out[name] = nil }
         }
@@ -217,8 +264,9 @@ public final class ProjectRun {
     }
 
     /// Asks a program something: its exit code and what it printed. Not a step of the run.
-    func ask(_ words: [String], quiet: Bool = false, confined: Bool = false) -> (code: Int32, output: String) {
-        guard let started = try? cleanup.start(RunStep(words, environment: environment(.nothing), output: .captured, quiet: quiet, confined: confined)) else { return (127, "") }
+    func ask(_ words: [String], quiet: Bool = false, confined: Bool = false, without: [String] = []) -> (code: Int32, output: String) {
+        let environment = environment(.nothing).filter { !without.contains($0.key) }
+        guard let started = try? cleanup.start(RunStep(words, environment: environment, output: .captured, quiet: quiet, confined: confined)) else { return (127, "") }
         let answer = host.finish(started)
         cleanup.change { $0.job = nil }
         return answer
@@ -265,14 +313,14 @@ public final class ProjectRun {
 
     func prepareDocker() throws {
         guard has("docker") else { throw RunStop.usage("docker is not installed (and no native xless is on PATH)") }
-        var name = setting("DOCKER_CONTEXT")
-        if name == nil, RunText.lines(ask(["docker", "context", "ls", "--format", "{{.Name}}"], quiet: true).output).contains("colima-xless") { name = "colima-xless" }
+        try chooseDockerContext()
         architecture = host.architecture
-        if let name { dockerCLI += ["--context", name] }
         // --pull=never: an image is one of this machine (chooseImages says which is missing), never a registry's.
         // --init: an init process forwards the stop signal docker run proxies to xless (which, as PID 1, would ignore it).
         // The label lets the clean-up find this run's containers.
         let label = "xless.run=\(host.processID).\(Int(host.now.timeIntervalSince1970))"
+        runLabel = label
+        // (`chooseImages` adds the pack's arguments: every container of the run has it, read-only)
         dockerRun = dockerCLI + ["run", "--rm", "--pull=never", "--init", "--label", label]
         if !dryRun {
             let cli = dockerCLI, environment = environment(.nothing)
@@ -310,10 +358,13 @@ public final class ProjectRun {
         try findSecrets(RunSecrets.Needs(next: false, signs: signs, uploads: span.to >= .upload), top: top)
         if setting("XLESS_BUILD_NUMBER") == nil { environment["XLESS_BUILD_NUMBER"] = "\(Int(host.now.timeIntervalSince1970) / 60)" }
         var images = RunImages.none, split = span
+        let work = ["--mount", RunText.bind(project, "/work")]
         if docker {
             try prepareDocker()
             try mountFiles(platform: .ios)
             split = try RunSpan.overlay(request)
+            // (the project is the one writable mount of its containers)
+            try refuseWritableReach(in: work)
             images = try chooseImages(top, builds: split.from <= .finalize, other: signs)
             if images.areTwo { try refuseSecretsInBuild(project) }
         } else { try unlockStore(builds: RunSpan.overlay(request).from <= .finalize) }
@@ -326,7 +377,7 @@ public final class ProjectRun {
             if images.areTwo { buildMounts = [try files.real(project)] }
             let configuration = try keepConfiguration(of: project, images)
             try materialize()
-            let run = dockerRun + ["--mount", RunText.bind(project, "/work")] + configuration, number = ["-e", "XLESS_BUILD_NUMBER"], platform = ["--platform", "ios"]
+            let run = dockerRun + work + configuration, number = ["-e", "XLESS_BUILD_NUMBER"], platform = ["--platform", "ios"]
             let given = secrets.api + secrets.sign + storeMounts("sign") + origin(project)
             if images.areTwo {
                 func stages(_ from: RunStage, _ to: RunStage) -> [String] { ["--from", from.name, "--to", to.name] + split.extra }

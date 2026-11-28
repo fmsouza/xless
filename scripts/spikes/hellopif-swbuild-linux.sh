@@ -4,6 +4,9 @@
 # that the m3 build stage automates; it is not part of xless and is not run by CI. Findings:
 # docs/research/react-native-ios-contract.md, "Swift Build on Linux — spike G2".
 #
+# A record: it ran in the per-Xcode images of older releases (xless:local-<arch>-xcode<version>), whose SDK was at
+# /opt/xless (B below). Today's xless image has no SDK, and an Xcode's pack lays it out otherwise (docs/images.md), so
+# it does not run as it is; nothing (no Makefile target, no test) runs it. As it was run then:
 #   mac$  cd samples/HelloPIF && xcodegen generate && xcodebuild -project HelloPIF.xcodeproj -dumpPIF /tmp/HelloPIF.pif
 #   linux (the xless image, repo at /repo):
 #         scripts/spikes/hellopif-swbuild-linux.sh /tmp/HelloPIF.pif <mac samples/HelloPIF dir> <derived data> \

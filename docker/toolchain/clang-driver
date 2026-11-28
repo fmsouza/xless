@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installed by docker/Dockerfile (Ruling R10) as the `clang` and `clang++` of an open-source Swift toolchain whose
+# Installed by scripts/fit-toolchain.sh as the `clang` and `clang++` of an Xcode pack's open-source Swift toolchain whose
 # clang driver lacks defaults of the Apple clang its Xcode ships (measured: Xcode 26.2's clang 17 against Swift 6.2.3's;
 # LLVM 21's driver has both):
 # - it drops -fno-cxx-modules yet passes -fmodule-map-file on, so the compiler refuses a C++ #include of a header that a
@@ -7,17 +7,30 @@
 #   disabled"): the flag is passed on when the command line or a response file names it;
 # - it predefines no TARGET_OS_* macros for Darwin targets (code testing TARGET_OS_MACCATALYST without including
 #   TargetConditionals.h fails under -Werror=undef-prefix=TARGET_OS_), and with -fdefine-target-os-macros still lacks
-#   some Apple clang has: compiles get the image's clang flags (recorded in /opt/xless/swift-toolchain.json as
-#   clangFlags; docker/toolchain/target-os-macros).
+#   some Apple clang has: compiles get the pack's clang flags (recorded in the pack's swift-toolchain.json as
+#   clangFlags; docker/toolchain/target-os-check finds them against the Xcode's target-os fixture).
 # Both are Apple clang's defaults for Apple targets only, so they are added only when the invocation targets Darwin: its
 # last -target/--target value (on the command line or in a response file) names an Apple triple. Any other invocation
 # (cargo build scripts, the cc crate's host builds, script phases compiling for Linux) runs the open-source driver
 # unchanged: -fdefine-target-os-macros would define TARGET_OS_LINUX 1, TARGET_OS_MAC 0, … for a Linux target, which
 # Apple's clang and stock clang never do, and C code testing `defined(TARGET_OS_MAC)` would take its Apple branch.
 # The flags go to compiles (-c, -S, -E, -fsyntax-only, -M, -MM, or a source file or stdin as input), not to links.
-# @DRIVER@ and @FLAGS@ are filled in at install: the real driver (absolute path) and the flags. Shell builtins only: build
-# systems run compilers with a reduced PATH.
+# @DRIVER@ and @FLAGS@ are filled in at install: the real driver and the flags. The driver is an absolute path, or a bare
+# name: the file of that name beside this one (its location with symbolic links followed), so a toolchain that is moved
+# still runs. Shell builtins only, but for readlink when this is a link: build systems run compilers with a reduced PATH.
 real=@DRIVER@
+case "$real" in
+  /*) ;;
+  *)
+    self=$0
+    case "$self" in */*) ;; *) self=$(command -v -- "$self") ;; esac
+    while [ -L "$self" ]; do
+      link=$(PATH=/usr/bin:/bin:$PATH readlink "$self")
+      case "$link" in /*) self=$link ;; *) self=${self%/*}/$link ;; esac
+    done
+    case "$self" in */*) dir=${self%/*} ;; *) dir=. ;; esac
+    real=$(cd -P "$dir" && pwd -P)/$real ;;
+esac
 flags='@FLAGS@'
 case "$1" in -cc1*) exec "$real" "$@" ;; esac
 mode=

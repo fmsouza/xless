@@ -158,7 +158,7 @@ enum ColorRule {
         let e = l.encoding, p = l.profile
         if encoded, let verified = e.verifiedSystemColors, !verified.contains(name) {
             throw XlessError(.ib, "unsupported: system color \"\(name)\"\(LoweringError.at(line)) in a storyboard of plain views under Xcode \(p.xcodeVersion) (\(p.xcodeBuild)): that ibtool writes such a nib with its own system colors, measured only for \(verified.sorted().joined(separator: ", ")) (see docs/research/xcode-tools-by-version.md)",
-                             fix: "use one of those system colors or an sRGB color, or build with an image of an Xcode that writes it (\(XcodeToolsProfile.all.values.filter { $0.nibPlainViews.verifiedSystemColors == nil }.map(\.xcodeBuild).sorted().joined(separator: ", ")))")
+                             fix: "use one of those system colors or an sRGB color, or pin an Xcode that writes it and prepare its pack (xless setup --xcode <Xcode.xip>): (\(XcodeToolsProfile.all.values.filter { $0.nibPlainViews.verifiedSystemColors == nil }.map(\.xcodeBuild).sorted().joined(separator: ", ")))")
         }
         if let rgb = e.systemColorOverrides[name] { components = rgb.map { Double($0) / 255 } }
         return ColorEncoding(name: .system(name), components: components, alpha: alpha, decimalInput: true, rounded: e.roundsSystemColors)

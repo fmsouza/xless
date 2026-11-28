@@ -43,7 +43,7 @@ public struct ToolchainMeta: Codable, Sendable, Equatable {
 
     public static func load(from url: URL) throws -> ToolchainMeta {
         guard let data = try? Data(contentsOf: url) else {
-            throw XlessError(.sdk, "toolchain metadata not found at \(url.path)", fix: "use the xless SDK image, or run `xless sdk install`")
+            throw XlessError(.sdk, "toolchain metadata not found at \(url.path)", fix: "prepare the Xcode's pack: `xless setup --xcode <Xcode.xip>` (`--docker` for xless run --docker)")
         }
         do { return try JSONDecoder().decode(ToolchainMeta.self, from: data) } catch {
             throw XlessError(.sdk, "toolchain metadata at \(url.path) is invalid: \(error)", fix: "re-run `xless sdk export` on the Mac")
@@ -57,11 +57,9 @@ public struct ToolchainMeta: Codable, Sendable, Equatable {
         try enc.encode(self).write(to: url)
     }
 
-    /// XLESS_TOOLCHAIN_META, else /opt/xless/toolchain-meta.json if present, else $XDG_CONFIG_HOME|~/.config /xless/toolchain-meta.json.
-    public static func defaultLocation(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        if let p = env["XLESS_TOOLCHAIN_META"], !p.isEmpty { return URL(fileURLWithPath: p) }
-        let image = "/opt/xless/toolchain-meta.json"
-        if FileManager.default.fileExists(atPath: image) { return URL(fileURLWithPath: image) }
+    /// Where an older xless wrote it, whatever `XLESS_TOOLCHAIN_META` says now (that variable is live: it names a file the person uses,
+    /// which `xless clean` must never take for an older install's): $XDG_CONFIG_HOME|~/.config /xless/toolchain-meta.json.
+    public static func olderLocation(env: [String: String] = ProcessInfo.processInfo.environment) -> URL {
         let base = env["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? "\(env["HOME"] ?? "~")/.config"
         return URL(fileURLWithPath: "\(base)/xless/toolchain-meta.json")
     }

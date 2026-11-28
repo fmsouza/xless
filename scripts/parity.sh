@@ -14,14 +14,28 @@ sed 's/^  # macos: /  macos: /' "$ROOT/samples/HelloShip/xless.yml" > "$S/xless.
 ALLOW="$ROOT/scripts/parity-allowlist.txt"
 (cd "$ROOT" && swift build -c release --product xless >/dev/null); X="$(cd "$ROOT" && swift build -c release --show-bin-path)/xless"
 status=0
-image="${XLESS_IMAGE:-xless:local-arm64-xcode$(sed -n 's/^XCODE_VERSION=//p' "$ROOT/versions.env")}"
+# The xless build runs in this checkout's image (make images builds it), with the Xcode's pack read-only (xless setup --docker
+# prepares it): XLESS_XCODE_PIN (default versions.env's XCODE_VERSION) chooses it, from its volume or XLESS_XCODES; XLESS_IMAGE
+# names another image; DOCKER_CONTEXT, default colima-xless when it exists.
+case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
+xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$ROOT/versions.env")}"
+image="${XLESS_IMAGE:-xless:$("$ROOT/scripts/docker-images.sh" tag --arch "$arch")-$arch}"
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$ROOT/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
+ctx="$(docker_context parity)" || exit 2
+[[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
+args=(docker)
+[[ -z "$ctx" ]] || args+=(--context "$ctx")
+# shellcheck source=SCRIPTDIR/xcode-pack-args.sh
+. "$ROOT/scripts/xcode-pack-args.sh"   # pack_args: the Xcode's pack, read-only, as xless run gives it
+pack_args parity
 
 for P in ios macos; do
   if [[ $P == ios ]]; then SCHEME=HelloShip-iOS; DEST='generic/platform=iOS'; else SCHEME=HelloShip-macOS; DEST='generic/platform=macOS'; fi
   (cd "$S" && xcodegen generate -q && xcodebuild -project HelloShipParity.xcodeproj -scheme "$SCHEME" -destination "$DEST" \
      -configuration Release CODE_SIGNING_ALLOWED=NO -derivedDataPath "$W/dd-$P" build -quiet)
   XAPP=$(find "$W/dd-$P/Build/Products" -maxdepth 2 -name HelloShip.app | head -1)
-  docker run --rm --pull=never -v "$S":/work "$image" bash -c "for s in build assets finalize; do xless \$s --platform $P || exit 1; done" >/dev/null
+  "${args[@]}" run --rm --pull=never "${pack[@]}" -v "$S":/work -w /work "$image" bash -c "for s in build assets finalize; do xless \$s --platform $P || exit 1; done" >/dev/null
   LAPP="$S/.xless/build/$P/final/HelloShip.app"
 
   "$X" inspect "$XAPP" --platform "$P" > "$W/xcode-$P.json"

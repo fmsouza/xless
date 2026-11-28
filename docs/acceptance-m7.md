@@ -28,7 +28,7 @@ maintainer ended it there; what it did not check is listed [in the record](#what
 - A Linux machine (x86_64 or arm64) that has never run xless: no `~/.config/xless`, no secret store, no key file. A
   fresh VM is best (step 1 checks; it asks before going on if the machine is not fresh).
 - xless installed from the release candidate ([README](../README.md#install)), the native toolchain set up for step 5
-  (`xless setup --xcode <Xcode.xip>`, [README](../README.md#set-up)) and the images for step 8 (`xless setup --docker --xcode <Xcode.xip>`).
+  (`xless setup --xcode <Xcode.xip>`, [README](../README.md#set-up)) and, for step 8, the xless image and the Xcode's pack (`xless setup --docker --xcode <Xcode.xip>`).
 - `python3` and `git` (Ubuntu has both); `docker` for step 8. `strings`, `keyctl` and `coredumpctl` are used when
   present.
 - This repository at the release candidate's tag, for the script, the sample and this page:

@@ -70,16 +70,19 @@ xless run ~/MyApp
 builds, signs, uploads and delivers an iOS `xless.yml` project to TestFlight (`xless ship --platform ios`, natively
 with what `xless setup` installed; with `--docker`, in the `xless` image). For an app described by an overlay use
 `xless run --docker --config <overlay.yml>`: a Tauri app ([tauri.md](tauri.md#shipping)) or a React Native / Expo app
-([react-native.md](react-native.md#shipping-three-containers)). On Linux overlays build in the images only; on a Mac without
+([react-native.md](react-native.md#shipping-three-containers)). On Linux overlays build in the images, or without `--docker` where
+their tools are installed (a kit's image used directly: [images.md](images.md#using-the-image-directly)); on a Mac without
 `--docker` too ([on a Mac](build.md#overlays-on-a-mac)). Arguments after the project or overlay go to `xless ship`, for example `--from upload` to retry only the upload (a `--` may come before
 them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<overlay.yml>`, with `ARGS="…"`) is the
-`xless run` of the `xless` on `PATH` (or `XLESS_SELF`), in the images unless `xless setup` installed an SDK natively
-(`XLESS_USE_DOCKER=1` or `0` decides).
+`xless run` of the `xless` on `PATH` (or `XLESS_SELF`), in the images unless this machine has a pack of the Xcode
+(`XLESS_USE_DOCKER=1` or `0` decides). A pack that is there but cannot be used (stale, broken) sends it to the images
+with a note that names the pack and its fix.
 
 - **Secrets.** With the keys in the encrypted store ([secrets.md](secrets.md#xless-run-and-docker-builds)), a run
   needs no secrets file: what it does not find in the environment comes from the store, one passphrase per run, before its
   first step ([in WSL](security.md#in-wsl) natively after the build, for each step that needs it), or none while the store is kept unlocked ([staying unlocked](secrets.md#staying-unlocked)) (with
-  `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload;
+  `--docker`, written to a tmpfs for the run and mounted only into the containers that sign and upload, which for an
+  `xless.yml` project without an image of its own is the one that builds too;
   `--allow-disk-secrets` where there is no tmpfs, as on macOS). To override the store, as CI does, set the paths of your
   secret files in the environment: a `NAME_FILE` set there wins over the store. The files are mounted read-only into the
   container (natively, read where they are); values are never printed or put on a command line. A run that stops before
@@ -102,16 +105,23 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   environment. [`xless secrets import-env`](secrets.md#moving-from-testflightenv) moves it into the store.
 
   The TestFlight demo account's password (`<passwordSecret>_FILE` when xless.yml or the overlay names its own secret)
-  is needed only by a run that uploads with `testflight.external.review.demoAccount`, and only the upload gets it
+  is needed only by a run that uploads with `testflight.external.review.demoAccount`, and xless hands it to the upload
+  only. That is what xless hands out, not all that a build's code can read: natively, and in the one container of an
+  `xless.yml` project under `--docker`, the password's file is where the build runs
   ([secrets.md](secrets.md#xless-run-and-docker-builds)).
 
-- **Native or image.** Natively (the default) the build uses the SDK and Swift `xless setup` installed
-  ([native-install.md](native-install.md)); a project pinning another Xcode with `xcode:` is refused until you run
-  `xless setup` with that Xcode. On a Mac it uses the Xcode that is installed, and a pin chooses among several. With `--docker`: the image of the Xcode the project
-  pins, `xless:local-<arch>-xcode<version>`, or without a pin that of the newest Xcode there is an image of. `image:`
+- **Native or image.** Natively (the default) the build uses the Xcode pack `xless setup` prepared
+  ([native-install.md](native-install.md)): that of the Xcode the project pins with `xcode:`, else the newest; a pin
+  with no pack stops the build (exit 2) until you run `xless setup` with that Xcode. On a Mac it uses the Xcode that is
+  installed, and a pin chooses among several. With `--docker`: the image of this xless, `xless:<version>-<arch>`, with
+  that Xcode's pack read-only in every container ([images.md](images.md#what-a-run-does)). `image:`
   in xless.yml or the overlay, or `XLESS_IMAGE`, names another image for the build step
-  ([images.md](images.md#an-image-of-your-own)). The Docker context is `DOCKER_CONTEXT` when set, else `colima-xless` when that context exists, else the
-  current one.
+  ([images.md](images.md#an-image-of-your-own)). The Docker context is `DOCKER_CONTEXT` when set (in the environment, or in `testflight.env`, which wins);
+  else, when `DOCKER_HOST` is set, the current one (that address); else `colima-xless` when that context exists; else the
+  current one: the same Docker as `xless setup --docker` and `xless clean` use. A chosen context wins over a `DOCKER_HOST`
+  that is set, which the run's docker calls then go without. A `DOCKER_CONTEXT` that docker does not have stops the run before anything, exit 2:
+  `testflight: DOCKER_CONTEXT is … (set in …), but docker has no context of that name; its contexts: …; set DOCKER_CONTEXT
+  to one of them …` ([images.md](images.md#which-docker)).
 - **Build number.** `XLESS_BUILD_NUMBER` if set, else `$(( $(date +%s) / 60 ))`, which is monotonic across machines.
   With `--config` the overlay's `build:` decides instead ([tauri.md](tauri.md#build-numbers)).
 - **Paths.** Relative secret paths are resolved against the current directory. With `--docker`, the secret files and
@@ -152,9 +162,13 @@ them). From a source checkout, `make testflight PROJECT=<dir>` (or `CONFIG=<over
   review, public links): `testflight.external` and `xless testflight`. API details:
   [research/asc-testflight.md](research/asc-testflight.md).
 
-With a project directory everything runs in one process (one container with `--docker`), so package code built there
-could read the key files. If that matters to you, build up to `finalize` first, with no secret, then sign and upload what it built. Use
-the same build number for both runs:
+With a project directory everything runs in one process natively on Linux, and with `--docker`, on Linux or a Mac, in
+one container (unless the build has an image of its own that is not the xless image: then in two), so package code built
+there could read the key files. (On a Mac and in WSL, natively, the build and the signing are two processes of one user:
+[security.md](security.md#the-build-and-your-secrets).) Build up to `finalize` first, with no secret, then sign and
+upload what it built, with the same build number for both runs. That keeps a build's mistake from the secrets, not code that means harm: what the first run wrote, and
+natively what it left running, are there when the second one signs
+([what does keep such a build from the secrets](security.md#a-build-that-means-harm)).
 
 ```sh
 export XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 ))
@@ -165,7 +179,7 @@ xless run ~/MyApp --from sign
 ## The three-step split
 
 An overlay app's build runs third-party code: npm scripts, `build.rs`, CocoaPods hooks, Xcode build phases. So with
-`--config`, `xless run --docker` never runs that code next to a secret. It uses three containers (natively on a Mac, the same
+`--config`, `xless run --docker` never runs that code next to a secret ([and what it does not keep apart](security.md#a-build-that-means-harm)). It uses three containers (natively on a Mac, the same
 three steps, with the second in [a sandbox](security.md#an-overlays-build-on-a-mac)):
 
 1. `xless next-build` (`xless tauri next-build` for Tauri), with the App Store Connect key only: the next `dated` build
@@ -173,9 +187,14 @@ three steps, with the second in [a sandbox](security.md#an-overlays-build-on-a-m
 2. `xless ship --to finalize`, with **no** secret file or variable: prepare, build, assets, finalize.
 3. `xless ship --from sign`, with the secrets: sign, package, upload. No build code runs here.
 
+That is what each container is handed. Natively the steps are processes of one user: steps 1 and 3 read the store or
+your environment themselves, and step 2 is started without the secret variables and unable to open the store, but a
+secret's file that your user can read is there for its code (on a Mac the sandbox keeps your home directory from it):
+[security.md](security.md#the-build-and-your-secrets).
+
 `--from` and `--to` choose which steps run, and each step needs only its own secrets: `--build-number <n> --to
-finalize` needs none. Secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are written
-once, before step 1, one directory per step, each mounted into its own step only. The overlay's folder and the app
+finalize` needs none. With `--docker`, secrets from the store ([secrets.md](secrets.md#xless-run-and-docker-builds)) are
+written once, before step 1, one directory per step, each mounted into its own step only. The overlay's folder and the app
 source are mounted into the build container, so a run refuses to start when either holds a secret file (or `testflight.env`). Details: [tauri.md](tauri.md#shipping) and
 [react-native.md](react-native.md#shipping-three-containers).
 
@@ -203,7 +222,8 @@ flat distribution package (`.pkg`) and uploaded to App Store Connect. The lane i
   [DMG section](#notarized-dmg-tauri-macos) builds it, then the App-Store pkg (the app signed with
   `XLESS_DIST_KEY_FILE` under a `MAC_APP_STORE` provisioning profile embedded as
   `Contents/embedded.provisionprofile`, the pkg signed with `XLESS_INSTALLER_KEY_FILE`, uploaded, delivered to the
-  `testflight.groups` block). Only that second ship has the two keys; the DMG ship has the Developer ID key. A
+  `testflight.groups` block). With `--docker`, only that second ship's container is handed the two keys, and the DMG
+  ship's the Developer ID key (natively each ship reads what it needs itself); neither runs build code. A
   failure in either channel stops the run with that channel's code; the DMG's bytes never depend on the second ship;
 - App Store Connect refuses a package that is not signed with a Mac Installer Distribution certificate
   (ITMS-90237), which is why the lane has its own key: [bootstrap.md](bootstrap.md#5d-mac-installer-distribution-key-the-mac-app-store-package);
@@ -259,20 +279,20 @@ never ignored. A missing certificate is exit 15 either way.
 
 ## Running `xless ship` yourself
 
-You can also run xless directly in the image, passing secrets by name (`-e NAME`) so their values stay out of your
-shell history and process list:
+You can also run xless directly in a container of the image, with the Xcode's pack mounted read-only at `/xcodes` and
+the secrets passed by name (`-e NAME`), so their values stay out of your shell history and process list:
 
 ```sh
-docker run --rm -v "$PWD":/work -w /work \
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/work -w /work \
+  --mount type=volume,src=xless-xcode-27.0-27A266a-amd64,dst=/xcodes,readonly \
   -e ASC_KEY_ID -e ASC_ISSUER_ID -e ASC_KEY_P8 -e XLESS_DIST_KEY -e XLESS_BUILD_NUMBER=$(( $(date +%s) / 60 )) \
-  xless:local-amd64-xcode27.0 xless ship --platform ios
+  xless:1.4.0-amd64 xless ship --platform ios
 ```
 
-Use the name that `docker image ls xless` shows: its architecture is the machine's (`arm64` or `amd64`), its Xcode the one
-you set up. Output ends up in `.xless/build/ios/out/`. The container runs as root, so
-the files it creates in your project (`.xless/`, and for iOS builds `.build/`, `.bsp/`, `xtool/` and `xtool.yml`)
-belong to root on a Linux host. Remove them with `sudo rm -rf .xless .build .bsp xtool xtool.yml`, or hand them back
-with `docker run --rm -v "$PWD":/work -w /work alpine chown -R "$(id -u):$(id -g)" .xless .build .bsp xtool xtool.yml`.
+Use the names that `docker image ls xless` and `docker volume ls --filter name=xless-xcode-` show: the image's
+architecture is the machine's (`arm64` or `amd64`), and the volume is that of the Xcode you set up. Output ends up in
+`.xless/build/ios/out/`, owned by you. That is one container in which the build's code runs beside the secrets: to keep
+them apart, build in one container and sign in another ([ci.md](ci.md#in-the-image), [security.md](security.md#the-image-used-directly)).
 
 ## Continuous integration
 

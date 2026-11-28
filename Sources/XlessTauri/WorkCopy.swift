@@ -125,3 +125,53 @@ public enum WorkCopy {
         try Data((origin + "\n").utf8).write(to: file, options: .atomic)
     }
 }
+
+/// Build outputs that a work copy keeps between builds (cargo's `target/<triple>`, the Swift packages' build directory)
+/// and that depend on the Xcode pack: its SDK and its toolchain. cargo and SwiftPM track sources, flags and the files a
+/// compile read by path, and a pack prepared again by another recipe has the same paths; so the pack is recorded beside
+/// them, and they are removed when another one builds.
+public enum PackOutputs {
+    /// What builds the outputs: with `xcode` (a Mac's own Xcode) "(xcode)", which native and --docker runs that share a work
+    /// copy tell apart; else the pack in `env`.
+    public static func identity(env: [String: String], xcode: Bool) -> String { xcode ? "(xcode)" : identity(env: env) }
+
+    /// The pack in `env` (`XcodePack.identity`), or "(no pack)" (an image's own SDK, or none); one that cannot be read is
+    /// "(no pack: <why>)", which the log of removed outputs names (the build then stops, with that problem).
+    public static func identity(env: [String: String]) -> String {
+        do {
+            guard let pack = try XcodeEnvironment.lookup(env: env)?.pack else { return "(no pack)" }
+            return pack.identity
+        } catch { return "(no pack: \(error))" }
+    }
+
+    /// Where the work copy records the pack its outputs were built with.
+    public static func record(work: URL) -> URL { work.appendingPathComponent(".xless/pack") }
+
+    /// What a build keeps in the work copy `work` that the pack made, for every platform (an iOS and a macOS build of
+    /// one overlay share the work copy and its record): cargo's outputs for the Apple targets in `targetDir`, which hold
+    /// its build scripts' outputs too (C code compiled against the SDK; the host's `target/release` stays), the Swift
+    /// packages' build directories, the dSYM debug links and the macOS staging.
+    public static func outputs(work: URL, targetDir: URL) -> [URL] {
+        ([RustApple.iosTarget] + TauriMacEnvironment.targets).map { targetDir.appendingPathComponent($0, isDirectory: true) }
+            + [".xless/swift", ".xless/dsym", ".xless/mac", ".xless/cargo-mac"].map { work.appendingPathComponent($0, isDirectory: true) }
+    }
+
+    /// Removes those of `outputs` that exist when `record` does not name `identity` (no record counts as another pack:
+    /// a work copy of an xless that did not record it), then records `identity`. Returns what it removed.
+    @discardableResult
+    public static func reset(_ outputs: [URL], record: URL, identity: String) throws -> [URL] {
+        let fm = FileManager.default
+        let line = identity + "\n"
+        guard (try? String(contentsOf: record, encoding: .utf8)) != line else { return [] }
+        let removed = outputs.filter { fm.fileExists(atPath: $0.path) }
+        do {
+            for url in removed { try fm.removeItem(at: url) }
+            try fm.createDirectory(at: record.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(line.utf8).write(to: record, options: .atomic)
+        } catch {
+            throw XlessError(.build, "cannot remove the build outputs of another Xcode pack: \(error.localizedDescription)",
+                             fix: "remove the work copy (its volume with --docker), then build again")
+        }
+        return removed
+    }
+}

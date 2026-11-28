@@ -52,8 +52,10 @@ rm -rf "$out/app" "$out/crash"; mkdir -p "$out/app" "$out/crash"
 if [[ "$app" == volume:* ]]; then
   spec="${app#volume:}"; volume="${spec%%:*}"; inner="${spec#*:}"
   [[ -n "$volume" && "$inner" == /*.app ]] || die "volume:<volume>:<absolute path of the .app> expected, got $app"
-  ctx="${DOCKER_CONTEXT:-}"
-  if [[ -z "$ctx" ]] && docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx 'colima-xless'; then ctx=colima-xless; fi
+  # shellcheck source=SCRIPTDIR/docker-context.sh
+  . "$(dirname "$0")/docker-context.sh"   # docker_context: the context, as xless chooses it
+  ctx="$(docker_context sim-launch)" || exit 2
+  [[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
   docker=(docker); [[ -z "$ctx" ]] || docker+=(--context "$ctx")
   echo "==> copying $inner out of volume $volume" >&2
   alpine="$(sed -n 's/^ALPINE_IMAGE=//p' "$(dirname "$0")/../versions.env")"

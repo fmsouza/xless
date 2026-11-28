@@ -1,0 +1,300 @@
+# Xcode packs acceptance (2026-11-27) — what the packs build, against the baked images
+
+Scope: the samples built with an Xcode pack (the generic xless image, with the Xcode's SDK, Swift toolchain and Swift
+Build in a pack mounted read-only at `/xcodes/<version>-<build>-<arch>`) against the same samples built in the images
+that had the Xcode baked in (`xless:local-<arch>-xcode<version>`, the SDK at
+`/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle`, the Xcode's Swift at `/opt/xless/toolchains/swift-<v>` or,
+when it is the image's own, at `/usr`, Swift Build at `/opt/swift-build`). The baked images were built from commit
+49ad396, the last with an Xcode in the image; the packs and the generic image from fc15c64, and the 27.0 HelloShip and
+HelloTauri pairs and the 26.2 HelloShip pair again with the generic image of 7febafe, whose xless builds with a pack's copy
+of the image's own Swift as with that Swift itself (below). The goal: the products are
+byte for byte the same (outside the code signatures, and of a universal file its slices: see
+[How the comparison masks](#how-the-comparison-masks)), or differ only where they record one of the moved paths, each listed. Also measured: sizes,
+the image and pack build times, a run's start-up, and what happens to a work copy when its pack is prepared again.
+Nothing was pushed or delivered.
+
+| Criterion | Result |
+|---|---|
+| The samples built with packs are those the baked images built (Xcode 27.0 and 26.2, arm64) | PARTLY — 6 of 8 pairs identical, 1 path only, 1 differs: the macOS HelloShip of Xcode 27.0, whose longer rpath to Swift moves the sections of `__TEXT`; with addresses mapped through that move, nothing else was found to differ. See below |
+| Run to run, a sample builds byte for byte the same (the noise floor) | PASS — nothing to mask |
+| amd64 | NOT RUN — the commands are below |
+| A new xless over existing packs prepares nothing | PASS — both packs, prepared by an earlier xless, were found current |
+| Sizes and times are measured | Below |
+| Outputs kept in a work copy follow a pack prepared again | FAIL for Cargo (and the Rust part of Tauri) at fc15c64; PASS for Cargo at 3107e94, after a51de02 (Tauri's builders run the same check; not exercised for real) — see [Stale outputs](#stale-outputs-after-a-pack-is-prepared-again) |
+
+## The machine
+
+- An Apple M3 Max Mac (14 cores, 36 GB), macOS 27.2.1, with Docker 29.5.2 in a Colima 0.10.3 VM (`vz`, arm64): 4 CPUs,
+  8 GiB of memory, a 100 GiB disk. The VM ran other containers of the user throughout.
+- The two SDK exports (`~/.cache/xless/sdk/xcode27.0-27A266a`, `xcode26.2-17C52`), made earlier from the `.xip`s: no
+  `.xip` was expanded for this record. The baked images were built from them with the baseline's own
+  `scripts/docker-images.sh image --arch arm64 --xcode <V> --xcode-build <B> --sdk-dir <export>`, its kits with the
+  `docker build` lines its `xless setup --docker --with tauri,react-native --dry-run` prints.
+- The packs: the volumes `xless-xcode-27.0-27A266a-arm64` and `xless-xcode-26.2-17C52-arm64`, already there.
+
+## How the pairs were built
+
+Each sample was built the way its test script builds it, in a container of the image (the kit for Cargo, Tauri and
+React Native), and its products copied out of the container:
+
+| Sample | As | Products compared |
+|---|---|---|
+| HelloShip (Swift) | `scripts/parity.sh`'s xless part: a copy of the sample with its macOS line on, `xless build`, `assets`, `finalize` for iOS and macOS in `/work` | `ios/HelloShip.app`, `macos/HelloShip.app` (universal) |
+| HelloCargo | `scripts/test-cargo-linux.sh`: `xless ship --to finalize`, iOS and macOS | both finalized apps |
+| HelloTauri | `scripts/test-tauri-linux.sh`: `xless ship --to finalize`, iOS and `--platform macos` | both finalized apps |
+| HelloRN | `scripts/test-rn-linux.sh`'s first run: a fresh work copy, `xless ship --to finalize`, iOS (`xless.overlay-26.2.yml` for 26.2) | the build stage's app and the finalized app |
+
+What a build may pick up from where and when it runs was made the same on both sides first:
+
+- the build number: `XLESS_BUILD_NUMBER` as the scripts set it (`1.0.0.2026010101`, `1.0.0.202601010000` on macOS,
+  `1.0.0.2026101601` for HelloRN; HelloShip's `xless.yml` says `build: 1`);
+- the sources and `GIT_SHA` (HelloCargo's macOS `Info.plist` records the commit): one clone at fc15c64 mounted
+  read-only as `/repo` on both sides, in place of each side's own checkout;
+- the work copy: a new, empty work volume for every build, at the same path in the container (`/cache/work/<overlay>`,
+  `/work`); the Rust toolchains and the cargo registry, and the React Native caches (corepack, bundler, CocoaPods), one
+  set of volumes for both sides.
+
+The image each build ran in is in the first lines of its log (the image's ID, and `XLESS_IMAGE_ID`, `XLESS_XCODE` and the
+`SDK:` and `compiler:` lines inside the container): every baseline build ran in a baked image of 49ad396 with no pack
+(Swift from `/usr` for 27.0, from `/opt/xless/toolchains/swift-6.2.3` for 26.2), every candidate build in the generic
+image of fc15c64 (7febafe for the three pairs built again) with the pin's pack (Swift from `/xcodes/<pack>/toolchain`).
+For those three the baked images were built again from the same exports; the 27.0 baked image's iOS HelloShip came out
+with the same `LC_UUID` as before (`4c4c44c555553144a1c297f5109122c2`), the linker's hash of the whole file.
+
+## The noise floor
+
+Built twice on the baseline alone, in fresh work volumes, each pair is byte for byte identical, the code signatures
+included: HelloShip, HelloCargo, HelloTauri and HelloRN with Xcode 27.0, HelloShip with Xcode 26.2. Nothing differs from
+run to run once the inputs above are the same, so nothing is masked as run-to-run. The image's identity
+(`XLESS_IMAGE_ID`, which differs between the two sides) is in no product: the identical pairs below show it.
+
+## Results
+
+`scripts/pack-parity.sh <baseline> <candidate>` on each pair (arm64):
+
+| Sample | Xcode 27.0 | Xcode 26.2 |
+|---|---|---|
+| HelloShip | **differs**: the iOS executable is path only; the macOS executable differs: a longer rpath to Swift moves `__TEXT` (below) | **path only**: the macOS executable, 37 paths of the SDK in each slice's symbol table |
+| HelloCargo | identical (11 files) | identical (11 files) |
+| HelloTauri | identical (16 files) | identical (16 files) |
+| HelloRN | identical (94 files) | identical (94 files) |
+
+Every "identical" pair is identical byte for byte, the code signatures included.
+
+### Path only
+
+- **HelloShip, Xcode 26.2, `macos/HelloShip.app/Contents/MacOS/HelloShip`**, in both slices (arm64 and x86_64): 37
+  paths in the symbol table's string table, the stabs the linker writes for the debugger, each naming a prebuilt module
+  of the SDK, e.g.
+  `/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/macosx/prebuilt-modules/26.2/AppKit.swiftmodule/arm64e-apple-macos.swiftmodule`
+  against the same under `/xcodes/26.2-17C52-arm64/config/swiftpm/swift-sdks/darwin.artifactbundle`. The string table
+  is 512 bytes longer, so `LC_SYMTAB`'s `strsize` and `__LINKEDIT`'s size grow with it, and `LC_UUID`, which ld64.lld
+  computes from the file's bytes, differs; every other byte is in place and the same. Checked with the tools as well:
+  `otool -l` of the two differs only in `strsize`, `__LINKEDIT`'s `vmsize` and `filesize`, and the UUID, and
+  `nm -ap` of the two is identical once the SDK's old and new prefix are replaced. The iOS app of the pair is
+  identical.
+
+### A pack whose Swift is the image's own
+
+In the baked 27.0 image, Xcode 27.0's Swift (6.4.0) was the image's own Swift, at `/usr`. The 27.0 pack holds a copy of
+the same release, fitted to its SDK, at `/xcodes/27.0-27A266a-arm64/toolchain` (its `pack.json` says `"mode": "own"`).
+xless compiles with that copy (its `usr/bin` first on `PATH`), and builds with it as with the image's own Swift: the
+route is chosen by the release (`SwiftToolchain.isEngineRelease`, against the engine's `swiftc --version`), not by where
+the toolchain is. Only another release builds its own way, in its own scratch directory (`.build-swift-<v>`,
+`.xless/macos-build-<arch>-swift-<v>`).
+
+That matters to the products. Measured with the 27.0 pack, a macOS app built by SwiftPM 6.4 with
+`--swift-sdk arm64-apple-macosx --arch arm64` is linked with the rpath `$ORIGIN`, an ELF token that dyld does not expand,
+where `--triple arm64-apple-macosx14.0` gives `@loader_path`; Tauri's Swift packages built in `.build-swift-6.4` name
+that directory in the app's debug map. Another release from 6.4 on therefore selects the architecture by the triple
+too; below 6.4 it keeps `--swift-sdk` and `--arch` (6.2.3's `--triple` builds both architectures and needs `lipo`).
+
+### Differs, and why
+
+- **HelloShip, Xcode 27.0, `ios/HelloShip.app/HelloShip`** (path only on its own): one `LC_RPATH`, the toolchain's
+  back-deployment libraries, `/usr/lib/swift-6.2/iphoneos` against `/xcodes/27.0-27A266a-arm64/toolchain/usr/lib/swift-6.2/iphoneos`.
+  The load commands are 40 bytes longer and fit in the header's padding; `LC_UUID` differs; every other byte is the same.
+- **HelloShip, Xcode 27.0, `macos/HelloShip.app/Contents/MacOS/HelloShip`**: the same rpath, `/usr/lib/swift-6.2/macosx`
+  against `/xcodes/27.0-27A266a-arm64/toolchain/usr/lib/swift-6.2/macosx`, in each slice; the other rpaths are the
+  baseline's (`/usr/lib/swift`, `@loader_path`, `@executable_path/../Frameworks`). That load command is 40 bytes longer
+  (`sizeofcmds` 3736 → 3776 in the arm64 slice, 3880 → 3920 in the x86_64 one) and the sections of `__TEXT` start later:
+  `__text` and `__stubs` by 0x28 and the others by 0x30 in the arm64 slice (`__text` at 0xf00 against 0xed8), all by 0x20
+  in the x86_64 one. The segments, and every section of `__DATA_CONST` and `__DATA`, are where they were (their load
+  commands are among those compared below, address by address). The tool
+  calls the file different, and says its printable strings differ once the path is replaced. The differing runs it
+  places in the load commands are bytes of `LC_UUID` that happen to be printable (`LLDuUU1D` against `UU1D` and `!:\)` in
+  the arm64 slice); the arm64 slice also lists two runs on each side that it places in "__LINKEDIT or padding", whose
+  bytes the record does not show and which were not identified (the code signature is the likely place, not checked).
+  Compared with each address mapped through that move, on one more pair built for the purpose (the same verdict):
+  - the load commands: besides the rpath and the sections' addresses and offsets, only `LC_UUID` and `LC_MAIN`'s
+    `entryoff` differ, and `entryoff` by its section's shift (0x2100 → 0x2128, 0x2170 → 0x2190);
+  - the code: `__text` (and the x86_64 `__stubs`) disassembled, every address made absolute (the PC-relative operands of
+    `adr`, `adrp`, `ldr` literals and `%rip` resolved) and the candidate's mapped back by its section's shift: no line
+    differs (2,657 arm64 and 2,879 + 1,497 x86_64 lines);
+  - the other sections: byte for byte the same, but for `__swift5_typeref`, `__const`, `__constg_swiftt` and
+    `__swift5_entry` of `__TEXT`, `__unwind_info`, and `__got`, `__const` and `__data`. There every differing byte lies
+    in a word whose new value is the old one plus the shift of the section it points into, read as a 32-bit offset
+    from the word itself (Swift's relative pointers), a 32-bit offset from the image base (`__unwind_info`) or a
+    chained-fixup rebase (its target address in the low 36 bits). This is a check of each differing word against those
+    three readings, not a parse of the Swift metadata;
+  - `__LINKEDIT`: the symbol table, the function starts, the chained fixups and the exports as `objdump` prints them are
+    the same once the candidate's addresses are mapped back; its bytes were not compared one by one, and the code
+    signature is left out;
+  - the bytes outside every section, up to `__LINKEDIT`, are zero in both.
+
+  SwiftPM writes that rpath from where its own toolchain is (`<toolchain>/usr/lib/swift-6.2/<platform>`, no option turns
+  it off), so only a SwiftPM run from `/usr` gives the baseline's: the image's own SwiftPM with the pack's compilers in a
+  toolset does, but Swift Build then still runs the image's own `clang` and `swift-frontend` for some steps, unfitted to
+  the SDK. The path does not exist on a Mac, in either build.
+
+With Xcode 26.2 both sides build with another Swift than the image's own (6.2.3), the same way, and the products agree.
+
+## How the comparison masks
+
+`scripts/pack-parity.sh` compares every file of the two trees. Left out, as `scripts/arch-compare.sh` does (the code
+is shared, `scripts/code-signature-mask.py`): the bundles' `_CodeSignature/` directories, and in a Mach-O image its
+code-signature blob, `LC_CODE_SIGNATURE`'s offset and size and `__LINKEDIT`'s sizes; a universal file slice by slice,
+so the padding between its slices is not compared. Only the files' bytes are compared, not their modes.
+A file that still differs is "path only" only when its differences are the moved paths:
+
+- the paths: the SDK (`/opt/xless/config/swiftpm/swift-sdks/darwin.artifactbundle` → `/xcodes/<pack>/config/swiftpm/swift-sdks/darwin.artifactbundle`),
+  Swift (`/opt/xless/toolchains/swift-<v>` → `/xcodes/<pack>/toolchain`; when the baked image's Swift was its own,
+  the empty prefix of its per-platform libraries `/usr/lib/swift[-<v>]/<platform>`, which no Apple OS has, at the start
+  of a path) and Swift Build (`/opt/swift-build` → `/xcodes/<pack>/swift-build`), each a whole path component, the old
+  only in the baseline, the new only in the candidate, the n-th of each the same directory, all of one pack;
+- the proof, by the first that applies: the same length (each replaced by a placeholder of its length, the two files
+  are equal); substituted (the baseline with each old path replaced by the new one is the candidate, byte for byte);
+  Mach-O (each occurrence is in a load command that holds a path or in the symbol table's string table, and the two
+  are equal once the paths are replaced in those strings, `sizeofcmds`, those commands' sizes and padding,
+  `strsize` and each symbol's offset into the string table are left out, the header's padding is all zero, and
+  `LC_UUID` is left out and listed);
+- anything else, including paths of different lengths whose surroundings moved, is a difference: the tool says whether
+  the printable strings are the same once the paths are replaced, and where the first section starts in each, as
+  evidence for a person, not as a pass.
+
+Each masked occurrence is printed with its offset in both files and where it is (`load command LC_RPATH`,
+`string table`, a section), and each differing `LC_UUID` with both values. Of the products here, two files were
+masked: the 26.2 macOS HelloShip executable (37 string-table occurrences per slice, and the UUID) and the 27.0 iOS
+HelloShip executable (one `LC_RPATH`, and the UUID).
+
+## Stale outputs after a pack is prepared again
+
+Cargo and Tauri keep their build outputs in the work copy (`target/`, `.xless/`), and nothing in their fingerprint
+names the pack; React Native's does. The run:
+
+1. HelloCargo built for Xcode 26.2 with the pack, its work volume kept: `target/*/release/hello-cargo` written at 13:53.
+2. The pack's `sdk` part marked as made by another recipe (its hash in `pack.json` replaced), then
+   `xless setup --docker --sdk ~/.cache/xless/sdk/xcode26.2-17C52`: "is not current (its sdk part was prepared by another
+   recipe …)", the part prepared again and the pack put in place at the same path, in 2 min 43 s. The SDK's files are
+   new files (`iPhoneOS.sdk/usr/lib/libSystem.tbd`: another inode, a new mtime).
+3. HelloCargo built again in the same work volume: cargo compiled and linked nothing (`Finished … in 0.34s` for each
+   target); the three executables kept their inodes and their 13:53 mtimes, and were bundled again as they were.
+4. A clean build in a new work volume: identical to the build of step 3, since the recipe, and so the SDK's content,
+   had not changed.
+
+So the executables of a Cargo app (and the Rust part of a Tauri app) linked against a pack survive that pack being
+prepared again: cargo tracks its sources, flags and declared environment variables, and the SDK's path is the same.
+Had the recipe changed the SDK or the toolchain, the next build would have shipped executables linked against the old
+ones. Swift Build, which tracks the headers and modules a compile read, was not tried.
+
+Since a51de02 a Cargo or Tauri build records the pack it builds with in the work copy (`.xless/pack`: the pack's name
+and its two recipe hashes) and, when the record is another pack's or missing, removes the Apple targets' outputs
+(`target/aarch64-apple-ios`, `target/aarch64-apple-darwin`, `target/x86_64-apple-darwin`) and `.xless/swift`, `dsym`,
+`mac` and `cargo-mac` before cargo runs. Measured again at 3107e94, HelloCargo for Xcode 26.2 in one kept work volume:
+
+1. Built: 43 s; the three executables written at 16:27:56 to 16:28:06; the record names `sdk=d26661a7be8a…`.
+2. The pack's `sdk` hash in `pack.json` replaced by zeros, then `xless setup --docker --sdk
+   ~/.cache/xless/sdk/xcode26.2-17C52`: "is not current (its sdk part was prepared by another recipe (000000000000,
+   this xless's is d26661a7be8a))", the `sdk` part prepared again in 1 min 33 s.
+3. Built again: 2 s, cargo compiled nothing (`Finished … in 0.07s`), the executables kept their inodes and mtimes, the
+   record unchanged. That is right: the recipe, so the pack's identity and its SDK's content, had not changed.
+4. The record rewritten to name another `sdk` hash (what a pack of another recipe leaves), then built again: 13 s;
+   "the work copy's outputs were not built with this Xcode pack (26.2-17C52-arm64 sdk=d26661… swift-build=db5516…):
+   removed aarch64-apple-ios, aarch64-apple-darwin, x86_64-apple-darwin, dsym, cargo-mac, cargo builds them again";
+   cargo compiled `hello-cargo` for the three targets (new inodes, written at 16:30:10 to 16:30:19), and the record
+   was written again.
+5. `scripts/pack-parity.sh` of the products of step 1 against those of steps 3 and 4: "11 files: 11 identical".
+
+A work copy made by an xless before a51de02 has no record: its Apple outputs are built again once.
+
+## Sizes
+
+Decimal GB. Images as `docker images` shows them (the Swift image they start from, 5.6 GB, is shared); the packs and
+exports as `du`.
+
+| What | Size |
+|---|---|
+| The image (fc15c64) / with the `tauri` kit / with the `react-native` kit | 6.52 / 6.83 / 7.28 GB |
+| Baked image, Xcode 27.0 / with `tauri` / with `react-native` | 11.0 / 11.3 / 11.8 GB |
+| Baked image, Xcode 26.2 / with `tauri` / with `react-native` | 12.8 / 13.1 / 13.5 GB |
+| Pack 27.0-27A266a-arm64: `config/` (the SDK), `toolchain/`, `swift-build/` | 7.3 GB: 3.6, 3.7, 0.05 |
+| Pack 26.2-17C52-arm64: `config/`, `toolchain/`, `swift-build/` | 6.7 GB: 3.3, 3.3, 0.10 |
+| SDK export, Xcode 27.0 / 26.2 | 3.5 / 3.2 GB |
+
+## Times
+
+On the machine above, each once:
+
+| What | Time |
+|---|---|
+| The image, from an empty build cache (the Swift image already on the machine), `xless setup --docker --sdk <27.0 export> --with tauri,react-native` | 3 min 53 s |
+| The `tauri` kit / the `react-native` kit (it compiles Ruby and `hermesc`) | 18 s / 2 min 30 s |
+| That whole setup (both packs current: nothing prepared) | 6 min 42 s |
+| The pack's `sdk` part prepared again from the 26.2 export: the Swift 6.2.3 download and unpacking, the SDK, the fit | 2 min 43 s: 1 min 53 s, 39 s, 7 s |
+| A whole pack from the export, with Swift Build compiled: measured at 3107e94, below | 6 min 55 s (27.0) / 6 min 24 s (26.2) |
+| Baked images, for comparison: 27.0 (partly next to other builds) / 26.2 (stages cached from 27.0) | 9 min 18 s / 7 min 4 s |
+| A run's start-up: `xless run --docker <HelloShip> --build-number 1 --to build`, from the command to the first line of the build step's container, with the pack / with the baked image | 0.82, 0.44, 0.44 s / 0.48, 0.36, 0.40 s |
+
+The start-up is the same: the pack is a volume mount. One of the three baseline runs then crashed in SwiftPM
+(`Signal 11` in libdispatch's event loop, `xless exited with code 12`); the next run passed. The baked 26.2 image's
+SwiftPM 6.2.3 crashed the same way twice more, building HelloShip for macOS while another build ran in the VM, and
+passed alone. That is the baked image's Swift, unchanged by the packs.
+
+Again at 3107e94, on the same machine, each once. Both packs were stale for both parts (the fixes of that wave changed
+their recipes), so each setup prepared a whole pack:
+
+| What | Time |
+|---|---|
+| `xless setup --docker --sdk <27.0 export> --with tauri`, all of it | 12 min 9 s |
+| Its image, from an empty build cache (the Swift image already on the machine) | 4 min 51 s |
+| Its whole pack 27.0: the Swift 6.4 download and unpacking, the SDK, the fit, Swift Build, putting it in place | 6 min 55 s: 1 min 55 s, 21 s, 5 s, 4 min 16 s, 16 s |
+| Its `tauri` kit | 20 s |
+| The whole pack 26.2 (`xless setup --docker --sdk <26.2 export> --with tauri`, the image and kit current): the same steps | 6 min 24 s: 1 min 48 s, 19 s, 5 s, 4 min 7 s, 1 s |
+| The 26.2 pack's `sdk` part prepared again alone (Swift Build kept, by hard links): the download, the SDK, the fit, putting it in place | 1 min 33 s: 1 min 2 s, 18 s, 5 s, 5 s |
+| The same two setups again ("is current for this xless: nothing to prepare") | 0 s each |
+
+## Not run
+
+- **amd64.** Under emulation here; it needs an x86_64 host with Docker and SDK exports that hold `amd64/darwin.xtoolsdk`.
+  There, with `A=amd64`, the exports in `$SDK27` and `$SDK26`, and this repository checked out:
+
+  ```sh
+  git worktree add ../xless-baked 49ad396
+  for x in "27.0 27A266a $SDK27" "26.2 17C52 $SDK26"; do set -- $x
+    (cd ../xless-baked && scripts/docker-images.sh image --arch $A --xcode $1 --xcode-build $2 --sdk-dir $3)
+    (cd ../xless-baked && swift build --product xless && XLESS_SHARE=$PWD .build/debug/xless setup --docker --sdk $3 \
+       --with tauri,react-native --arch $A --dry-run)   # prints the two kits' docker build lines: run them
+    swift build --product xless && XLESS_SHARE=$PWD .build/debug/xless setup --docker --sdk $3 --with tauri,react-native --arch $A
+  done
+  ```
+
+  Then build each sample on both sides as in [How the pairs were built](#how-the-pairs-were-built): the baked side in
+  `xless:local-$A-xcode<V>[-tauri|-react-native]` with no pack, the pack side in `xless:<commit>-$A[-tauri|-react-native]`
+  with `--mount type=volume,src=xless-xcode-<V>-<B>-$A,dst=/xcodes,readonly -e XLESS_XCODE=/xcodes/<V>-<B>-$A`; both with
+  one clone mounted as `/repo`, a new work volume each, the build numbers above; copy the products out and run
+  `scripts/pack-parity.sh <baked> <pack>` for each of the eight pairs.
+- The Mac half of `scripts/parity.sh` (HelloShip built by Xcode) and the test scripts' comparisons with the Mac
+  references: they compare with Xcode, not the two images with each other.
+
+## Known limits
+
+- A native `xless setup` on a Linux host asks docker whether one of xless's containers uses a pack of a directory store
+  (`XLESS_XCODES`) before it replaces it (since 01d7bf2 and 4dbfb3c, covered by unit tests): a container that docker does
+  not report (another daemon or context, or a docker the user cannot reach) or one started by hand without xless's
+  labels is not seen.
+- Rootless Docker and a directory store of packs are covered by unit tests, not exercised for real.
+- A Swift app for macOS built with a pack's toolchain records that toolchain's place in one rpath, as the baked images
+  recorded theirs; where the path is longer than the baseline's, the sections of `__TEXT` move with it (the 27.0
+  HelloShip above).
+- A Tauri work copy's outputs are removed when its pack changes by the same code as Cargo's (above); that was not
+  exercised for real.

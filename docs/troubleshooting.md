@@ -84,10 +84,18 @@ Natively (the default):
 | `the Swift toolchain does not run on this machine: …` | A library Swift's toolchain links against is missing (the cause names it). Install the packages the message lists, then run `xless setup` again (it downloads the toolchain again). |
 | `… has sha256 …, not versions.env's …: nothing was installed` | The download is not the pinned file (cut short by a proxy, or changed upstream). Run `xless setup` again; if it persists, report it. |
 | `… GB free under … for the native install (…)` | Free some space, or put the native install on a larger disk: `XLESS_NATIVE_HOME=/big/disk/xless-native xless setup …` (set it for `xless run` too). |
-| `--arch … needs --docker` | A native setup installs for this machine's architecture only. Drop `--arch`, or build the images with `--docker`. |
+| `--arch … needs --docker` | A native setup installs for this machine's architecture only. Drop `--arch`, or add `--docker` to set up the xless image and the Xcode packs for those architectures. |
 | `on a Mac xless builds with the Xcode that is installed, not with an exported SDK` (with a `.xip`, `--sdk` or `--reexport`) | Run `xless setup` with no source, or with `--xcode <Xcode.app>`. With `--docker` it takes the `.xip`. |
-| `xcode: "…" is pinned, but … SDK from Xcode …` when building | The native install holds another Xcode. Run `xless setup --xcode <that Xcode's .xip>` (it replaces the installed one), or build in its images with `--docker`. |
-| `a --config overlay (Tauri, plain Cargo, React Native) builds in the xless images` | On Linux overlays build in Docker only: `xless setup --docker --xcode …` once, then `xless run --docker --config …`. |
+| `there is no pack for Xcode … (arm64) in …`, `xcode: "…" is pinned, but there is no pack …` when building (exit 2) | The store has no pack of that Xcode: `xless setup --xcode <that Xcode's .xip or .app>` adds one beside the others, or `xless setup --sdk <its export>`. With `--docker` the packs are elsewhere: `xless run --docker` prepares it from the export in the cache. |
+| `the Darwin SDK of the pack … was prepared by another recipe than this xless uses` (or `the Swift Build of the pack …`, `the pack … has no Darwin SDK`, `the pack … is of pack format …`; exit 2) | The pack is stale: this xless prepares that part in another way ([maintainers.md](maintainers.md#xcode-packs)). The message names the command: `xless setup --sdk <the SDK export of that Xcode in the cache>` prepares it again; with no export, `xless setup --xcode <its .xip or .app>`. In a container the pack is read-only: run `xless setup --docker --sdk <that export>` on the host, then start the container again. |
+| `the pack … has no Swift Build` (exit 2) | A native setup prepares no Swift Build part; only a pack prepared in xless's image has one. `xless setup --docker --sdk <the SDK export of that Xcode in the cache>` prepares it; then build with `xless run --docker`, or in a container of that image ([images.md](images.md#using-the-image-directly)). |
+| `cannot tell whether the pack … is current: …` (exit 2) | xless's share lacks a file or a `versions.env` entry that the pack's recipe is made from: install xless again, or set `XLESS_SHARE` to its share directory. |
+| `the pack … in … cannot be used: its pack.json cannot be read` | Remove the directory the message names and run `xless setup` again. |
+| `XLESS_XCODE names …, a pack for …, which this … machine cannot use` (exit 2) | `XLESS_XCODE` names a pack of the other architecture: point it at a pack for this machine's, or unset it to use the store. |
+| ``the store of Xcode packs … is on a file system that does not tell `Endian.h` from `endian.h`, and the SDK needs both`` | The SDK has headers whose names differ only in case. Set `XLESS_XCODES` to a directory on a case-sensitive file system (on a Mac a case-sensitive APFS volume), or build in Docker: `xless setup --docker` (its volumes are case-sensitive). With `--docker` (a setup, or a run that prepares a pack) it says to unset `XLESS_XCODES`, so that the packs are Docker volumes. Nothing was written. |
+| `==> waiting for another xless setup, which is preparing the pack …` | Not an error: another setup prepares the same pack; this one goes on when it ends, and finds what it left. |
+| `the overlay … needs, and this machine lacks: …` (exit 2) | A Tauri, Cargo or React Native overlay builds natively where its tools are, as in a kit's image; the message names what is missing (React Native needs Swift Build and the Xcode tool shims, which only the image has). Install the rest, or run it in Docker: `xless setup --docker --xcode … --with <kit>` once, then `xless run --docker --config …`. |
+| `note: the Xcode that an older xless installed natively … is not used any more` | Not an error: a native install of before the packs. Setup prepares a pack instead; `xless clean --old` removes the old install. |
 
 On a Mac, natively ([native-install.md](native-install.md#on-a-mac)):
 
@@ -115,6 +123,7 @@ With `--docker`:
 
 | Symptom | What to do |
 |---|---|
+| `DOCKER_CONTEXT is … (set in …), but docker has no context of that name; its contexts: …` (exit 2, before anything runs; `xless run` and the scripts too) | `DOCKER_CONTEXT`, in the environment or in the file the message names (`testflight.env`), names a context docker does not have. Set it to one that `docker context ls` lists, or remove it: xless then uses docker's current one when `DOCKER_HOST` is set, else `colima-xless` when that context exists, else docker's current one ([images.md](images.md#which-docker)). |
 | `docker is not installed (or not on PATH)`, or `` `docker info` failed `` | Check that `docker info` works in your shell. If Docker is missing, install Docker Engine with the buildx plugin: <https://docs.docker.com/engine/install/>. |
 | `Docker refused the connection: permission denied on its socket` | Add yourself to the `docker` group: `sudo usermod -aG docker $USER`, then log out and in again (or run `newgrp docker`). |
 | `cannot connect to the Docker daemon` | Start Docker: `sudo systemctl start docker`. |
@@ -123,9 +132,10 @@ With `--docker`:
 | `… GB free under … for Docker's data root (…)` | Free some space (`docker system prune`), or move Docker's data root to a larger disk. See the disk check below. |
 | `… is not a supported Xcode (supported: Xcode 26.0.1 (17A400), Xcode 26.1 (17B55), Xcode 26.1.1 (17B100), Xcode 26.2 (17C52), Xcode 26.3 (17C529), Xcode 26.4 (17E192), Xcode 26.4.1 (17E202), Xcode 26.5 (17F42), Xcode 26.6 (17F113), Xcode 27.0 (27A266a), Xcode 27.1 (27A9275), Xcode 27.2 (27B52))` | The file is not one of the supported downloads: another Xcode version, a beta, or an incomplete download. Download a supported one ([apple-requirements.md](apple-requirements.md#how-to-get-xcode-on-linux)). |
 | `… contains ':', which docker cannot mount` | Move or rename the `.xip` so that its path has no `:`. |
-| Setup was interrupted | Run the same command again. A half-written SDK export or download is deleted, never reused; installed tools and images already built are kept. |
-| `xless:local-<arch>-xcode<V> is another build of Xcode <V>` | An image of another build of the same Xcode version (a beta) exists. `XLESS_XCODE_RETAG=1 xless setup …` keeps it under a `-xcode<V>-<build>` tag and builds the new one. |
-| `note: … image tags of an older xless … not used any more` | Not an error: images of xless 0.10 and older, which nothing uses any more. `xless clean --old` asks, and removes them. |
+| Setup was interrupted | Run the same command again. A half-written SDK export or download is deleted, never reused; installed tools and images already built are kept. A pack is prepared beside its place and put there whole, so the pack that was there stays as it was. |
+| `the pack … is used by a running container: …; preparing it now would replace it under it` | A run uses the pack that this setup would prepare again. Wait for it to end, or stop it with the `docker stop` the message names, then run setup again. |
+| `the pack … is current for this xless: nothing to prepare` | Not an error: the pack is there, and its recipe hashes are this xless's. `--reexport` exports the SDK again from the Xcode. |
+| `note: … image tags of an older xless (as …) are not used any more` | Not an error: the per-Xcode images and the tools image of older releases, or those of xless 0.10 and older, which nothing uses any more. `xless clean --old` asks, and removes them. |
 | `this xless is a development build … there is no release to download the linux-<arch> xless from` | Only with `--arch` for the other architecture and an xless built from source: set `XLESS_BIN_ARM64` or `XLESS_BIN_AMD64` to a Linux `xless` binary of that architecture. |
 
 ### The disk check
@@ -136,8 +146,8 @@ natively, this machine's only):
 | Where | Asked for | Why | Set by |
 |---|---|---|---|
 | The cache: `$XDG_CACHE_HOME/xless`, else `~/.cache/xless` | 17 GB, only when this run exports the SDK | xtool unpacks the `.xip` into the SDK export there (measured peak about 15 GB); about 3.5 GB stays | `XLESS_SETUP_CACHE_GB` |
-| The native home: `$XLESS_NATIVE_HOME`, else `~/.local/share/xless-native` (native only) | 10 GB, unless nothing is left to install | the Swift toolchain (about 4 GB unpacked, from a 1.1 GB download), xtool, rcodesign and the installed SDK (about 3.5 GB) | `XLESS_SETUP_NATIVE_GB` |
-| Docker's data root (`docker info`, `/var/lib/docker` by default; checked on Linux, with `--docker` only) | 30 GB | the image, both kits and their build cache (measured about 25 GB for a first setup; the image is 13 GB, the kits 0.3 and 0.7 GB) | `XLESS_SETUP_DOCKER_GB` |
+| The store of Xcode packs: `$XLESS_XCODES`, else `~/.local/share/xless-native/xcodes` (native only) | 10 GB, only when this run prepares a pack | the pack's Swift toolchain (about 4 GB unpacked, from a 1.1 GB download) and its installed SDK (about 3.5 GB) | `XLESS_SETUP_NATIVE_GB` |
+| Docker's data root (`docker info`, `/var/lib/docker` by default; checked on Linux, with `--docker` only) | 30 GB | the image, its kits and their build cache, and the pack volume (the image is about 6.5 GB, a pack 6.7 to 7.3 GB) | `XLESS_SETUP_DOCKER_GB` |
 
 The figures are decimal GB (10^9 bytes), from `versions.env`, measured on first runs from the Xcode 26.2, 26.6 and 27.0
 `.xip`s (the native ones: [acceptance-m5.md](acceptance-m5.md)). With `--arch arm64 --arch amd64` each is doubled. The refusal names the
@@ -145,10 +155,10 @@ directory it checked, the free and the needed space, and the variable. If you kn
 because most image layers are already built, set that variable to the GB per architecture to ask for:
 `XLESS_SETUP_DOCKER_GB=10 xless setup …`. `xless setup --dry-run` prints what the check asks for.
 
-A native install needs nothing after an upgrade of xless. To put a newer xless into the image, run
-`xless setup --docker` again: it is rebuilt around the new
-`xless` (the SDK export is reused), and the previous one stays on disk without a tag until `xless clean --old`
-removes it.
+After an upgrade of xless, the packs are used as they are, unless the new xless prepares a part of them in another way:
+then `xless setup` (or, with `--docker`, the next run) prepares that part again from the SDK export. The new xless has an
+image of its own, `xless:<version>-<arch>`, which `xless setup --docker` builds; the previous version's stays on disk
+until `xless clean --old` removes it.
 
 `xless setup --reexport` exports the SDK again even when the cache has it. The cache is
 `$XDG_CACHE_HOME/xless`, else `~/.cache/xless`; deleting it costs only a new export.
@@ -156,7 +166,7 @@ removes it.
 ### Without the .xip
 
 The `.xip` is needed only to export the SDK. Once an export exists, `xless setup` (native or `--docker`) can run
-from it instead, for example on a CI runner that kept `~/.cache/xless` but lost its images:
+from it instead, for example on a CI runner that kept `~/.cache/xless` but lost its packs:
 
 - `xless setup --docker` with neither `--xcode` nor `--sdk` reuses the export in `~/.cache/xless/sdk/` when exactly
   one export there, of a supported Xcode, holds every architecture the run sets up.
@@ -179,14 +189,18 @@ and must be one `versions.env` supports. Nothing is exported, so the disk check 
 
 | Symptom | What to do |
 |---|---|
-| `there is no xless image on this machine` (exit 2) | With `--docker`, no image yet: `xless setup --docker --xcode <Xcode.xip>`. After an upgrade from xless 0.10 or older, `xless setup --docker` alone builds it from the SDK exported before. |
-| `… pins xcode: "…", but the image xless:local-…-xcode… is missing` (exit 2) | Build that Xcode's image with the command the message names: from the SDK export in the cache where there is one, else `xless setup --docker --xcode <that Xcode's .xip>`. |
-| `… is not an image of this xless`, `… holds xless …, and this xless needs … or later there` (exit 2) | An older xless built the image: run `xless setup --docker` again, with the Xcode the message names when the export is gone. |
-| `XLESS_IMAGE names …`, `image: in … names …` (exit 2) | An [image of your own](images.md#an-image-of-your-own) that is missing, is built on another Xcode's, architecture's or an earlier build of the xless image, or is not built on one at all. The message has the `docker build` that fixes it. |
-| `XLESS_SIGN_IMAGE names …, which has more in it than xless's own image` (exit 2) | The steps with the secrets run in the xless image itself. Unset the variable. |
+| `the image xless:<version>-<arch> is missing (xless images are never pulled from a registry)` (exit 2) | A run never builds the xless image: `xless setup --docker` does, and needs no Xcode for it. With `--arch` for another architecture: `xless setup --docker --arch <arch>`. |
+| `there is no xless image on this machine …, and xless:local-… is an older xless's, which is not used` (exit 2) | The images of an older release are not used any more ([images.md](images.md#from-older-layouts)): `xless setup --docker` builds the new one, and the pack from the SDK export in the cache when there is one (else `--sdk <export>`). |
+| `… pins xcode: "…", but there is no pack of Xcode … for … in …, and there is no SDK export … to prepare it from` (exit 2) | The run would prepare the pack from the export, and there is none: `xless setup --docker --xcode <that Xcode's .xip or Xcode.app>`. |
+| `==> preparing the pack … of Xcode … first (…)` | Not an error: the pack is missing or a part of it is stale, and the SDK export is in the cache, so the run prepares it before it builds ([images.md](images.md#what-a-run-does)): on an arm64 Mac a whole pack took 6 min 24 s (Xcode 26.2) and 6 min 55 s (27.0), the `sdk` part of the 26.2 pack alone 1 min 33 s, and 2 min 43 s in an earlier run. |
+| `… is for amd64, not arm64`, `… is the image of xless …, not of …` (exit 2) | The image is another architecture's or another xless's: run `xless setup --docker` again. |
+| `the volume xless-xcode-…, which a container of this run would mount writable …` (exit 2) | No container of a run may write a pack. Name another volume (for `XLESS_RN_WORK_VOLUME`, one that does not start with `xless-xcode-`). |
+| `XLESS_XCODES (…), the store of the Xcode packs, and …, which a container of this run would mount writable …, overlap` (exit 2) | The store is in the project, the overlay's source or a cache the build writes, or holds one of them. Set `XLESS_XCODES` to a directory apart from them. |
+| `XLESS_IMAGE names …`, `image: in … names …` (exit 2) | An [image of your own](images.md#an-image-of-your-own) that is missing, is built for another architecture, on another xless's image or an earlier build of this one's, or is not built on one at all. The message has the `docker build` that fixes it. |
+| `==> note: XLESS_SIGN_IMAGE is set, but nothing reads it any more` | Not an error: the steps with the secrets run in the xless image. Unset the variable. |
 | `warning: …/xless.yml is not what it was when this run began` | Something changed it meanwhile: you, or the build's code. The run signed by what it was; look at the change (`git diff`) before the next run ([security.md](security.md#the-build-and-your-secrets)). |
 | `… was not built (docker build exited with code …)` | The kit's build failed; its output is above the line. It needs buildx (`docker buildx version`), the network and room on Docker's disk. |
-| `==> building the image xless:local-…-tauri` (or `-react-native`) | Not an error: a kit an app needs is built once, when it is missing or older than xless ([images.md](images.md#what-there-is)). It needs the network. |
+| `==> building the image xless:<version>-<arch>-tauri` (or `-react-native`) | Not an error: a kit an app needs is built once, when it is missing or older than xless ([images.md](images.md#what-there-is)). It needs the network. |
 | `testflight: set ASC_KEY_ID in the environment or …` (exit 2) | The run includes `sign`. Set up the secrets ([signing-and-testflight.md](signing-and-testflight.md#one-command-testflight)), or stop before signing with `--to finalize`. |
 | `testflight: the work copy … is in use by another run (pid …)` (exit 2) | Another `xless run` is building the same project or overlay ([one run per work copy](signing-and-testflight.md#one-command-testflight)). Wait for it to end, or stop it with the `kill` the message names. Its containers are removed when it stops. |
 | `testflight: the work copy … may be in use by another run (pid …)` (exit 2) | A run that was killed, or one on another machine or in another container: which, this one cannot tell. The message says why, and what to do once no run works there any more. Do it in that order: the lock is the only place that says where a killed run's secrets are. |

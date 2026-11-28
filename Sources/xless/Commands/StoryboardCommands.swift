@@ -25,7 +25,7 @@ struct StoryboardCompileCommand: AsyncParsableCommand {
     @Option(help: "Output .storyboardc directory.") var out: String
     @Option(help: "Minimum iOS deployment target (15.0 to 27.x).") var minimumDeploymentTarget: String
     @Option(name: .customLong("target-device"), help: "Target device family: iphone or ipad. Repeat for both.") var targetDevices: [String] = []
-    @Option(help: "The Xcode build whose ibtool output to reproduce (default: the image's, from its toolchain metadata).") var xcodeBuild: String?
+    @Option(help: "The Xcode build whose ibtool output to reproduce (default: that of the Xcode this build uses, from its pack's toolchain metadata).") var xcodeBuild: String?
     @Flag(help: "Replace --out if it exists.") var force = false
 
     func run() async throws {

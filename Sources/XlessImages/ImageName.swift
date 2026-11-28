@@ -1,39 +1,78 @@
 import Foundation
+import XlessCore
 
-/// The names of the Docker images `xless setup --docker` builds on this machine. One image per Xcode and architecture,
-/// `xless:local-<arch>-xcode<version>`; the images of the kits (`Kit`) are named after the one they are built on.
+/// The names of the Docker images of xless: one image per xless and architecture, `xless:<version>-<arch>`, with no Xcode in it
+/// (the Xcode is a pack, mounted in a container of it). The images of the kits (`Kit`) are named after the one they are built on.
 public enum ImageName {
     public static let repository = "xless"
 
     /// The images of xless up to 0.10: one Xcode's SDK, Tauri's and React Native's toolchains, each an image of its own.
     public static let oldRepositories = ["xless-base", "xless-tauri", "xless-rn"]
 
-    public static func base(arch: String, xcode: String) -> String { "\(repository):local-\(arch)-xcode\(xcode)" }
+    /// Every tag of the old layouts (`xless:local-arm64-xcode26.6`, `xless:local-arm64-setup`, …): an older xless's.
+    public static var legacyTag: Regex<(Substring, Substring?)> { /local(-[A-Za-z0-9_.-]+)?/ }
 
-    /// The base image of one build of an Xcode: the tag that `XLESS_XCODE_RETAG=1` keeps when another build of that version comes.
-    public static func base(arch: String, xcode: String, build: String) -> String { "\(base(arch: arch, xcode: xcode))-\(build)" }
+    /// `tag` names this xless: its release version, or a checkout's commit (`tag(ofShare:)`).
+    public static func base(version tag: String, arch: String) -> String { "\(repository):\(tag)-\(arch)" }
 
-    /// Swift, xtool and rcodesign without an SDK: what `xless setup --docker` exports the SDK with, and removes again.
-    public static func tools(arch: String) -> String { "\(repository):local-\(arch)-setup" }
-
-    /// The tag without an Xcode, as xless made it up to 0.10.
-    public static func plain(arch: String) -> String { "\(repository):local-\(arch)" }
-
-    /// The Xcode version of a base image's name; nil: it is another image's.
-    public static func xcode(ofBase name: String, arch: String) -> String? {
-        let start = "\(repository):local-\(arch)-xcode"
-        guard name.hasPrefix(start) else { return nil }
-        let version = name.dropFirst(start.count)
-        return version.wholeMatch(of: /[0-9]+\.[0-9]+(\.[0-9]+)?/) == nil ? nil : String(version)
+    /// `name` is an image that an older xless made: it is not used, and `xless clean --old` removes it.
+    public static func isLegacy(_ name: String) -> Bool {
+        guard let colon = name.lastIndex(of: ":") else { return false }
+        let repository = String(name[..<colon]), tag = String(name[name.index(after: colon)...])
+        return oldRepositories.contains(repository) || repository == Self.repository && tag.wholeMatch(of: legacyTag) != nil
     }
 
     /// `text` can be the name of an image. It starts with a letter or a digit, so docker never takes it for an option.
     public static func isReference(_ text: String) -> Bool { text.wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9._\/:@+\-]*/) != nil }
 
-    /// `a` is an older Xcode version than `b`.
-    static func isOlder(_ a: String, than b: String) -> Bool {
-        let a = a.split(separator: ".").map { Int($0) ?? 0 }, b = b.split(separator: ".").map { Int($0) ?? 0 }
-        return a.lexicographicallyPrecedes(b)
+    // MARK: - The tag of this xless
+
+    /// Runs git in `directory`: its exit code, and what it printed.
+    public typealias Git = (_ arguments: [String], _ directory: URL) -> (code: Int32, output: String)
+
+    /// A checkout's tag: its commit (12 hex), and `-dirty` when what is tracked has changes.
+    public static func checkoutTag(commit: String, dirty: Bool) -> String { dirty ? "\(commit)-dirty" : commit }
+
+    /// The part of the tag that names the xless of `share` (its share directory), as scripts/docker-images.sh decides it: the
+    /// commit of the checkout that `share` is the top of (when it has one), else the release (its VERSION file's, else versions.env's).
+    public static func tag(ofShare share: URL, git: Git = ImageName.runGit) throws -> String {
+        try resolution(ofShare: share, git: git).tag
+    }
+
+    /// `tag(ofShare:)`, and whether it is the fallback of a checkout: `share` is a git checkout (it has a `.git`), yet git did not give its
+    /// commit, so the tag is the release's (`0.0.0-dev`) and no image is known to be this xless's (`xless clean --old` then treats the tag as unknown).
+    public static func resolution(ofShare share: URL, git: Git = ImageName.runGit) throws -> (tag: String, fellBack: Bool) {
+        let root = share.resolvingSymlinksInPath()
+        let top = git(["rev-parse", "--show-toplevel"], root)
+        if top.code == 0,
+           URL(fileURLWithPath: top.output.trimmingCharacters(in: .whitespacesAndNewlines)).resolvingSymlinksInPath().path == root.path {
+            let commit = git(["rev-parse", "--short=12", "HEAD"], root)
+            let id = commit.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if commit.code == 0, !id.isEmpty { return (checkoutTag(commit: id, dirty: git(["diff", "--quiet", "HEAD"], root).code != 0), false) }
+        }
+        guard let release = XlessShare.release(of: share) else {
+            throw ImageProblem("xless's share directory \(share.path) records no release (no VERSION file, no XLESS_VERSION in versions.env), so the image of this xless has no name",
+                               fix: "install xless again, or set XLESS_SHARE to its share directory")
+        }
+        return (release, FileManager.default.fileExists(atPath: root.appendingPathComponent(".git").path))
+    }
+
+    private static let remembered = NSLock(), cache = Box()
+    private final class Box: @unchecked Sendable { var tags: [String: String] = [:] }
+
+    /// `tag(ofShare:)`, asked of git once per share and process: what a run resolves its images by.
+    public static func cachedTag(ofShare share: URL) throws -> String {
+        remembered.lock(); defer { remembered.unlock() }
+        let key = share.resolvingSymlinksInPath().path
+        if let found = cache.tags[key] { return found }
+        let found = try tag(ofShare: share)
+        cache.tags[key] = found
+        return found
+    }
+
+    /// Thin: git, as the person has it, started as every tool is. Where it is not there, or fails, the share is no checkout.
+    public static func runGit(_ arguments: [String], in directory: URL) -> (code: Int32, output: String) {
+        do { return (0, try Shell.run("git", ["-C", directory.path] + arguments, stage: .sdk).stdout) } catch { return (1, "") }
     }
 }
 
@@ -42,21 +81,16 @@ public enum ImageName {
 public enum ImageLabel {
     /// On every image of xless and those built on one: `xless clean` finds the untagged ones by it.
     public static let image = "org.xless.image"
-    /// The Xcode build whose SDK it holds, e.g. 17F113.
-    public static let sdk = "dev.xless.sdk"
-    /// That Xcode's version, e.g. 26.6.
-    public static let xcode = "dev.xless.xcode"
     public static let arch = "dev.xless.arch"
     /// The release of the xless in it.
     public static let version = "dev.xless.version"
+    /// Which xless built it: `v<version>-<12 hex>` of a release, `<commit>[-dirty]-<12 hex>` of a checkout (the hex: its pins).
+    public static let id = "dev.xless.image"
 
     /// A kit's image: which kit, the ID of the image it was built on, and the SHA-256 of what it was built from.
     public static let kit = "dev.xless.kit"
     public static let kitBase = "dev.xless.kit.base"
     public static let kitRecipe = "dev.xless.kit.recipe"
-
-    /// The oldest xless that this one works with in an image.
-    public static let minimumVersion = "0.10.0"
 }
 
 /// Why an image is not used, and how to get one that is.

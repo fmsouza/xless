@@ -263,29 +263,32 @@ public enum SwiftPackages {
     /// for 'iphoneos'"), no SDKROOT. The versioned triple gives every module, dependencies included, minos
     /// `minimumIOS`, as swift-rs's `--triple` does on the Mac (contract doc, "Deployment target of the Swift objects").
     /// Returns `.build/out/Products/Release-iphoneos/libXlessTauriSwift.a`, or the only `libXlessTauriSwift.a` under `.build`.
-    /// `swift`: the image's app Swift toolchain (Ruling R10). Another release than the image's own builds with its own
+    /// `swift`: the image's app Swift toolchain (Ruling R10). A copy of the image's own release (`isEngineRelease`: a pack
+    /// whose Swift is the image's own) builds as the image's own does, with its own `swift`. Another release builds with its own
     /// SwiftPM and Swift Build (as Xcode builds packages with the SwiftPM it ships), in its own scratch directory
     /// (`.build-swift-<version>`, never a previous toolchain's products), naming the product (SwiftPM 6.2's Swift Build
     /// builds only targets otherwise). Where that SwiftPM leaves no static library but each target prelinked into
     /// `<target>.o` (the SDK linker's `-r` writes an `ar` archive), the archives in its products directory are merged into
     /// `lib<aggregate>.a` with `llvm-libtool-darwin -static`; that directory is deleted before the build, so only this
     /// build's archives are merged.
-    public static func build(aggregateDir: URL, minimumIOS: String, sdk: DarwinSDK = DarwinSDK(),
+    public static func build(aggregateDir: URL, minimumIOS: String, sdk: DarwinSDK,
                              env: [String: String] = ProcessInfo.processInfo.environment, swift: SwiftToolchain? = nil,
-                             run: Runner = { try Shell.run($0, $1, env: $2, stage: .build, passthrough: true) }) throws -> URL {
+                             engineRelease: String? = SwiftToolchain.engineRelease, run: Runner = { try Shell.run($0, $1, env: $2, stage: .build, passthrough: true) }) throws -> URL {
         let toolset = sdk.bundle.appendingPathComponent("toolset-swb.json")
         guard FileManager.default.fileExists(atPath: toolset.path) else {
-            throw XlessError(.build, "Darwin SDK not installed at \(sdk.bundle.path)", fix: "use the xless SDK image or run `xless sdk install`")
+            throw XlessError(.build, "Darwin SDK not installed at \(sdk.bundle.path)", fix: "prepare the Xcode's pack: `xless setup --xcode <Xcode.xip>` (`--docker` for xless run --docker)")
         }
-        let own = swift.flatMap { $0.isEngine ? nil : $0 }
+        let own = swift.flatMap { $0.isEngineRelease(engineRelease) ? nil : $0 }
         let buildDir = aggregateDir.appendingPathComponent(own.map { ".build-swift-\($0.version)" } ?? ".build", isDirectory: true)
         // The merge below takes every archive in the products directory, which outlives a build: a plugin removed since
         // the last one would leave its archive there. So that directory starts empty (Swift Build writes it again).
         if own != nil, let previous = prelinkedAggregate(under: buildDir) {
             try FileManager.default.removeItem(at: previous.deletingLastPathComponent())
         }
+        // The pack is read-only: SwiftPM finds its SDK by --swift-sdks-path, and keeps its own state in XDG_CONFIG_HOME.
         var args = ["build", "-c", "release", "--package-path", aggregateDir.path, "--build-system", "swiftbuild",
-                    "--triple", "arm64-apple-ios\(minimumIOS)", "--toolset", toolset.path, "--force-resolved-versions"]
+                    "--triple", "arm64-apple-ios\(minimumIOS)", "--toolset", toolset.path, "--force-resolved-versions",
+                    "--swift-sdks-path", sdk.bundle.deletingLastPathComponent().path]
         if let own { args += ["--scratch-path", buildDir.path, linksLibraryProductWithLibtool(own) ? "--target" : "--product", aggregateName] }
         try run(swift?.tool("swift") ?? "swift", args, [
             "SDKROOT": nil,

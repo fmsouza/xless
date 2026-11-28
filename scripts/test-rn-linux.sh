@@ -33,19 +33,24 @@
 # it is still running after 10 s (its screenshot, console and any crash report are kept in ~/.cache/xless/sim/HelloRN);
 # elsewhere that step is skipped. --no-launch skips it on a Mac too.
 # Variables: ARCH (arm64 or amd64; default the host's: the image's platform, so ARCH=amd64 on an arm64 Mac runs the amd64 chain
-#   under emulation), XLESS_IMAGE (default xless:local-<arch>-xcode<versions.env's>-react-native), DOCKER_CONTEXT (default colima-xless if it exists),
+#   under emulation), XLESS_XCODE_PIN (default versions.env's XCODE_VERSION): the Xcode whose pack the
+#   container gets, read-only, as xless run gives it (its volume xless-xcode-<XLESS_XCODE_PIN>-<build>-<arch>, or its directory in XLESS_XCODES),
+#   XLESS_IMAGE (default xless:<this checkout's tag>-<arch>-react-native, which xless setup --docker --with react-native builds),
+#   DOCKER_CONTEXT (default colima-xless if it exists),
 #   XLESS_RN_TEST_VOLUME (default xless-rn-test-work): the docker volume holding the work copy and the pnpm store.
 #   XLESS_RN_OVERLAY (default samples/HelloRN/xless.overlay.yml): the overlay, relative to the repository; its work copy is
 #     named after the file. XLESS_RN_REFERENCE (default samples/HelloRN/reference): the Mac reference directory (an absolute
-#     host path; mounted read-only). With the Xcode 26.2 pin: XLESS_IMAGE=xless:local-arm64-xcode26.2-react-native
+#     host path; mounted read-only). With the Xcode 26.2 pin: XLESS_XCODE_PIN=26.2
 #     XLESS_RN_OVERLAY=samples/HelloRN/xless.overlay-26.2.yml XLESS_RN_REFERENCE=<`DEVELOPER_DIR=<26.2> make rn-reference`'s OUT>
 #     XLESS_RN_TEST_VOLUME=xless-rn-test-work-26.2 (the reference's directory also needs the allowed-gaps.txt of the default one).
 # The repository is mounted read-only. Caches are the docker volumes xless run uses: xless-corepack,
 # xless-bundle, xless-cocoapods-home, xless-cocoapods-cache (created on first use).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
-ctx="${DOCKER_CONTEXT:-}"
-if [[ -z "$ctx" ]] && docker context ls --format '{{.Name}}' 2>/dev/null | grep -qx 'colima-xless'; then ctx=colima-xless; fi
+# shellcheck source=SCRIPTDIR/docker-context.sh
+. "$root/scripts/docker-context.sh"   # docker_context: the context, as xless chooses it
+ctx="$(docker_context test-rn-linux)" || exit 2
+[[ -z "$ctx" ]] || unset DOCKER_HOST   # a chosen context is the docker (docker ranks DOCKER_HOST above DOCKER_CONTEXT)
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 vsuf=""; plat=()   # ARCH=amd64|arm64 runs the image of that architecture (under emulation when it is not the host's)
 if [[ -n "${ARCH:-}" ]]; then
@@ -53,8 +58,9 @@ if [[ -n "${ARCH:-}" ]]; then
   [[ "$ARCH" == "$arch" ]] || vsuf="-$ARCH"   # another architecture's native gems and work copy stay apart from the host's
   arch="$ARCH"; plat=(--platform "linux/$ARCH")
 fi
-xcode="$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")"
-image="${XLESS_IMAGE:-xless:local-$arch-xcode$xcode-react-native}"   # xless setup --docker --with react-native builds it
+xcode="${XLESS_XCODE_PIN:-$(sed -n 's/^XCODE_VERSION=//p' "$root/versions.env")}"   # the Xcode whose pack builds (XLESS_XCODE_PIN=26.2: that pin's; not XCODE, the Xcode.app the Makefile exports for make images)
+[[ "$xcode" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "test-rn-linux: XLESS_XCODE_PIN must be an Xcode version such as 26.2, not $xcode" >&2; exit 2; }
+image="${XLESS_IMAGE:-xless:$("$root/scripts/docker-images.sh" tag --arch "$arch")-$arch-react-native}"   # xless setup --docker --with react-native builds it
 volume="${XLESS_RN_TEST_VOLUME:-xless-rn-test-work$vsuf}"
 overlay="${XLESS_RN_OVERLAY:-samples/HelloRN/xless.overlay.yml}"
 refdir="${XLESS_RN_REFERENCE:-$root/samples/HelloRN/reference}"
@@ -71,13 +77,17 @@ while [[ $# -gt 0 ]]; do
 done
 docker=(docker)
 [[ -z "$ctx" ]] || docker+=(--context "$ctx")
+args=("${docker[@]}")
+# shellcheck source=SCRIPTDIR/xcode-pack-args.sh
+. "$root/scripts/xcode-pack-args.sh"   # pack_args: the Xcode's pack, read-only, as xless run gives it
+pack_args test-rn-linux
 alpine="$(sed -n 's/^ALPINE_IMAGE=//p' "$root/versions.env")"   # pinned by digest
 [[ -n "$alpine" ]] || { echo "versions.env has no ALPINE_IMAGE" >&2; exit 2; }
 
 run() {   # RUN-NAME [docker run options...]: one build and compare, in a fresh container
   local name="$1"; shift
   echo "==> HelloRN: $name" >&2
-  "${docker[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} "$@" -v "$root":/repo:ro -v "$volume":/cache/work -v "$refdir":/ref:ro \
+  "${docker[@]}" run --rm -i --pull=never ${plat[@]+"${plat[@]}"} "${pack[@]}" "$@" -v "$root":/repo:ro -v "$volume":/cache/work -v "$refdir":/ref:ro \
     -v xless-corepack:/cache/corepack -v "xless-bundle$vsuf":/cache/bundle \
     -v xless-cocoapods-home:/root/.cocoapods -v xless-cocoapods-cache:/root/Library/Caches/CocoaPods \
     -e XLESS_BUILD_NUMBER=1.0.0.2026101601 -e FRESH="$fresh" -e OVERLAY="$overlay" -e WORKNAME="$workname" "$image" bash -s <<'IN'

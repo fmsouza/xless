@@ -260,12 +260,61 @@ private func git(_ root: URL, _ args: [String]) throws -> String {
     /// is removed from `deps/` so that cargo links it again through the wrapper.
     @Test func buildRemovesALinkedExecutableTheDebugDirectoryHasNoRecordOf() async throws {
         let f = try fixture(.ios)
+        try write("(no pack)\n", f.ctx.packRecord)   // built before with this pack: only the debug link is new
         let deps = f.ctx.workRoot.deletingLastPathComponent().appendingPathComponent("target/aarch64-apple-ios/release/deps")
         try write("old", deps.appendingPathComponent("hello_mobile-0a1b2c"))
         try write("", deps.appendingPathComponent("hello_mobile-0a1b2c.d"))
         _ = try await CargoBuilder.build(ctx: f.ctx)
         #expect(!fm.fileExists(atPath: deps.appendingPathComponent("hello_mobile-0a1b2c").path))
         #expect(fm.fileExists(atPath: deps.appendingPathComponent("hello_mobile-0a1b2c.d").path))
+    }
+
+    /// Cargo's outputs for the app's targets follow the Xcode pack (`PackOutputs`): built with another pack, or before the
+    /// record, they are removed and cargo builds them again; with the same pack, kept.
+    @Test func buildStartsAfreshWithAnotherPack() async throws {
+        let f = try fixture(.macos)
+        let target = f.ctx.workRoot.deletingLastPathComponent().appendingPathComponent("target")
+        let stale = target.appendingPathComponent("aarch64-apple-darwin/release/deps/stale.o"), host = target.appendingPathComponent("release/host")
+        try write("old", stale)
+        try write("host", host)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: stale.path) && fm.fileExists(atPath: host.path))
+        #expect(try String(contentsOf: f.ctx.packRecord, encoding: .utf8) == "(no pack)\n")
+        try write("new", stale)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(fm.fileExists(atPath: stale.path))
+        try write("other sdk=a swift-build=b\n", f.ctx.packRecord)
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: stale.path))
+    }
+
+    /// A Mac's own Xcode builds the work copy too (native and --docker runs share it): it is recorded as such, so that a
+    /// build with a pack after it, and one with the Xcode after a pack, each start afresh.
+    @Test func buildWithTheMacsXcodeIsRecordedAsSuch() async throws {
+        var f = try fixture(.ios)
+        let app = scratch("xcode").appendingPathComponent("Xcode.app")
+        for (platform, runtime) in [("iPhoneOS", "ios"), ("MacOSX", "osx")] {
+            try fm.createDirectory(atPath: app.path + "/Contents/Developer/Platforms/\(platform).platform/Developer/SDKs/\(platform).sdk", withIntermediateDirectories: true)
+            let lib = app.path + "/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/21/lib/darwin"
+            try fm.createDirectory(atPath: lib, withIntermediateDirectories: true)
+            try Data().write(to: URL(fileURLWithPath: "\(lib)/libclang_rt.\(runtime).a"))
+        }
+        let pack = f.ctx.sdk
+        f.ctx.sdk = DarwinSDK(xcode: InstalledXcode(app: app, version: "27.2", build: "27B52", source: "-"))
+        let target = f.ctx.workRoot.deletingLastPathComponent().appendingPathComponent("target")
+        let stale = target.appendingPathComponent("aarch64-apple-ios/release/deps/stale.o")
+        // Built with a pack before: the Xcode's build starts afresh, and records the Xcode.
+        try write("p sdk=a swift-build=b\n", f.ctx.packRecord)
+        try write("pack's", stale)
+        _ = try? await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: stale.path))
+        #expect(try String(contentsOf: f.ctx.packRecord, encoding: .utf8) == "(xcode)\n")
+        // Then a build with no pack (here the fixture's SDK): afresh again.
+        try write("xcode's", stale)
+        f.ctx.sdk = pack
+        _ = try await CargoBuilder.build(ctx: f.ctx)
+        #expect(!fm.fileExists(atPath: stale.path))
+        #expect(try String(contentsOf: f.ctx.packRecord, encoding: .utf8) == "(no pack)\n")
     }
 
     @Test func prepareSyncsInstallsTheToolchainAndRecordsTheInputs() async throws {

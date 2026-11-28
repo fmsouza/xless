@@ -14,8 +14,10 @@ struct RunImages {
 
     /// Of the step that builds: code of the app and of others, with no secret in reach.
     var build: Image
-    /// Of the steps with the secrets: xless's own image of the same Xcode, with no toolchain of another language in it.
+    /// Of the steps with the secrets: xless's own image, with no toolchain of another language in it.
     var secrets: Image
+    /// The Xcode's pack, which every container of the run has, read-only.
+    var pack: RunPack?
     /// The app is built in an image other than xless's own.
     var areTwo: Bool { build.reference != secrets.reference }
 
@@ -23,33 +25,36 @@ struct RunImages {
 }
 
 extension ProjectRun {
+    /// docker, asked (with the run's context): not a step.
+    var askDocker: LocalImages.Docker { { [self] in ask(dockerCLI + $0, quiet: true) } }
     private var localImages: LocalImages {
-        LocalImages(exports: { [self] in SDKExport.all(in: RunFiles.cache(setting("XDG_CACHE_HOME"), home: files.home), arch: $0) }) { [self] in ask(dockerCLI + $0, quiet: true) }
+        LocalImages(askDocker)
     }
     private func started(_ image: LocalImage) -> RunImages.Image { RunImages.Image(name: image.name, reference: dryRun ? image.name : image.id) }
-    private var shareDirectory: URL { URL(fileURLWithPath: context.share) }
+    var shareDirectory: URL { URL(fileURLWithPath: context.share) }
 
-    /// Chooses them: the project's pinned Xcode, else the newest one there is an image of, decides. A person never names one,
-    /// unless the app needs one of their own (`image:`, XLESS_IMAGE), which is for the build step alone.
+    /// Chooses them, and the pack: the project's pinned Xcode, else the newest one there is a pack of, decides the pack
+    /// (`choosePack`); the images are this xless's. A person never names one, unless the app needs one of their own (`image:`,
+    /// XLESS_IMAGE), which is for the build step alone. Every container of a run that builds gets the pack (`dockerRun`); a run
+    /// that starts after finalize reads no Xcode, and has none.
     ///
     /// - Parameters:
     ///   - kit: what the app's build needs besides xless's own image.
     ///   - builds: the run has the build step. Only that one needs the kit, which is built here when it is missing or stale.
     ///   - other: it has others.
-    ///   - signImage: XLESS_SIGN_IMAGE counts.
-    func chooseImages(_ top: RunTop, kit: Kit? = nil, builds: Bool, other: Bool, signImage: Bool = false) throws -> RunImages {
-        do { return try choose(top, kit: kit, builds: builds, other: other, signImage: signImage) } catch let problem as ImageProblem {
+    func chooseImages(_ top: RunTop, kit: Kit? = nil, builds: Bool, other: Bool) throws -> RunImages {
+        do { return try choose(top, kit: kit, builds: builds, other: other) } catch let problem as ImageProblem {
             throw RunStop.usage("\(problem)")
         }
     }
 
-    private func choose(_ top: RunTop, kit: Kit?, builds: Bool, other: Bool, signImage: Bool) throws -> RunImages {
+    private func choose(_ top: RunTop, kit: Kit?, builds: Bool, other: Bool) throws -> RunImages {
         guard !top.isNotOneValue("image") else { throw RunStop.usage("image: in \(pinFile) is not the name of an image") }
         let own = setting("XLESS_IMAGE").map { (name: $0, variable: "XLESS_IMAGE") } ?? top["image"].map { (name: $0, variable: "image: in \(pinFile)") }
         var images: RunImages
         let base: LocalImage
         if let own, try isHere(own.name, own.variable) {
-            let custom = try localImages.custom(own.name, named: own.variable, arch: architecture, pin: xcodeTag)
+            let custom = try localImages.custom(own.name, named: own.variable, version: context.version, arch: architecture)
             base = custom.base
             images = RunImages(build: started(custom.isBase ? base : custom.image), secrets: started(base))
         } else {
@@ -57,17 +62,15 @@ extension ProjectRun {
             images = RunImages(build: started(base), secrets: started(base))
             if let name = own?.name ?? kit?.image(on: base) { images.build = RunImages.Image(name: name, reference: name) }
         }
-        if signImage, let name = setting("XLESS_SIGN_IMAGE") {
-            host.say("note: XLESS_SIGN_IMAGE still works, but nothing needs it any more: without it the steps with the secrets run in xless's own image of the same Xcode")
-            if try isHere(name, "XLESS_SIGN_IMAGE") {
-                let custom = try localImages.custom(name, named: "XLESS_SIGN_IMAGE", arch: architecture, pin: base.xcode)
-                guard custom.isBase else {
-                    throw ImageProblem("XLESS_SIGN_IMAGE names \(name), which has more in it than xless's own image \(custom.base.name), and the steps with the secrets run in that one alone", fix: "unset XLESS_SIGN_IMAGE")
-                }
-                guard custom.base.id == base.id else {
-                    throw ImageProblem("XLESS_SIGN_IMAGE names \(name), and the build's image is \(base.name) or built on it", fix: "unset XLESS_SIGN_IMAGE")
-                }
-            }
+        // (an older xless's variable: said once, so that a person who sets it knows it changes nothing)
+        if setting("XLESS_SIGN_IMAGE") != nil {
+            host.say("==> note: XLESS_SIGN_IMAGE is set, but nothing reads it any more: the steps with the secrets run in this xless's own image")
+        }
+        // Only the steps up to finalize read the Xcode (`builds`): a run from sign on needs no pack, and prepares none.
+        if builds {
+            let pack = try choosePack(image: base)
+            images.pack = pack
+            dockerRun += pack.arguments
         }
         sayImages(images, own: own?.variable, builds: builds, other: other)
         if builds, own == nil, let kit, let built = try prepare(kit, on: base) { images.build = started(built) }
@@ -81,29 +84,27 @@ extension ProjectRun {
         return false
     }
 
+    /// The image of this xless. A run never builds it (`xless setup --docker` does): a missing one stops the run, with that command.
     private func baseImage() throws -> LocalImage {
         do {
-            let base = try localImages.base(arch: architecture, pin: xcodeTag)
-            if let notice = base.notice { host.say(notice) }
-            return base.image
+            return try localImages.base(version: context.version, arch: architecture)
         } catch let problem as ImageProblem {
-            if let pin = xcodePin { throw RunStop.usage("\(pinFile) pins xcode: \"\(pin)\", but \(problem)") }
             guard dryRun else { throw problem }
             host.say("==> note: \(problem)")
-            let versions = (try? String(contentsOfFile: "\(context.share)/versions.env", encoding: .utf8)) ?? ""
-            let xcode = RunText.lines(versions).lazy.compactMap { RunText.value(of: "XCODE_VERSION=", in: $0) }.first.flatMap(RunText.xcodeTag) ?? "<version>"
-            return LocalImage(name: ImageName.base(arch: architecture, xcode: xcode), id: "", architecture: architecture, labels: [ImageLabel.xcode: xcode], layers: [])
+            // (empty ID: there is none to read the pack volumes with)
+            return LocalImage(name: ImageName.base(version: (try? context.version) ?? "<version>", arch: architecture), id: "", architecture: architecture, labels: [:], layers: [])
         }
     }
 
     private func sayImages(_ images: RunImages, own: String?, builds: Bool, other: Bool) {
         let what = builds && other && images.areTwo ? "build \(images.build.name), signing and upload \(images.secrets.name)" : builds ? images.build.name : images.secrets.name
-        let why = xcodePin.map { "xcode: \"\($0)\" (pinned)" } ?? own ?? "no xcode: is pinned, so the newest Xcode there is an image of"
-        host.say("==> \(why): \(what)")
+        guard let pack = images.pack else { return host.say("==> \(what) (no Xcode: this run starts after finalize)") }
+        let why = xcodePin.map { "xcode: \"\($0)\" (pinned)" } ?? own ?? "no xcode: is pinned, so the newest Xcode there is a pack of"
+        host.say("==> \(why): Xcode \(pack.manifest.xcode) (\(pack.manifest.build)), \(what)")
     }
 
-    /// The kit's image as this xless builds it: from the Dockerfile shipped with it, on the local image of the project's Xcode. nil: a
-    /// dry run, and there is none.
+    /// The kit's image as this xless builds it: from the Dockerfile shipped with it, on the image of this xless. nil: a dry run, and
+    /// there is none.
     private func prepare(_ kit: Kit, on base: LocalImage) throws -> LocalImage? {
         let name = kit.image(on: base), why: String
         switch try localImages.state(of: kit, on: base, share: shareDirectory) {

@@ -248,7 +248,8 @@ private func tree(_ files: [String]) throws -> URL {
                    "XLESS_CACHE": root.appendingPathComponent("cache").path]
         let work = root.appendingPathComponent("work", isDirectory: true)
         let ctx = TauriMacBuildContext(overlay: overlay, resolved: try TauriProject.resolveMac(overlay: overlay, source: src), sourceRoot: src,
-                                       workRoot: work, paths: StagePaths(project: work, platform: .macos), env: env)
+                                       workRoot: work, paths: StagePaths(project: work, platform: .macos),
+                                       sdk: DarwinSDK(bundle: DarwinSDKLocator.bundle(env: env)), env: env)
         return (ctx, root)
     }
 

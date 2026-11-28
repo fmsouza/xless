@@ -85,9 +85,10 @@ To build only, with no Apple account: `xless run <project-dir> --build-number 1 
   Native, Tauri and Cargo apps build with the Mac's own Node, Ruby or Rust ([how](docs/build.md#overlays-on-a-mac)).
 - **On Linux**, <a id="set-up"></a>`xless setup --xcode ~/Downloads/Xcode_27.xip`, once per Xcode version
   ([build: on Linux](docs/build.md#on-linux): what it needs and installs).
-- <a id="build-in-docker-instead"></a>**In Docker**, on either: `xless setup --docker --xcode …` once, then
-  `xless run --docker …`. On Linux, React Native, Tauri and Cargo apps build there
-  ([build: in Docker](docs/build.md#in-docker)).
+- <a id="build-in-docker-instead"></a>**In Docker**, on either: `xless setup --docker --xcode …` once per Xcode, then
+  `xless run --docker …`. It builds the xless image, which holds nothing of Apple's, and the Xcode's pack, which every
+  container of a run gets read-only. On Linux, React Native, Tauri and Cargo apps build there
+  ([build: in Docker](docs/build.md#in-docker), [the image and the packs](docs/images.md)).
 - **In WSL 2**, as on Linux, but read [what a build can reach there](docs/security.md#in-wsl) first.
 - <a id="get-xcode"></a>**The Xcode download** that Linux and Docker need: [the versions, and how to get one](docs/xcode-versions.md).
 
@@ -107,8 +108,8 @@ To build only, with no Apple account: `xless run <project-dir> --build-number 1 
 ## Apple software
 
 xless contains and distributes no Apple software: no Xcode, no SDKs, no Apple tools. You obtain Xcode from Apple
-yourself and are responsible for complying with its license terms. The SDK you export, and the images that contain it,
-stay on your machine and are not meant to be published.
+yourself and are responsible for complying with its license terms. The SDK you export, and the Xcode packs that
+contain it, stay on your machines and are not meant to be published. The xless image contains none of it.
 
 xless is not made or supported by Apple.
 

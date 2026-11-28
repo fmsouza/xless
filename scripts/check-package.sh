@@ -44,7 +44,7 @@ grep -v '/$' "$t/names" | sort > "$t/files"
 "$root/scripts/third-party-licenses.sh" --os "$os" --list > "$t/licences"
 {
   printf '%s\n' LICENSE bin/xless share/xless/VERSION share/xless/versions.env
-  for s in docker-images xcode-swift testflight native-toolchain; do echo "share/xless/scripts/$s.sh"; done
+  for s in docker-images xcode-swift testflight fit-toolchain pack-swift-build pack-check; do echo "share/xless/scripts/$s.sh"; done
   for h in pass secret-tool; do echo "share/xless/credential-helpers/xless-credential-$h"; done
   git -c "safe.directory=$root" -C "$root" ls-files docker samples/HelloShip | sed 's#^#share/xless/#'
   while IFS=' ' read -r name kind; do

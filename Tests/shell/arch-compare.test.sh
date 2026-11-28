@@ -96,6 +96,36 @@ test_summary_diff_alone_fails() {
   [[ $rc == 1 ]] || fail "differing summaries (identical bytes) exit $rc, want 1"
   grep -q 'one' "$T/out" && grep -q 'two' "$T/out" || fail "summary diff not shown"
 }
+# The wider masking (scripts/code-signature-mask.py): a nested bundle's _CodeSignature/ at any depth, and a universal file
+# slice by slice, each without its signature (the fat header's offsets and sizes left out); a code change in a slice fails.
+fat() {   # FILE SIGNATURE-BYTE [FLIP]: two slices of macho(), the second's code byte FLIP changed
+  macho "$1.a" "$2"; macho "$1.b" "$2"
+  python3 - "$1" "${3:-}" <<'P2'
+import struct, sys
+path, flip = sys.argv[1], sys.argv[2]
+a, b = open(path + ".a", "rb").read(), bytearray(open(path + ".b", "rb").read())
+if flip: b[32 + 72 + 16 + int(flip)] ^= 1
+off_a = 4096; off_b = off_a + ((len(a) + 4095) // 4096) * 4096
+hdr = struct.pack(">II", 0xcafebabe, 2) + struct.pack(">iiIII", 0x0100000c, 0, off_a, len(a), 12) + struct.pack(">iiIII", 0x01000007, 3, off_b, len(b), 12)
+out = bytearray(hdr) + bytearray(off_a - len(hdr)) + a + bytearray(off_b - off_a - len(a)) + b
+open(path, "wb").write(out)
+P2
+  rm "$1.a" "$1.b"
+}
+test_nested_codesignature_and_fat_signatures_pass() {
+  mkfixture "$T/a10"; mkfixture "$T/b10"
+  mkdir -p "$T/a10/Frameworks/X.framework/_CodeSignature" "$T/b10/Frameworks/X.framework/_CodeSignature"
+  printf 'sig-a' > "$T/a10/Frameworks/X.framework/_CodeSignature/CodeResources"
+  printf 'sig-b' > "$T/b10/Frameworks/X.framework/_CodeSignature/CodeResources"
+  fat "$T/a10/Universal" A; fat "$T/b10/Universal" B
+  "$S" "$T/a10" "$T/b10" >"$T/out" 2>&1 || fail "nested _CodeSignature or fat signatures exit $?: $(cat "$T/out")"
+}
+test_fat_slice_code_change_fails() {
+  mkfixture "$T/a11"; mkfixture "$T/b11"; fat "$T/a11/Universal" A; fat "$T/b11/Universal" A 5
+  local rc=0; "$S" "$T/a11" "$T/b11" >"$T/out" 2>&1 || rc=$?
+  [[ $rc == 1 ]] || fail "a fat slice's code change exits $rc, want 1"
+  grep -q 'Universal' "$T/out" || fail "output does not name Universal: $(cat "$T/out")"
+}
 test_usage() {
   local rc=0; "$S" "$T/a1" >"$T/out" 2>&1 || rc=$?
   [[ $rc == 2 ]] || fail "one argument exits $rc, want 2"
@@ -112,5 +142,7 @@ test_macho_code_change_fails
 test_summary_difference_fails
 test_summaries_are_printed
 test_summary_diff_alone_fails
+test_nested_codesignature_and_fat_signatures_pass
+test_fat_slice_code_change_fails
 test_usage
 echo PASS

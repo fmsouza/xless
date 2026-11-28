@@ -23,10 +23,18 @@ enum StageRunner {
             try await withStage(.prepare) { _ = try BuildSDKCheck.check(pin: ctx.config.xcode, platform: ctx.platform, file: pinFile(ctx), stage: .prepare) }
         }
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.prepare(ctx: rn).path }
-        if let cargo = ctx.cargoBuild { return try await CargoBuilder.prepare(ctx: cargo).path }
-        if let mac = ctx.tauriMacBuild { return try await TauriBuilder.prepareMac(ctx: mac).path }
-        guard let tauri = ctx.tauriBuild else { return "skipped (not an overlay project)" }
+        let overlay = try await overlayContexts(ctx, .prepare)
+        if let cargo = overlay.cargo { return try await CargoBuilder.prepare(ctx: cargo).path }
+        if let mac = overlay.tauriMac { return try await TauriBuilder.prepareMac(ctx: mac).path }
+        guard let tauri = overlay.tauri else { return "skipped (not an overlay project)" }
         return try await TauriBuilder.prepare(ctx: tauri).path
+    }
+
+    /// The Cargo and Tauri stages' views of `ctx`, made in `stage`: they look up the Xcode's SDK, whose problems (a pack that
+    /// cannot be used) are the stage's, `[stage] cause — fix` with the usage exit code.
+    private static func overlayContexts(_ ctx: Context, _ stage: Stage) async throws
+        -> (cargo: CargoBuildContext?, tauriMac: TauriMacBuildContext?, tauri: TauriBuildContext?) {
+        try await withStage(stage) { (try ctx.cargoBuild, try ctx.tauriMacBuild, try ctx.tauriBuild) }
     }
 
     /// `ctx` with the Mac's Xcode that an overlay is built with on a Mac, in the sandbox.
@@ -45,9 +53,10 @@ enum StageRunner {
         // build that keeps none (xtool, Cargo, Tauri) leaves none for `package` to zip.
         try? FileManager.default.removeItem(at: ctx.paths.dSYMs)
         if let rn = ctx.reactNativeBuild { return try await ReactNativeBuilder.build(ctx: rn) }
-        if let cargo = ctx.cargoBuild { return try await CargoBuilder.build(ctx: cargo) }
-        if let mac = ctx.tauriMacBuild { return try await TauriBuilder.buildMac(ctx: mac) }
-        if let tauri = ctx.tauriBuild { return try await TauriBuilder.build(ctx: tauri) }
+        let overlay = try await overlayContexts(ctx, .build)
+        if let cargo = overlay.cargo { return try await CargoBuilder.build(ctx: cargo) }
+        if let mac = overlay.tauriMac { return try await TauriBuilder.buildMac(ctx: mac) }
+        if let tauri = overlay.tauri { return try await TauriBuilder.build(ctx: tauri) }
         return try await withStage(.build) {
             if let mac = try MacNative.here(for: ctx, stage: .build) {
                 if ctx.simulator { return try await mac.buildForSimulator(ctx) }
@@ -61,9 +70,9 @@ enum StageRunner {
         }
     }
 
-    /// Ruling R8: the image's SDK (its toolchain metadata) against the project's `xcode:` pin, then recorded next to the
-    /// build's output (`BuildSDKRecord`) and printed; finalize stamps from the same SDK. Without metadata (a host with no
-    /// SDK installed) and without a pin there is nothing to check or record.
+    /// Ruling R8: the Xcode's SDK (its toolchain metadata, `XcodeEnvironment`) against the project's `xcode:` pin, then
+    /// recorded next to the build's output (`BuildSDKRecord`) and printed; finalize stamps from the same SDK. Without an
+    /// Xcode (a host with nothing set up) and without a pin there is nothing to check or record.
     /// Ruling R10: the image's Swift toolchain must be the one that Xcode ships (`SwiftToolchain.check`); it is recorded
     /// and printed with the SDK, and put on this process's PATH before the image's own Swift (`activate`), so every
     /// compile the build runs uses it (Swift Build also gets it through its toolset: `SwiftBuildEnvironment`).
@@ -114,7 +123,7 @@ enum StageRunner {
             try ctx.requireDevice(.finalize)
             _ = try NativeOverlay.mac(for: ctx, stage: .finalize)
             let input = try ctx.paths.bundle(in: ctx.paths.assets, stage: .finalize)
-            let meta = try MacNative.here(for: ctx, stage: .finalize)?.meta ?? ToolchainMeta.load(from: ToolchainMeta.defaultLocation())
+            let meta = try MacNative.here(for: ctx, stage: .finalize)?.meta ?? ToolchainMeta.load(from: XcodeEnvironment.current().meta)
             let kind: ProjectKind = ctx.isReactNative ? .reactNative : ctx.isCargo ? .cargo : ctx.isTauri ? .tauri : .xlessYML
             let built = BuildSDKRecord.load(in: ctx.paths.root)
             // Ruling R10: the compiler the build recorded (DTCompiler stays Xcode's compiler identifier for every Swift).

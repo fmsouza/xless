@@ -49,7 +49,6 @@ expect 10 "error: [config] --destination simulator builds React Native overlays 
 mkdir -p "$t/p" "$t/bin" "$t/home" "$t/share"
 cp "$repo/samples/HelloShip/xless.yml" "$t/p/xless.yml"
 case "$(uname -m)" in arm64|aarch64) A=arm64 ;; *) A=amd64 ;; esac
-"$repo/Tests/shell/fake-images.sh" base "$A" 27.0 27A266a > "$t/images"
 cat > "$t/bin/docker" <<'S'
 #!/bin/sh
 printf '%s\n' "$*" >> "$DLOG"
@@ -60,7 +59,11 @@ chmod +x "$t/bin/docker"
 cp "$repo/versions.env" "$t/share/versions.env"; cp -R "$repo/docker" "$t/share/docker"
 v="$("${base[@]}" "$x" --version)"
 echo "$v" > "$t/share/VERSION"   # a share is from one release: this xless's
-runs=("${base[@]}" HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" DLOG="$t/dlog" FAKE="$repo/Tests/shell/fake-images.sh" FAKE_IMAGES="$t/images" DOCKER_CONTEXT=stub XLESS_SHARE="$t/share")
+# the image is named after this xless: its share's release; the Xcode's pack is in a directory store
+FAKE_SHARE="$t/share" "$repo/Tests/shell/fake-images.sh" base "$A" 27.0 27A266a > "$t/images"
+"$repo/Tests/shell/fake-images.sh" pack "$t/xcodes" "$A"
+runs=("${base[@]}" HOME="$t/home" PATH="$t/bin:/usr/bin:/bin" XLESS_TESTFLIGHT_ENV="$t/none.env" DLOG="$t/dlog" FAKE="$repo/Tests/shell/fake-images.sh" FAKE_IMAGES="$t/images" DOCKER_CONTEXT=stub XLESS_SHARE="$t/share"
+      XLESS_XCODES="$t/xcodes")
 ship="ship --platform ios --build-number 1 --to finalize"
 xr="$(cd "$(dirname "$x")" && pwd -P)/$(basename "$x")"
 # xless docker: in the images unless XLESS_USE_DOCKER says otherwise; ship's arguments, with or without the `--` that may
@@ -83,10 +86,11 @@ code=0; "${runs[@]}" "$x" docker "$t/p" --to finalize >"$t/out" 2>"$t/err" || co
 grep -qF "this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "mismatch message: $(cat "$t/err")"
 grep -qF "XLESS_ALLOW_SHARE_MISMATCH=1" "$t/err" || fail "the refusal does not name the escape hatch: $(cat "$t/err")"
 [[ ! -s "$t/out" && ! -s "$t/dlog" ]] || fail "something ran with a share of another release: $(cat "$t/out" "$t/dlog")"
+cp "$t/images" "$t/images.keep"; FAKE_SHARE="$t/share" "$repo/Tests/shell/fake-images.sh" base "$A" 27.0 27A266a > "$t/images" # the image of the share's release
 "${runs[@]}" XLESS_ALLOW_SHARE_MISMATCH=1 "$x" docker "$t/p" --to finalize >/dev/null 2>"$t/err" || fail "XLESS_ALLOW_SHARE_MISMATCH=1 still refused: $(cat "$t/err")"
 grep -q " run .* xless ship --platform ios --to finalize$" "$t/dlog" || fail "XLESS_ALLOW_SHARE_MISMATCH=1 runs: $(cat "$t/dlog")"
 grep -qF "warning: this xless is $v, but its share directory $t/share (XLESS_SHARE) is from xless 9.9.9" "$t/err" || fail "no warning: $(cat "$t/err")"
-echo "$v" > "$t/share/VERSION"
+mv "$t/images.keep" "$t/images"; echo "$v" > "$t/share/VERSION"
 # xless run: natively by default, in the images with --docker (taken out of the arguments, but not after `--`), an
 # XLESS_USE_DOCKER already set wins over the default only; the steps run this xless, whatever XLESS_SELF says.
 "${base[@]}" "$x" run --help >/dev/null 2>"$t/err" || fail "xless run --help failed: $(cat "$t/err")"
@@ -109,11 +113,13 @@ code=0; "${runs[@]}" "$x" run "$t/p" --to finalize --no-such-option >/dev/null 2
 # an xless.yml that is not YAML: the run itself says so, before ship does
 code=0; echo 'nonsense: [' > "$t/p/xless.yml"; "${runs[@]}" "$x" run "$t/p" --to finalize >/dev/null 2>"$t/err" || code=$?
 [[ $code -eq 10 ]] || fail "xless run of an unreadable xless.yml exits $code, want 10: $(cat "$t/err")"
-# On Linux, an overlay builds in the images only: refused natively, naming --docker, before anything runs.
+# On Linux, an overlay builds natively only where its tools are (docs/troubleshooting.md): here they are not, so it is
+# refused with exit 2, naming --docker, before anything runs.
 if [[ "$(uname)" == Linux ]]; then
   : > "$t/dlog"
   code=0; "${runs[@]}" "$x" run --config "$t/tauri.yml" >"$t/out" 2>"$t/err" || code=$?
-  [[ $code -eq 10 ]] || fail "native overlay exits $code, want 10: $(cat "$t/err")"
+  [[ $code -eq 2 ]] || fail "native overlay exits $code, want 2: $(cat "$t/err")"
+  grep -q 'needs, and this machine lacks: ' "$t/err" || fail "the overlay refusal does not say what is missing: $(cat "$t/err")"
   grep -q -- '--docker' "$t/err" || fail "the overlay refusal does not name --docker: $(cat "$t/err")"
   [[ ! -s "$t/out" && ! -s "$t/dlog" ]] || fail "something ran for a refused overlay: $(cat "$t/out" "$t/dlog")"
 fi
@@ -142,4 +148,12 @@ if command -v zip >/dev/null; then
   mkfifo "$ios/signed/App.app/pipe"
   expect 16 "error: [package] pipe in App.app is neither a file" package --platform ios --project "$pkg"
 fi
+
+# The xcrun shim beside a pack that cannot be used: xcrun's own form of error (exit 1), with the pack's fix.
+case "$(uname -m)" in arm64|aarch64) pa=arm64 ;; *) pa=amd64 ;; esac
+mkdir -p "$t/xcodes/99.0-99Z99-$pa"
+printf '{"format":1,"xcode":"99.0","build":"99Z99","arch":"%s","swift":"6.4.0","mode":"own","parts":{}}' "$pa" > "$t/xcodes/99.0-99Z99-$pa/pack.json"
+code=0; "${base[@]}" XLESS_XCODES="$t/xcodes" "$x" shim xcrun --show-sdk-path >/dev/null 2>"$t/err" || code=$?
+[[ $code == 1 && "$(cat "$t/err")" == "xcrun: error: the pack 99.0-99Z99-$pa has no Darwin SDK; xless setup --sdk "* ]] \
+  || fail "the xcrun shim beside a pack that cannot be used: exit $code: $(cat "$t/err")"
 echo PASS

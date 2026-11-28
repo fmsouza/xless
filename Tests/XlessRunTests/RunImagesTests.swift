@@ -9,7 +9,7 @@ import XlessImages
     let home: RunHome
     init() throws { home = try RunHome() }
 
-    private static let base = "xless:local-arm64-xcode26.6"
+    private static let base = "xless:0.14.0-arm64"
 
     private func containers(_ host: FakeRunHost) -> [RunStep] { host.allSteps.filter(\.isContainer) }
     /// The names of the images the containers are of: each is started by the ID of the image that was checked, which no tag moves.
@@ -42,21 +42,18 @@ import XlessImages
         #expect(code == 0)
         #expect(names(host) == [Self.base, "\(Self.base)-\(kit)", Self.base])
         #expect(builds(host).isEmpty)
-        #expect(host.lines.contains("==> no xcode: is pinned, so the newest Xcode there is an image of: build \(Self.base)-\(kit), signing and upload \(Self.base)"))
+        #expect(host.lines.contains("==> no xcode: is pinned, so the newest Xcode there is a pack of: Xcode 27.0 (27A266a), build \(Self.base)-\(kit), signing and upload \(Self.base)"))
     }
 
-    @Test func thePinnedXcodesImagesAreUsed() throws {
-        home.images.add(xcode: "27.0", build: "27A266a")
-        try home.images.add(.tauri, xcode: "27.0", share: home.share)
-        let (newest, _) = try run()
-        #expect(names(newest).first == "xless:local-arm64-xcode27.0")
-        try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.6\"\n")
+    /// An image holds no Xcode: a pin chooses the pack (`RunPackTests`), and the images are this xless's whatever it pins. A missing
+    /// image stops the run with the command that builds it, pin or not.
+    @Test func thePinChoosesNoImage() throws {
+        try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")
         let (host, code) = try run()
         #expect(code == 0 && names(host) == [Self.base, "\(Self.base)-tauri", Self.base])
-        #expect(host.lines.contains("==> xcode: \"26.6\" (pinned): build \(Self.base)-tauri, signing and upload \(Self.base)"))
-        try home.write("ov/app.yml", "type: tauri\nsource: ../src\nxcode: \"26.2\"\n")
-        #expect(try refused() == "testflight: \(home.overlay) pins xcode: \"26.2\", but the image xless:local-arm64-xcode26.2 is missing; build it from Xcode 26.2: xless setup --docker --xcode <path to Xcode 26.2's .app or .xip> --arch arm64")
-        #expect(try home.run(["--config", home.overlay, "--dry-run"], docker: true, host: FakeRunHost(answer: home.answer())) == 2)
+        home.images.remove(Self.base)
+        #expect(try refused().hasPrefix("testflight: the image xless:0.14.0-arm64 is missing"))
+        #expect(try home.run(["--config", home.overlay, "--dry-run"], docker: true, host: FakeRunHost(answer: home.answer())) == 0)
     }
 
     @Test(arguments: [true, false])
@@ -68,7 +65,7 @@ import XlessImages
         #expect(try home.run(["--config", home.overlay], docker: true, host: host, environment: ["BUILDX_BUILDER": "other", "DOCKER_BUILDKIT": "0", "XLESS_DIST_KEY": "DIST-VALUE"], session: "/agent") == 0)
         let build = try #require(builds(host).first)
         #expect(builds(host).count == 1)
-        #expect(build.words == ["docker"] + (try Kit.tauri.build(on: LocalImage(name: Self.base, id: "sha256:base26.6", architecture: "arm64", labels: [ImageLabel.xcode: "26.6"], layers: []), share: home.share, builder: "here")))
+        #expect(build.words == ["docker"] + (try Kit.tauri.build(on: LocalImage(name: Self.base, id: "sha256:base26.6", architecture: "arm64", labels: [:], layers: []), share: home.share, builder: "here")))
         // it sees no secret, and docker's own builder builds it (another could not see the local image)
         #expect(Set(build.environment.keys).isDisjoint(with: SecretEnvironment.names + ["SOME_PASSWORD", "XLESS_SESSION", "BUILDX_BUILDER", "DOCKER_BUILDKIT"]))
         let order = host.allSteps.map { $0 == build ? "build" : $0.words.contains("materialize") && !$0.words.contains("--check") ? "secrets" : $0.isContainer ? "container" : "" }.filter { !$0.isEmpty }
@@ -96,9 +93,9 @@ import XlessImages
         // with no image at all it shows what there would be
         home.images.remove(Self.base)
         let (none, noneCode) = try run(["--config", home.overlay, "--dry-run"])
-        #expect(noneCode == 0 && none.output.contains { $0.contains(" xless:local-arm64-xcode27.0 xless next-build ") })
-        #expect(none.lines.contains { $0.hasPrefix("==> note: there is no xless image on this machine") })
-        #expect(try refused().hasPrefix("testflight: there is no xless image on this machine"))
+        #expect(noneCode == 0 && none.output.contains { $0.contains(" xless:0.14.0-arm64 xless next-build ") })
+        #expect(none.lines.contains { $0.hasPrefix("==> note: the image xless:0.14.0-arm64 is missing") })
+        #expect(try refused().hasPrefix("testflight: the image xless:0.14.0-arm64 is missing"))
     }
 
     @Test func aBuildThatFailsOrIsNotOnTheLocalImageEndsTheRun() throws {
@@ -113,12 +110,12 @@ import XlessImages
         #expect(!home.exists(home.secrets))
     }
 
-    /// A run that signs what is built already needs no kit.
+    /// A run that signs what is built already needs no kit (and no Xcode: RunPackTests.aRunFromSignTakesNoPack).
     @Test func onlyTheBuildStepNeedsTheKit() throws {
         home.images.remove("\(Self.base)-tauri")
         let (host, code) = try run(["--config", home.overlay, "--from", "sign"])
         #expect(code == 0 && builds(host).isEmpty && names(host) == [Self.base])
-        #expect(host.lines.contains("==> no xcode: is pinned, so the newest Xcode there is an image of: \(Self.base)"))
+        #expect(host.lines.contains("==> \(Self.base) (no Xcode: this run starts after finalize)"), "\(host.lines)")
     }
 
     // MARK: - A project's own image
@@ -136,7 +133,7 @@ import XlessImages
             }
         }
         // nor is the kit's, which nothing would use
-        for kit in Kit.allCases { home.images.remove(kit.image(on: LocalImage(name: "", id: "", architecture: "arm64", labels: [ImageLabel.xcode: "26.6"], layers: []))) }
+        for kit in Kit.allCases { home.images.remove(kit.image(on: LocalImage(name: "", id: "", architecture: "arm64", labels: [:], layers: []))) }
         let (host, code) = try run(nil, ["XLESS_IMAGE": "mine:1"])
         #expect(code == 0 && builds(host).isEmpty && names(host) == [Self.base, "mine:1", Self.base])
     }
@@ -422,14 +419,15 @@ import XlessImages
     @Test func aMismatchedImageIsRefusedBeforeAnythingRuns() throws {
         try home.write("ov/app.yml", "type: react-native\nsource: ../src\nimage: mine:1\nxcode: \"26.6\"\n")
         #expect(try refused() == "testflight: image: in \(home.overlay) names mine:1, which is not on this machine (images are never pulled from a registry); build it first: docker build -t mine:1 <its folder>")
-        home.images.add(xcode: "27.0", build: "27A266a", name: "mine:1", layers: ["mine"])
-        #expect(try refused().hasPrefix("testflight: image: in \(home.overlay) names mine:1, which holds the SDK of Xcode 27.0 (27A266a), not Xcode 26.6's; build it on the image of Xcode 26.6: docker build --pull=false --build-arg XLESS_IMAGE=\(Self.base)"))
+        mine()
+        home.images.change("mine:1") { $0.labels[ImageLabel.id] = "v0.13.0-0123456789ab" }
+        #expect(try refused().hasPrefix("testflight: image: in \(home.overlay) names mine:1, which is the image of xless v0.13.0-0123456789ab, not of 0.14.0; build it on \(Self.base): docker build --pull=false --build-arg XLESS_IMAGE=\(Self.base)"))
         mine()
         home.images.change("mine:1") { $0.layers = ["os", "copied-labels"] }
         #expect(try refused().contains("which is not built on \(Self.base) as it is now"))
         mine()
-        home.images.change("mine:1") { $0.labels[ImageLabel.version] = "0.1.0" }
-        #expect(try refused().contains("which holds xless 0.1.0, and this xless needs"))
+        home.images.change("mine:1") { $0.labels[ImageLabel.id] = nil }
+        #expect(try refused().contains("which is not built on an image of this xless (it has no dev.xless.image label)"))
         mine()
         home.images.change("mine:1") { $0.architecture = "amd64" }
         #expect(try refused().contains("which is for amd64, not arm64"))
@@ -453,36 +451,22 @@ import XlessImages
 
     // MARK: - The old names
 
-    /// It names xless's own image, as without it: no code of the project, nor of a language's toolchain, is next to the keys.
-    @Test func theSignImageVariableStillWorksForReactNative() throws {
+    /// XLESS_SIGN_IMAGE is not read any more: the steps with the secrets are in xless's own image, which nothing names.
+    @Test func theSignImageVariableIsNotRead() throws {
         mine()
         try home.write("ov/app.yml", "type: react-native\nsource: ../src\n")
-        let (host, code) = try run(nil, ["XLESS_SIGN_IMAGE": Self.base])
+        let (host, code) = try run(nil, ["XLESS_SIGN_IMAGE": "mine:1"])
         #expect(code == 0 && names(host) == [Self.base, "\(Self.base)-react-native", Self.base])
-        #expect(host.lines.contains("note: XLESS_SIGN_IMAGE still works, but nothing needs it any more: without it the steps with the secrets run in xless's own image of the same Xcode"))
-        for name in ["mine:1", "\(Self.base)-react-native", "\(Self.base)-tauri"] {
-            #expect(try refused(nil, ["XLESS_SIGN_IMAGE": name]) == "testflight: XLESS_SIGN_IMAGE names \(name), which has more in it than xless's own image \(Self.base), and the steps with the secrets run in that one alone; unset XLESS_SIGN_IMAGE", "\(name)")
-        }
-        // nor with what the build's image is made of, when that is another one
-        #expect(try refused(nil, ["XLESS_SIGN_IMAGE": "mine:1", "XLESS_IMAGE": "mine:1"]).contains("has more in it than xless's own image"))
-        home.images.change("mine:1") { $0.layers = ["x"] }
-        #expect(try refused(nil, ["XLESS_SIGN_IMAGE": "mine:1"]).contains("XLESS_SIGN_IMAGE names mine:1, which is not built on \(Self.base) as it is now"))
-        // xless's own image of another build of the same Xcode
-        home.images.add(xcode: "26.6", build: "17F200", name: "\(Self.base)-17F200", id: "sha256:other")
-        #expect(try refused(nil, ["XLESS_SIGN_IMAGE": "\(Self.base)-17F200"]) == "testflight: XLESS_SIGN_IMAGE names \(Self.base)-17F200, and the build's image is \(Self.base) or built on it; unset XLESS_SIGN_IMAGE")
-        // the others never had it
-        try home.write("ov/app.yml", "type: tauri\nsource: ../src\n")
-        #expect(try names(run(nil, ["XLESS_SIGN_IMAGE": "mine:1"]).host) == [Self.base, "\(Self.base)-tauri", Self.base])
+        // said once, and nothing else
+        #expect(host.lines.filter { $0.contains("XLESS_SIGN_IMAGE") } == ["==> note: XLESS_SIGN_IMAGE is set, but nothing reads it any more: the steps with the secrets run in this xless's own image"])
+        let (unset, _) = try run(nil, [:])
+        #expect(!unset.lines.contains { $0.contains("XLESS_SIGN_IMAGE") })
     }
 
-    @Test func thePlainTagStillWorksWithANotice() throws {
+    /// The tag without an Xcode is an older xless's now, and not used.
+    @Test func theTagOfBeforeThePacksIsNotUsed() throws {
         for name in [Self.base, "\(Self.base)-tauri"] { home.images.remove(name) }
         home.images.add(xcode: "26.6", build: "17F113", name: "xless:local-arm64")
-        let (host, code) = try run([home.project])
-        #expect(code == 0 && names(host) == ["xless:local-arm64"])
-        #expect(host.lines.contains { $0.hasPrefix("note: xless:local-arm64 is used for Xcode 26.6; the tag without an Xcode goes away") })
-        // an image of an older xless has no labels: not used
-        home.images.change("xless:local-arm64") { $0.labels = [:] }
-        #expect(try refused([home.project]).contains("; those of an older xless, as xless:local-arm64, are not used: xless clean --old removes them)"))
+        #expect(try refused([home.project]).contains("and xless:local-arm64 is an older xless's, which is not used; build it: xless setup --docker --arch arm64 (it needs no Xcode to build the image), and xless clean --old removes the older xless's images"))
     }
 }

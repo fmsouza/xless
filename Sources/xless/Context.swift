@@ -30,7 +30,8 @@ struct Context {
     var reactNative: ResolvedReactNative? = nil
     /// What the stages of an overlay build with on a Mac (`NativeOverlay`); nil elsewhere.
     var native: MacNative? = nil
-    private var sdk: DarwinSDK { native.map { DarwinSDK(xcode: $0.xcode) } ?? DarwinSDK() }
+    /// The Mac's Xcode, else the Xcode pack's SDK (`DarwinSDK(env:)`: a pack that does not fit is its error).
+    private var sdk: DarwinSDK { get throws { try native.map { DarwinSDK(xcode: $0.xcode) } ?? DarwinSDK() } }
 
     /// `--destination simulator` (React Native overlays, and xless.yml projects on a Mac): stages after build are refused.
     var simulator = false
@@ -61,29 +62,29 @@ struct Context {
     var hasPrepare: Bool { isTauri || isReactNative || isCargo }
 
     /// The Tauri stages' view of this context; nil without `--config` or for `--platform macos`.
-    var tauriBuild: TauriBuildContext? {
+    var tauriBuild: TauriBuildContext? { get throws {
         guard let overlay, let sourceRoot, let workRoot, let tauri else { return nil }
-        return TauriBuildContext(overlay: overlay, resolved: tauri, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
-    }
+        return TauriBuildContext(overlay: overlay, resolved: tauri, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: try sdk)
+    } }
 
     /// The macOS Tauri stages' view of this context; nil without `--config … --platform macos`.
-    var tauriMacBuild: TauriMacBuildContext? {
+    var tauriMacBuild: TauriMacBuildContext? { get throws {
         guard let overlay, let sourceRoot, let workRoot, let tauriMac else { return nil }
-        return TauriMacBuildContext(overlay: overlay, resolved: tauriMac, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
-    }
+        return TauriMacBuildContext(overlay: overlay, resolved: tauriMac, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: try sdk)
+    } }
 
     /// The React Native stages' view of this context; nil without a `type: react-native` overlay.
     var reactNativeBuild: ReactNativeBuildContext? {
         guard let rnOverlay, let sourceRoot, let workRoot, let reactNative else { return nil }
         return ReactNativeBuildContext(overlay: rnOverlay, resolved: reactNative, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths,
-                                       destination: simulator ? .iphonesimulator : .iphoneos, xcode: native.map { XcodeBuild(sdk: sdk, meta: $0.meta) })
+                                       destination: simulator ? .iphonesimulator : .iphoneos, xcode: native.map { XcodeBuild(sdk: DarwinSDK(xcode: $0.xcode), meta: $0.meta) })
     }
 
     /// The cargo stages' view of this context; nil without a `type: cargo` overlay.
-    var cargoBuild: CargoBuildContext? {
+    var cargoBuild: CargoBuildContext? { get throws {
         guard let cargo, let cargoResolved, let sourceRoot, let workRoot else { return nil }
-        return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: sdk)
-    }
+        return CargoBuildContext(overlay: cargo, resolved: cargoResolved, platform: platform, sourceRoot: sourceRoot, workRoot: workRoot, paths: paths, sdk: try sdk)
+    } }
 
     /// `--distribution` (ship): replaces the platform's configured distribution for this run; the config file is
     /// untouched. Applied after validation, so sign/package/upload all see it.
@@ -94,7 +95,20 @@ struct Context {
         var context = try await loadConfiguration(opts, distribution: distribution, env: env, fresh: fresh, expecting: expecting)
         context.configFile = opts.configURL
         for name in context.config.secretNames { SecretEnvironment.scrub(name) }
+        pinXcode(context.config.xcode, env: env)
         return context
+    }
+
+    /// The project's pinned Xcode for this command and every child, as `xless run` gives it: `XLESS_XCODE_PIN`
+    /// (`XcodeEnvironment.pin`: a value in `env` wins), and that Xcode's toolchain first on PATH again
+    /// (`NativeLayout.activatedPath`), where the command's start put the newest pack's. `set`: `setenv`.
+    static func pinXcode(_ configured: String?, env: [String: String], linux: Bool = NativeLayout.isLinuxHost,
+                         set: (String, String) -> Void = { setenv($0, $1, 1) }) {
+        guard let pin = XcodeEnvironment.pin(configured: configured, env: env) else { return }
+        set(XcodeEnvironment.pinVariable, pin)
+        var pinned = env
+        pinned[XcodeEnvironment.pinVariable] = pin
+        if let path = NativeLayout.activatedPath(env: pinned, linux: linux) { set("PATH", path) }
     }
 
     private static func loadConfiguration(_ opts: ProjectOptions, distribution: Distribution?, env: [String: String], fresh: Bool, expecting: String?) async throws -> Context {
